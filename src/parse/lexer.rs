@@ -69,6 +69,8 @@ pub enum TokenKind {
     Bang,
     /// `|` between destination registers (`setp ... p|q`).
     Pipe,
+    /// `=` — a variable initializer (`.global .b8 _$_str[11] = {..};`).
+    Equals,
     EndOfFile,
     /// Unexpected byte; the lexer skips it and continues.
     Error,
@@ -168,6 +170,7 @@ impl<'a> Lexer<'a> {
             b'@' => punct(TokenKind::At),
             b'!' => punct(TokenKind::Bang),
             b'|' => punct(TokenKind::Pipe),
+            b'=' => punct(TokenKind::Equals),
             _ => None,
         };
         if let Some(kind) = single {
@@ -460,6 +463,7 @@ mod tests {
         assert_eq!(kinds("&add"), [Error, Identifier, EndOfFile]);
         assert_eq!(kinds("%7"), [Error, Number, EndOfFile]); // operand refs dropped
         assert_eq!(kinds("$ x"), [Error, Identifier, EndOfFile]);
+        assert_eq!(kinds("= {95}"), [Equals, LBrace, Number, RBrace, EndOfFile]);
     }
 
     #[test]
