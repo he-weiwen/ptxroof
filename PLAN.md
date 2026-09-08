@@ -48,10 +48,6 @@ as requested by the PTX; nothing is measured (README).
 
 ### Presentation
 
-- Every label starts a block, so LLVM's `$L__tmpN` debug labels
-  fragment the block table (`ce_chunk_kernel.sm_89.ptx`: 50 rows for
-  straight-line code), and two zero-instruction blocks follow the
-  final `ret` (`$L__tmp48`, `$L__func_end0`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
@@ -61,8 +57,8 @@ as requested by the PTX; nothing is measured (README).
 - Fixture corpus: nvcc output for one CUDA header ladder (k1, k2, k5,
   k11, k12, k14, mma_demo), Triton 3.8.0 (Gluon) output for five
   nanochat kernels (`tests/fixtures/gluon`: seven PTX files, the GEMM
-  and the cross-entropy chunk at two shapes each; classification 93
-  to 100 percent), and hand-written micro kernels. clang is untested.
+  and the cross-entropy chunk at two shapes each; every instruction
+  classifies), and hand-written micro kernels. clang is untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
   identical to the original's for 20 of the 21 fixtures; k14's is
   rejected because the in-kernel `.local` depot declaration is

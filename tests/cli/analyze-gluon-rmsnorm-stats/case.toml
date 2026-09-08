@@ -1,4 +1,5 @@
-# Residual RMSNorm pass 1: straight-line code behind a row guard, so
-# every total is an upper bound; nothing unknown.
+# Residual RMSNorm pass 1: one block, no branches. The flops are exact;
+# the loads and stores are masked (`@%p`), so the byte totals are upper
+# bounds and AI(global) is a lower bound. Nothing unknown.
 args = ["analyze", "{fixtures}/gluon/rmsnorm_stats_kernel.sm_89.ptx"]
 exit = 0

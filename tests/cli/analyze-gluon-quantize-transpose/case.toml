@@ -1,4 +1,5 @@
-# Residual RMSNorm pass 2 (e4m3 quantization and transpose): the 32
-# unparsed statements are the `.reg .b16 lo, hi;` asm-scope lists (PLAN.md).
+# Residual RMSNorm pass 2 (e4m3 quantization and transpose): one block,
+# no branches, no masks, so every total is exact, including the 64
+# conversions declared inside inline-asm scopes.
 args = ["analyze", "{fixtures}/gluon/quantize_transpose_kernel.sm_89.ptx"]
 exit = 0

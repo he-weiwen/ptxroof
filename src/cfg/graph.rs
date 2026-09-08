@@ -16,6 +16,7 @@
 
 use crate::core::arena::newtype_idx;
 use crate::core::{IndexVec, Instr, Kernel, Module, Operand, Stmt, Symbol};
+use std::collections::HashSet;
 
 newtype_idx! {
     /// Index into [`Cfg::blocks`].
@@ -87,6 +88,22 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> Cfg {
     };
 
     // -- leaders ----------------------------------------------------------
+    // A label starts a block only if a branch can reach it; LLVM's
+    // `$L__tmpN` debug-range labels are not control flow.
+    let mut targets: HashSet<Symbol> = HashSet::new();
+    for stmt in &kernel.stmts {
+        match stmt {
+            Stmt::Instr(i) if Some(i.mnemonic) == sym_bra || Some(i.mnemonic) == sym_brx => {
+                for &id in module.operand_ids(i.operands) {
+                    if let Operand::SymbolRef(s) = module.operand(id) {
+                        targets.insert(*s);
+                    }
+                }
+            }
+            Stmt::BranchTargets(ts) => targets.extend(ts.iter().copied()),
+            _ => {}
+        }
+    }
     let n = kernel.stmts.len();
     let mut leader = vec![false; n + 1];
     if n > 0 {
@@ -94,7 +111,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> Cfg {
     }
     for (i, stmt) in kernel.stmts.iter().enumerate() {
         match stmt {
-            Stmt::Label(_) => leader[i] = true,
+            Stmt::Label(l) if targets.contains(l) => leader[i] = true,
             Stmt::Instr(instr) if is_branch(instr) => leader[i + 1] = true,
             _ => {}
         }
@@ -106,6 +123,13 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> Cfg {
     let mut start = 0usize;
     for (i, &is_leader) in leader.iter().enumerate().skip(1) {
         if i == n || is_leader {
+            // Labels after the final terminator are not a block.
+            let has_instr = kernel.stmts[start..i]
+                .iter()
+                .any(|s| matches!(s, Stmt::Instr(_)));
+            if i == n && !has_instr && !blocks.is_empty() {
+                break;
+            }
             let label = match kernel.stmts[start] {
                 Stmt::Label(l) => Some(l),
                 _ => None,
@@ -285,9 +309,19 @@ mod tests {
     }
 
     #[test]
-    fn fallthrough_into_label() {
-        let (_, cfg) = cfg_of("add.f32 %f1, %f1, %f1;\n$L__A:\nret;");
-        assert_eq!(shape(&cfg), [vec![1], vec![]]);
+    fn only_branch_targets_start_blocks() {
+        // A label nobody branches to (LLVM's `$L__tmpN`) stays inside its
+        // block, and labels after the final `ret` are not a block.
+        let (module, cfg) = cfg_of(
+            "add.f32 %f1, %f1, %f1;\n$L__tmp0:\nadd.f32 %f1, %f1, %f1;\n\
+             @%p1 bra $L__A;\n$L__tmp1:\nmul.f32 %f1, %f1, %f1;\n$L__A:\nret;\n\
+             $L__tmp2:\n$L__func_end0:",
+        );
+        assert_eq!(shape(&cfg), [vec![2, 1], vec![2], vec![]]);
+        let names: Vec<String> = (0..cfg.blocks.len() as u32)
+            .map(|i| cfg.block_name(&module, BlockId(i)))
+            .collect();
+        assert_eq!(names, ["<block 0>", "$L__tmp1", "$L__A"]);
     }
 
     #[test]

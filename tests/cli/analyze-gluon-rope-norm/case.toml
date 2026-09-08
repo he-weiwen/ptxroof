@@ -1,3 +1,4 @@
-# Rotary + QK-norm: straight-line code behind a row guard; nothing unknown.
+# Rotary + QK-norm: one block, no branches; flops exact, masked loads
+# and stores bounded. Nothing unknown.
 args = ["analyze", "{fixtures}/gluon/rope_norm_kernel.sm_89.ptx"]
 exit = 0

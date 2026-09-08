@@ -13,9 +13,9 @@ global bytes: load <= 128 B, store 0 B
 shared bytes: load 256 B, store <= 128 B
 AI(global) >= 128 flop/B
 totals [static]:
-flops = <= 129  (f32 <= 129)
+flops = 129  (f32 129)
 tensor flops = <= 16384 * ⌈param_10/64⌉  (fp8 <= 16384 * ⌈param_10/64⌉)
-global bytes: load <= 128 * ⌈param_10/64⌉ + 264 B, store <= 256 B
+global bytes: load <= 128 * ⌈param_10/64⌉ + 264 B, store 256 B
 unknowns: none
 coverage: instructions_classified 100.0% (966/966)
 coverage: loop_trips_resolved 100.0% (1/1)

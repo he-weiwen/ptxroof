@@ -1,6 +1,6 @@
 kernel ce_chunk_kernel
-$L__tmp5         standard.py:293         7  $L__tmp6
-$L__func_end0    (no line info)          0  (end)
+|    <block 3>        (no line info)          2  $L__BB0_4
+$L__tmp27        gluon_ce.py:31-65      35  (end)
 block size: 512 threads (512x1x1 from .reqntid)
 shared memory [static]: 0 B per CTA + dynamic (set at launch)
 loop gluon_ce.py:47 ($L__BB0_1)
