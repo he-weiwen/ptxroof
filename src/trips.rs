@@ -35,6 +35,7 @@ use crate::cfg::naming::LoopName;
 use crate::cfg::{BlockId, Cfg};
 use crate::core::symexpr::SymExpr;
 use crate::core::{Instr, Kernel, Module, Operand, Stmt, Symbol};
+use crate::parse::parser::parse_int;
 use std::collections::HashMap;
 
 /// Trip count of one loop: an expression, or a named reason there
@@ -328,7 +329,7 @@ impl<'a> Tracer<'a> {
             match (self.module.operand(*a), self.module.operand(*b)) {
                 (Operand::Register(r), Operand::Immediate(c))
                 | (Operand::Immediate(c), Operand::Register(r)) => {
-                    Some((*r, parse_imm(self.module.interner.resolve(*c))?))
+                    Some((*r, parse_int(self.module.interner.resolve(*c))?))
                 }
                 _ => None,
             }
@@ -452,7 +453,7 @@ impl<'a> Tracer<'a> {
             Operand::Register(reg) => self.trace_reg(*reg, pos, id, ivs, depth),
             Operand::Immediate(text) => {
                 let text = self.module.interner.resolve(*text);
-                parse_imm(text)
+                parse_int(text)
                     .map(|c| Affine::invariant(SymExpr::Const(c)))
                     .ok_or_else(|| format!("non-integer immediate {text}"))
             }
@@ -669,19 +670,6 @@ fn defines_dest(mnemonic: &str) -> bool {
             | "nop"
             | "prefetch"
     )
-}
-
-fn parse_imm(text: &str) -> Option<i64> {
-    let (neg, rest) = match text.strip_prefix('-') {
-        Some(r) => (true, r),
-        None => (false, text),
-    };
-    let v = if let Some(h) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
-        i64::from_str_radix(h, 16).ok()?
-    } else {
-        rest.parse::<i64>().ok()?
-    };
-    Some(if neg { -v } else { v })
 }
 
 /// Solve `continue while A1·k + A0 cmp 0` (k = 1, 2, ...) for the

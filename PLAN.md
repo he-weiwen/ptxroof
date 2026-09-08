@@ -42,9 +42,6 @@ as requested by the PTX; nothing is measured (README).
   `docs/ptx-instruction-coverage.md` are `Unknown`: fp8, integer,
   sparse and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
   textures and surfaces; `multimem`; video instructions.
-- **`cp.async` sizes in hex** (`0x10`) are not parsed; the copy's bytes
-  are then unknown. `fp8_gemm_kernel.c_fc.sm_89.ptx`: 24 copies,
-  `global load with statically unknown byte count x24`.
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.

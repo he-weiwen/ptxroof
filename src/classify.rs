@@ -26,6 +26,7 @@
 //! multiplied by packed lanes (`f16x2` = ×2).
 
 use crate::core::{Instr, Module, Operand};
+use crate::parse::parser::parse_int;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Precision {
@@ -508,7 +509,9 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> OpClass {
         .iter()
         .skip(2)
         .filter_map(|&id| match module.operand(id) {
-            Operand::Immediate(text) => module.interner.resolve(*text).parse().ok(),
+            Operand::Immediate(text) => {
+                parse_int(module.interner.resolve(*text)).and_then(|v| u32::try_from(v).ok())
+            }
             _ => None,
         })
         .collect();
@@ -1028,6 +1031,11 @@ mod tests {
 
     #[test]
     fn cp_async_is_a_global_read_and_a_shared_write() {
+        // Triton writes the sizes in hex, with spaces inside the brackets.
+        assert_eq!(
+            class_of("cp.async.cg.shared.global [ %r24 + 0 ], [ %rd5 + 0 ], 0x10, 0x10;"),
+            class_of("cp.async.cg.shared.global [%r20], [%rd11], 16, 16;")
+        );
         let copy = |read_bytes, written_bytes| OpClass::Copy {
             from: Space::Global,
             to: Space::Shared,

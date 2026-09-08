@@ -787,7 +787,7 @@ impl<'a> Parser<'a> {
 
 /// Parse a PTX integer literal: decimal, hex (`0x..`), optionally
 /// negative.
-fn parse_int(text: &str) -> Option<i64> {
+pub(crate) fn parse_int(text: &str) -> Option<i64> {
     let (neg, rest) = match text.strip_prefix('-') {
         Some(r) => (true, r),
         None => (false, text),

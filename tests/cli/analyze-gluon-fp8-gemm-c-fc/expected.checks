@@ -5,18 +5,17 @@ loop gluon_fp8.py:173 ($L__BB0_3)
 trips = (param_10 + 63) / 64
 mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     64
 ldmatrix.sync.aligned.m8n8.x4.shared.b16                16
+global -> shared copy 16 B                              <= 8
 cp.async.cg.shared.global                             <= 8
 flops = 0 + unknown
 tensor flops = 0 + unknown
-global bytes: load 0 B + unknown, store 0 B + unknown
-shared bytes: load 256 B + unknown, store 0 B + unknown
+global bytes: load <= 128 B + unknown, store 0 B + unknown
+shared bytes: load 256 B + unknown, store <= 128 B + unknown
+AI(global): not bounded (flops are a lower bound, global bytes are bounded in neither direction)
 totals [static]:
 flops = <= 129 + unknown  (f32 <= 129)
-global bytes: load <= 8 B + unknown, store <= 256 B + unknown
-AI(global): not bounded (flops are bounded in neither direction, global bytes are bounded in neither direction)
+global bytes: load <= 128 * ((param_10 + 63) / 64) + 264 B + unknown, store <= 256 B + unknown
 unknowns:
 instruction `mma` x64 — not classified — its flops/bytes are not counted
-global load with statically unknown byte count x24 — counted as an op; bytes missing from every byte total
-shared store with statically unknown byte count x24 — counted as an op; bytes missing from every byte total
 coverage: instructions_classified 93.4% (902/966)
 coverage: loop_trips_resolved 100.0% (1/1)

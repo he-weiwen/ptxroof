@@ -5,10 +5,11 @@ trips = (128 * ((param_10 + 63) / 64)) / 128
 cvt.rn.satfinite.e4m3x2.f32                             16
 mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     32
 ld.global.v4.b32                                         4
+global -> shared copy 16 B                              <= 2
 cp.async.cg.shared.global                             <= 2
 flops = 96 + unknown  (f32 96)
+global bytes: load <= 96 B + unknown, store 0 B + unknown
 AI(global): not bounded (flops are a lower bound, global bytes are bounded in neither direction)
 unknowns:
 instruction `mma` x32 — not classified — its flops/bytes are not counted
-global load with statically unknown byte count x6 — counted as an op; bytes missing from every byte total
 coverage: instructions_classified 96.6% (918/950)

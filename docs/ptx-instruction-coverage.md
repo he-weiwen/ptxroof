@@ -250,7 +250,7 @@ give the target class each should land as.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.9.26.3.1 | `cp.async` | `Copy { Global → Shared, read = src-size or cp-size, written = cp-size }` — the immediates after the two addresses; a non-immediate `src-size` (a register) falls back to `cp-size`, an upper bound on the read | OK — the `cp` arm, pinned by k12/k14 (nvcc writes `..., 16, 16`). `collect` records one memory instruction with two byte measurements: a global load and a shared store. |
+| 9.7.9.26.3.1 | `cp.async` | `Copy { Global → Shared, read = src-size or cp-size, written = cp-size }` — the immediates after the two addresses; a non-immediate `src-size` (a register) falls back to `cp-size`, an upper bound on the read | OK — the `cp` arm, pinned by k12/k14 (nvcc writes `..., 16, 16`) and the Gluon GEMMs (Triton writes `..., 0x10, 0x10`). `collect` records one memory instruction with two byte measurements: a global load and a shared store. |
 | 9.7.9.26.3.2 | `cp.async.commit_group` | `Sync` | OK — moves no bytes. |
 | 9.7.9.26.3.3 | `cp.async.wait_group` | `Sync` | OK. |
 | 9.7.9.26.3.3 | `cp.async.wait_all` | `Sync` | OK. |
