@@ -54,9 +54,7 @@ as requested by the PTX; nothing is measured (README).
   final `ret` (`$L__tmp48`, `$L__func_end0`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
-- Floor division prints as `/`; `(param_10 + 63) / 64` is not folded
-  to `⌈param_10/64⌉`, nor `(128 * x) / 128` to `x` (the two GEMM
-  fixtures' trip counts).
+- Floor division prints as `/`.
 
 ### Producers and validation
 

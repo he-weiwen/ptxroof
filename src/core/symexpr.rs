@@ -180,15 +180,33 @@ impl SymExpr {
         }
     }
 
-    /// `e / c` rounding toward −∞; `c` must be positive.
+    /// `e / c` rounding toward −∞; `c` must be positive. Two identities
+    /// fold: `⌊(x + c − 1)/c⌋ = ⌈x/c⌉` and `⌊k·c·x / c⌋ = k·x`.
     pub fn floor_div(e: SymExpr, c: i64) -> SymExpr {
         assert!(c > 0, "floor_div by non-positive constant is a matcher bug");
         if c == 1 {
             return e;
         }
-        match e.as_const() {
-            Some(v) => SymExpr::Const(v.div_euclid(c)),
-            None => SymExpr::FloorDiv(Box::new(e), c),
+        match e {
+            SymExpr::Const(v) => SymExpr::Const(v.div_euclid(c)),
+            SymExpr::Sum(mut terms) if terms.last() == Some(&SymExpr::Const(c - 1)) => {
+                terms.pop();
+                let rest = terms
+                    .into_iter()
+                    .reduce(SymExpr::add)
+                    .expect("Sum invariant: ≥ 2 terms");
+                SymExpr::ceil_div(rest, c)
+            }
+            SymExpr::Prod(factors) if matches!(factors.first(), Some(SymExpr::Const(k)) if k % c == 0) =>
+            {
+                let mut rest = factors.into_iter();
+                let k = rest
+                    .next()
+                    .and_then(|f| f.as_const())
+                    .expect("guard checked");
+                rest.fold(SymExpr::Const(k / c), SymExpr::mul)
+            }
+            other => SymExpr::FloorDiv(Box::new(other), c),
         }
     }
 
@@ -394,6 +412,30 @@ mod tests {
             }
             other => panic!("expected flattened product, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn floor_division_folds_the_ceiling_and_multiple_identities() {
+        // LLVM writes ⌈K/64⌉ as (K + 63) >> 6, and a counter stepping by
+        // 128 up to 128·x gives (128 * x) / 128.
+        assert_eq!(
+            E::floor_div(E::add(k(), E::Const(63)), 64),
+            E::ceil_div(k(), 64)
+        );
+        let x = E::ceil_div(k(), 64);
+        assert_eq!(E::floor_div(E::mul(E::Const(128), x.clone()), 128), x);
+        assert_eq!(
+            E::floor_div(E::mul(E::Const(6), k()), 3),
+            E::mul(E::Const(2), k())
+        );
+        assert!(matches!(
+            E::floor_div(E::add(k(), E::Const(62)), 64),
+            E::FloorDiv(..)
+        ));
+        assert!(matches!(
+            E::floor_div(E::mul(E::Const(6), k()), 4),
+            E::FloorDiv(..)
+        ));
     }
 
     #[test]

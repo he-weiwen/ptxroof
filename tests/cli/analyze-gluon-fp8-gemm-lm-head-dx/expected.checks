@@ -1,7 +1,7 @@
 kernel fp8_gemm_kernel
 block size: 256 threads (256x1x1 from .reqntid)
 loop gluon_fp8.py:173 ($L__BB0_3)
-trips = (128 * ((param_10 + 63) / 64)) / 128
+trips = ⌈param_10/64⌉
 cvt.rn.satfinite.e4m3x2.f32                             16
 tensor fp8                                                32
 mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     32
