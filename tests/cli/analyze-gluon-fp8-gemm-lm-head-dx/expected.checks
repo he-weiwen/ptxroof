@@ -3,13 +3,14 @@ block size: 256 threads (256x1x1 from .reqntid)
 loop gluon_fp8.py:173 ($L__BB0_3)
 trips = (128 * ((param_10 + 63) / 64)) / 128
 cvt.rn.satfinite.e4m3x2.f32                             16
+tensor fp8                                                32
 mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     32
 ld.global.v4.b32                                         4
 global -> shared copy 16 B                              <= 2
 cp.async.cg.shared.global                             <= 2
-flops = 96 + unknown  (f32 96)
-global bytes: load <= 96 B + unknown, store 0 B + unknown
-AI(global): not bounded (flops are a lower bound, global bytes are bounded in neither direction)
-unknowns:
-instruction `mma` x32 — not classified — its flops/bytes are not counted
-coverage: instructions_classified 96.6% (918/950)
+flops = 96  (f32 96)
+tensor flops = 8192  (fp8 8192)
+global bytes: load <= 96 B, store 0 B
+AI(global) >= 86.33333333333333 flop/B
+unknowns: none
+coverage: instructions_classified 100.0% (950/950)

@@ -37,10 +37,14 @@ pub enum Precision {
     TF32,
     F32,
     F64,
+    /// Tensor-core only: the 8-bit `.e4m3` and `.e5m2` multiplicands
+    /// (PTX ISA §9.7.15.5.1, `mma` with `.kind::f8f6f4` shapes).
+    FP8,
 }
 
 impl Precision {
-    pub const ALL: [Precision; 5] = [
+    pub const ALL: [Precision; 6] = [
+        Precision::FP8,
         Precision::F16,
         Precision::BF16,
         Precision::TF32,
@@ -55,6 +59,7 @@ impl Precision {
             Precision::TF32 => "tf32",
             Precision::F32 => "f32",
             Precision::F64 => "f64",
+            Precision::FP8 => "fp8",
         }
     }
 }
@@ -344,7 +349,7 @@ fn element_bits(ty: &str) -> Option<u32> {
     Some(match ty {
         "b1" => 1,
         "s4" | "u4" => 4,
-        "s8" | "u8" | "b8" => 8,
+        "s8" | "u8" | "b8" | "e4m3" | "e5m2" => 8,
         "f16" | "bf16" | "b16" => 16,
         "tf32" | "f32" | "s32" => 32,
         "f64" => 64,
@@ -358,6 +363,7 @@ fn tensor_precision(ty: &str) -> Option<Precision> {
         "bf16" => Precision::BF16,
         "tf32" => Precision::TF32,
         "f64" => Precision::F64,
+        "e4m3" | "e5m2" => Precision::FP8,
         _ => return None,
     })
 }
@@ -988,9 +994,21 @@ mod tests {
             ),
             tensor(Precision::F64, 16)
         );
+        // The Gluon fp8 GEMM's form: 2*16*8*32 / 32 = 256 flops per lane.
+        assert_eq!(
+            class_of(
+                "mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 {%r1,%r2,%r3,%r4}, {%r5,%r6,%r7,%r8}, {%r9,%r10}, {%r1,%r2,%r3,%r4};"
+            ),
+            tensor(Precision::FP8, 256)
+        );
+        assert_eq!(
+            class_of(
+                "mma.sync.aligned.m16n8k16.row.col.f32.e5m2.e4m3.f32 {%f1}, {%r1}, {%r2}, {%f2};"
+            ),
+            tensor(Precision::FP8, 128)
+        );
         for text in [
             "mma.sync.aligned.m16n8k32.row.col.satfinite.s32.s8.s8.s32 {%r1}, {%r2}, {%r3}, {%r4};",
-            "mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 {%f1}, {%r1}, {%r2}, {%f2};",
             "mma.sp.sync.aligned.m16n8k32.row.col.f32.f16.f16.f32 {%f1}, {%r1}, {%r2}, {%f2}, %r3, 0;",
             "mma.sync.aligned.m16n8k64.row.col.kind::mxf4.block_scale.f32.e2m1.e2m1.f32.ue8m0 {%f1}, {%r1}, {%r2}, {%f2}, %r3, {0, 0}, %r4, {0, 0};",
         ] {

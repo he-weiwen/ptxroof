@@ -202,7 +202,7 @@ pub struct Unroll {
 #[derive(Debug, Serialize)]
 pub struct Aggregates {
     /// CUDA-core flops. Keys: "total" and every precision key
-    /// ("f16", "bf16", "tf32", "f32", "f64") — always present.
+    /// ("fp8", "f16", "bf16", "tf32", "f32", "f64") — always present.
     pub flops: BTreeMap<String, Count>,
     /// Tensor-core flops (`wmma.mma`, `mma`), same keys.
     pub tensor_flops: BTreeMap<String, Count>,

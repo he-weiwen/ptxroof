@@ -38,9 +38,9 @@ as requested by the PTX; nothing is measured (README).
   in an earlier Triton build of the fp8 GEMM, not emitted by triton
   3.8.0 @ c3aa0c5, which the fixtures use), grid-stride loops (special
   registers), data-dependent bounds, multi-exit loops.
-- **Instruction families.** 79 of the 232 rows in
-  `docs/ptx-instruction-coverage.md` are `Unknown`: fp8, integer,
-  sparse and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
+- **Instruction families.** 77 of the 232 rows in
+  `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
+  and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
   textures and surfaces; `multimem`; video instructions.
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
@@ -70,8 +70,13 @@ as requested by the PTX; nothing is measured (README).
   rejected because the in-kernel `.local` depot declaration is
   discarded (`Unknown symbol '__local_depot0'`). Not a CI step: it
   needs the CUDA toolkit.
-- Hardware cross-check: k5's counts against Nsight Compute on an RTX
-  4090, nothing else.
+- Hardware cross-check on an RTX 4090 with Nsight Compute: k5's
+  counts, and the c_fc fp8 GEMM's launch (M=4096, N=3072, K=768):
+  `sm__ops_path_tensor_src_fp8.sum` = 19,327,352,832 = 2·M·N·K, the
+  tool's 16384 fp8 flops per thread per K iteration times 12
+  iterations, 128 threads and 768 CTAs; `sm__inst_executed_pipe_tensor`
+  = 2,359,296 = 64 `mma` per warp-iteration likewise; l1tex global-load
+  bytes = the K loop's 150,994,944 B plus the epilogue's. Nothing else.
 - Counts are PTX, not SASS: ptxas removes most register moves, folds
   address arithmetic into addressing modes, expands `.rn` divides, and
   may add spills.
@@ -84,9 +89,6 @@ One line each, with the trigger that would start it.
 
 - clang fixtures with a regen script. Trigger: the first clang-built
   kernel.
-- fp8 dense `mma` (2·M·N·K over 32 lanes) with an NCU cross-check on
-  sm_89. Trigger fired: `fp8_gemm_kernel.c_fc.sm_89.ptx`, 64
-  unclassified `mma` per K iteration.
 - `diff` between two builds of one kernel, PTX and SASS spill counts.
   Trigger: the first spill regression hunt.
 - Local memory per thread from the `.local` depot declaration (k14:
