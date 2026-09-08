@@ -20,11 +20,6 @@ as requested by the PTX; nothing is measured (README).
 - **Triangular loop nests report the inner loop's trips as 0.** The
   latch tracer follows the outer induction variable to its pre-loop
   initial value. Found with a hand-written nest; no fixture yet.
-- **Nested inlining is attributed to the intermediate file.** Only one
-  `inlined_at` hop is followed. `ce_chunk_kernel.sm_89.ptx`: the
-  reductions inlined from Triton's `standard.py` through
-  `gluon_ce.py:50` land on `standard.py:293` (block rows, and
-  `standard.py:191 x16, standard.py:293 x16` in the unrolled lines).
 
 ### Reported as unknowns
 

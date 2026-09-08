@@ -23,6 +23,7 @@ use crate::core::{
     Predicate, RegDecl, SharedDecl, SourceLoc, Stmt, Symbol,
 };
 use crate::parse::lexer::{Token, TokenKind, tokenize};
+use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
 #[error("parse error at line {line}: {message}")]
@@ -46,6 +47,8 @@ struct Parser<'a> {
     files: Vec<FileDirective>,
     kernels: Vec<Kernel>,
     shared_decls: Vec<SharedDecl>,
+    /// Inlined location → the user line it was ultimately inlined at.
+    inlined: HashMap<SourceLoc, SourceLoc>,
     operands: IndexVec<OperandId, Operand>,
     operand_lists: Vec<OperandId>,
     modifier_pool: Vec<Symbol>,
@@ -64,6 +67,7 @@ impl<'a> Parser<'a> {
             files: Vec::new(),
             kernels: Vec::new(),
             shared_decls: Vec::new(),
+            inlined: HashMap::new(),
             operands: IndexVec::new(),
             operand_lists: Vec::new(),
             modifier_pool: Vec::new(),
@@ -464,13 +468,15 @@ impl<'a> Parser<'a> {
 
     /// `.loc f l c` or
     /// `.loc f l c, function_name $sym, inlined_at f l c`.
-    /// The effective location is the `inlined_at` one when present:
-    /// attribution wants the user's source line, not the header line
-    /// the code was inlined from.
+    /// The effective location is the `inlined_at` one when present,
+    /// followed through earlier `.loc`s when that site was itself
+    /// inlined (LLVM writes the chain outer-first): attribution wants
+    /// the user's source line, not the header line the code came from.
     fn parse_loc(&mut self, cur_loc: &mut Option<SourceLoc>) {
-        let Some(mut loc) = self.parse_loc_triple() else {
+        let Some(inner) = self.parse_loc_triple() else {
             return;
         };
+        let mut loc = inner;
         while self.at(TokenKind::Comma) {
             self.bump();
             if !self.at(TokenKind::Identifier) {
@@ -485,7 +491,8 @@ impl<'a> Parser<'a> {
                 }
                 "inlined_at" => {
                     if let Some(outer) = self.parse_loc_triple() {
-                        loc = outer;
+                        loc = self.inlined.get(&outer).copied().unwrap_or(outer);
+                        self.inlined.insert(inner, loc);
                     }
                 }
                 _ => break,
@@ -924,6 +931,26 @@ mod tests {
             Operand::VectorList { children } => assert_eq!(children.len(), 2),
             other => panic!("expected vector list, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn inlined_at_chains_resolve_to_the_user_line() {
+        // Triton: a standard.py reduction inlined at gluon_ce.py:50, whose
+        // helper is inlined at the reduction's own line.
+        let m = parse_body(
+            ".loc 1 50 28\n\
+             .loc 2 293 12, function_name $L__info_string0, inlined_at 1 50 28\n\
+             .loc 2 263 12, function_name $L__info_string0, inlined_at 2 293 12\n\
+             add.f32 %f1, %f1, %f1;\n\
+             .loc 2 293 12, function_name $L__info_string0, inlined_at 1 64 10\n\
+             .loc 2 263 12, function_name $L__info_string0, inlined_at 2 293 12\n\
+             add.f32 %f1, %f1, %f1;",
+        );
+        let lines: Vec<_> = instrs(&m)
+            .iter()
+            .map(|i| i.loc.map(|l| (l.file, l.line)))
+            .collect();
+        assert_eq!(lines, [Some((1, 50)), Some((1, 64))]);
     }
 
     #[test]

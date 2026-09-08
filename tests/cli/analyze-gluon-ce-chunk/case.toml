@@ -1,8 +1,7 @@
 # The cross-entropy chunk at nanochat's vocabulary: two eight-trip
 # loops, fully counted, in a seven-row block table (LLVM's `$L__tmpN`
-# debug labels are not branch targets and start no block). One PLAN.md
-# limitation shows: the reductions inlined from Triton's standard.py
-# through gluon_ce.py:50 are attributed to standard.py in the
-# unrolled-source-lines list.
+# debug labels are not branch targets and start no block). The
+# reductions inlined from Triton's standard.py are attributed to the
+# gluon_ce.py lines they were inlined at (50 and 64), two hops down.
 args = ["analyze", "{fixtures}/gluon/ce_chunk_kernel.sm_89.ptx"]
 exit = 0
