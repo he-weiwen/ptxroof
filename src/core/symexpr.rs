@@ -1,4 +1,4 @@
-//! SymExpr: the count datatype (PLAN.md §6, PR 10; bet 2 of §1).
+//! SymExpr: the count datatype.
 //!
 //! Deliberately not a CAS — exactly the forms the trip matcher emits
 //! and the report aggregates: integer constants, named symbols (kernel

@@ -1,4 +1,4 @@
-//! Per-block measurement collection (PLAN.md §6, PR 09).
+//! Per-block measurement collection.
 //!
 //! Walks every block's instructions through the classifier and emits
 //! the measurement stream, plus per-block class tallies (the accounting

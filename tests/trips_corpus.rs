@@ -1,4 +1,4 @@
-//! Pinned trip counts for the corpus (PLAN.md §6, PR 11): the ladder's
+//! Pinned trip counts for the corpus: the ladder's
 //! real nvcc shapes and the micro fixtures' honest unknowns. Every
 //! unknown must carry a reason string — these are pinned too, because
 //! they are user-facing output.

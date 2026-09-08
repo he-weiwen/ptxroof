@@ -1,4 +1,4 @@
-# S7.1 (PLAN.md §4): did tiling pay off? — the naive side. k1's main
+# S7.1 (PLAN.md, acceptance scenarios): did tiling pay off? — the naive side. k1's main
 # loop runs at AI(global) = 0.5 flop/B, shape-independent (no --bind).
 # Contrast with S7.2 (k5 at 32 flop/B): two independent runs, two
 # comparable numbers, no diff verb. Flips at PR 12. The same contrast

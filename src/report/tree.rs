@@ -1,4 +1,4 @@
-//! The result tree (PLAN.md §6, PR 12): ergonomic, owned, resolved —
+//! The result tree: ergonomic, owned, resolved —
 //! the only structure that leaves the library. JSON output IS the
 //! `Serialize` derivation of these structs; the text report renders
 //! the same values, so the two views cannot drift.

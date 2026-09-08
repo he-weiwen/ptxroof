@@ -1,5 +1,5 @@
 //! Dominator tree via Cooper–Harvey–Kennedy ("A Simple, Fast Dominance
-//! Algorithm"), hand-rolled over the index arena (PLAN.md §6, PR 06).
+//! Algorithm"), hand-rolled over the index arena.
 //!
 //! Unreachable blocks have no RPO number and no idom; every consumer
 //! treats them as outside the analysis (they execute zero times).

@@ -1,4 +1,4 @@
-# Scenario status file (PLAN.md §3, T3) — the single source of truth for
+# Scenario status file — the single source of truth for
 # what CI currently expects: each acceptance scenario's status, and the
 # minimum coverage achieved so far. The test runner (tests/run.py)
 # enforces it in BOTH directions: a `pass` scenario that fails blocks CI,
@@ -8,7 +8,7 @@
 #
 # "xfail" = expected failure, the term LLVM lit (XFAIL:) and pytest use.
 #
-# Scenario schema: id is the PLAN.md §4 row (dotted ids are one row's
+# Scenario schema: id is the PLAN.md acceptance-scenario row (dotted ids are one row's
 # fan-out into several invocations — the runner runs one case per
 # entry); case is the case dir under tests/acceptance/ or tests/cli/;
 # status is "xfail" | "pass".

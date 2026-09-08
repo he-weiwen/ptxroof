@@ -1,4 +1,4 @@
-//! Corpus-wide lex check (PLAN.md §6, PR 03): every committed fixture
+//! Corpus-wide lex check: every committed fixture
 //! lexes with zero `Error` tokens. This is the transcription-fidelity
 //! gate for the lexer — when a new fixture or toolchain introduces a
 //! token shape we don't handle, this test names the file and the byte.

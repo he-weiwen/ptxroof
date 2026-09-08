@@ -1,5 +1,4 @@
-//! Natural-loop forest + irreducible-region detection (PLAN.md §6,
-//! PR 06).
+//! Natural-loop forest + irreducible-region detection.
 //!
 //! Back edges are edges whose target dominates their source; each
 //! header's natural loop is the union of reverse-reachable blocks from

@@ -1,4 +1,4 @@
-//! Pinned block/edge counts per fixture (PLAN.md §6, PR 05).
+//! Pinned block/edge counts per fixture.
 //!
 //! The expected values were derived by hand from the committed PTX
 //! (k1/k2: entry guard, K<1 guard, unroll guard, main-loop preheader,

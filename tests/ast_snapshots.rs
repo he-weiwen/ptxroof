@@ -1,4 +1,4 @@
-//! Reviewable AST snapshots for two micro fixtures (PLAN.md §6, PR 04).
+//! Reviewable AST snapshots for two micro fixtures.
 //! Snapshots go through the symbol-resolving dumper, so they stay
 //! readable — no raw indices. Review with `cargo insta review` (or
 //! inspect the .snap diff directly; snapshots are committed).

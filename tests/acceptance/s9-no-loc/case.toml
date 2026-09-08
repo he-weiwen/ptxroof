@@ -1,4 +1,4 @@
-# S9.3 (PLAN.md §4): no .loc anywhere — loops fall back to label
+# S9.3 (PLAN.md, acceptance scenarios): no .loc anywhere — loops fall back to label
 # naming and the report still completes with exit 0. Flips at PR 12.
 args = ["analyze", "{fixtures}/micro/no_loc.ptx", "--json"]
 exit = 0

@@ -1,5 +1,4 @@
-//! Measurement: the canonical record of one instruction's contribution
-//! (PLAN.md §6, PR 09 — v1's Measurement contract, kept and extended).
+//! Measurement: the canonical record of one instruction's contribution.
 //!
 //! `count` is the magnitude contributed by ONE execution of the
 //! instruction by ONE thread (flops for `Flops`, bytes for `Bytes`,

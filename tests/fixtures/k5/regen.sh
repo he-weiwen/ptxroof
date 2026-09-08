@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates k5.<arch>.ptx (PLAN.md §3 fixture policy). Rerunning on the
+# Regenerates k5.<arch>.ptx (PLAN.md, fixture policy). Rerunning on the
 # same toolchain is a no-op diff modulo the date line, so a regen diff is
 # information: it means the source or the toolchain changed.
 set -euo pipefail

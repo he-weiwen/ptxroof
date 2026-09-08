@@ -1,6 +1,6 @@
-//! Pinned per-block flop/byte numbers for the ladder (PLAN.md §6,
-//! PR 09): every expected value is hand-computed directly from the
-//! committed PTX and kept as a comment beside its assertion.
+//! Pinned per-block flop/byte numbers for the ladder: every expected
+//! value is hand-computed directly from the committed PTX and kept as a
+//! comment beside its assertion.
 
 use ptxroof::cfg::{BlockId, Cfg, build_cfg, loop_forest};
 use ptxroof::classify::{Direction, Precision, Space};

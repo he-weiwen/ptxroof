@@ -1,4 +1,4 @@
-# S1 (PLAN.md §4): is this kernel's design point what I computed on
+# S1 (PLAN.md, acceptance scenarios): is this kernel's design point what I computed on
 # paper? k5 at BM=64 BN=64 BK=8 TM=8 TN=8: per tile 1024 f32 flops
 # over 32 requested global bytes, AI(global) = 32 flop/B, exact.
 # Shape-independent, so no --bind.

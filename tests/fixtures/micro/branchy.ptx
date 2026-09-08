@@ -1,5 +1,5 @@
 //
-// HAND-WRITTEN: in-loop data-dependent conditional (PLAN.md §4, S9.2).
+// HAND-WRITTEN: in-loop data-dependent conditional (PLAN.md, S9.2).
 // Each iteration runs one fma unconditionally and one more under an
 // @%p guard, so the conditional block's counts carry at_most and every
 // aggregate that sums them inherits the marker (rendered <=).

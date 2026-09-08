@@ -1,4 +1,4 @@
-// Fixture source (PLAN.md §3 fixture policy): two straight-line
+// Fixture source (PLAN.md, fixture policy): two straight-line
 // tensor-core kernels with no loops, so every count in the report is
 // a plain constant. One 16x16x16 product each way the ISA offers it:
 // the wmma API (load a, load b, mma, store d) and a hand-written

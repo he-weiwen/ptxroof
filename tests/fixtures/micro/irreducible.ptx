@@ -1,5 +1,5 @@
 //
-// HAND-WRITTEN: irreducible two-entry cycle (PLAN.md §6, PR 06).
+// HAND-WRITTEN: irreducible two-entry cycle.
 // The entry block branches into the middle of an A <-> B cycle, so
 // neither cycle block dominates the other: there is no natural loop
 // here. The analyzer must flag the region unknown-multiplicity and

@@ -1,5 +1,5 @@
 //
-// HAND-WRITTEN: no debug info anywhere (PLAN.md §4, S9.3).
+// HAND-WRITTEN: no debug info anywhere (PLAN.md, S9.3).
 // Same loop as single_loop.ptx but with every .loc/.file stripped:
 // loops must fall back to label naming ($L__BB0_2) and the report
 // must still complete with exit 0.

@@ -1,7 +1,7 @@
 //! Lexer for PTX program text.
 //!
 //! Transcribed from v1's `lib/PTX/Tokenizer.cpp` (the reference spec,
-//! PLAN.md §3 transcription fidelity; v1 lives only in git history
+//! v1 lives only in git history
 //! now, last at 690d81d), extended from inline-asm bodies to full
 //! programs:
 //!

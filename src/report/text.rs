@@ -1,4 +1,4 @@
-//! Text view of the result tree (PLAN.md §6, PR 12). Renders the same
+//! Text view of the result tree. Renders the same
 //! structs `--json` serializes — the two views cannot disagree.
 //!
 //! Conventions: every static quantity is labeled `[static]` once per

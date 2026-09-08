@@ -1,5 +1,5 @@
 //
-// HAND-WRITTEN: data-dependent loop bound (PLAN.md §4, S9.1).
+// HAND-WRITTEN: data-dependent loop bound (PLAN.md, S9.1).
 // The latch predicate is computed from a value loaded inside the loop
 // (a pointer-chase shape), so no static trip count exists. Trips must
 // degrade to a named unknown with a reason — never a silent zero —

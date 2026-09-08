@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI test runner — tiers T2 and T3 of PLAN.md §3.
+"""CLI test runner — tiers T2 and T3 of PLAN.md.
 
 Deliberately implementation-language-neutral and dependency-free:
 stdlib only, Python >= 3.11 (for tomllib). If ptxroof were ever
@@ -9,7 +9,7 @@ survive unchanged.
 Pipeline, in order:
 
   0. Fixture lint. Every committed .ptx under tests/fixtures/ declares
-     where it came from (PLAN.md §3 fixture policy): a "Provenance:"
+     where it came from (PLAN.md, fixture policy): a "Provenance:"
      header plus a sibling regen.sh (generated), a "HAND-WRITTEN:"
      header (authored for this suite), or a "HAND-EDITED:" header
      (negative case derived from a named base fixture).
@@ -38,7 +38,7 @@ Pipeline, in order:
      identities that must hold for any correct implementation, with no
      per-case expectations and no human review. The registry below is
      empty in PR 01; checks register here as their analyses land
-     (PR 08, 09, 12 — PLAN.md §3).
+     .
 
   3. Acceptance scenarios (T3). tests/acceptance/status.toml lists the
      acceptance scenarios, each referencing a case by name with status
@@ -93,7 +93,7 @@ DEFAULT_BIN = REPO_ROOT / "target" / "debug" / "ptxroof"
 CASE_TIMEOUT_S = 120
 
 # --------------------------------------------------------------------------
-# Report verifier (PLAN.md §3): (name, fn(report) -> [violation, ...]).
+# Report verifier : (name, fn(report) -> [violation, ...]).
 # Each fn receives one case's parsed JSON report and returns human-readable
 # violation strings — identities any correct implementation satisfies, with
 # no per-case expectations. (The IR-level identities that need data the
@@ -267,7 +267,7 @@ def verify_report(report):
 
 
 # --------------------------------------------------------------------------
-# Fixture lint (PLAN.md §3 fixture policy)
+# Fixture lint (PLAN.md, fixture policy)
 
 
 def lint_fixtures(fixtures_dir):

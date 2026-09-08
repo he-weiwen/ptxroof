@@ -1,4 +1,4 @@
-# S9.2 (PLAN.md §4): an in-loop data-dependent conditional makes the
+# S9.2 (PLAN.md, acceptance scenarios): an in-loop data-dependent conditional makes the
 # conditional block's counts upper bounds; the at_most marker must
 # propagate into every aggregate that includes them. Flips at PR 12.
 # Also pins the block table: the guarded fma sits alone in an unlabelled

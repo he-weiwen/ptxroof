@@ -1,4 +1,4 @@
-//! IR-level verifier identities (PLAN.md §3) that need data the JSON
+//! IR-level verifier identities  that need data the JSON
 //! deliberately omits — the runner's JSON checks cover the rest.
 //!
 //! 1. Every Measurement's provenance index resolves to a real

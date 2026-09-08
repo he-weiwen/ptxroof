@@ -1,23 +1,22 @@
 # Project instructions
 
-## Keep the coverage audit and the plan current — on every commit
+## Keep PLAN.md and the coverage audit current on every commit
 
-Before finishing any commit in this repo, check whether it makes
-either of these stale, and fold the update into the same commit:
+`PLAN.md` is the list of known limitations, missing features and
+scope, each with its evidence. `docs/ptx-instruction-coverage.md` is
+the per-instruction PTX ISA coverage audit. Before finishing any
+commit, fold into it whatever the commit changes in either:
 
-- `docs/ptx-instruction-coverage.md` — the per-instruction PTX ISA
-  coverage audit. Any change to instruction handling
-  (`src/classify.rs`, the parser's instruction surface, the model axes
-  in `src/core/measurement.rs`) must update the affected rows, the
-  warts and tier sections, and the pinned commit hash in the doc's
-  header. If the pinned PTX ISA version changes, re-derive the
-  instruction inventory from the manual before editing rows.
-- `PLAN.md` — the roadmap. Mark PRs the commit completes, and record
-  any Phase 2 item the commit starts, re-scopes, or retires.
+- A commit that fixes a limitation deletes its entry; one that finds
+  or introduces a gap adds it, with the evidence (fixture, command,
+  output). A commit that starts, re-scopes or retires a missing
+  feature says so in its line. Do not add design essays, predictions
+  or "verified" notes: a claim either has a test or fixture that pins
+  it, or it is listed as a limitation.
+- Any change to instruction handling (`src/classify.rs`, the parser's
+  instruction surface, the model axes in `src/core/measurement.rs`)
+  updates the audit's affected rows and its assessment sections. If
+  the pinned PTX ISA version changes, re-derive the instruction
+  inventory from the manual before editing rows.
 
-The same-commit rule is deliberate, matching the repo's existing
-convention (PLAN.md's anti-scope list is edited in the same change
-that revisits an item): updating these in the commit that causes the drift
-is what keeps them trustworthy. When the Phase 2 `capabilities` verb
-lands, the audit doc's tables become generated output and this
-instruction shrinks to covering the assessment sections only.
+The same-commit rule is what keeps both files trustworthy.

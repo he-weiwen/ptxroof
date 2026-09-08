@@ -1,5 +1,4 @@
-//! Stats: filter queries over the per-block measurement stream
-//! (PLAN.md §6, PR 09 — the v1 Stats design, kept).
+//! Stats: filter queries over the per-block measurement stream.
 //!
 //! The soft-filter rule (v1's, documented once here): a `None` filter
 //! axis matches everything; a `Some` axis selects only measurements of

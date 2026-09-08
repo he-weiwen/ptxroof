@@ -1,4 +1,4 @@
-# S9.1 (PLAN.md §4): does the tool admit what it can't see? The latch
+# S9.1 (PLAN.md, acceptance scenarios): does the tool admit what it can't see? The latch
 # depends on a loaded value: trips become a named unknown with a
 # reason, totals stay symbolic (never a silent zero), the trip
 # coverage stat drops below 100%, and the exit code is still 0 —

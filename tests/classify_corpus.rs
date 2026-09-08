@@ -1,4 +1,4 @@
-//! Corpus-wide classification coverage (PLAN.md §6, PR 08): every
+//! Corpus-wide classification coverage: every
 //! instruction in every fixture classifies non-Unknown, or its
 //! mnemonic is listed in tests/classify-allowlist.txt. This is the
 //! check that makes "useful in the majority of cases" a tested number:

@@ -1,4 +1,4 @@
-//! Build the result tree for one module (PLAN.md §6, PR 12).
+//! Build the result tree for one module.
 //!
 //! Aggregation model: a block's contribution to an aggregate is its
 //! per-execution tally times the product of the trip counts of the

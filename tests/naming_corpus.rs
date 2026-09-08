@@ -1,4 +1,4 @@
-//! Pinned loop display names on the corpus (PLAN.md §6, PR 07): every
+//! Pinned loop display names on the corpus: every
 //! loop in the Phase 1 corpus gets a human-readable name — source line
 //! where debug info exists, label where it doesn't.
 

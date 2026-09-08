@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PR-blocking CI (PLAN.md §2): T1 via cargo, then T2/T3 via the CLI test
+# PR-blocking CI : T1 via cargo, then T2/T3 via the CLI test
 # runner. Hermetic — needs only a rustup-managed toolchain (pinned by
 # rust-toolchain.toml) and python3 >= 3.11. No CUDA, no LLVM, no C++.
 set -euo pipefail

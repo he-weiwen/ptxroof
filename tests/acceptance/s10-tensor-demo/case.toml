@@ -1,4 +1,4 @@
-# S10.1 (PLAN.md §4): is my tensor-core work visible, and only the
+# S10.1 (PLAN.md, acceptance scenarios): is my tensor-core work visible, and only the
 # work? Two loop-free kernels whose counts are hand-checkable: one
 # wmma m16n16k16 product = 2*16^3 / 32 lanes = 256 tensor flops per
 # lane, one mma.sync m16n8k16 = 2*16*8*16 / 32 = 128. The cuda-core

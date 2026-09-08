@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetches the official NVIDIA references (PLAN.md §3) into refs/, which
+# Fetches the official NVIDIA references  into refs/, which
 # is untracked: NVIDIA copyright — cite, don't commit. The PTX ISA
 # manual is the grammar reference PRs 03-04 transcribe against.
 set -euo pipefail

@@ -1,4 +1,4 @@
-//! Display names for loops and kernels (PLAN.md §6, PR 07).
+//! Display names for loops and kernels.
 //!
 //! A loop is named by the source line of its back-edge branch — for a
 //! `for` loop nvcc attributes the increment/compare/branch to the

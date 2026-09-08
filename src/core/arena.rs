@@ -1,4 +1,4 @@
-//! Typed index arenas (PLAN.md §2 flat-IR ground rule).
+//! Typed index arenas (the flat-IR ground rule).
 //!
 //! The flat IR stores objects in module-level `Vec`s and refers to them
 //! by integer handle, never by pointer. This module gives those handles

@@ -1,8 +1,7 @@
 //! ptxroof — static roofline analysis for PTX kernels (v2 of
-//! nvptx_analyzer; see PLAN.md).
+//! nvptx_analyzer).
 //!
-//! Modules land per the Phase 1 sequence in PLAN.md: `parse/` holds the
-//! text frontend (lexer now; parser next, PR 04). The library/binary
+//! The library/binary
 //! split is architectural: everything analyzable lives here behind a
 //! `Result`-returning API; `main.rs` only parses arguments and renders
 //! errors.

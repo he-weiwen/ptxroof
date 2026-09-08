@@ -1,4 +1,4 @@
-// Fixture wrapper (PLAN.md §3 fixture policy): the ladder kernel is a
+// Fixture wrapper (PLAN.md, fixture policy): the ladder kernel is a
 // C++ template; one configuration is instantiated explicitly here.
 // Same tile as k12 (BM=BN=128, BK=16, 64x64 warp tiles, 128 threads,
 // cp.async double buffer) with the fragments loaded by ldmatrix and

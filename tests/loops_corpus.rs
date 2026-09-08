@@ -1,4 +1,4 @@
-//! Pinned loop forests for the corpus (PLAN.md §6, PR 06): headers by
+//! Pinned loop forests for the corpus: headers by
 //! label, nesting depths, and the honest irreducible flag for
 //! micro/irreducible. The k5 tree is also an insta snapshot — the
 //! human-reviewable form.

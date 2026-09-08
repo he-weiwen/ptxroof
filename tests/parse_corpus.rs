@@ -1,4 +1,4 @@
-//! Corpus-wide parse checks (PLAN.md §6, PR 04).
+//! Corpus-wide parse checks.
 //!
 //! 1. Every fixture parses with zero `Stmt::Unparsed` statements, or is
 //!    listed in tests/parse-allowlist.txt — additions there are named

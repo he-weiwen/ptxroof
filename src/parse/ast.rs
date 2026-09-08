@@ -1,6 +1,6 @@
-//! Canonical dumper: the human/debug view of the flat IR (PLAN.md §6,
-//! PR 04). Resolves every `Symbol`/`OperandId` so no raw index ever
-//! reaches output; snapshots and expected outputs route through here.
+//! Canonical dumper: the human/debug view of the flat IR. Resolves
+//! every `Symbol`/`OperandId` so no raw index ever reaches output;
+//! snapshots and expected outputs route through here.
 //!
 //! The dump is itself valid PTX, which makes idempotence testable:
 //! `dump(parse(dump(parse(src))))` must equal `dump(parse(src))` on the

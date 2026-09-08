@@ -1,5 +1,5 @@
 //
-// HAND-WRITTEN: minimal single counted loop (PLAN.md §6, PR 02).
+// HAND-WRITTEN: minimal single counted loop.
 // One up-counting i < n loop (n = param 1) with one fma and one
 // global load/store per iteration — the smallest fixture that
 // exercises lexer -> parser -> CFG -> loop forest -> trips end to end.

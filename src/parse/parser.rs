@@ -11,7 +11,7 @@
 //! skipped), `{ ... }` statement blocks (inline-asm expansions —
 //! flattened; the braces scope nothing we model), and `.branchtargets`.
 //!
-//! Error policy (PLAN.md §2): the library never panics on malformed
+//! Error policy: the library never panics on malformed
 //! input. Inside a kernel body a bad statement becomes `Stmt::Unparsed`
 //! and parsing resumes after the next `;` — one malformed instruction
 //! never poisons the kernel. Outside bodies the structure is rigid and
@@ -162,7 +162,7 @@ impl<'a> Parser<'a> {
                 }
                 "section" => {
                     // `.section .debug_str { ... }` — data sections are
-                    // parsed-and-skipped (PLAN.md §6 PR 04).
+                    // parsed-and-skipped.
                     self.expect(TokenKind::Dot, ".section name")?;
                     self.expect_ident(".section name")?;
                     self.skip_balanced_braces()?;
@@ -181,6 +181,21 @@ impl<'a> Parser<'a> {
                     if self.parse_shared_decl().is_none() {
                         self.resync_to_semicolon();
                     }
+                }
+                "global" => {
+                    // Module-scope global variable. LLVM's NVPTX backend (Triton,
+                    // libdevice) emits e.g. `.global .align 1 .b8 _$_str[11] = {..};`
+                    // for its FTZ marker string: a declaration, not analysis
+                    // content, so parse-and-discard to the semicolon, stepping
+                    // over the brace-delimited initializer as a unit.
+                    while !self.at(TokenKind::Semicolon) && !self.at(TokenKind::EndOfFile) {
+                        if self.at(TokenKind::LBrace) {
+                            self.skip_balanced_braces()?;
+                        } else {
+                            self.bump();
+                        }
+                    }
+                    self.eat(TokenKind::Semicolon);
                 }
                 "entry" => {
                     let kernel = self.parse_kernel()?;
@@ -293,6 +308,21 @@ impl<'a> Parser<'a> {
                 _ => {
                     ty = attr;
                     break;
+                }
+            }
+        }
+        // Pointer attributes after the type: `.ptr [.global|.shared|.local|.const] [.align N]`
+        // (LLVM's NVPTX backend, e.g. Triton: `.param .u64 .ptr .global .align 1 p0`).
+        while self.at(TokenKind::Dot) {
+            self.expect(TokenKind::Dot, "param attribute")?;
+            let attr = self.expect_ident("param attribute")?;
+            match self.interner.resolve(attr) {
+                "ptr" | "global" | "shared" | "local" | "const" => {}
+                "align" => {
+                    self.expect_u32(".align value")?;
+                }
+                other => {
+                    return Err(self.err(format!("unexpected param attribute .{other}")));
                 }
             }
         }

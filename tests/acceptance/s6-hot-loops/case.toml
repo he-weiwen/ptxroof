@@ -1,4 +1,4 @@
-# S6 (PLAN.md §4): where does the work go? k2's loops ranked by
+# S6 (PLAN.md, acceptance scenarios): where does the work go? k2's loops ranked by
 # instructions executed (symbolic): the unrolled main loop (K-dependent) first, its
 # nounroll remainder (K mod 4) second, linked as one logical loop.
 # Flips at PR 12.

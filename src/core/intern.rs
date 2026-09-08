@@ -1,4 +1,4 @@
-//! Hand-rolled string interner (PLAN.md §2 flat-IR ground rule).
+//! Hand-rolled string interner (the flat-IR ground rule).
 //!
 //! All mnemonics, modifiers, and identifiers in the module IR are
 //! `Symbol(u32)`; the classifier and every later consumer match on

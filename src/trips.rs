@@ -1,4 +1,4 @@
-//! Trip-count matcher for the nvcc loop shapes (PLAN.md §6, PR 11).
+//! Trip-count matcher for the nvcc loop shapes.
 //!
 //! Per loop: extract the latch condition (`setp` + `@%p bra`),
 //! recognize the induction variable (the loop's single in-loop

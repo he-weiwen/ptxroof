@@ -1,4 +1,4 @@
-//! Control-flow graph over index arenas (PLAN.md §6, PR 05).
+//! Control-flow graph over index arenas.
 //!
 //! Hand-rolled, no graph crate (§2): blocks are a `Vec<Block>` indexed
 //! by `BlockId(u32)`, edges are id lists. Leaders are the kernel entry,

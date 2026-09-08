@@ -1,4 +1,4 @@
-# S8 (PLAN.md §4): am I on the precision path I think? k2 computes in
+# S8 (PLAN.md, acceptance scenarios): am I on the precision path I think? k2 computes in
 # f32 cuda-core only — 0 f16 flops despite __half data — with 8 cvt
 # per main-loop iteration as conversion overhead, 8 x 2 B loads per
 # iteration, and one guarded 2 B store in the epilogue. Flips at PR 12.

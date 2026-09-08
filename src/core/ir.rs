@@ -1,4 +1,4 @@
-//! The flat module IR (PLAN.md §2 ground rule, after Sampson's
+//! The flat module IR (the ground rule, after Sampson's
 //! "Flattening ASTs").
 //!
 //! No pointer structures anywhere: instructions live in per-kernel

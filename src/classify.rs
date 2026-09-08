@@ -1,4 +1,4 @@
-//! Instruction → semantic record (PLAN.md §6, PR 08).
+//! Instruction → semantic record.
 //!
 //! Transcribed from v1's `lib/PTX/Classifier.cpp` (v1 lives only in
 //! git history now, last at 690d81d): cuda-core, tensor-core and SFU

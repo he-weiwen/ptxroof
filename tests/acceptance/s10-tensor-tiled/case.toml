@@ -1,4 +1,4 @@
-# S10.2 (PLAN.md §4): the k14 design point on paper. Per BK=16 tile
+# S10.2 (PLAN.md, acceptance scenarios): the k14 design point on paper. Per BK=16 tile
 # each warp issues 4x4 output tiles x 2 mma.sync.m16n8k16 = 32 MMAs
 # = 32 * 128 = 4096 tensor flops per lane; the tile's A and B panels
 # arrive by four 16-byte cp.async per thread = 64 global bytes (an
