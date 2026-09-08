@@ -1,0 +1,16 @@
+kernel fp8_gemm_kernel
+block size: 128 threads (128x1x1 from .reqntid)
+loop gluon_fp8.py:173 ($L__BB0_3)
+trips = (param_10 + 63) / 64
+mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     64
+ldmatrix.sync.aligned.m8n8.x4.shared.b16                16
+cp.async.cg.shared.global                             <= 8
+shared bytes: load 256 B, store 0 B
+totals [static]:
+global bytes: load <= 8 B, store <= 256 B
+unknowns:
+instruction `mma` x64 — not classified — its flops/bytes are not counted
+global load with statically unknown byte count x24 — counted as an op; bytes missing from every byte total
+shared store with statically unknown byte count x24 — counted as an op; bytes missing from every byte total
+coverage: instructions_classified 93.4% (902/966)
+coverage: loop_trips_resolved 100.0% (1/1)

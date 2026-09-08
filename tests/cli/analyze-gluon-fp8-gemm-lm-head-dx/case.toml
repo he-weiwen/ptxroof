@@ -1,0 +1,7 @@
+# The lm_head grad-input GEMM: bf16 activation quantized in-kernel, e4m3
+# weight, promoted accumulation, 8 warps. The in-kernel quantization's
+# inline-asm scopes declare `.reg .b16 lo, hi;`, which the parser rejects
+# (8 unparsed statements), and the strided K counter yields a trip count
+# that is not folded (PLAN.md).
+args = ["analyze", "{fixtures}/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx"]
+exit = 0

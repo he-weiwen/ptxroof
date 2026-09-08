@@ -1,0 +1,3 @@
+# Rotary + QK-norm: straight-line code behind a row guard; nothing unknown.
+args = ["analyze", "{fixtures}/gluon/rope_norm_kernel.sm_89.ptx"]
+exit = 0

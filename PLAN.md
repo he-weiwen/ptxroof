@@ -22,33 +22,45 @@ as requested by the PTX; nothing is measured (README).
   initial value. Found with a hand-written nest; no fixture yet.
 - **Bounds ignore unknowns in their scope.** Flop and byte totals
   print as exact or `<=` even when the scope holds unclassified
-  instructions or unquantified bytes. Gluon fp8 GEMM, K loop:
-  `flops = 96` exact beside 32 unclassified `mma`; `global bytes:
-  load <= 64 B` beside two `cp.async` whose bytes are missing, so the
-  `<=` is wrong in direction. The unknowns are named; the numbers next
-  to them are not marked.
+  instructions or unquantified bytes.
+  `tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx`: `global
+  bytes: load <= 8 B` beside eight `cp.async` per K iteration whose
+  bytes are unknown, so the `<=` is wrong in direction; `flops = <=
+  129` beside 64 unclassified `mma`. The unknowns are named; the
+  numbers next to them are not marked.
 - **Nested inlining is attributed to the intermediate file.** Only one
-  `inlined_at` hop is followed. Gluon cross-entropy kernel: rows land
-  on `standard.py:293` instead of `gluon_ce.py:50`.
+  `inlined_at` hop is followed. `ce_chunk_kernel.sm_89.ptx`: the
+  reductions inlined from Triton's `standard.py` through
+  `gluon_ce.py:50` land on `standard.py:293` (block rows, and
+  `standard.py:191 x16, standard.py:293 x16` in the unrolled lines).
 
 ### Reported as unknowns
 
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, and
   nvcc's unroll main+remainder pair. Not recognised, reported as
-  `trips = unknown`: LLVM's two-register counter (increment into a
-  temporary, `mov` copy in the latch; Gluon GEMM K loop), the
-  predicate-controlled two-trip loop (Gluon cross-entropy), grid-stride
-  loops (special registers), data-dependent bounds, multi-exit loops.
+  `trips = unknown`: the predicate-controlled two-trip loop
+  (`ce_chunk_kernel.v8192.sm_89.ptx`: a `mov.pred` phi, "latch
+  predicate is not defined in the latch block"), LLVM's two-register
+  counter (increment into a temporary, `mov` copy in the latch; seen
+  in an earlier Triton build of the fp8 GEMM, not emitted by triton
+  3.8.0 @ c3aa0c5, which the fixtures use), grid-stride loops (special
+  registers), data-dependent bounds, multi-exit loops.
 - **Instruction families.** 79 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: fp8, integer,
   sparse and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
   textures and surfaces; `multimem`; video instructions.
 - **`cp.async` sizes in hex** (`0x10`) are not parsed; the copy's bytes
-  are then unknown. Gluon GEMM.
+  are then unknown. `fp8_gemm_kernel.c_fc.sm_89.ptx`: 24 copies,
+  `global load with statically unknown byte count x24`.
 - **`.reg .b16 lo, hi;` inside inline-asm scopes** produces an
-  "unparsed statement" entry per block; the instructions inside the
-  block are counted. Gluon GEMM: 8 of 152 asm blocks.
+  "unparsed statement" entry per scope; the instructions inside the
+  scope are counted. `fp8_gemm_kernel.lm_head_dx.sm_89.ptx`: 8 of its
+  asm scopes; `quantize_transpose_kernel.sm_89.ptx`: 32.
+- **Module-scope `.extern .shared` declarations are discarded.** The
+  Gluon kernels' dynamic shared memory (`global_smem`) is not
+  reported, and `--dump-ast` drops the declaration, so `ptxas` rejects
+  the dump (`mov.b32 %r163, global_smem`: "Arguments mismatch").
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.
@@ -56,21 +68,25 @@ as requested by the PTX; nothing is measured (README).
 ### Presentation
 
 - Every label starts a block, so LLVM's `$L__tmpN` debug labels
-  fragment the block table (Gluon cross-entropy: 50 rows for
-  straight-line code), and a zero-instruction block follows the final
-  `ret`.
+  fragment the block table (`ce_chunk_kernel.sm_89.ptx`: 50 rows for
+  straight-line code), and two zero-instruction blocks follow the
+  final `ret` (`$L__tmp48`, `$L__func_end0`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
-- Floor division prints as `/`, and `(x + 63) / 64` is not folded to
-  `⌈x/64⌉`.
+- Floor division prints as `/`; `(param_10 + 63) / 64` is not folded
+  to `⌈param_10/64⌉`, nor `(128 * x) / 128` to `x` (the two GEMM
+  fixtures' trip counts).
 
 ### Producers and validation
 
 - Fixture corpus: nvcc output for one CUDA header ladder (k1, k2, k5,
-  k11, k12, k14, mma_demo) plus hand-written micro kernels. Triton
-  3.8.0 (Gluon) output parses, with classification at 97 to 100
-  percent on six kernels, but no Triton fixture is committed. clang
-  is untested.
+  k11, k12, k14, mma_demo), Triton 3.8.0 (Gluon) output for five
+  nanochat kernels (`tests/fixtures/gluon`: seven PTX files, the GEMM
+  and the cross-entropy chunk at two shapes each; classification 93
+  to 100 percent), and hand-written micro kernels. clang is untested.
+- `--dump-ast` output reassembles to identical SASS for k5 and
+  `rope_norm_kernel`; for the other Gluon fixtures `ptxas` rejects it
+  (the `.reg` lists and the module-scope `.extern .shared` above).
 - Hardware cross-check: k5's counts against Nsight Compute on an RTX
   4090, nothing else.
 - Counts are PTX, not SASS: ptxas removes most register moves, folds
@@ -83,10 +99,11 @@ as requested by the PTX; nothing is measured (README).
 
 One line each, with the trigger that would start it.
 
-- Triton and clang fixtures with a generator script, and the fixes
-  above that they pin. Trigger fired: the nanochat Gluon kernels.
+- clang fixtures with a regen script. Trigger: the first clang-built
+  kernel.
 - fp8 dense `mma` (2·M·N·K over 32 lanes) with an NCU cross-check on
-  sm_89. Trigger fired: the same kernels.
+  sm_89. Trigger fired: `fp8_gemm_kernel.c_fc.sm_89.ptx`, 64
+  unclassified `mma` per K iteration.
 - `diff` between two builds of one kernel, PTX and SASS spill counts.
   Trigger: the first spill regression hunt.
 - Access-pattern and coalescing analysis. Trigger: the first
@@ -126,7 +143,8 @@ Ids used by `tests/acceptance/status.toml`:
 | S10.1, S10.2 | Is my tensor-core work visible, and only the work? | mma_demo, k14 |
 
 Planned, no case yet: S2 spill diff, S3 coalescing, S4 black-box
-Triton kernel, S5 CI gate.
+Triton kernel (fixtures and CLI cases exist, `tests/cli/analyze-gluon-*`;
+a scenario case waits on the GEMM's flops and bytes), S5 CI gate.
 
 ## Fixture policy
 

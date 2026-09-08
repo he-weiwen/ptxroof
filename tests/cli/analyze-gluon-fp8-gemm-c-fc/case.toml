@@ -1,0 +1,7 @@
+# The nanochat c_fc GEMM (both operands e4m3, 4 warps). Pinned as the
+# tool reads it today; the limitations it shows are PLAN.md's: the fp8
+# `mma` is unclassified, the hex-sized `cp.async` bytes are unknown, the
+# trip count is not folded to a ceiling, and the byte total next to the
+# unknown copies is printed as an upper bound.
+args = ["analyze", "{fixtures}/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx"]
+exit = 0

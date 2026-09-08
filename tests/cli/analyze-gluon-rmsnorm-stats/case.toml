@@ -1,0 +1,4 @@
+# Residual RMSNorm pass 1: straight-line code behind a row guard, so
+# every total is an upper bound; nothing unknown.
+args = ["analyze", "{fixtures}/gluon/rmsnorm_stats_kernel.sm_89.ptx"]
+exit = 0

@@ -1,0 +1,6 @@
+kernel rope_norm_kernel
+block size: 128 threads (128x1x1 from .reqntid)
+flops = <= 432  (f32 <= 432)
+global bytes: load <= 256 B, store <= 128 B
+unknowns: none
+coverage: instructions_classified 100.0% (878/878)

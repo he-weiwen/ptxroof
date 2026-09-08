@@ -1,0 +1,6 @@
+kernel rmsnorm_stats_kernel
+block size: 128 threads (128x1x1 from .reqntid)
+flops = <= 534  (f32 <= 534)
+global bytes: load <= 396 B, store <= 140 B
+unknowns: none
+coverage: instructions_classified 100.0% (1146/1146)

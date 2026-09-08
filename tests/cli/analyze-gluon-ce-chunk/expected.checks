@@ -1,0 +1,17 @@
+kernel ce_chunk_kernel
+$L__tmp5         standard.py:293         7  $L__tmp6
+$L__func_end0    (no line info)          0  (end)
+block size: 512 threads (512x1x1 from .reqntid)
+loop gluon_ce.py:47 ($L__BB0_1)
+trips = 8
+flops = 89  (f32 89)
+global bytes: load 16 B, store 0 B
+AI(global) = 7.0625 flop/B
+loop gluon_ce.py:54 ($L__BB0_5)
+trips = 8
+flops = 161  (bf16 8, f32 153)
+global bytes: load 16 B, store 16 B
+totals [static]:
+unrolled source lines: gluon_ce.py:31 x6, gluon_ce.py:42 x2, gluon_ce.py:45 x11, gluon_ce.py:50 x17, gluon_ce.py:64 x2, standard.py:191 x16, standard.py:293 x16
+unknowns: none
+coverage: instructions_classified 100.0% (589/589)

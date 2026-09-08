@@ -1,0 +1,8 @@
+kernel ce_chunk_kernel
+loop gluon_ce.py:54 ($L__BB0_3)
+trips = unknown: latch predicate is not defined in the latch block
+instructions = 265
+AI(global) = 5.78125 flop/B
+unknowns:
+loop gluon_ce.py:54 — latch predicate is not defined in the latch block
+coverage: loop_trips_resolved 0.0% (0/1)

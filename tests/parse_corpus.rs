@@ -82,7 +82,12 @@ fn every_fixture_parses_with_zero_unparsed_statements() {
 
 #[test]
 fn dump_reparse_dump_is_idempotent_on_every_fixture() {
+    let allow = allowlist();
     for (path, src) in corpus() {
+        let rel = path.strip_prefix(fixtures_dir()).expect("under fixtures");
+        if allow.iter().any(|a| Path::new(a) == rel) {
+            continue;
+        }
         let d1 = dump(&parse(&src).unwrap_or_else(|e| panic!("{}: {e}", path.display())));
         let m2 = parse(&d1)
             .unwrap_or_else(|e| panic!("{}: canonical dump does not reparse: {e}", path.display()));

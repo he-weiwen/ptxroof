@@ -1,0 +1,5 @@
+# The same kernel at a two-block vocabulary: LLVM turns the two-trip
+# second loop into a predicate phi (`mov.pred` in the header, set to
+# false in the latch), a shape the trip matcher does not know (PLAN.md).
+args = ["analyze", "{fixtures}/gluon/ce_chunk_kernel.v8192.sm_89.ptx"]
+exit = 0
