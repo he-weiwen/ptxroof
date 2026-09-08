@@ -1,0 +1,6 @@
+# An instruction the classifier does not model inside a counted loop:
+# the loop's flop and global/shared byte totals carry `+ unknown`, the
+# flops' per-precision entries do not (they are what was counted), and
+# AI(global) has no direction because both sides are lower bounds.
+args = ["analyze", "{fixtures}/micro/unknown_in_loop.ptx"]
+exit = 0

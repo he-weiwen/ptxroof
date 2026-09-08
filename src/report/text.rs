@@ -3,7 +3,8 @@
 //!
 //! Conventions: every static quantity is labeled `[static]` once per
 //! section header (bet 3: a lone static number without its provenance
-//! label is a half-truth); `at_most` counts render with a `<=` prefix;
+//! label is a half-truth); `at_most` counts render with a `<=` prefix,
+//! `at_least` ones with a `+ unknown` suffix;
 //! zero rows are skipped in flop/byte tables but unknowns are always
 //! printed, even (especially) when present.
 
@@ -276,38 +277,60 @@ fn intensity(ai: &Intensity) -> String {
     format!("{sign} {}", ai.value)
 }
 
-fn both_sides_are_bounds(a: &Aggregates) -> bool {
-    let flops = [&a.flops, &a.tensor_flops, &a.sfu_flops]
-        .iter()
-        .any(|t| t["total"].at_most);
-    let global = &a.bytes["global"];
-    flops && (global.load.at_most || global.store.at_most)
+fn describe(at_most: bool, at_least: bool) -> &'static str {
+    match (at_most, at_least) {
+        (false, false) => "exact",
+        (true, false) => "an upper bound",
+        (false, true) => "a lower bound",
+        (true, true) => "bounded in neither direction",
+    }
 }
 
-fn count(c: &Count) -> String {
-    if c.at_most {
-        format!("<= {}", c.expr)
-    } else {
-        c.expr.clone()
+/// Why AI(global) is missing although flops and global bytes are both
+/// constants: the directions the two sides are known in.
+fn unbounded_note(a: &Aggregates) -> Option<String> {
+    let flops: Vec<&Count> = [&a.flops, &a.tensor_flops, &a.sfu_flops]
+        .iter()
+        .map(|t| &t["total"])
+        .collect();
+    let g = &a.bytes["global"];
+    let bytes = g.load.expr.parse::<i64>().ok()? + g.store.expr.parse::<i64>().ok()?;
+    if bytes == 0 || flops.iter().any(|c| c.expr.parse::<i64>().is_err()) {
+        return None;
     }
+    let f = describe(
+        flops.iter().any(|c| c.at_most),
+        flops.iter().any(|c| c.at_least),
+    );
+    let b = describe(
+        g.load.at_most || g.store.at_most,
+        g.load.at_least || g.store.at_least,
+    );
+    Some(format!("flops are {f}, global bytes are {b}"))
+}
+
+fn count(c: &Count, unit: &str) -> String {
+    let bound = if c.at_most { "<= " } else { "" };
+    let unknown = if c.at_least { " + unknown" } else { "" };
+    format!("{bound}{}{unit}{unknown}", c.expr)
 }
 
 fn render_flops(w: &mut String, pad: &str, label: &str, table: &BTreeMap<String, Count>) {
     let total = &table["total"];
-    if total.expr == "0" {
+    if total.expr == "0" && !total.at_least {
         return;
     }
     let by_precision: Vec<String> = table
         .iter()
         .filter(|(k, v)| k.as_str() != "total" && v.expr != "0")
-        .map(|(k, v)| format!("{k} {}", count(v)))
+        .map(|(k, v)| format!("{k} {}", count(v, "")))
         .collect();
-    let _ = writeln!(
-        w,
-        "{pad}{label} = {}  ({})",
-        count(total),
-        by_precision.join(", ")
-    );
+    let detail = if by_precision.is_empty() {
+        String::new()
+    } else {
+        format!("  ({})", by_precision.join(", "))
+    };
+    let _ = writeln!(w, "{pad}{label} = {}{detail}", count(total, ""));
 }
 
 /// Kinds in descending count, opcodes beneath each kind likewise:
@@ -317,19 +340,19 @@ fn render_instructions(w: &mut String, pad: &str, i: &InstructionCounts) {
     if i.total.expr == "0" {
         return;
     }
-    let _ = writeln!(w, "{pad}instructions = {}", count(&i.total));
+    let _ = writeln!(w, "{pad}instructions = {}", count(&i.total, ""));
     let by_count = |a: &Count, b: &Count| rank(&b.expr).cmp(&rank(&a.expr));
     let mut rows: Vec<(String, String)> = Vec::new();
     let mut kinds: Vec<_> = i.by_kind.iter().collect();
     kinds.sort_by(|a, b| by_count(&a.1.total, &b.1.total));
     for (kind, k) in kinds {
-        rows.push((kind.clone(), count(&k.total)));
+        rows.push((kind.clone(), count(&k.total, "")));
         let mut opcodes: Vec<_> = k.opcodes.iter().collect();
         opcodes.sort_by(|a, b| by_count(a.1, b.1));
         rows.extend(
             opcodes
                 .into_iter()
-                .map(|(o, n)| (format!("  {o}"), count(n))),
+                .map(|(o, n)| (format!("  {o}"), count(n, ""))),
         );
     }
     let name_width = rows.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
@@ -355,30 +378,29 @@ fn render_aggregates(w: &mut String, a: &Aggregates, pad: &str) {
     render_flops(w, pad, "tensor flops", &a.tensor_flops);
     render_flops(w, pad, "sfu flops", &a.sfu_flops);
     for (space, d) in &a.bytes {
-        if d.load.expr == "0" && d.store.expr == "0" {
+        let zero = |c: &Count| c.expr == "0" && !c.at_least;
+        if zero(&d.load) && zero(&d.store) {
             continue;
         }
         let _ = writeln!(
             w,
-            "{pad}{space} bytes: load {} B, store {} B",
-            count(&d.load),
-            count(&d.store)
+            "{pad}{space} bytes: load {}, store {}",
+            count(&d.load, " B"),
+            count(&d.store, " B")
         );
     }
-    if a.conversions.expr != "0" {
-        let _ = writeln!(w, "{pad}conversions = {}", count(&a.conversions));
+    if a.conversions.expr != "0" || a.conversions.at_least {
+        let _ = writeln!(w, "{pad}conversions = {}", count(&a.conversions, ""));
     }
     match a.ai_global {
         Some(ai) => {
             let _ = writeln!(w, "{pad}AI(global) {} flop/B", intensity(&ai));
         }
-        None if both_sides_are_bounds(a) => {
-            let _ = writeln!(
-                w,
-                "{pad}AI(global): not bounded (flops and global bytes are both upper bounds)"
-            );
+        None => {
+            if let Some(note) = unbounded_note(a) {
+                let _ = writeln!(w, "{pad}AI(global): not bounded ({note})");
+            }
         }
-        None => {}
     }
     if !a.unrolled_source_lines.is_empty() {
         let lines: Vec<String> = a
@@ -393,6 +415,19 @@ fn render_aggregates(w: &mut String, a: &Aggregates, pad: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_render_their_bounds() {
+        let c = |at_most, at_least| Count {
+            expr: "8".into(),
+            at_most,
+            at_least,
+        };
+        assert_eq!(count(&c(false, false), " B"), "8 B");
+        assert_eq!(count(&c(true, false), ""), "<= 8");
+        assert_eq!(count(&c(false, true), " B"), "8 B + unknown");
+        assert_eq!(count(&c(true, true), ""), "<= 8 + unknown");
+    }
 
     fn blocks(edges: &[&[usize]]) -> Vec<BlockInfo> {
         edges

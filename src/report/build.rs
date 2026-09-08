@@ -6,6 +6,12 @@
 //! unresolved trips contributes through a *named opaque symbol*
 //! `trips(<loop>)` — totals stay symbolic, never silently zero (S9.1).
 //!
+//! `at_least` propagation: a scope holding an instruction the classifier
+//! does not model marks every flop table and the global and shared byte
+//! totals as lower bounds (an unmodelled family may compute on any pipe
+//! or move bytes in either space); an unquantified byte count marks its
+//! own space and direction.
+//!
 //! `at_most` propagation: a tally is an upper bound if any contributing
 //! block is conditional within its innermost scope (PR 09 rule), any
 //! contributing instruction is predicated, or any loop on the
@@ -174,6 +180,32 @@ fn resolve_bindings(
     Ok(map)
 }
 
+/// The direction a count is known in; `None` when bounded in neither.
+fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
+    match (at_most, at_least) {
+        (false, false) => Some(Bound::Exact),
+        (true, false) => Some(Bound::AtMost),
+        (false, true) => Some(Bound::AtLeast),
+        (true, true) => None,
+    }
+}
+
+/// Direction of `flops / bytes`: the byte bound inverts, and the two
+/// sides must agree.
+fn ratio_bound(flops: Option<Bound>, bytes: Option<Bound>) -> Option<Bound> {
+    let inverted = match bytes? {
+        Bound::Exact => Bound::Exact,
+        Bound::AtMost => Bound::AtLeast,
+        Bound::AtLeast => Bound::AtMost,
+    };
+    match (flops?, inverted) {
+        (a, Bound::Exact) => Some(a),
+        (Bound::Exact, b) => Some(b),
+        (a, b) if a == b => Some(a),
+        _ => None,
+    }
+}
+
 /// Symbolic sum that collects like terms: contributions are grouped
 /// by their constant-free multiplier, so two blocks under the same
 /// trip chain merge into one term ("4 * param_1", never
@@ -183,6 +215,7 @@ fn resolve_bindings(
 struct TermSum {
     groups: Vec<(SymExpr, i64)>,
     at_most: bool,
+    at_least: bool,
     touched: bool,
 }
 
@@ -194,6 +227,11 @@ impl TermSum {
             None => self.groups.push((rest, coeff * count)),
         }
         self.at_most |= at_most;
+        self.touched = true;
+    }
+
+    fn add_unknown(&mut self) {
+        self.at_least = true;
         self.touched = true;
     }
 
@@ -209,6 +247,7 @@ impl TermSum {
         Count {
             expr: self.expr().to_string(),
             at_most: self.at_most,
+            at_least: self.at_least,
         }
     }
 }
@@ -284,6 +323,10 @@ impl FlopTable {
             .expect("every precision pre-inserted")
             .add(n, mult, at_most);
         self.total.add(n, mult, at_most);
+    }
+
+    fn add_unknown(&mut self) {
+        self.total.add_unknown();
     }
 
     fn counts(&self) -> BTreeMap<String, Count> {
@@ -511,14 +554,27 @@ impl<'a> KernelBuilder<'a> {
                         }
                     }
                     MeasureKind::Conversions => conversions.add(n, &mult, at_most),
+                    MeasureKind::UnquantifiedBytes { space, direction } => {
+                        let entry = bytes.entry(space.key()).or_default();
+                        match direction {
+                            Direction::Load => entry.0.add_unknown(),
+                            Direction::Store => entry.1.add_unknown(),
+                        }
+                    }
+                    MeasureKind::UnknownOps { .. } => {
+                        flops.values_mut().for_each(FlopTable::add_unknown);
+                        for space in ["global", "shared"] {
+                            let (l, s) = bytes.get_mut(space).expect("pre-inserted");
+                            l.add_unknown();
+                            s.add_unknown();
+                        }
+                    }
                     // Op-count kinds appear in unknowns/classes, not in
                     // the workload aggregates.
-                    MeasureKind::UnquantifiedBytes { .. }
-                    | MeasureKind::NonFlopOps { .. }
+                    MeasureKind::NonFlopOps { .. }
                     | MeasureKind::SyncOps
                     | MeasureKind::CommunicationOps
-                    | MeasureKind::ControlOps
-                    | MeasureKind::UnknownOps { .. } => {}
+                    | MeasureKind::ControlOps => {}
                 }
             }
         }
@@ -540,17 +596,15 @@ impl<'a> KernelBuilder<'a> {
             })
             .collect();
 
-        let flops_at_most = flops.values().any(|t| t.total.at_most);
+        let flops_bound = direction(
+            flops.values().any(|t| t.total.at_most),
+            flops.values().any(|t| t.total.at_least),
+        );
         let ai_global = match (all_flops.as_const(), bytes.get("global")) {
             (Some(f), Some((l, s))) => match (l.expr().as_const(), s.expr().as_const()) {
                 (Some(lb), Some(sb)) if lb + sb > 0 => {
-                    let bound = match (flops_at_most, l.at_most || s.at_most) {
-                        (false, false) => Some(Bound::Exact),
-                        (true, false) => Some(Bound::AtMost),
-                        (false, true) => Some(Bound::AtLeast),
-                        (true, true) => None,
-                    };
-                    bound.map(|bound| Intensity {
+                    let bytes_bound = direction(l.at_most || s.at_most, l.at_least || s.at_least);
+                    ratio_bound(flops_bound, bytes_bound).map(|bound| Intensity {
                         value: f as f64 / (lb + sb) as f64,
                         bound,
                     })
@@ -936,6 +990,33 @@ mod tests {
         assert!(parse_bind("K=x").is_err());
         assert!(parse_bind("=4").is_err());
         assert!(parse_bind("a:K=4").is_err());
+    }
+
+    /// A scope holding an unclassified instruction or an unquantified
+    /// byte count marks its totals as lower bounds; AI(global) then has
+    /// no direction when the sides disagree.
+    #[test]
+    fn unknowns_in_scope_make_totals_lower_bounds() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_90a\n.address_size 64\n\
+                   .visible .entry k()\n{\n\
+                   ld.global.f32 %f1, [%rd1];\nfma.rn.f32 %f2, %f1, %f1, %f1;\n\
+                   wgmma.fence.sync.aligned;\n\
+                   cp.async.cg.shared.global [%r1], [%rd2], %r2;\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let t = &r.kernels[0].totals;
+        assert_eq!(t.flops["total"].expr, "2");
+        assert!(t.flops["total"].at_least && !t.flops["total"].at_most);
+        assert!(!t.flops["f32"].at_least);
+        assert!(t.bytes["global"].load.at_least && t.bytes["shared"].store.at_least);
+        assert!(t.ai_global.is_none());
+
+        let src = src.replace("wgmma.fence.sync.aligned;\n", "");
+        let r = analyze(&src, "t", &opts).expect("analyzes");
+        let t = &r.kernels[0].totals;
+        assert!(!t.flops["total"].at_least);
+        assert!(t.bytes["global"].load.at_least && !t.bytes["global"].store.at_least);
+        assert_eq!(t.ai_global.map(|ai| ai.bound), Some(Bound::AtMost));
     }
 
     /// Static shared memory per CTA = Σ (element count × element width)

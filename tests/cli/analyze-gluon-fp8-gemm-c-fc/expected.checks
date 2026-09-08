@@ -6,9 +6,14 @@ trips = (param_10 + 63) / 64
 mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     64
 ldmatrix.sync.aligned.m8n8.x4.shared.b16                16
 cp.async.cg.shared.global                             <= 8
-shared bytes: load 256 B, store 0 B
+flops = 0 + unknown
+tensor flops = 0 + unknown
+global bytes: load 0 B + unknown, store 0 B + unknown
+shared bytes: load 256 B + unknown, store 0 B + unknown
 totals [static]:
-global bytes: load <= 8 B, store <= 256 B
+flops = <= 129 + unknown  (f32 <= 129)
+global bytes: load <= 8 B + unknown, store <= 256 B + unknown
+AI(global): not bounded (flops are bounded in neither direction, global bytes are bounded in neither direction)
 unknowns:
 instruction `mma` x64 — not classified — its flops/bytes are not counted
 global load with statically unknown byte count x24 — counted as an op; bytes missing from every byte total

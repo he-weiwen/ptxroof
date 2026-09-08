@@ -20,14 +20,6 @@ as requested by the PTX; nothing is measured (README).
 - **Triangular loop nests report the inner loop's trips as 0.** The
   latch tracer follows the outer induction variable to its pre-loop
   initial value. Found with a hand-written nest; no fixture yet.
-- **Bounds ignore unknowns in their scope.** Flop and byte totals
-  print as exact or `<=` even when the scope holds unclassified
-  instructions or unquantified bytes.
-  `tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx`: `global
-  bytes: load <= 8 B` beside eight `cp.async` per K iteration whose
-  bytes are unknown, so the `<=` is wrong in direction; `flops = <=
-  129` beside 64 unclassified `mma`. The unknowns are named; the
-  numbers next to them are not marked.
 - **Nested inlining is attributed to the intermediate file.** Only one
   `inlined_at` hop is followed. `ce_chunk_kernel.sm_89.ptx`: the
   reductions inlined from Triton's `standard.py` through

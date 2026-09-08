@@ -12,7 +12,8 @@
             "flops": {
               "f32": {
                 "expr": "1024",
-                "at_most": false
+                "at_most": false,
+                "at_least": false
               }
             },
             "bytes": {

@@ -1,0 +1,9 @@
+kernel micro_unknown_in_loop
+trips = param_1
+wgmma.fence.sync.aligned  1
+flops = 2 + unknown  (f32 2)
+tensor flops = 0 + unknown
+global bytes: load 4 B + unknown, store 4 B + unknown
+AI(global): not bounded (flops are a lower bound, global bytes are a lower bound)
+unknowns:
+instruction `wgmma` x1 — not classified — its flops/bytes are not counted

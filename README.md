@@ -65,7 +65,9 @@ Generate PTX with `nvcc -ptx -lineinfo kernel.cu`; without
 Every count is static and per thread: what the PTX requests, not what
 the hardware moves (a warp-collective instruction contributes its warp
 total over the 32 lanes). `<=` marks an upper bound from a conditional
-path; whatever cannot be derived is reported as a named unknown.
+path, `+ unknown` a total that the scope's unclassified instructions or
+unquantified bytes could raise; whatever cannot be derived is reported
+as a named unknown.
 Requested bytes are not DRAM bytes, since cache reuse and uncoalesced
 access move the real figure in either direction; for measured traffic
 and for what a part sustains, use Nsight Compute.

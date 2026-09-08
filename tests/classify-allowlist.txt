@@ -5,3 +5,6 @@
 
 # fp8 (.e4m3/.e5m2) mma: PLAN.md, missing features.
 mma
+# sm_90 family (PLAN.md, missing features); micro/unknown_in_loop.ptx
+# uses its fence to pin the lower-bound marking of an unmodelled op.
+wgmma

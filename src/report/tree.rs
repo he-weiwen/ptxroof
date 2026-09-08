@@ -4,9 +4,11 @@
 //! the same values, so the two views cannot drift.
 //!
 //! Schema conventions, pinned by the committed scenario expectations:
-//! - every count is `{"expr": string, "at_most": bool}` — symbolic
-//!   expressions print via SymExpr's deterministic form, `at_most`
-//!   marks upper bounds (rendered `≤` in text);
+//! - every count is `{"expr": string, "at_most": bool, "at_least":
+//!   bool}` — symbolic expressions print via SymExpr's deterministic
+//!   form, `at_most` marks upper bounds (rendered `<=` in text),
+//!   `at_least` a count that unclassified instructions or
+//!   unquantified bytes in its scope could raise (`+ unknown`);
 //! - trips are `{"expr": ...}` or `{"unknown": reason}` — an unknown
 //!   is a result, not an error;
 //! - the three flop tables (one per pipe) always carry every
@@ -45,6 +47,9 @@ pub struct Fraction {
 pub struct Count {
     pub expr: String,
     pub at_most: bool,
+    /// Unclassified instructions or unquantified bytes in the scope
+    /// could raise it.
+    pub at_least: bool,
 }
 
 #[derive(Debug, Serialize)]
