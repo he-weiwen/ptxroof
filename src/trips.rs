@@ -249,9 +249,13 @@ impl<'a> Tracer<'a> {
         }
 
         // The setp defining the branch predicate, inside the latch block.
-        let (setp_idx, setp) = self
-            .find_setp(latch, branch.0, pred.reg)
-            .ok_or_else(|| "latch predicate is not defined in the latch block".to_owned())?;
+        let Some((setp_idx, setp)) = self.find_setp(latch, branch.0, pred.reg) else {
+            return self
+                .predicate_phi_trips(id, latch, branch.0, pred.reg, continue_if_true)
+                .unwrap_or_else(|| {
+                    Err("latch predicate is not defined in the latch block".to_owned())
+                });
+        };
         let cmp = self
             .module
             .modifiers(setp)
@@ -294,6 +298,61 @@ impl<'a> Tracer<'a> {
         let a0 = SymExpr::add(SymExpr::mul(SymExpr::Const(coeff), init), d.base);
 
         solve(&cmp, continue_if_true, a1, a0)
+    }
+
+    /// LLVM's two-trip loop: the latch predicate is a copy of a register
+    /// set true before the loop and false in the latch (`mov.pred %q,
+    /// -1; header: mov.pred %p, %q; latch: mov.pred %q, 0; @%p bra
+    /// header`). Trips: 2 if the initial value continues, else 1.
+    fn predicate_phi_trips(
+        &self,
+        id: LoopId,
+        latch: BlockId,
+        branch_idx: usize,
+        pred: Symbol,
+        continue_if_true: bool,
+    ) -> Option<TripCount> {
+        let mov_src = |site: usize| -> Option<&Operand> {
+            let Stmt::Instr(instr) = &self.kernel.stmts[site] else {
+                return None;
+            };
+            if self.module.interner.resolve(instr.mnemonic) != "mov" {
+                return None;
+            }
+            let [_, src] = self.module.operand_ids(instr.operands) else {
+                return None;
+            };
+            Some(self.module.operand(*src))
+        };
+        let copy = self.reaching_def(pred, branch_idx)?;
+        let Operand::Register(phi) = mov_src(copy)? else {
+            return None;
+        };
+        if !self.in_loop(id, copy) {
+            return None;
+        }
+        let latch_blk = self.cfg.block(latch);
+        let mut in_loop = self.defs.get(phi)?.iter().filter(|&&d| self.in_loop(id, d));
+        let (&latch_def, None) = (in_loop.next()?, in_loop.next()) else {
+            return None;
+        };
+        if latch_def < latch_blk.start || latch_def >= latch_blk.end {
+            return None;
+        }
+        let header = self.forest.get(id).header;
+        let init_def = self.reaching_def(*phi, self.cfg.block(header).start)?;
+        let (Operand::Immediate(latch_val), Operand::Immediate(init_val)) =
+            (mov_src(latch_def)?, mov_src(init_def)?)
+        else {
+            return None;
+        };
+        let continues = |text: &Symbol| {
+            parse_int(self.module.interner.resolve(*text)).map(|v| (v != 0) == continue_if_true)
+        };
+        if continues(latch_val)? {
+            return None;
+        }
+        Some(Ok(SymExpr::Const(if continues(init_val)? { 2 } else { 1 })))
     }
 
     /// In-loop registers whose ONLY in-loop definition adds a constant

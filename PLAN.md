@@ -26,9 +26,7 @@ as requested by the PTX; nothing is measured (README).
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, and
   nvcc's unroll main+remainder pair. Not recognised, reported as
-  `trips = unknown`: the predicate-controlled two-trip loop
-  (`ce_chunk_kernel.v8192.sm_89.ptx`: a `mov.pred` phi, "latch
-  predicate is not defined in the latch block"), LLVM's two-register
+  `trips = unknown`: LLVM's two-register
   counter (increment into a temporary, `mov` copy in the latch; seen
   in an earlier Triton build of the fp8 GEMM, not emitted by triton
   3.8.0 @ c3aa0c5, which the fixtures use), grid-stride loops (special

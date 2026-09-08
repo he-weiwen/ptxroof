@@ -58,6 +58,22 @@ fn ladder_trip_counts_are_pinned() {
 }
 
 #[test]
+fn gluon_trip_counts_are_pinned() {
+    // Both fp8 GEMMs: K tiles of 64, param 10 is K.
+    let (trips, _) = info_of("gluon/fp8_gemm_kernel.c_fc.sm_89.ptx");
+    assert_eq!(trips, ["ok: ⌈param_10/64⌉"]);
+    let (trips, _) = info_of("gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx");
+    assert_eq!(trips, ["ok: ⌈param_10/64⌉"]);
+    // Cross-entropy: V/BLOCK = 8 for both passes ...
+    let (trips, _) = info_of("gluon/ce_chunk_kernel.sm_89.ptx");
+    assert_eq!(trips, ["ok: 8", "ok: 8"]);
+    // ... and at V = 2·BLOCK LLVM unrolls the first pass and turns the
+    // second into a predicate-phi loop of two trips.
+    let (trips, _) = info_of("gluon/ce_chunk_kernel.v8192.sm_89.ptx");
+    assert_eq!(trips, ["ok: 2"]);
+}
+
+#[test]
 fn micro_trip_counts_and_honest_unknowns() {
     let (trips, _) = info_of("micro/single_loop.ptx");
     assert_eq!(trips, ["ok: param_1"]);
