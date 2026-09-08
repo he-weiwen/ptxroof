@@ -278,20 +278,26 @@ impl<'a> Tracer<'a> {
         let Some((iv_reg, coeff)) = d.iv else {
             return Err("latch condition does not involve an induction variable".to_owned());
         };
-        let step = ivs[&iv_reg];
+        let (step, phi) = ivs[&iv_reg];
 
-        // Check the increment precedes the compare (it does in every
-        // corpus shape; anything else would shift k by one).
-        let iv_def_in_latch = self.defs[&iv_reg]
-            .iter()
-            .any(|&d| d >= latch_block.start && d < setp_idx);
-        if !iv_def_in_latch {
+        // The compare must read the post-increment value: the in-loop
+        // definition precedes it in the latch block, or sits in a block
+        // that dominates the latch.
+        let increment_precedes_compare = self.defs[&iv_reg].iter().any(|&d| {
+            self.in_loop(id, d)
+                && if d >= latch_block.start && d < latch_block.end {
+                    d < setp_idx
+                } else {
+                    self.forest.doms.dominates(self.block_of(d), latch)
+                }
+        });
+        if !increment_precedes_compare {
             return Err("induction increment does not precede the latch compare".to_owned());
         }
 
         // IV value at the latch on iteration k (k = 1, 2, ...):
         // init + k·step, so D(k) = coeff·step·k + (coeff·init + base).
-        let init = self.iv_init(iv_reg, l.header, id)?;
+        let init = self.iv_init(phi, l.header, id)?;
         let a1 = coeff
             .checked_mul(step)
             .ok_or_else(|| "induction step overflows".to_owned())?;
@@ -356,12 +362,15 @@ impl<'a> Tracer<'a> {
     }
 
     /// In-loop registers whose ONLY in-loop definition adds a constant
-    /// to themselves → (reg, step). The addition may pass through other
-    /// single-definition registers (`t = i + 2; i = t - 1`, nvcc's
-    /// shape when the body also reads `i + 2`); the step is the sum
-    /// of the constants along that chain.
-    fn induction_vars(&self, id: LoopId) -> HashMap<Symbol, i64> {
+    /// to themselves → reg ↦ (step, phi). The addition may pass through
+    /// other single-definition registers (`t = i + 2; i = t - 1`,
+    /// nvcc's shape when the body also reads `i + 2`; `t = i + 1` then
+    /// `mov i, t` in the latch, LLVM's two-register counter); the step
+    /// is the sum of the constants along that chain, and phi is the
+    /// chain's register defined before the loop.
+    fn induction_vars(&self, id: LoopId) -> HashMap<Symbol, (i64, Symbol)> {
         let l = self.forest.get(id);
+        let header_start = self.cfg.block(l.header).start;
         let mut in_loop_defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
         for &b in &l.blocks {
             let blk = self.cfg.block(b);
@@ -379,17 +388,19 @@ impl<'a> Tracer<'a> {
             let Stmt::Instr(instr) = &self.kernel.stmts[site] else {
                 return None;
             };
-            if self.module.interner.resolve(instr.mnemonic) != "add" {
-                return None;
-            }
-            let [_, a, b] = self.module.operand_ids(instr.operands) else {
-                return None;
-            };
-            match (self.module.operand(*a), self.module.operand(*b)) {
-                (Operand::Register(r), Operand::Immediate(c))
-                | (Operand::Immediate(c), Operand::Register(r)) => {
-                    Some((*r, parse_int(self.module.interner.resolve(*c))?))
-                }
+            let ops = self.module.operand_ids(instr.operands);
+            match (self.module.interner.resolve(instr.mnemonic), ops) {
+                ("mov", [_, src]) => match self.module.operand(*src) {
+                    Operand::Register(r) => Some((*r, 0)),
+                    _ => None,
+                },
+                ("add", [_, a, b]) => match (self.module.operand(*a), self.module.operand(*b)) {
+                    (Operand::Register(r), Operand::Immediate(c))
+                    | (Operand::Immediate(c), Operand::Register(r)) => {
+                        Some((*r, parse_int(self.module.interner.resolve(*c))?))
+                    }
+                    _ => None,
+                },
                 _ => None,
             }
         };
@@ -397,18 +408,28 @@ impl<'a> Tracer<'a> {
         for (reg, sites) in &in_loop_defs {
             let [mut site] = sites[..] else { continue };
             let mut step = 0;
+            let mut chain = vec![*reg];
             for _ in 0..8 {
                 let Some((src, c)) = add_const(site) else {
                     break;
                 };
                 step += c;
                 if src == *reg {
-                    ivs.insert(*reg, step);
+                    let phi = chain.iter().copied().find(|&r| {
+                        self.reaching_def(r, header_start)
+                            .is_some_and(|d| !self.in_loop(id, d))
+                    });
+                    if let Some(phi) = phi
+                        && step != 0
+                    {
+                        ivs.insert(*reg, (step, phi));
+                    }
                     break;
                 }
                 let Some([next]) = in_loop_defs.get(&src).map(|s| &s[..]) else {
                     break;
                 };
+                chain.push(src);
                 site = *next;
             }
         }
@@ -466,18 +487,19 @@ impl<'a> Tracer<'a> {
     /// the dominator chain. (Defs on non-dominating paths are shadowed
     /// by construction in the nvcc shapes; anything that depends on a
     /// merge degrades to unknown through the def-form rules below.)
+    fn block_of(&self, stmt: usize) -> BlockId {
+        (0..self.cfg.blocks.len() as u32)
+            .map(BlockId)
+            .find(|&b| {
+                let blk = self.cfg.block(b);
+                blk.start <= stmt && stmt < blk.end
+            })
+            .expect("statement belongs to a block")
+    }
+
     fn reaching_def(&self, reg: Symbol, pos: usize) -> Option<usize> {
-        let block_of = |stmt: usize| {
-            (0..self.cfg.blocks.len() as u32)
-                .map(BlockId)
-                .find(|&b| {
-                    let blk = self.cfg.block(b);
-                    blk.start <= stmt && stmt < blk.end
-                })
-                .expect("statement belongs to a block")
-        };
         let sites = self.defs.get(&reg)?;
-        let here = block_of(pos);
+        let here = self.block_of(pos);
         let blk = self.cfg.block(here);
         if let Some(&d) = sites
             .iter()
@@ -505,7 +527,7 @@ impl<'a> Tracer<'a> {
         op: crate::core::OperandId,
         pos: usize,
         id: LoopId,
-        ivs: &HashMap<Symbol, i64>,
+        ivs: &HashMap<Symbol, (i64, Symbol)>,
         depth: u32,
     ) -> Result<Affine, String> {
         match self.module.operand(op) {
@@ -527,7 +549,7 @@ impl<'a> Tracer<'a> {
         reg: Symbol,
         pos: usize,
         id: LoopId,
-        ivs: &HashMap<Symbol, i64>,
+        ivs: &HashMap<Symbol, (i64, Symbol)>,
         depth: u32,
     ) -> Result<Affine, String> {
         if depth > 32 {
@@ -550,12 +572,13 @@ impl<'a> Tracer<'a> {
             );
         };
 
-        // The IV itself: its single in-loop def is the self-add; reading
-        // it at/after that def yields the post-increment latch value.
+        // The IV itself: its single in-loop def is the self-add (or the
+        // copy closing a two-register chain); reading it at/after that
+        // def yields the post-increment latch value.
         if ivs.contains_key(&reg)
             && let Stmt::Instr(instr) = &self.kernel.stmts[def]
             && self.in_loop(id, def)
-            && self.module.interner.resolve(instr.mnemonic) == "add"
+            && matches!(self.module.interner.resolve(instr.mnemonic), "add" | "mov")
         {
             return Ok(Affine {
                 iv: Some((reg, 1)),

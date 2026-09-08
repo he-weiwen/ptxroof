@@ -24,13 +24,11 @@ as requested by the PTX; nothing is measured (README).
 ### Reported as unknowns
 
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
-  then `setp` in the latch), countdown, derived-register latch, and
-  nvcc's unroll main+remainder pair. Not recognised, reported as
-  `trips = unknown`: LLVM's two-register
-  counter (increment into a temporary, `mov` copy in the latch; seen
-  in an earlier Triton build of the fp8 GEMM, not emitted by triton
-  3.8.0 @ c3aa0c5, which the fixtures use), grid-stride loops (special
-  registers), data-dependent bounds, multi-exit loops.
+  then `setp` in the latch), countdown, derived-register latch, nvcc's
+  unroll main+remainder pair, LLVM's two-register counter and its
+  predicate-phi two-trip loop. Not recognised, reported as
+  `trips = unknown`: grid-stride loops (special registers),
+  data-dependent bounds, multi-exit loops.
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;

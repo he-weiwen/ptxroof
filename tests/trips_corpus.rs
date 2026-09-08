@@ -74,6 +74,13 @@ fn gluon_trip_counts_are_pinned() {
 }
 
 #[test]
+fn two_register_counter_is_an_induction_variable() {
+    // t = i + 1 in the header, `mov i, t` in the latch after the compare.
+    let (trips, _) = info_of("micro/two_register_counter.ptx");
+    assert_eq!(trips, ["ok: param_1"]);
+}
+
+#[test]
 fn micro_trip_counts_and_honest_unknowns() {
     let (trips, _) = info_of("micro/single_loop.ptx");
     assert_eq!(trips, ["ok: param_1"]);
