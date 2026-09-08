@@ -823,7 +823,12 @@ impl<'a> KernelBuilder<'a> {
     fn shared_memory(&self) -> SharedMemory {
         let mut static_bytes = 0u64;
         let mut dynamic = false;
-        for decl in &self.kernel.shared_decls {
+        for decl in self
+            .kernel
+            .shared_decls
+            .iter()
+            .chain(&self.module.shared_decls)
+        {
             match decl.size {
                 Some(count) => {
                     let ty = self.module.interner.resolve(decl.ty);
@@ -972,6 +977,12 @@ mod tests {
             sm(".shared .align 2 .b8 As[1024];\n.extern .shared .align 8 .b8 dsm[];\n"),
             (1024, true)
         );
+        // LLVM's module-scope form counts for every kernel in the module.
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .extern .shared .align 16 .b8 global_smem[];\n\
+                   .visible .entry k()\n{\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        assert!(r.kernels[0].shared_memory.dynamic);
     }
 
     #[test]

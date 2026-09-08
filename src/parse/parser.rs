@@ -45,6 +45,7 @@ struct Parser<'a> {
     address_size: u32,
     files: Vec<FileDirective>,
     kernels: Vec<Kernel>,
+    shared_decls: Vec<SharedDecl>,
     operands: IndexVec<OperandId, Operand>,
     operand_lists: Vec<OperandId>,
     modifier_pool: Vec<Symbol>,
@@ -62,6 +63,7 @@ impl<'a> Parser<'a> {
             address_size: 64,
             files: Vec::new(),
             kernels: Vec::new(),
+            shared_decls: Vec::new(),
             operands: IndexVec::new(),
             operand_lists: Vec::new(),
             modifier_pool: Vec::new(),
@@ -170,18 +172,10 @@ impl<'a> Parser<'a> {
                 "visible" | "weak" | "extern" | "common" => {
                     // Linkage prefix; the next directive carries the meat.
                 }
-                "shared" => {
-                    // Module-scope shared variable. nvcc emits dynamic shared
-                    // memory as `.extern .shared .align A .b8 name[];` at module
-                    // scope (the `.extern` linkage prefix is consumed above).
-                    // These are declarations, not analysis content, and a
-                    // module-scope dynamic decl is 0 static bytes, so parse-and-
-                    // discard keeps the module parseable without affecting the
-                    // per-kernel static shared-per-CTA report.
-                    if self.parse_shared_decl().is_none() {
-                        self.resync_to_semicolon();
-                    }
-                }
+                "shared" => match self.parse_shared_decl() {
+                    Some(decl) => self.shared_decls.push(decl),
+                    None => self.resync_to_semicolon(),
+                },
                 "global" => {
                     // Module-scope global variable. LLVM's NVPTX backend (Triton,
                     // libdevice) emits e.g. `.global .align 1 .b8 _$_str[11] = {..};`
@@ -221,6 +215,7 @@ impl<'a> Parser<'a> {
             operands: self.operands,
             operand_lists: self.operand_lists,
             modifier_pool: self.modifier_pool,
+            shared_decls: self.shared_decls,
         })
     }
 
@@ -1006,6 +1001,9 @@ mod tests {
         )
         .expect("module with top-level .extern .shared parses");
         assert_eq!(m.kernels.len(), 1);
+        assert_eq!(m.shared_decls.len(), 2);
+        assert_eq!(m.interner.resolve(m.shared_decls[0].name), "smem");
+        assert_eq!(m.shared_decls[0].size, None);
     }
 
     #[test]

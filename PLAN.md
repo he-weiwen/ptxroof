@@ -53,10 +53,6 @@ as requested by the PTX; nothing is measured (README).
 - **`cp.async` sizes in hex** (`0x10`) are not parsed; the copy's bytes
   are then unknown. `fp8_gemm_kernel.c_fc.sm_89.ptx`: 24 copies,
   `global load with statically unknown byte count x24`.
-- **Module-scope `.extern .shared` declarations are discarded.** The
-  Gluon kernels' dynamic shared memory (`global_smem`) is not
-  reported, and `--dump-ast` drops the declaration, so `ptxas` rejects
-  the dump (`mov.b32 %r163, global_smem`: "Arguments mismatch").
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.
@@ -80,9 +76,11 @@ as requested by the PTX; nothing is measured (README).
   nanochat kernels (`tests/fixtures/gluon`: seven PTX files, the GEMM
   and the cross-entropy chunk at two shapes each; classification 93
   to 100 percent), and hand-written micro kernels. clang is untested.
-- `--dump-ast` output reassembles to identical SASS for k5 and
-  `rope_norm_kernel`; for the other Gluon fixtures `ptxas` rejects it
-  (the module-scope `.extern .shared` above).
+- `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
+  identical to the original's for 20 of the 21 fixtures; k14's is
+  rejected because the in-kernel `.local` depot declaration is
+  discarded (`Unknown symbol '__local_depot0'`). Not a CI step: it
+  needs the CUDA toolkit.
 - Hardware cross-check: k5's counts against Nsight Compute on an RTX
   4090, nothing else.
 - Counts are PTX, not SASS: ptxas removes most register moves, folds
@@ -102,6 +100,9 @@ One line each, with the trigger that would start it.
   unclassified `mma` per K iteration.
 - `diff` between two builds of one kernel, PTX and SASS spill counts.
   Trigger: the first spill regression hunt.
+- Local memory per thread from the `.local` depot declaration (k14:
+  `__local_depot0[512]`), where spills go; keeping the declaration
+  also lets k14's dump reassemble. Trigger: the same hunt.
 - Access-pattern and coalescing analysis. Trigger: the first
   uncoalesced-access suspicion.
 - `check` verb: CI gate on a kernel property. Trigger: the first gate.

@@ -143,6 +143,10 @@ pub struct Module {
     pub operand_lists: Vec<OperandId>,
     /// Pool of modifier symbols; `Instr::modifiers` is a span into it.
     pub modifier_pool: Vec<Symbol>,
+    /// Module-scope `.shared` declarations, visible to every kernel:
+    /// LLVM emits dynamic shared memory as
+    /// `.extern .shared .align 16 .b8 global_smem[];` ahead of the entry.
+    pub shared_decls: Vec<SharedDecl>,
 }
 
 impl Module {

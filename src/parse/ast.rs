@@ -9,7 +9,7 @@
 //! braces are dropped; extended `.loc` collapses to its effective
 //! (inlined-at) location; whitespace is canonical.
 
-use crate::core::{Kernel, Module, Operand, OperandId, SourceLoc, Stmt};
+use crate::core::{Kernel, Module, Operand, OperandId, SharedDecl, SourceLoc, Stmt};
 use std::fmt::Write;
 
 pub fn dump(module: &Module) -> String {
@@ -18,6 +18,9 @@ pub fn dump(module: &Module) -> String {
     let _ = writeln!(out, ".version {major}.{minor}");
     let _ = writeln!(out, ".target {}", module.interner.resolve(module.target));
     let _ = writeln!(out, ".address_size {}", module.address_size);
+    for decl in &module.shared_decls {
+        dump_shared_decl(module, decl, &mut out);
+    }
     for kernel in &module.kernels {
         dump_kernel(module, kernel, &mut out);
     }
@@ -69,20 +72,7 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
         }
     }
     for decl in &k.shared_decls {
-        let align = decl
-            .align
-            .map(|a| format!(".align {a} "))
-            .unwrap_or_default();
-        let name = m.interner.resolve(decl.name);
-        let ty = m.interner.resolve(decl.ty);
-        match decl.size {
-            Some(n) => {
-                let _ = writeln!(out, ".shared {align}.{ty} {name}[{n}];");
-            }
-            None => {
-                let _ = writeln!(out, ".extern .shared {align}.{ty} {name}[];");
-            }
-        }
+        dump_shared_decl(m, decl, out);
     }
 
     let mut last_loc: Option<SourceLoc> = None;
@@ -126,6 +116,23 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
         }
     }
     let _ = writeln!(out, "}}");
+}
+
+fn dump_shared_decl(m: &Module, decl: &SharedDecl, out: &mut String) {
+    let align = decl
+        .align
+        .map(|a| format!(".align {a} "))
+        .unwrap_or_default();
+    let name = m.interner.resolve(decl.name);
+    let ty = m.interner.resolve(decl.ty);
+    match decl.size {
+        Some(n) => {
+            let _ = writeln!(out, ".shared {align}.{ty} {name}[{n}];");
+        }
+        None => {
+            let _ = writeln!(out, ".extern .shared {align}.{ty} {name}[];");
+        }
+    }
 }
 
 fn dump_operand(m: &Module, id: OperandId) -> String {
