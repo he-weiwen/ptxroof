@@ -51,7 +51,7 @@ as requested by the PTX; nothing is measured (README).
   and the cross-entropy chunk at two shapes each; every instruction
   classifies), and hand-written micro kernels. clang is untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 20 of the 21 fixtures; k14's is
+  identical to the original's for 22 of the 23 fixtures; k14's is
   rejected because the in-kernel `.local` depot declaration is
   discarded (`Unknown symbol '__local_depot0'`). Not a CI step: it
   needs the CUDA toolkit.
@@ -61,7 +61,11 @@ as requested by the PTX; nothing is measured (README).
   tool's 16384 fp8 flops per thread per K iteration times 12
   iterations, 128 threads and 768 CTAs; `sm__inst_executed_pipe_tensor`
   = 2,359,296 = 64 `mma` per warp-iteration likewise; l1tex global-load
-  bytes = the K loop's 150,994,944 B plus the epilogue's. Nothing else.
+  bytes (151,191,552) = every `cp.async` byte (150,994,944: two
+  prologue stages plus ten of the twelve iterations, the predicated
+  prefetches off at the end) plus 256 B per CTA for the two scale
+  loads at sector granularity, under the tool's `<=` bound of
+  176,947,200. Nothing else.
 - Counts are PTX, not SASS: ptxas removes most register moves, folds
   address arithmetic into addressing modes, expands `.rn` divides, and
   may add spills.
