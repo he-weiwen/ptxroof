@@ -3,3 +3,5 @@
 /target
 # NVIDIA manuals fetched by tools/fetch-manuals.sh — cite, do not commit
 /refs
+# compile.py imports the Gluon fixture sources
+__pycache__/

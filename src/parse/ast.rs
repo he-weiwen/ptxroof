@@ -52,7 +52,11 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
     }
     let _ = writeln!(out, "{{");
 
+    let mut seen = std::collections::HashSet::new();
     for decl in &k.reg_decls {
+        if !seen.insert((decl.class, decl.prefix, decl.count)) {
+            continue;
+        }
         let prefix = m.interner.resolve(decl.prefix);
         let class = m.interner.resolve(decl.class);
         match decl.count {

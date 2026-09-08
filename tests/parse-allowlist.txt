@@ -1,7 +1,3 @@
 # Fixtures allowed to contain Stmt::Unparsed statements, one relative
 # path per line. Additions require review: every
-# entry is a named hole in frontend coverage.
-
-# `.reg .b16 lo, hi;` lists inside inline-asm scopes: PLAN.md.
-gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx
-gluon/quantize_transpose_kernel.sm_89.ptx
+# entry is a named hole in frontend coverage. Empty today.

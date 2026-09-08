@@ -408,8 +408,8 @@ impl<'a> Parser<'a> {
         match self.interner.resolve(name) {
             "loc" => self.parse_loc(cur_loc),
             "reg" => {
-                if let Some(decl) = self.parse_reg_decl() {
-                    kernel.reg_decls.push(decl);
+                if let Some(decls) = self.parse_reg_decl() {
+                    kernel.reg_decls.extend(decls);
                 } else {
                     kernel.stmts.push(Stmt::Unparsed { offset });
                     self.resync_to_semicolon();
@@ -513,8 +513,9 @@ impl<'a> Parser<'a> {
         Some(SourceLoc { file, line, col })
     }
 
-    /// `.reg .f32 %f<789>;` or scoped `.reg .pred p;`.
-    fn parse_reg_decl(&mut self) -> Option<RegDecl> {
+    /// `.reg .f32 %f<789>;`, scoped `.reg .pred p;`, or a list
+    /// `.reg .b16 lo, hi;`.
+    fn parse_reg_decl(&mut self) -> Option<Vec<RegDecl>> {
         if !self.eat(TokenKind::Dot) {
             return None;
         }
@@ -524,29 +525,36 @@ impl<'a> Parser<'a> {
         } else {
             return None;
         };
-        let prefix = match self.peek().kind {
-            TokenKind::Register | TokenKind::Identifier => {
-                let t = self.bump();
-                self.interner.intern(t.text)
+        let mut decls = Vec::new();
+        loop {
+            let prefix = match self.peek().kind {
+                TokenKind::Register | TokenKind::Identifier => {
+                    let t = self.bump();
+                    self.interner.intern(t.text)
+                }
+                _ => return None,
+            };
+            let mut count = None;
+            if self.eat(TokenKind::Lt) {
+                count = parse_int(self.peek().text).and_then(|v| u32::try_from(v).ok());
+                if !self.at(TokenKind::Number) {
+                    return None;
+                }
+                self.bump();
+                if !self.eat(TokenKind::Gt) {
+                    return None;
+                }
             }
-            _ => return None,
-        };
-        let mut count = None;
-        if self.eat(TokenKind::Lt) {
-            count = parse_int(self.peek().text).and_then(|v| u32::try_from(v).ok());
-            if !self.at(TokenKind::Number) {
-                return None;
-            }
-            self.bump();
-            if !self.eat(TokenKind::Gt) {
-                return None;
+            decls.push(RegDecl {
+                class,
+                prefix,
+                count,
+            });
+            if !self.eat(TokenKind::Comma) {
+                break;
             }
         }
-        self.eat(TokenKind::Semicolon).then_some(RegDecl {
-            class,
-            prefix,
-            count,
-        })
+        self.eat(TokenKind::Semicolon).then_some(decls)
     }
 
     /// After `.shared`: `.align A .b8 name[N];` (size empty for the
@@ -966,6 +974,24 @@ mod tests {
         assert_eq!(k.shared_decls.len(), 2);
         assert_eq!(k.shared_decls[0].size, Some(1024));
         assert_eq!(k.shared_decls[1].size, None); // dynamic
+    }
+
+    #[test]
+    fn reg_lists_in_asm_scopes_declare_every_name() {
+        let m = parse_body(
+            "{ .reg .b16 lo, hi; cvt.rn.satfinite.e4m3x2.f32 lo, %r1, %r2; \
+             mov.b32 %r3, {lo, hi}; }\nret;",
+        );
+        let k = &m.kernels[0];
+        let names: Vec<_> = k
+            .reg_decls
+            .iter()
+            .map(|d| m.interner.resolve(d.prefix))
+            .collect();
+        assert_eq!(names, ["lo", "hi"]);
+        assert_eq!(m.interner.resolve(k.reg_decls[1].class), "b16");
+        assert!(!k.stmts.iter().any(|s| matches!(s, Stmt::Unparsed { .. })));
+        assert_eq!(instrs(&m).len(), 3);
     }
 
     #[test]

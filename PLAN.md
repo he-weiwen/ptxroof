@@ -53,10 +53,6 @@ as requested by the PTX; nothing is measured (README).
 - **`cp.async` sizes in hex** (`0x10`) are not parsed; the copy's bytes
   are then unknown. `fp8_gemm_kernel.c_fc.sm_89.ptx`: 24 copies,
   `global load with statically unknown byte count x24`.
-- **`.reg .b16 lo, hi;` inside inline-asm scopes** produces an
-  "unparsed statement" entry per scope; the instructions inside the
-  scope are counted. `fp8_gemm_kernel.lm_head_dx.sm_89.ptx`: 8 of its
-  asm scopes; `quantize_transpose_kernel.sm_89.ptx`: 32.
 - **Module-scope `.extern .shared` declarations are discarded.** The
   Gluon kernels' dynamic shared memory (`global_smem`) is not
   reported, and `--dump-ast` drops the declaration, so `ptxas` rejects
@@ -86,7 +82,7 @@ as requested by the PTX; nothing is measured (README).
   to 100 percent), and hand-written micro kernels. clang is untested.
 - `--dump-ast` output reassembles to identical SASS for k5 and
   `rope_norm_kernel`; for the other Gluon fixtures `ptxas` rejects it
-  (the `.reg` lists and the module-scope `.extern .shared` above).
+  (the module-scope `.extern .shared` above).
 - Hardware cross-check: k5's counts against Nsight Compute on an RTX
   4090, nothing else.
 - Counts are PTX, not SASS: ptxas removes most register moves, folds

@@ -1,6 +1,7 @@
 kernel quantize_transpose_kernel
 block size: 128 threads (128x1x1 from .reqntid)
+cvt.rn.satfinite.e4m3x2.f32   <= 64
 flops = <= 256  (f32 <= 256)
 global bytes: load <= 292 B, store <= 256 B
-unparsed statement x32 — the parser could not read it — whatever it does is not counted
+unknowns: none
 coverage: instructions_classified 100.0% (1049/1049)
