@@ -83,8 +83,23 @@ One line each, with the trigger that would start it.
 - Local memory per thread from the `.local` depot declaration (k14:
   `__local_depot0[512]`), where spills go; keeping the declaration
   also lets k14's dump reassemble. Trigger: the same hunt.
-- Access-pattern and coalescing analysis. Trigger: the first
-  uncoalesced-access suspicion.
+- Access patterns, in three steps on the trip matcher's tracer
+  (special registers as variables, a coefficient map instead of one
+  induction variable, the memory operand traced instead of the latch
+  compare; non-affine addresses such as the xor swizzles and the
+  cross-entropy gather become a named unknown per reference):
+  1. per-reference affine address over lane, CTA, counters, params;
+  2. sectors and lines per warp request (k1 vs k2 differ only here),
+     with the cache path from the modifiers (`.cg`, `.nc`, `.cs`,
+     `cp.async.cg` never hits L1); oracle: ncu sectors per request;
+  3. per loop, whether a reference is invariant or strided, the
+     per-thread reuse distance for self-reuse (the body's footprint),
+     and the unique-byte span per scope: compulsory ≤ moved ≤ requested;
+     oracle: ncu DRAM bytes ≥ compulsory.
+  Same-line decisions are the difference of two affine forms: exact for
+  constant differences (k1's `[%rd25]`, `[%rd25+2]`, `[%rd25+4]`),
+  need `--bind` for symbolic strides, undecidable across base pointers
+  (assume distinct, and say so). Trigger fired 2026-09-08; not started.
 - `check` verb: CI gate on a kernel property. Trigger: the first gate.
 - Nsight Compute import beside the static columns. Trigger: the first
   static-versus-measured comparison beyond k5.
@@ -95,8 +110,9 @@ One line each, with the trigger that would start it.
 
 ## Will not do
 
-- Cache reuse, divergence, bank conflicts, occupancy, latency: Nsight
-  Compute's.
+- Cache hit rates and any reuse distance across warps or CTAs: they
+  depend on the schedule, so a model would have to guess. Divergence,
+  bank conflicts, occupancy, latency: Nsight Compute's.
 - Branch probabilities: conditional code is a `<=` bound.
 - General scalar-evolution: trip shapes are a catalogue grown by
   fixtures.
