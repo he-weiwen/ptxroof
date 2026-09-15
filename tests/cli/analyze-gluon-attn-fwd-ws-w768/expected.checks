@@ -3,7 +3,7 @@ block size: 256 threads (256x1x1 from .reqntid)
 loop gluon_attn_fwd.py:126 ($L__BB0_39)
 trips = unknown: loop exit is not at the latch
 loop gluon_attn_fwd.py:131 (waitLoop$scope1)
-trips = unknown: latch predicate is not defined in the latch block
+trips = unknown: latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison
 loop gluon_attn_fwd.py:143 ($L__BB0_43)
 trips = unknown: latch condition depends on special register %ctaid.x
 mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32                                                              <= 128

@@ -103,7 +103,7 @@ fn attention_trip_reasons_are_pinned() {
         reasons,
         [
             "unknown: latch condition depends on special register %ctaid.x",
-            "unknown: latch predicate is not defined in the latch block",
+            "unknown: latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison",
             "unknown: loop exit is not at the latch",
             "unknown: loop has multiple latches",
         ]

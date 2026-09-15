@@ -35,10 +35,9 @@ as requested by the PTX; nothing is measured (README).
   predicate-phi two-trip loop. Not recognised, reported as
   `trips = unknown`: grid-stride loops (special registers),
   data-dependent bounds, multi-exit loops, and the attention kernels'
-  causal loops, bounded by the CTA index. The mbarrier wait loops say
-  "latch predicate is not defined in the latch block" when
-  `mbarrier.test_wait` defines it there. The persistent tile loop has
-  a latch and an exit per partition.
+  causal loops, bounded by the CTA index, the mbarrier spin-waits
+  (`mbarrier.test_wait` defines the predicate), and the persistent
+  tile loop, which has a latch and an exit per partition.
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;

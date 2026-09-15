@@ -252,9 +252,7 @@ impl<'a> Tracer<'a> {
         let Some((setp_idx, setp)) = self.find_setp(latch, branch.0, pred.reg) else {
             return self
                 .predicate_phi_trips(id, latch, branch.0, pred.reg, continue_if_true)
-                .unwrap_or_else(|| {
-                    Err("latch predicate is not defined in the latch block".to_owned())
-                });
+                .unwrap_or_else(|| Err(self.predicate_reason(latch, branch.0, pred.reg)));
         };
         let cmp = self
             .module
@@ -304,6 +302,34 @@ impl<'a> Tracer<'a> {
         let a0 = SymExpr::add(SymExpr::mul(SymExpr::Const(coeff), init), d.base);
 
         solve(&cmp, continue_if_true, a1, a0)
+    }
+
+    /// No setp defines the latch predicate: say what does, if anything
+    /// in the latch block does (`mbarrier.test_wait` in a spin-wait).
+    fn predicate_reason(&self, latch: BlockId, before: usize, pred: Symbol) -> String {
+        let blk = self.cfg.block(latch);
+        let definer = self.kernel.stmts[blk.start..before]
+            .iter()
+            .rev()
+            .find_map(|s| match s {
+                Stmt::Instr(i)
+                    if self
+                        .module
+                        .operand_ids(i.operands)
+                        .first()
+                        .is_some_and(|&id| {
+                            matches!(self.module.operand(id),
+                                 Operand::Register(r) | Operand::SymbolRef(r) if *r == pred)
+                        }) =>
+                {
+                    Some(self.module.opcode(i))
+                }
+                _ => None,
+            });
+        match definer {
+            Some(op) => format!("latch predicate is defined by `{op}`, not a comparison"),
+            None => "latch predicate is not defined in the latch block".to_owned(),
+        }
     }
 
     /// LLVM's two-trip loop: the latch predicate is a copy of a register
@@ -1092,6 +1118,21 @@ mod tests {
         );
         let err = trips_of(&src)[0].1.clone().unwrap_err();
         assert_eq!(err, "value defined by unsupported instruction `or`");
+    }
+
+    #[test]
+    fn a_spin_wait_names_what_defines_its_predicate() {
+        let src = kernel_with(
+            N_PARAM,
+            "{ .reg .pred complete;\nwaitLoop:\n\
+             mbarrier.test_wait.parity.shared::cta.b64 complete, [%r1], %r2;\n\
+             @!complete bra.uni waitLoop; }\nret;",
+        );
+        let err = trips_of(&src)[0].1.clone().unwrap_err();
+        assert_eq!(
+            err,
+            "latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison"
+        );
     }
 
     #[test]
