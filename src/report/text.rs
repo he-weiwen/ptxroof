@@ -273,6 +273,14 @@ fn render_loop(w: &mut String, l: &LoopNode, depth: usize) {
     let _ = writeln!(w, "{pad}  per iteration:");
     render_aggregates(w, &l.per_iteration, &format!("{pad}    "));
     render_accesses(w, &format!("{pad}  "), "accesses", &l.accesses);
+    if let Some(b) = &l.global_bytes_per_cta {
+        let bound = if b.at_most { "<= " } else { "" };
+        let _ = writeln!(
+            w,
+            "{pad}  global bytes per CTA over the loop's own blocks: requested {bound}{} B, unique {bound}{} B",
+            b.requested, b.unique
+        );
+    }
     for child in &l.loops {
         render_loop(w, child, depth + 1);
     }

@@ -78,7 +78,7 @@ impl fmt::Display for Var {
 }
 
 /// `Σ coeff·var + base`; a missing variable has coefficient 0.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Affine {
     pub terms: BTreeMap<Var, SymExpr>,
     pub base: SymExpr,

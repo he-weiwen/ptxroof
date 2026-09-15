@@ -194,7 +194,21 @@ pub struct LoopNode {
     /// The memory operands in this loop's own blocks, not its nested
     /// loops', in program order.
     pub accesses: Vec<Access>,
+    /// Global bytes one CTA requests over one execution of the loop's
+    /// own blocks, and the distinct bytes those requests touch, when
+    /// the trip count, the block shape and every global address are
+    /// known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_bytes_per_cta: Option<LoopBytes>,
     pub loops: Vec<LoopNode>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct LoopBytes {
+    pub requested: u64,
+    pub unique: u64,
+    /// Some contributing access is predicated: both are upper bounds.
+    pub at_most: bool,
 }
 
 /// One memory operand of one instruction: where it points, as an

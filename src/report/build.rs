@@ -204,7 +204,8 @@ fn accesses_by_scope(
     display: &[String],
     bind_map: &HashMap<String, i64>,
     tracer: &Tracer,
-) -> HashMap<Option<LoopId>, Vec<Access>> {
+) -> (ByScope<Access>, ByScope<AccessForm>) {
+    let mut forms: ByScope<AccessForm> = HashMap::new();
     let name = |v: &Var| match v {
         Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
         other => other.to_string(),
@@ -325,6 +326,15 @@ fn accesses_by_scope(
                     Some(Err(why)) => (None, None, Some(why)),
                     None => (None, None, None),
                 };
+                if let (Some(a), Some(b)) = (&form, bytes) {
+                    forms.entry(scope).or_default().push(AccessForm {
+                        form: a.clone(),
+                        bytes: b,
+                        space,
+                        block: bid,
+                        predicated: instr.predicate.is_some(),
+                    });
+                }
                 let mut reuse = Vec::new();
                 if let Some(a) = &form {
                     let mut cur = scope;
@@ -372,7 +382,19 @@ fn accesses_by_scope(
             }
         }
     }
-    out
+    (out, forms)
+}
+
+/// Rows per scope: a block's innermost loop, or `None` outside every loop.
+type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
+
+/// A memory operand's bound affine address, for the per-loop footprint.
+struct AccessForm {
+    form: Affine,
+    bytes: u32,
+    space: Space,
+    block: BlockId,
+    predicated: bool,
 }
 
 /// The cache level an access can hit at. PTX ISA §9.7.9.1, Tables 30
@@ -581,7 +603,9 @@ struct KernelBuilder<'a> {
     display: Vec<String>,
     /// Memory operands per scope: the innermost loop of their block, or
     /// `None` outside every loop.
-    accesses: HashMap<Option<LoopId>, Vec<Access>>,
+    accesses: ByScope<Access>,
+    /// The same rows' bound affine forms, where known.
+    access_forms: ByScope<AccessForm>,
     /// Which threads run each block.
     thread_sets: Vec<ThreadSet>,
     /// The block shape when known (`--launch` or `.reqntid`), else zeros.
@@ -628,7 +652,7 @@ impl<'a> KernelBuilder<'a> {
             .collect();
 
         let tracer = Tracer::new(module, kernel, &cfg, &forest).with_bindings(bind_map);
-        let accesses =
+        let (accesses, access_forms) =
             accesses_by_scope(module, kernel, &cfg, &forest, &display, bind_map, &tracer);
         let thread_sets = block_thread_sets(module, kernel, &cfg, &forest, &tracer);
         let shape = ["%ntid.x", "%ntid.y", "%ntid.z"]
@@ -646,9 +670,98 @@ impl<'a> KernelBuilder<'a> {
             cond_entry,
             display,
             accesses,
+            access_forms,
             thread_sets,
             shape,
         }
+    }
+
+    /// Global bytes one CTA requests over one execution of loop `id`'s
+    /// own blocks, and the distinct bytes they touch: every lane of every
+    /// executing thread at every iteration, as intervals merged per
+    /// base (the form without its lane, counter and constant parts:
+    /// forms on different pointers are assumed disjoint). Needs a
+    /// numeric trip count, the block shape, and every global address's
+    /// lane and counter coefficients as constants.
+    fn loop_bytes(&self, id: LoopId) -> Option<LoopBytes> {
+        let trips = self.trip_exprs[id.0 as usize]
+            .as_const()
+            .filter(|&t| t > 0)?;
+        let [nx, ny, nz] = self.shape.map(i64::from);
+        let threads = nx * ny * nz;
+        if threads == 0 {
+            return None;
+        }
+        let forms = self.access_forms.get(&Some(id))?;
+        let global: Vec<&AccessForm> = forms
+            .iter()
+            .filter(|f| matches!(f.space, Space::Global | Space::Generic))
+            .collect();
+        if global.is_empty() {
+            return None;
+        }
+        let mut requested = 0u64;
+        let mut at_most = false;
+        let mut per_base: HashMap<Affine, Vec<(i64, i64)>> = HashMap::new();
+        for f in global {
+            let stride = match f.form.terms.get(&Var::Iter(id)) {
+                Some(c) => c.as_const()?,
+                None => 0,
+            };
+            if f.form
+                .terms
+                .iter()
+                .any(|(v, c)| crate::footprint::depends_on_lane(v) && c.as_const().is_none())
+            {
+                return None;
+            }
+            let set = &self.thread_sets[f.block.0 as usize];
+            let bytes = i64::from(f.bytes);
+            at_most |= f.predicated;
+            let mut key = f.form.clone();
+            key.terms
+                .retain(|v, _| !crate::footprint::depends_on_lane(v) && *v != Var::Iter(id));
+            key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
+            let intervals = per_base.entry(key).or_default();
+            for t in 0..threads {
+                let tid = [t % nx, (t / nx) % ny, t / (nx * ny)];
+                if !set.contains(tid) {
+                    continue;
+                }
+                requested += f.bytes as u64 * trips as u64;
+                let base = crate::footprint::eval_lane(&f.form, tid);
+                if intervals.len() as i64 + trips > 1 << 22 {
+                    return None;
+                }
+                for k in 0..trips {
+                    let start = base + stride * k;
+                    intervals.push((start, start + bytes));
+                }
+            }
+        }
+        let mut unique = 0i64;
+        for mut intervals in per_base.into_values() {
+            intervals.sort_unstable();
+            let mut cur: Option<(i64, i64)> = None;
+            for (s, e) in intervals {
+                match cur {
+                    Some((cs, ce)) if s <= ce => cur = Some((cs, ce.max(e))),
+                    Some((cs, ce)) => {
+                        unique += ce - cs;
+                        cur = Some((s, e));
+                    }
+                    None => cur = Some((s, e)),
+                }
+            }
+            if let Some((cs, ce)) = cur {
+                unique += ce - cs;
+            }
+        }
+        Some(LoopBytes {
+            requested,
+            unique: unique as u64,
+            at_most,
+        })
     }
 
     /// The block's selected threads as text, when a branch selects them.
@@ -956,6 +1069,7 @@ impl<'a> KernelBuilder<'a> {
             unroll,
             per_iteration: self.aggregates(Some(id), None),
             accesses: self.accesses.get(&Some(id)).cloned().unwrap_or_default(),
+            global_bytes_per_cta: self.loop_bytes(id),
             loops: self
                 .forest
                 .children_of(id)
@@ -1287,6 +1401,42 @@ mod tests {
             r.kernels[0].blocks[2].threads.as_deref(),
             Some("128 (⌊%tid.x/32⌋ < 4)")
         );
+    }
+
+    #[test]
+    fn loop_bytes_count_every_thread_and_iteration_once() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u64 k_param_1\n)\n\
+                   .reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u64 %rd5, [k_param_1];\n\
+                   mov.u32 %r1, %tid.x;\nmul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                   mov.u32 %r2, 0;\nsetp.ne.s32 %p2, %r1, 0;\n\
+                   $L__LOOP:\nld.global.f32 %f1, [%rd3];\nld.global.f32 %f2, [%rd5];\n\
+                   add.s64 %rd3, %rd3, 128;\nadd.s32 %r2, %r2, 1;\nsetp.lt.u32 %p1, %r2, 8;\n\
+                   @%p1 bra $L__LOOP;\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        // 32 lanes × 4 B × 8 trips per load; the first sweeps 1024 B, the
+        // second is one word.
+        assert_eq!(
+            r.kernels[0].loops[0].global_bytes_per_cta,
+            Some(LoopBytes {
+                requested: 2048,
+                unique: 1028,
+                at_most: false,
+            })
+        );
+        let src = src.replace("ld.global.f32 %f2", "@%p2 ld.global.f32 %f2");
+        let r = analyze(&src, "t", &opts).expect("analyzes");
+        let b = r.kernels[0].loops[0]
+            .global_bytes_per_cta
+            .clone()
+            .expect("still enumerable");
+        assert!(b.at_most);
+        assert_eq!((b.requested, b.unique), (2048, 1028));
+        let src = src.replace(".reqntid 32, 1, 1\n", "");
+        let r = analyze(&src, "t", &opts).expect("analyzes");
+        assert_eq!(r.kernels[0].loops[0].global_bytes_per_cta, None);
     }
 
     #[test]

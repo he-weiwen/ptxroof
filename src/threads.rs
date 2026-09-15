@@ -93,6 +93,17 @@ impl Constraint {
 }
 
 impl ThreadSet {
+    /// Whether the thread at `tid` is in the set; an unknown set
+    /// includes every thread, as a bound.
+    pub fn contains(&self, tid: [i64; 3]) -> bool {
+        match self {
+            ThreadSet::All | ThreadSet::Unknown => true,
+            ThreadSet::Some { constraints, .. } => constraints
+                .iter()
+                .all(|c| holds(&c.cmp, eval_lane(&c.form, tid))),
+        }
+    }
+
     /// How many threads of a block of this shape satisfy the set.
     pub fn count(&self, shape: [u32; 3]) -> Option<u32> {
         let ThreadSet::Some { constraints, .. } = self else {

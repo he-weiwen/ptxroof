@@ -70,7 +70,9 @@ Generate PTX with `nvcc -ptx -lineinfo kernel.cu`; without
 
 Every count is static and per thread: what the PTX requests, not what
 the hardware moves (a warp-collective instruction contributes its warp
-total over the 32 lanes). `<=` marks an upper bound from a conditional
+total over the 32 lanes). With a block shape and a numeric trip count
+each loop also reports the global bytes one CTA requests over it and
+the distinct bytes it touches, the difference being intra-CTA reuse. `<=` marks an upper bound from a conditional
 path, `+ unknown` a total that the scope's unclassified instructions or
 unquantified bytes could raise; whatever cannot be derived is reported
 as a named unknown.

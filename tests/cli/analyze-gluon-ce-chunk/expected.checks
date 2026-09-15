@@ -8,10 +8,12 @@ trips = 8
 flops = 89  (f32 89)
 global bytes: load 16 B, store 0 B
 AI(global) = 7.0625 flop/B
+global bytes per CTA over the loop's own blocks: requested 65536 B, unique 65536 B
 loop gluon_ce.py:54 ($L__BB0_5)
 trips = 8
 flops = 161  (bf16 8, f32 153)
 global bytes: load 16 B, store 16 B
+global bytes per CTA over the loop's own blocks: requested 131072 B, unique 131072 B
 accesses outside loops:
 gluon_ce.py:40  ld.global.b64                    global load 8 B via L1 and L2                        warp: 1 sector, 1 line  [8 * %ctaid.x + param_1]
 gluon_ce.py:45  ld.global.b16                    global load 2 B via L1 and L2                                                unknown: value defined by unsupported instruction `selp`

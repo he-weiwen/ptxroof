@@ -13,9 +13,11 @@ flops by pipe and precision, bytes by state space, AI(global), and per
 memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
 sectors and 128-byte lines one warp's request touches once the block
-shape and the parameters in the lane coefficients are bound; and per
+shape and the parameters in the lane coefficients are bound; per
 block, which threads of the CTA run it when thread-index branches
-select them, so per-CTA totals count each block on its own threads.
+select them, so per-CTA totals count each block on its own threads;
+and per loop with a numeric trip count, the global bytes one CTA
+requests over the loop's own blocks and the distinct bytes it touches.
 Text
 and JSON views of the same tree. Every number is static, per thread,
 as requested by the PTX; nothing is measured (README).
@@ -33,6 +35,14 @@ as requested by the PTX; nothing is measured (README).
   one run of bits (the attention backward's dQ stores, `0xdc`); a
   counter's value after its loop (k1's remainder loop reads the main
   loop's final k: "more than one reaching definition"); `selp`.
+- **Unique bytes per loop assume different pointer parameters are
+  disjoint** (the cross-entropy's second pass, `tests/cli/
+  analyze-gluon-ce-chunk`: the load and the store count 131,072 B
+  unique for the 131,072 B requested; aliasing would halve it), count
+  the loop's own blocks only, and need a numeric trip count, the block
+  shape, and constant lane and counter coefficients. k5's K loop at
+  256³ (`analyze-k5-footprint`): requested 65,536 B, unique 65,536 B;
+  k1's (`analyze-k1-footprint`): 1,048,576 B, 32,768 B.
 
 ### Reported as unknowns
 
@@ -108,7 +118,12 @@ as requested by the PTX; nothing is measured (README).
   analyze-k5-footprint`, `analyze-k1-footprint`): l1tex global load
   requests and sectors 18,432 / 81,920 (k5) and 1,050,624 / 1,576,960
   (k1), stores 2,048 / 32,768 and 2,048 / 4,096, each the rows'
-  aligned counts times their execution counts. Nothing else.
+  aligned counts times their execution counts. Unique bytes, k5 at
+  256³ and 16 CTAs: `lts__t_sectors_srcunit_tex_op_read.sum` = 36,868,
+  the tool's 65,536 unique B per CTA over the K loop as 2,048 sectors
+  plus the epilogue's 256-sector C tile, times 16, plus 4;
+  `dram__bytes_read.sum` = 511,104 for the 524,288 B of A, B and C.
+  Nothing else.
 - Counts are PTX, not SASS: ptxas removes most register moves, folds
   address arithmetic into addressing modes, expands `.rn` divides, and
   may add spills.
@@ -126,27 +141,22 @@ One line each, with the trigger that would start it.
 - Local memory per thread from the `.local` depot declaration (k14:
   `__local_depot0[512]`), where spills go; keeping the declaration
   also lets k14's dump reassemble. Trigger: the same hunt.
-- Access patterns, in three steps on the tracer; the first two are
-  done (the `accesses` rows: every fixture's global and shared
-  operands except those listed above, including 2D tiles'
-  `⌊%tid.x/8⌋` and `(%tid.x mod 8)` and counters stepped by `4·N`;
-  sectors and lines per warp request by enumerating the lanes under
-  every alignment of the uniform part, since pointer parameters carry
-  no alignment in the PTX, so a coalesced 4-byte access reads
-  `4–5 sectors`; needs `--launch` or `.reqntid` and `--bind` for a
-  parameter in a lane coefficient; and the cache path from the state
-  space and the cache operator, PTX ISA §9.7.9.1, so the GEMM's
-  `cp.async.cg` copies read "L2 only"; and per enclosing loop how
+- Access patterns: done 2026-09-15 (the `accesses` rows: every
+  fixture's global and shared operands except those listed above,
+  including 2D tiles' `⌊%tid.x/8⌋` and `(%tid.x mod 8)` and counters
+  stepped by `4·N`; sectors and lines per warp request by enumerating
+  the lanes under every alignment of the uniform part, since pointer
+  parameters carry no alignment in the PTX, so a coalesced 4-byte
+  access reads `4–5 sectors`; needs `--launch` or `.reqntid` and
+  `--bind` for a parameter in a lane coefficient; the cache path from
+  the state space and the cache operator, PTX ISA §9.7.9.1, so the
+  GEMM's `cp.async.cg` copies read "L2 only"; per enclosing loop how
   the address moves per iteration, `k[loop]: +16 B/iter` or
-  `invariant`, which is the per-thread reuse class; the bytes a thread
-  touches between two reads of an invariant address are the loop's
-  per-iteration bytes printed above the rows):
-  3. the unique-byte span per loop and CTA: compulsory ≤ moved ≤
-     requested; oracle: ncu DRAM bytes ≥ compulsory.
-  Same-line decisions are the difference of two affine forms: exact for
-  constant differences (k1's `[%rd25]`, `[%rd25+2]`, `[%rd25+4]`),
-  need `--bind` for symbolic strides, undecidable across base pointers
-  (assume distinct, and say so). Trigger fired 2026-09-08; not started.
+  `invariant`, the per-thread reuse class; and per loop the bytes one
+  CTA requests and the distinct bytes it touches, the intervals of
+  every executing thread at every iteration merged per base pointer,
+  so intra-CTA reuse is `requested − unique` and the L2-to-L1 sectors
+  are at least `unique / 32`). What remains is listed above.
 - `check` verb: CI gate on a kernel property. Trigger: the first gate.
 - Nsight Compute import beside the static columns. Trigger: the first
   static-versus-measured comparison beyond k5.

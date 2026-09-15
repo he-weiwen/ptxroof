@@ -34,9 +34,10 @@ pub fn depends_on_lane(v: &Var) -> bool {
 }
 
 /// The value of a form with constant coefficients for one thread;
-/// variables that are not lane-dependent count as 0.
+/// variables that are not lane-dependent and symbols count as 0, so
+/// the constant offset of the base is kept.
 pub fn eval_lane(a: &Affine, tid: [i64; 3]) -> i64 {
-    a.base.as_const().unwrap_or(0)
+    a.base.const_part()
         + a.terms
             .iter()
             .map(|(v, c)| c.as_const().unwrap_or(0) * eval(v, tid))

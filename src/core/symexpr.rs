@@ -53,6 +53,15 @@ impl SymExpr {
         SymExpr::Sym(name.into())
     }
 
+    /// The constant summand: the value with every symbol at 0.
+    pub fn const_part(&self) -> i64 {
+        match self {
+            SymExpr::Const(c) => *c,
+            SymExpr::Sum(ts) => ts.iter().map(SymExpr::const_part).sum(),
+            _ => 0,
+        }
+    }
+
     /// `(c, rest)` with `self = c·rest`: the leading constant of a
     /// product, or 1.
     pub fn split_const(e: SymExpr) -> (i64, SymExpr) {
