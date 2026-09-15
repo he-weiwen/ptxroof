@@ -80,8 +80,9 @@ fn is_ident_start(c: u8) -> bool {
     c.is_ascii_alphabetic() || c == b'_'
 }
 
+/// PTX ISA §4.4: `followsym: [a-zA-Z0-9_$]`.
 fn is_ident_cont(c: u8) -> bool {
-    is_ident_start(c) || c.is_ascii_digit()
+    is_ident_start(c) || c.is_ascii_digit() || c == b'$'
 }
 
 /// Lex an entire PTX program. Always ends with an `EndOfFile` token.
@@ -464,6 +465,12 @@ mod tests {
         assert_eq!(kinds("%7"), [Error, Number, EndOfFile]); // operand refs dropped
         assert_eq!(kinds("$ x"), [Error, Identifier, EndOfFile]);
         assert_eq!(kinds("= {95}"), [Equals, LBrace, Number, RBrace, EndOfFile]);
+        assert_eq!(
+            kinds("spin$scope1: bra spin$scope1; _$_str"),
+            [
+                Identifier, Colon, Identifier, Identifier, Semicolon, Identifier, EndOfFile
+            ]
+        );
     }
 
     #[test]
