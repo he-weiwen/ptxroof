@@ -1,0 +1,44 @@
+//
+// HAND-WRITTEN: the same label defined in two sibling `{ }` blocks, the
+// shape of Triton's mbarrier wait loops (six `waitLoop:` scopes in the
+// warp-specialized attention kernel). ptxas scopes a label to its block,
+// so each `bra spin` is a self-loop on its own block; reading both as
+// one label fused them into a spurious cycle. Two counted loops of
+// param 0 and param 1 trips on independent registers.
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_scoped_labels(
+	.param .u32 micro_scoped_labels_param_0,
+	.param .u32 micro_scoped_labels_param_1
+)
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<5>;
+	.loc	1 3 0
+
+	ld.param.u32 	%r1, [micro_scoped_labels_param_0];
+	ld.param.u32 	%r2, [micro_scoped_labels_param_1];
+	mov.u32 	%r3, 0;
+	{
+	.loc	1 5 5
+	spin:
+	add.s32 	%r3, %r3, 1;
+	setp.lt.s32 	%p1, %r3, %r1;
+	@%p1 bra 	spin;
+	}
+	mov.u32 	%r4, 0;
+	{
+	.loc	1 9 5
+	spin:
+	add.s32 	%r4, %r4, 1;
+	setp.lt.s32 	%p2, %r4, %r2;
+	@%p2 bra 	spin;
+	}
+	.loc	1 12 1
+	ret;
+
+}
+	.file	1 "micro/scoped_labels.cu"

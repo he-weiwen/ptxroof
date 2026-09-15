@@ -1,0 +1,8 @@
+kernel micro_scoped_labels
+<->  spin$scope1  scoped_labels.cu:5        3  spin$scope1, <block 2>  scoped_labels.cu:5 (header, latch)
+<->  spin$scope2  scoped_labels.cu:9        3  spin$scope2, <block 4>  scoped_labels.cu:9 (header, latch)
+loop scoped_labels.cu:5 (spin$scope1)
+trips = param_0
+loop scoped_labels.cu:9 (spin$scope2)
+trips = param_1
+unknowns: none

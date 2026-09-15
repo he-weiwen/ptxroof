@@ -51,7 +51,7 @@ as requested by the PTX; nothing is measured (README).
   and the cross-entropy chunk at two shapes each; every instruction
   classifies), and hand-written micro kernels. clang is untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 22 of the 23 fixtures; k14's is
+  identical to the original's for 23 of the 24 fixtures; k14's is
   rejected because the in-kernel `.local` depot declaration is
   discarded (`Unknown symbol '__local_depot0'`). Not a CI step: it
   needs the CUDA toolkit.

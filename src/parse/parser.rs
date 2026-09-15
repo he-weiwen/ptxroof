@@ -9,7 +9,8 @@
 //! `function_name/inlined_at` forms — both appear in k2), `.pragma` in
 //! body position, `.section .debug_*` data sections (parsed and
 //! skipped), `{ ... }` statement blocks (inline-asm expansions —
-//! flattened; the braces scope nothing we model), and `.branchtargets`.
+//! flattened, with the labels they define renamed per scope, since
+//! ptxas scopes a label to its block), and `.branchtargets`.
 //!
 //! Error policy: the library never panics on malformed
 //! input. Inside a kernel body a bad statement becomes `Stmt::Unparsed`
@@ -49,6 +50,9 @@ struct Parser<'a> {
     shared_decls: Vec<SharedDecl>,
     /// Inlined location → the user line it was ultimately inlined at.
     inlined: HashMap<SourceLoc, SourceLoc>,
+    /// Per open `{ }` block, its labels renamed `name$scopeN`.
+    scopes: Vec<HashMap<Symbol, Symbol>>,
+    scope_count: u32,
     operands: IndexVec<OperandId, Operand>,
     operand_lists: Vec<OperandId>,
     modifier_pool: Vec<Symbol>,
@@ -68,6 +72,8 @@ impl<'a> Parser<'a> {
             kernels: Vec::new(),
             shared_decls: Vec::new(),
             inlined: HashMap::new(),
+            scopes: Vec::new(),
+            scope_count: 0,
             operands: IndexVec::new(),
             operand_lists: Vec::new(),
             modifier_pool: Vec::new(),
@@ -363,10 +369,12 @@ impl<'a> Parser<'a> {
                         return Ok(());
                     }
                     block_depth -= 1;
+                    self.scopes.pop();
                 }
                 TokenKind::LBrace => {
                     self.bump();
                     block_depth += 1;
+                    self.enter_scope();
                 }
                 TokenKind::Semicolon => {
                     self.bump();
@@ -377,6 +385,7 @@ impl<'a> Parser<'a> {
                 TokenKind::Identifier if self.peek_at(1).kind == TokenKind::Colon => {
                     let text = self.peek().text;
                     let label = self.interner.intern(text);
+                    let label = self.scoped(label);
                     self.bump();
                     self.bump();
                     kernel.stmts.push(Stmt::Label(label));
@@ -390,6 +399,53 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+    }
+
+    /// A `{ }` block just opened: find the labels it defines (at its own
+    /// depth) and give them scope-unique names, so a branch inside the
+    /// block resolves to its own label and not a sibling scope's.
+    fn enter_scope(&mut self) {
+        self.scope_count += 1;
+        let id = self.scope_count;
+        let mut depth = 1u32;
+        let mut names = Vec::new();
+        let mut k = 0;
+        loop {
+            let tok = self.peek_at(k);
+            match tok.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                TokenKind::EndOfFile => break,
+                TokenKind::Identifier
+                    if depth == 1 && self.peek_at(k + 1).kind == TokenKind::Colon =>
+                {
+                    names.push(tok.text);
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+        let map = names
+            .into_iter()
+            .map(|n| {
+                let renamed = format!("{n}$scope{id}");
+                (self.interner.intern(n), self.interner.intern(&renamed))
+            })
+            .collect();
+        self.scopes.push(map);
+    }
+
+    fn scoped(&self, label: Symbol) -> Symbol {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|m| m.get(&label).copied())
+            .unwrap_or(label)
     }
 
     fn parse_body_directive(
@@ -445,7 +501,8 @@ impl<'a> Parser<'a> {
                 let mut targets = Vec::new();
                 while self.at(TokenKind::Identifier) {
                     let t = self.bump();
-                    targets.push(self.interner.intern(t.text));
+                    let sym = self.interner.intern(t.text);
+                    targets.push(self.scoped(sym));
                     if !self.eat(TokenKind::Comma) {
                         break;
                     }
@@ -728,6 +785,7 @@ impl<'a> Parser<'a> {
             TokenKind::Identifier => {
                 let t = self.bump();
                 let sym = self.interner.intern(t.text);
+                let sym = self.scoped(sym);
                 Some(self.push_operand(Operand::SymbolRef(sym)))
             }
             TokenKind::LBracket => {
@@ -1038,6 +1096,36 @@ mod tests {
         let m = parse_body("{ cvt.f32.f16 %f14, %rs1;}\nret;");
         assert_eq!(instrs(&m).len(), 2);
         assert_eq!(unparsed_count(&m), 0);
+    }
+
+    #[test]
+    fn labels_in_asm_scopes_are_scope_local() {
+        // Triton's mbarrier wait: the same label in sibling scopes, each
+        // branch bound to its own; a kernel-level label is untouched.
+        let m = parse_body(
+            "{ spin: add.s32 %r1, %r1, 1; @%p1 bra spin; }\n\
+             { spin: add.s32 %r2, %r2, 1; @%p2 bra spin; }\n\
+             @%p3 bra $L__END;\n$L__END:\nret;",
+        );
+        let k = &m.kernels[0];
+        let labels: Vec<&str> = k
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Label(l) => Some(m.interner.resolve(*l)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, ["spin$scope1", "spin$scope2", "$L__END"]);
+        let targets: Vec<&str> = instrs(&m)
+            .iter()
+            .filter(|i| m.interner.resolve(i.mnemonic) == "bra")
+            .map(|i| match m.operand(m.operand_ids(i.operands)[0]) {
+                Operand::SymbolRef(s) => m.interner.resolve(*s),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(targets, ["spin$scope1", "spin$scope2", "$L__END"]);
     }
 
     #[test]

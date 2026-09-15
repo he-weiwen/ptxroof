@@ -1,0 +1,4 @@
+# The same label in two sibling asm scopes: two separate self-loops,
+# named by their scope-unique labels, each with its own trip count.
+args = ["analyze", "{fixtures}/micro/scoped_labels.ptx"]
+exit = 0

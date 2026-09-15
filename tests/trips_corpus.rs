@@ -81,6 +81,12 @@ fn two_register_counter_is_an_induction_variable() {
 }
 
 #[test]
+fn scoped_labels_are_separate_loops() {
+    let (trips, _) = info_of("micro/scoped_labels.ptx");
+    assert_eq!(trips, ["ok: param_0", "ok: param_1"]);
+}
+
+#[test]
 fn micro_trip_counts_and_honest_unknowns() {
     let (trips, _) = info_of("micro/single_loop.ptx");
     assert_eq!(trips, ["ok: param_1"]);
