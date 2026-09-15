@@ -65,6 +65,13 @@ as requested by the PTX; nothing is measured (README).
   discarded (`Unknown symbol '__local_depot0'`) and is allowlisted in
   `tests/roundtrip-allowlist.txt`. A `tests/run.py` stage when the
   toolkit is on PATH, skipped otherwise.
+- Generated loops (`tests/gen_loops.py`, a CI step): single counted
+  loops drawn from a grammar of steps, initial values, bounds,
+  comparisons, operand orders, branch polarities and read positions,
+  each simulated in Python and bound with `--bind`; the tool's count
+  must equal the simulation wherever the loop iterates, and a refused
+  shape only counts. 200 kernels per run; the only refused shape is a
+  loop that continues while two values are equal.
 - Hardware cross-check on an RTX 4090 with Nsight Compute: k5's
   counts, and the c_fc fp8 GEMM's launch (M=4096, N=3072, K=768):
   `sm__ops_path_tensor_src_fp8.sum` = 19,327,352,832 = 2·M·N·K, the

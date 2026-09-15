@@ -20,5 +20,8 @@ cargo build --locked # the test runner drives target/debug/ptxroof
 
 python3 tests/run.py --self-test
 python3 tests/run.py
+# Generated loop kernels against a simulator: trip counts are never wrong.
+python3 tests/gen_loops.py --self-test
+python3 tests/gen_loops.py --seed 1 --count 200
 
 echo "ci.sh: all green"
