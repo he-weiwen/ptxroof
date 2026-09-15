@@ -13,6 +13,7 @@ pub mod core;
 pub mod footprint;
 pub mod parse;
 pub mod report;
+pub mod threads;
 pub mod tracer;
 pub mod trips;
 

@@ -1,4 +1,6 @@
 kernel attn_fwd_ws_kernel
+/-------------  <block 1>        gluon_attn_fwd.py:79-229       93  128 (⌊%tid.x/32⌋ < 4)          $L__BB0_62, <block 2>
+|  |      /---  <block 2>        gluon_attn_fwd.py:98-118       63  <= 128 (⌊%tid.x/32⌋ < 4)       $L__BB0_38, $L__tmp5
 block size: 256 threads (256x1x1 from .reqntid)
 loop gluon_attn_fwd.py:126 ($L__BB0_39)
 trips = unknown: loop exit is not at the latch
@@ -11,5 +13,7 @@ tensor flops = <= 16384  (bf16 <= 16384)
 global bytes: load <= 128 B, store 0 B
 loop gluon_attn_fwd.py:213 ($L__BB0_2)
 trips = unknown: loop has multiple latches
+totals per CTA [static]:
+tensor flops = <= 2097152 * trips(gluon_attn_fwd.py:143) * trips(gluon_attn_fwd.py:126) + 2097152 * trips(gluon_attn_fwd.py:213) * trips(gluon_attn_fwd.py:213) * trips(gluon_attn_fwd.py:213)  (bf16 <= 2097152 * trips(gluon_attn_fwd.py:143) * trips(gluon_attn_fwd.py:126) + 2097152 * trips(gluon_attn_fwd.py:213) * trips(gluon_attn_fwd.py:213) * trips(gluon_attn_fwd.py:213))
 unknowns:
 coverage: instructions_classified 100.0% (3024/3024)

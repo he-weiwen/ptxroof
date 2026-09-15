@@ -16,7 +16,7 @@
 //! read. The domain is nonnegative and non-overflowing, as documented
 //! in `trips`.
 
-use crate::affine::{Affine, Var};
+use crate::affine::{Affine, Axis, Var};
 use crate::cfg::loops::{LoopForest, LoopId};
 use crate::cfg::{BlockId, Cfg};
 use crate::core::symexpr::SymExpr;
@@ -701,6 +701,57 @@ impl<'a> Tracer<'a> {
                     a.clone().modulo_const(d)
                 };
                 result.ok_or_else(|| refuse(&a, id, "division"))
+            }
+            "shfl" if mods.contains(&"idx") && ops.len() == 5 => {
+                // shfl.sync.idx d, a, c, 31, mask: a's value in lane c of the
+                // warp. With warps of 32 consecutive %tid.x, that is a with
+                // %tid.x replaced by 32·⌊%tid.x/32⌋ + c; a warp-uniform a
+                // (a function of ⌊%tid.x/32⌋) is unchanged.
+                let a = arg(1)?;
+                let Some(c) = self.constant(&arg(2)?).filter(|c| (0..32).contains(c)) else {
+                    return Err("shfl.idx from a non-constant lane".to_owned());
+                };
+                let warp = |v: Var| Affine::var(Var::Div(Box::new(v), 32));
+                let lane = |v: &Var| -> Option<Affine> {
+                    match v {
+                        Var::Tid(Axis::X) => Some(
+                            warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32))
+                                + Affine::invariant(SymExpr::Const(c)),
+                        ),
+                        Var::Div(inner, d) if **inner == Var::Tid(Axis::X) => {
+                            if d % 32 == 0 {
+                                Some(Affine::var(v.clone()))
+                            } else if 32 % d == 0 {
+                                Some(
+                                    warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32 / d))
+                                        + Affine::invariant(SymExpr::Const(c / d)),
+                                )
+                            } else {
+                                None
+                            }
+                        }
+                        Var::Mod(inner, m) if **inner == Var::Tid(Axis::X) => {
+                            if 32 % m == 0 {
+                                Some(Affine::invariant(SymExpr::Const(c % m)))
+                            } else if m % 32 == 0 {
+                                let w = Var::Mod(
+                                    Box::new(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
+                                    m / 32,
+                                );
+                                Some(
+                                    Affine::var(w).scale(SymExpr::Const(32))
+                                        + Affine::invariant(SymExpr::Const(c)),
+                                )
+                            } else {
+                                None
+                            }
+                        }
+                        Var::Tid(_) => None,
+                        other => Some(Affine::var(other.clone())),
+                    }
+                };
+                a.map_vars(lane)
+                    .ok_or_else(|| "shfl.idx of a value not a function of %tid.x".to_owned())
             }
             "min" | "max" if ops.len() == 3 => {
                 // A clamp of two constants (after bindings) is a constant.

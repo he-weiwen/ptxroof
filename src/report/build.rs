@@ -34,6 +34,7 @@ use crate::footprint::warp_footprint;
 use crate::parse::parser::{ParseError, parse};
 use crate::report::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::report::tree::*;
+use crate::threads::{Constraint, ThreadSet, block_thread_sets};
 use crate::tracer::Tracer;
 use crate::trips::{TripInfo, trip_counts};
 use std::collections::{BTreeMap, HashMap};
@@ -202,8 +203,8 @@ fn accesses_by_scope(
     forest: &LoopForest,
     display: &[String],
     bind_map: &HashMap<String, i64>,
+    tracer: &Tracer,
 ) -> HashMap<Option<LoopId>, Vec<Access>> {
-    let tracer = Tracer::new(module, kernel, cfg, forest).with_bindings(bind_map);
     let name = |v: &Var| match v {
         Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
         other => other.to_string(),
@@ -569,6 +570,10 @@ struct KernelBuilder<'a> {
     /// Memory operands per scope: the innermost loop of their block, or
     /// `None` outside every loop.
     accesses: HashMap<Option<LoopId>, Vec<Access>>,
+    /// Which threads run each block.
+    thread_sets: Vec<ThreadSet>,
+    /// The block shape when known (`--launch` or `.reqntid`), else zeros.
+    shape: [u32; 3],
 }
 
 impl<'a> KernelBuilder<'a> {
@@ -610,7 +615,12 @@ impl<'a> KernelBuilder<'a> {
             })
             .collect();
 
-        let accesses = accesses_by_scope(module, kernel, &cfg, &forest, &display, bind_map);
+        let tracer = Tracer::new(module, kernel, &cfg, &forest).with_bindings(bind_map);
+        let accesses =
+            accesses_by_scope(module, kernel, &cfg, &forest, &display, bind_map, &tracer);
+        let thread_sets = block_thread_sets(module, kernel, &cfg, &forest, &tracer);
+        let shape = ["%ntid.x", "%ntid.y", "%ntid.z"]
+            .map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
         KernelBuilder {
             module,
             kernel,
@@ -624,7 +634,27 @@ impl<'a> KernelBuilder<'a> {
             cond_entry,
             display,
             accesses,
+            thread_sets,
+            shape,
         }
+    }
+
+    /// The block's selected threads as text, when a branch selects them.
+    fn thread_set_text(&self, b: BlockId) -> Option<String> {
+        let set = &self.thread_sets[b.0 as usize];
+        let ThreadSet::Some { constraints, exact } = set else {
+            return None;
+        };
+        let cond = constraints
+            .iter()
+            .map(Constraint::render)
+            .collect::<Vec<_>>()
+            .join(" and ");
+        let bound = if *exact { "" } else { "<= " };
+        Some(match set.count(self.shape) {
+            Some(n) => format!("{bound}{n} ({cond})"),
+            None => format!("{bound}({cond})"),
+        })
     }
 
     fn blocks(&self) -> Vec<BlockInfo> {
@@ -642,6 +672,7 @@ impl<'a> KernelBuilder<'a> {
                     name: name(b),
                     lines: self.line_span(&instrs),
                     instructions: instrs.len() as u64,
+                    threads: self.thread_set_text(b),
                     successors: self.cfg.block(b).succs.iter().map(|&s| name(s)).collect(),
                     r#loop: in_loop,
                 }
@@ -715,10 +746,19 @@ impl<'a> KernelBuilder<'a> {
                 mult = SymExpr::mul(mult, self.trip_exprs[l.0 as usize].clone());
                 chain_at_most |= self.cond_entry[l.0 as usize];
             }
-            let block_at_most = bm.qualifier == CountQualifier::AtMost
-                || chain_at_most
-                || cta.is_some_and(|c| !c.exact);
-            let threads = cta.map_or(1, |c| c.threads as i64);
+            // A block selected by thread-index branches runs on exactly
+            // its threads: per CTA that count, and not a bound.
+            let set = &self.thread_sets[bm.block.0 as usize];
+            let selected = cta.and(set.count(self.shape));
+            let tid_exact = matches!(set, ThreadSet::Some { exact: true, .. });
+            let conditional =
+                bm.qualifier == CountQualifier::AtMost && !(selected.is_some() && tid_exact);
+            let block_at_most = conditional || chain_at_most || cta.is_some_and(|c| !c.exact);
+            let threads = match (cta, selected) {
+                (Some(_), Some(n)) => i64::from(n),
+                (Some(c), None) => c.threads as i64,
+                (None, _) => 1,
+            };
             for ((class, opcode), &n) in &bm.instructions {
                 let n = n as i64 * threads;
                 let kind = instructions.entry(instruction_kind(*class)).or_default();
@@ -730,11 +770,9 @@ impl<'a> KernelBuilder<'a> {
                 instruction_total.add(n, &mult, block_at_most);
             }
             for m in &bm.measurements {
-                let at_most = bm.qualifier == CountQualifier::AtMost
-                    || m.predicated
-                    || chain_at_most
-                    || cta.is_some_and(|c| !c.exact);
-                let n = m.count as i64 * cta.map_or(1, |c| c.threads as i64);
+                let at_most =
+                    conditional || m.predicated || chain_at_most || cta.is_some_and(|c| !c.exact);
+                let n = m.count as i64 * threads;
                 match m.kind {
                     MeasureKind::Flops { pipe, precision } => {
                         flops
@@ -1188,6 +1226,55 @@ mod tests {
         assert!(parse_bind("K=x").is_err());
         assert!(parse_bind("=4").is_err());
         assert!(parse_bind("a:K=4").is_err());
+    }
+
+    /// Blocks selected by thread-index branches: the two halves of a
+    /// warp-specialized CTA and an elected thread. Per CTA their counts
+    /// are exact; per thread they stay bounds.
+    #[test]
+    fn thread_index_branches_select_blocks() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 256, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\nshr.u32 %r2, %r1, 5;\n\
+                   setp.lt.u32 %p1, %r2, 4;\n@%p1 bra $L__A;\n\
+                   add.f32 %f1, %f1, %f1;\nbra.uni $L__J;\n\
+                   $L__A:\nmul.f32 %f1, %f1, %f1;\nmul.f32 %f1, %f1, %f1;\n\
+                   $L__J:\nsetp.ne.s32 %p2, %r1, 0;\n@%p2 bra $L__END;\n\
+                   st.global.f32 [%rd1], %f1;\n$L__END:\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let k = &r.kernels[0];
+        let threads: Vec<Option<&str>> = k.blocks.iter().map(|b| b.threads.as_deref()).collect();
+        assert_eq!(
+            threads,
+            [
+                None,
+                Some("128 (⌊%tid.x/32⌋ >= 4)"),
+                Some("128 (⌊%tid.x/32⌋ < 4)"),
+                None,
+                Some("1 (%tid.x == 0)"),
+                None,
+            ]
+        );
+        // 128 threads add once, 128 multiply twice: 384 flops per CTA, exact.
+        let cta = k.totals_per_cta.as_ref().expect("reqntid gives a launch");
+        assert_eq!(cta.flops["f32"].expr, "384");
+        assert!(!cta.flops["f32"].at_most);
+        assert_eq!(cta.bytes["global"].store.expr, "4");
+        assert!(!cta.bytes["global"].store.at_most);
+        // Per thread the same counts are bounds: a thread runs one path.
+        assert_eq!(k.totals.flops["f32"].expr, "3");
+        assert!(k.totals.flops["f32"].at_most);
+        // Triton broadcasts the warp index from lane 0 before comparing.
+        let src = src.replace(
+            "setp.lt.u32 %p1, %r2, 4;",
+            "shfl.sync.idx.b32 %r3, %r2, 0, 31, -1;\nsetp.lt.u32 %p1, %r3, 4;",
+        );
+        let r = analyze(&src, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].blocks[2].threads.as_deref(),
+            Some("128 (⌊%tid.x/32⌋ < 4)")
+        );
     }
 
     #[test]

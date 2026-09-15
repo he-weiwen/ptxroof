@@ -25,12 +25,22 @@ pub struct Footprint {
     pub lines: Range,
 }
 
-fn depends_on_lane(v: &Var) -> bool {
+pub fn depends_on_lane(v: &Var) -> bool {
     match v {
         Var::Tid(_) => true,
         Var::Ctaid(_) | Var::Iter(_) => false,
         Var::Div(inner, _) | Var::Mod(inner, _) => depends_on_lane(inner),
     }
+}
+
+/// The value of a form with constant coefficients for one thread;
+/// variables that are not lane-dependent count as 0.
+pub fn eval_lane(a: &Affine, tid: [i64; 3]) -> i64 {
+    a.base.as_const().unwrap_or(0)
+        + a.terms
+            .iter()
+            .map(|(v, c)| c.as_const().unwrap_or(0) * eval(v, tid))
+            .sum::<i64>()
 }
 
 fn eval(v: &Var, tid: [i64; 3]) -> i64 {

@@ -192,8 +192,14 @@ fn render_blocks(w: &mut String, blocks: &[BlockInfo]) {
     );
     let margins = margins(blocks);
     let blank = " ".repeat(margins.first().map_or(0, String::len));
-    let header = ["block", "lines", "instrs", "successors", "loop"].map(String::from);
-    let rows: Vec<[String; 5]> = blocks
+    let with_threads = blocks.iter().any(|b| b.threads.is_some());
+    let mut header: Vec<String> = ["block", "lines", "instrs", "successors", "loop"]
+        .map(String::from)
+        .to_vec();
+    if with_threads {
+        header.insert(3, "threads".to_owned());
+    }
+    let rows: Vec<Vec<String>> = blocks
         .iter()
         .map(|b| {
             let role = b.r#loop.as_ref().map_or(String::new(), |l| {
@@ -206,7 +212,7 @@ fn render_blocks(w: &mut String, blocks: &[BlockInfo]) {
                     false => format!("{} ({})", l.name, flags.join(", ")),
                 }
             });
-            [
+            let mut row = vec![
                 b.name.clone(),
                 b.lines
                     .clone()
@@ -217,7 +223,11 @@ fn render_blocks(w: &mut String, blocks: &[BlockInfo]) {
                     false => b.successors.join(", "),
                 },
                 role,
-            ]
+            ];
+            if with_threads {
+                row.insert(3, b.threads.clone().unwrap_or_default());
+            }
+            row
         })
         .collect();
     let width = |col: usize| {
@@ -227,21 +237,19 @@ fn render_blocks(w: &mut String, blocks: &[BlockInfo]) {
             .max()
             .unwrap_or(0)
     };
-    let widths = [width(0), width(1), width(2), width(3)];
+    let widths: Vec<usize> = (0..header.len() - 1).map(width).collect();
     let margin_of = std::iter::once(&blank).chain(&margins);
     for (m, r) in margin_of.zip(std::iter::once(&header).chain(&rows)) {
-        let line = format!(
-            "    {m}  {:<w0$}  {:<w1$}  {:>w2$}  {:<w3$}  {}",
-            r[0],
-            r[1],
-            r[2],
-            r[3],
-            r[4],
-            w0 = widths[0],
-            w1 = widths[1],
-            w2 = widths[2],
-            w3 = widths[3],
-        );
+        let mut line = format!("    {m}");
+        for (i, cell) in r.iter().enumerate() {
+            if i + 1 == r.len() {
+                line.push_str(&format!("  {cell}"));
+            } else if i == 2 {
+                line.push_str(&format!("  {cell:>w$}", w = widths[i]));
+            } else {
+                line.push_str(&format!("  {cell:<w$}", w = widths[i]));
+            }
+        }
         let _ = writeln!(w, "{}", line.trim_end());
     }
 }
@@ -499,6 +507,7 @@ mod tests {
                 name: format!("b{i}"),
                 lines: None,
                 instructions: 1,
+                threads: None,
                 successors: succs.iter().map(|s| format!("b{s}")).collect(),
                 r#loop: None,
             })

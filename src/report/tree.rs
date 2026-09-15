@@ -115,6 +115,13 @@ pub struct BlockInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lines: Option<String>,
     pub instructions: u64,
+    /// The threads of the CTA that execute the block, when a branch on
+    /// the thread index selects them: the count, if the block shape is
+    /// known, and the condition (`128 (⌊%tid.x/32⌋ < 4)`). Absent when
+    /// every thread runs the block or the selecting branch is not a
+    /// thread-index condition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threads: Option<String>,
     /// Successor block names; empty for a block that ends the kernel.
     pub successors: Vec<String>,
     /// The innermost loop containing the block, if any.

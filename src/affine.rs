@@ -213,6 +213,15 @@ impl Affine {
         Some(quotient.scale(SymExpr::Const(m)) + Affine::invariant(self.base))
     }
 
+    /// Substitute every variable by a form; None if any substitution is.
+    pub fn map_vars(&self, f: impl Fn(&Var) -> Option<Affine>) -> Option<Affine> {
+        let mut out = Affine::invariant(self.base.clone());
+        for (v, c) in &self.terms {
+            out = out + f(v)?.scale(c.clone());
+        }
+        Some(out)
+    }
+
     pub fn is_invariant(&self) -> bool {
         self.terms.is_empty()
     }

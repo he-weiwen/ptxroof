@@ -13,7 +13,10 @@ flops by pipe and precision, bytes by state space, AI(global), and per
 memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
 sectors and 128-byte lines one warp's request touches once the block
-shape and the parameters in the lane coefficients are bound. Text
+shape and the parameters in the lane coefficients are bound; and per
+block, which threads of the CTA run it when thread-index branches
+select them, so per-CTA totals count each block on its own threads.
+Text
 and JSON views of the same tree. Every number is static, per thread,
 as requested by the PTX; nothing is measured (README).
 
@@ -30,12 +33,6 @@ as requested by the PTX; nothing is measured (README).
   one run of bits (the attention backward's dQ stores, `0xdc`); a
   counter's value after its loop (k1's remainder loop reads the main
   loop's final k: "more than one reaching definition"); `selp`.
-- **Warp-specialized kernels are bounded, not counted.** Every count
-  is per thread and every block is assumed to run on every thread.
-  `attn_fwd_ws_kernel.sm_89.ptx` splits on `tid.x >> 5 < 4`: warps 0
-  to 3 and 4 to 7 run different code, so the per-thread totals are
-  `<=` the sum of both partitions and the per-CTA bound is loose by
-  up to 2. The model has no term for which threads execute a block.
 
 ### Reported as unknowns
 
@@ -59,6 +56,11 @@ as requested by the PTX; nothing is measured (README).
 
 ### Presentation
 
+- Per-thread totals of a warp-specialized kernel are `<=` the sum of
+  its partitions, since a thread runs one of them: the `threads` column
+  of the block table says which threads run each block (`128
+  (⌊%tid.x/32⌋ < 4)`), and the per-CTA totals count each block on its
+  own threads, but there is no per-role view of the per-thread numbers.
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
