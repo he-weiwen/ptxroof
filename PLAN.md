@@ -34,11 +34,8 @@ as requested by the PTX; nothing is measured (README).
   unroll main+remainder pair, LLVM's two-register counter and its
   predicate-phi two-trip loop. Not recognised, reported as
   `trips = unknown`: grid-stride loops (special registers),
-  data-dependent bounds, multi-exit loops. The attention kernels'
-  causal loops are bounded by the CTA index and are unknown for that
-  reason, but the reason printed is the first arithmetic the tracer
-  could not read: `or`, `bfe` (`attn_bwd_kernel.sm_89.ptx`), `div`
-  (`attn_fwd_ws_kernel.sm_89.ptx`). The mbarrier wait loops say
+  data-dependent bounds, multi-exit loops, and the attention kernels'
+  causal loops, bounded by the CTA index. The mbarrier wait loops say
   "latch predicate is not defined in the latch block" when
   `mbarrier.test_wait` defines it there. The persistent tile loop has
   a latch and an exit per partition.

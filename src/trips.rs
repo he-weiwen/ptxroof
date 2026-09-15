@@ -36,7 +36,7 @@ use crate::cfg::{BlockId, Cfg};
 use crate::core::symexpr::SymExpr;
 use crate::core::{Instr, Kernel, Module, Operand, Stmt, Symbol};
 use crate::parse::parser::parse_int;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Trip count of one loop: an expression, or a named reason there
 /// isn't one.
@@ -557,19 +557,11 @@ impl<'a> Tracer<'a> {
         }
         let name = self.module.interner.resolve(reg);
         let Some(def) = self.reaching_def(reg, pos) else {
-            return Err(
-                if name.starts_with("%tid")
-                    || name.starts_with("%ctaid")
-                    || name.starts_with("%ntid")
-                    || name.starts_with("%nctaid")
-                    || name.starts_with("%laneid")
-                    || name.starts_with("%warpid")
-                {
-                    format!("latch condition depends on special register {name}")
-                } else {
-                    format!("no definition found for {name}")
-                },
-            );
+            return Err(if is_special_register(name) {
+                format!("latch condition depends on special register {name}")
+            } else {
+                format!("no definition found for {name}")
+            });
         };
 
         // The IV itself: its single in-loop def is the self-add (or the
@@ -718,9 +710,68 @@ impl<'a> Tracer<'a> {
                 };
                 prod.combine(c, 1)
             }
-            other => Err(format!(
-                "value defined by unsupported instruction `{other}`"
-            )),
+            other => {
+                let mut seen = HashSet::new();
+                let fundamental =
+                    ops.iter()
+                        .skip(1)
+                        .find_map(|&op| match self.module.operand(op) {
+                            Operand::Register(r) => self.obstacle(*r, def, id, &mut seen),
+                            _ => None,
+                        });
+                Err(fundamental.unwrap_or_else(|| {
+                    format!("value defined by unsupported instruction `{other}`")
+                }))
+            }
+        }
+    }
+
+    /// Why a value cannot be traced, looking through arithmetic the
+    /// tracer does not read: a special register, a memory load or an
+    /// atomic on some operand chain is the reason a reader can act on,
+    /// not the `or` or `bfe` in between.
+    fn obstacle(
+        &self,
+        reg: Symbol,
+        pos: usize,
+        id: LoopId,
+        seen: &mut HashSet<Symbol>,
+    ) -> Option<String> {
+        if !seen.insert(reg) || seen.len() > 64 {
+            return None;
+        }
+        let Some(def) = self.reaching_def(reg, pos) else {
+            let name = self.module.interner.resolve(reg);
+            return is_special_register(name)
+                .then(|| format!("latch condition depends on special register {name}"));
+        };
+        let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
+            return None;
+        };
+        let is_param_load = self
+            .module
+            .modifiers(instr)
+            .iter()
+            .any(|&m| self.module.interner.resolve(m) == "param");
+        match self.module.interner.resolve(instr.mnemonic) {
+            "ld" if !is_param_load => Some(
+                if self.in_loop(id, def) {
+                    "latch condition depends on a value loaded inside the loop"
+                } else {
+                    "latch condition depends on a value loaded from memory"
+                }
+                .to_owned(),
+            ),
+            "atom" => Some("latch condition depends on an atomic operation".to_owned()),
+            _ => self
+                .module
+                .operand_ids(instr.operands)
+                .iter()
+                .skip(1)
+                .find_map(|&op| match self.module.operand(op) {
+                    Operand::Register(r) => self.obstacle(*r, def, id, seen),
+                    _ => None,
+                }),
         }
     }
 
@@ -730,6 +781,12 @@ impl<'a> Tracer<'a> {
             blk.start <= stmt && stmt < blk.end
         })
     }
+}
+
+fn is_special_register(name: &str) -> bool {
+    ["%tid", "%ctaid", "%ntid", "%nctaid", "%laneid", "%warpid"]
+        .iter()
+        .any(|p| name.starts_with(p))
 }
 
 /// Mnemonics whose first operand is a register destination (for the
@@ -1004,6 +1061,37 @@ mod tests {
             trips[0].1.as_ref().unwrap_err(),
             "latch condition depends on a value loaded inside the loop"
         );
+    }
+
+    #[test]
+    fn the_reason_is_the_obstacle_behind_unread_arithmetic() {
+        // LLVM writes m_start + 127 as `or` on a value with zero low bits;
+        // the bound still comes from the CTA index, and that is the reason.
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u32 %r1, %ctaid.x;\nshl.b32 %r2, %r1, 7;\nor.b32 %r3, %r2, 127;\n\
+             mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+             setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+        );
+        let err = trips_of(&src)[0].1.clone().unwrap_err();
+        assert!(err.contains("special register %ctaid.x"), "{err}");
+        // A loaded bound behind `bfe` is a loaded bound.
+        let src = kernel_with(
+            ".param .u64 k_param_0",
+            "ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r1, [%rd1];\n\
+             bfe.s32 %r3, %r1, 0, 26;\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+             setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+        );
+        let err = trips_of(&src)[0].1.clone().unwrap_err();
+        assert_eq!(err, "latch condition depends on a value loaded from memory");
+        // Nothing fundamental behind it: the instruction is still named.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nor.b32 %r3, %r1, 1;\nmov.u32 %r4, 0;\n\
+             $L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+        );
+        let err = trips_of(&src)[0].1.clone().unwrap_err();
+        assert_eq!(err, "value defined by unsupported instruction `or`");
     }
 
     #[test]

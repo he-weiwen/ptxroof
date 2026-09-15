@@ -82,12 +82,12 @@ fn two_register_counter_is_an_induction_variable() {
 
 #[test]
 fn attention_trip_reasons_are_pinned() {
-    // Causal bounds depend on the CTA index; the reasons name the first
-    // arithmetic form the tracer could not read (PLAN.md, trip shapes).
+    // Causal bounds depend on the CTA index, behind `bfe`, `div` and `or`
+    // the tracer does not read; the reason is the index.
     let (trips, _) = info_of("gluon/attn_bwd_kernel.sm_89.ptx");
     assert_eq!(
         trips,
-        ["unknown: value defined by unsupported instruction `bfe`"]
+        ["unknown: latch condition depends on special register %ctaid.x"]
     );
     for f in [
         "gluon/attn_bwd_pre_kernel.sm_89.ptx",
@@ -102,10 +102,10 @@ fn attention_trip_reasons_are_pinned() {
     assert_eq!(
         reasons,
         [
+            "unknown: latch condition depends on special register %ctaid.x",
             "unknown: latch predicate is not defined in the latch block",
             "unknown: loop exit is not at the latch",
             "unknown: loop has multiple latches",
-            "unknown: value defined by unsupported instruction `div`",
         ]
     );
 }

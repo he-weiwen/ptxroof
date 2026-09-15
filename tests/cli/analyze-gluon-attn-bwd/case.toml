@@ -1,6 +1,6 @@
 # Flash-attention backward, main kernel: one CTA per key block walks
 # the query blocks at or after it, 160 bf16 mma per iteration (five
 # 64x64x128 GEMMs over 8 warps). The trip count depends on the CTA
-# index; the reason names `bfe`, the signed division fix-up (PLAN.md).
+# index, which the reason names.
 args = ["analyze", "{fixtures}/gluon/attn_bwd_kernel.sm_89.ptx"]
 exit = 0
