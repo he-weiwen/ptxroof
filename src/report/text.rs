@@ -301,7 +301,7 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
             format!("{}–{}", r.min, r.max)
         }
     };
-    let cols: Vec<[String; 5]> = rows
+    let cols: Vec<[String; 6]> = rows
         .iter()
         .map(|a| {
             let bytes = a.bytes.map(|b| format!(" {b} B")).unwrap_or_default();
@@ -333,15 +333,26 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                 (None, Some(why)) => format!("unknown: {why}"),
                 (None, None) => String::new(),
             };
-            [a.site.clone(), a.opcode.clone(), what, warp, addr]
+            let reuse = a
+                .reuse
+                .iter()
+                .map(|r| match &r.stride {
+                    Some(s) if s.starts_with('-') => format!("k[{}]: {s} B/iter", r.r#loop),
+                    Some(s) if s.parse::<i64>().is_ok() => format!("k[{}]: +{s} B/iter", r.r#loop),
+                    Some(s) => format!("k[{}]: {s} B/iter", r.r#loop),
+                    None => format!("k[{}]: invariant", r.r#loop),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            [a.site.clone(), a.opcode.clone(), what, warp, addr, reuse]
         })
         .collect();
     let width = |i: usize| cols.iter().map(|c| c[i].len()).max().unwrap_or(0);
-    let (w0, w1, w2, w3) = (width(0), width(1), width(2), width(3));
+    let (w0, w1, w2, w3, w4) = (width(0), width(1), width(2), width(3), width(4));
     for c in &cols {
         let line = format!(
-            "{pad}  {:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}",
-            c[0], c[1], c[2], c[3], c[4]
+            "{pad}  {:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {}",
+            c[0], c[1], c[2], c[3], c[4], c[5]
         );
         let _ = writeln!(w, "{}", line.trim_end());
     }

@@ -232,6 +232,18 @@ pub struct Access {
     pub lines_per_request: Option<crate::footprint::Range>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footprint_unknown: Option<String>,
+    /// How the address moves per iteration of each enclosing loop,
+    /// innermost first; a loop it does not move in is self-reuse.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reuse: Vec<Reuse>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct Reuse {
+    pub r#loop: String,
+    /// Bytes the address advances per iteration; absent when it does not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stride: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

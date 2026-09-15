@@ -40,8 +40,8 @@ kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(int, int, int, float, ...)
       global bytes: load 32 B, store 0 B
       AI(global) = 32 flop/B
     accesses:
-      5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B via L1 and L2  warp: ? (the coefficient of ⌊%tid.x/8⌋ is 2 * param_2; bind it)       [(128 * param_2) * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + (2 * param_2) * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]
-      5_2d_blocktiling.cuh:42  st.shared.u16  shared store 2 B                                                                                     [2 * %tid.x + As]
+      5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B via L1 and L2  warp: ? (the coefficient of ⌊%tid.x/8⌋ is 2 * param_2; bind it)       [(128 * param_2) * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + (2 * param_2) * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]                      k[5_2d_blocktiling.cuh:39]: +16 B/iter
+      5_2d_blocktiling.cuh:42  st.shared.u16  shared store 2 B                                                                                     [2 * %tid.x + As]                                                                                                                                    k[5_2d_blocktiling.cuh:39]: invariant
       ...
     ...
 ```

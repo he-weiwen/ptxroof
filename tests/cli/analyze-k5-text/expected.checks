@@ -24,12 +24,12 @@ shared load 2 B     128
 register move        19
 AI(global) = 32 flop/B
 accesses:
-5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B via L1 and L2  warp: ? (the coefficient of ⌊%tid.x/8⌋ is 2 * param_2; bind it)       [(128 * param_2) * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + (2 * param_2) * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]
-5_2d_blocktiling.cuh:42  st.shared.u16  shared store 2 B                                                                                     [2 * %tid.x + As]
-5_2d_blocktiling.cuh:46  ld.global.u16  global load 2 B via L1 and L2  warp: ? (the coefficient of ⌊%tid.x/64⌋ is 2 * param_1; bind it)      [128 * %ctaid.x + (16 * param_1) * k[5_2d_blocktiling.cuh:39] + (2 * param_1) * ⌊%tid.x/64⌋ + 2 * (%tid.x mod 64) + param_5 - 16 * param_1]
+5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B via L1 and L2  warp: ? (the coefficient of ⌊%tid.x/8⌋ is 2 * param_2; bind it)       [(128 * param_2) * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + (2 * param_2) * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]                      k[5_2d_blocktiling.cuh:39]: +16 B/iter
+5_2d_blocktiling.cuh:42  st.shared.u16  shared store 2 B                                                                                     [2 * %tid.x + As]                                                                                                                                    k[5_2d_blocktiling.cuh:39]: invariant
+5_2d_blocktiling.cuh:46  ld.global.u16  global load 2 B via L1 and L2  warp: ? (the coefficient of ⌊%tid.x/64⌋ is 2 * param_1; bind it)      [128 * %ctaid.x + (16 * param_1) * k[5_2d_blocktiling.cuh:39] + (2 * param_1) * ⌊%tid.x/64⌋ + 2 * (%tid.x mod 64) + param_5 - 16 * param_1]          k[5_2d_blocktiling.cuh:39]: 16 * param_1 B/iter
 loop 5_2d_blocktiling.cuh:53 ($L__BB0_3)
 trips = 8
 unrolled source lines: 5_2d_blocktiling.cuh:55 x8, 5_2d_blocktiling.cuh:57 x8, 5_2d_blocktiling.cuh:60 x64
-5_2d_blocktiling.cuh:55  ld.shared.u16  shared load 2 B    [2 * k[5_2d_blocktiling.cuh:53] + 128 * ⌊%tid.x/8⌋ + As - 2]
-5_2d_blocktiling.cuh:57  ld.shared.u16  shared load 2 B    [128 * k[5_2d_blocktiling.cuh:53] + 16 * (%tid.x mod 8) + Bs - 128]
+5_2d_blocktiling.cuh:55  ld.shared.u16  shared load 2 B    [2 * k[5_2d_blocktiling.cuh:53] + 128 * ⌊%tid.x/8⌋ + As - 2]         k[5_2d_blocktiling.cuh:53]: +2 B/iter, k[5_2d_blocktiling.cuh:39]: invariant
+5_2d_blocktiling.cuh:57  ld.shared.u16  shared load 2 B    [128 * k[5_2d_blocktiling.cuh:53] + 16 * (%tid.x mod 8) + Bs - 128]  k[5_2d_blocktiling.cuh:53]: +128 B/iter, k[5_2d_blocktiling.cuh:39]: invariant
 coverage: loop_trips_resolved 100.0% (2/2)

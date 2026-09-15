@@ -325,6 +325,17 @@ fn accesses_by_scope(
                     Some(Err(why)) => (None, None, Some(why)),
                     None => (None, None, None),
                 };
+                let mut reuse = Vec::new();
+                if let Some(a) = &form {
+                    let mut cur = scope;
+                    while let Some(l) = cur {
+                        reuse.push(Reuse {
+                            r#loop: display[l.0 as usize].clone(),
+                            stride: a.terms.get(&Var::Iter(l)).map(ToString::to_string),
+                        });
+                        cur = forest.get(l).parent;
+                    }
+                }
                 let site = match instr.loc.filter(|l| l.line != 0) {
                     Some(loc) => format!(
                         "{}:{}",
@@ -356,6 +367,7 @@ fn accesses_by_scope(
                     sectors_per_request,
                     lines_per_request,
                     footprint_unknown,
+                    reuse,
                 });
             }
         }
@@ -1356,6 +1368,14 @@ mod tests {
             inner[0].address.as_deref(),
             Some("4 * k[$L__L] + param_0 - 4")
         );
+        assert_eq!(
+            inner[0].reuse,
+            [Reuse {
+                r#loop: "$L__L".to_owned(),
+                stride: Some("4".to_owned())
+            }]
+        );
+        assert!(k.accesses[0].reuse.is_empty());
     }
 
     /// A scope holding an unclassified instruction or an unquantified

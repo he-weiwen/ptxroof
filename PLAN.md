@@ -136,11 +136,13 @@ One line each, with the trigger that would start it.
   `4–5 sectors`; needs `--launch` or `.reqntid` and `--bind` for a
   parameter in a lane coefficient; and the cache path from the state
   space and the cache operator, PTX ISA §9.7.9.1, so the GEMM's
-  `cp.async.cg` copies read "L2 only"):
-  3. per loop, whether a reference is invariant or strided, the
-     per-thread reuse distance for self-reuse (the body's footprint),
-     and the unique-byte span per scope: compulsory ≤ moved ≤ requested;
-     oracle: ncu DRAM bytes ≥ compulsory.
+  `cp.async.cg` copies read "L2 only"; and per enclosing loop how
+  the address moves per iteration, `k[loop]: +16 B/iter` or
+  `invariant`, which is the per-thread reuse class; the bytes a thread
+  touches between two reads of an invariant address are the loop's
+  per-iteration bytes printed above the rows):
+  3. the unique-byte span per loop and CTA: compulsory ≤ moved ≤
+     requested; oracle: ncu DRAM bytes ≥ compulsory.
   Same-line decisions are the difference of two affine forms: exact for
   constant differences (k1's `[%rd25]`, `[%rd25+2]`, `[%rd25+4]`),
   need `--bind` for symbolic strides, undecidable across base pointers
