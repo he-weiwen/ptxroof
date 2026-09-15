@@ -298,7 +298,12 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
         .map(|a| {
             let bytes = a.bytes.map(|b| format!(" {b} B")).unwrap_or_default();
             let pred = if a.predicated { " (predicated)" } else { "" };
-            let what = format!("{} {}{bytes}{pred}", a.space, a.direction);
+            let via = if a.path == "shared memory" {
+                String::new()
+            } else {
+                format!(" via {}", a.path)
+            };
+            let what = format!("{} {}{bytes}{via}{pred}", a.space, a.direction);
             let plural = |r: &crate::footprint::Range, one: &str, many: &str| {
                 format!("{} {}", range(r), if r.max == 1 { one } else { many })
             };

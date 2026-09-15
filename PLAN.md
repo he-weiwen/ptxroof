@@ -132,9 +132,9 @@ One line each, with the trigger that would start it.
   every alignment of the uniform part, since pointer parameters carry
   no alignment in the PTX, so a coalesced 4-byte access reads
   `4–5 sectors`; needs `--launch` or `.reqntid` and `--bind` for a
-  parameter in a lane coefficient):
-  2. the cache path from the modifiers (`.cg`, `.nc`, `.cs`,
-     `cp.async.cg` never hits L1);
+  parameter in a lane coefficient; and the cache path from the state
+  space and the cache operator, PTX ISA §9.7.9.1, so the GEMM's
+  `cp.async.cg` copies read "L2 only"):
   3. per loop, whether a reference is invariant or strided, the
      per-thread reuse distance for self-reuse (the body's footprint),
      and the unique-byte span per scope: compulsory ≤ moved ≤ requested;

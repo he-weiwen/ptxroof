@@ -332,6 +332,11 @@ fn accesses_by_scope(
                     ),
                     None => cfg.block_name(module, bid),
                 };
+                let mods: Vec<&str> = module
+                    .modifiers(instr)
+                    .iter()
+                    .map(|&m| module.interner.resolve(m))
+                    .collect();
                 out.entry(scope).or_default().push(Access {
                     site,
                     opcode: module.opcode(instr),
@@ -339,6 +344,12 @@ fn accesses_by_scope(
                     direction: direction.to_owned(),
                     bytes,
                     predicated: instr.predicate.is_some(),
+                    path: cache_path(
+                        module.interner.resolve(instr.mnemonic),
+                        &mods,
+                        space,
+                        direction,
+                    ),
                     address,
                     unknown,
                     sectors_per_request,
@@ -349,6 +360,33 @@ fn accesses_by_scope(
         }
     }
     out
+}
+
+/// The cache level an access can hit at. PTX ISA §9.7.9.1, Tables 30
+/// and 31: loads default to `.ca` (all levels), `.cg` caches in L2
+/// only, `.cs` and `.lu` allocate evict-first, `.cv` fetches again;
+/// stores default to `.wb`, with `.cg`, `.cs` and `.wt`. `ld.global.nc`
+/// is the read-only data path; `cp.async` takes `.ca` or `.cg`.
+fn cache_path(mnemonic: &str, mods: &[&str], space: Space, direction: &str) -> String {
+    let has = |m: &str| mods.contains(&m);
+    let base = match space {
+        Space::Shared | Space::SharedCluster => return "shared memory".to_owned(),
+        Space::Const => return "constant cache".to_owned(),
+        _ if mnemonic == "atom" || mnemonic == "red" => "L2 (atomics)",
+        _ if has("nc") => "read-only path (.nc)",
+        _ if has("cg") => "L2 only (.cg)",
+        _ if has("cs") => "evict-first streaming (.cs)",
+        _ if has("lu") => "evict-first streaming (.lu)",
+        _ if has("cv") => "no cache (.cv)",
+        _ if has("wt") => "write-through (.wt)",
+        _ if direction == "store" => "write-back (.wb)",
+        _ => "L1 and L2",
+    };
+    let mut path = base.to_owned();
+    if let Some(hint) = mods.iter().find(|m| m.starts_with("L2::")) {
+        path.push_str(&format!(" with .{hint}"));
+    }
+    path
 }
 
 /// The direction a count is known in; `None` when bounded in neither.
@@ -1150,6 +1188,53 @@ mod tests {
         assert!(parse_bind("K=x").is_err());
         assert!(parse_bind("=4").is_err());
         assert!(parse_bind("a:K=4").is_err());
+    }
+
+    #[test]
+    fn cache_paths_follow_the_operators() {
+        let p = |m: &str, mods: &[&str], s, d| cache_path(m, mods, s, d);
+        assert_eq!(
+            p("ld", &["global", "u16"], Space::Global, "load"),
+            "L1 and L2"
+        );
+        assert_eq!(
+            p("ld", &["global", "nc", "v4", "f32"], Space::Global, "load"),
+            "read-only path (.nc)"
+        );
+        assert_eq!(
+            p(
+                "cp",
+                &["async", "cg", "shared", "global"],
+                Space::Global,
+                "load"
+            ),
+            "L2 only (.cg)"
+        );
+        assert_eq!(
+            p("st", &["global", "cs", "f32"], Space::Global, "store"),
+            "evict-first streaming (.cs)"
+        );
+        assert_eq!(
+            p("st", &["global", "b32"], Space::Global, "store"),
+            "write-back (.wb)"
+        );
+        assert_eq!(
+            p("ld", &["global", "L2::128B", "f32"], Space::Global, "load"),
+            "L1 and L2 with .L2::128B"
+        );
+        assert_eq!(
+            p("red", &["global", "add", "f32"], Space::Global, "store"),
+            "L2 (atomics)"
+        );
+        assert_eq!(
+            p(
+                "ldmatrix",
+                &["sync", "aligned", "m8n8", "x4", "shared", "b16"],
+                Space::Shared,
+                "load"
+            ),
+            "shared memory"
+        );
     }
 
     /// Each memory operand's address as an affine form: a 2D tile's
