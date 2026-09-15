@@ -79,6 +79,8 @@ pub struct KernelReport {
     /// Launch configuration, when known (flag or PTX directive).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<LaunchInfo>,
+    /// Memory operands in blocks outside every loop.
+    pub accesses: Vec<Access>,
     /// Kernel totals scaled to one CTA (needs `launch`; upper bounds
     /// when the block size is only a maximum).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,7 +184,32 @@ pub struct LoopNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unroll: Option<Unroll>,
     pub per_iteration: Aggregates,
+    /// The memory operands in this loop's own blocks, not its nested
+    /// loops', in program order.
+    pub accesses: Vec<Access>,
     pub loops: Vec<LoopNode>,
+}
+
+/// One memory operand of one instruction: where it points, as an
+/// affine form over thread and CTA indices (`%tid.x`), loop counters
+/// (`k[loop name]`, the iteration number from 1) and the parameters,
+/// plus the instruction's constant offset; or why that is unknown.
+#[derive(Debug, Serialize, Clone)]
+pub struct Access {
+    /// `file:line`, or the block's label when there is no line.
+    pub site: String,
+    pub opcode: String,
+    pub space: String,
+    /// `load`, `store`, or `load+store` for an atomic on one location.
+    pub direction: String,
+    /// Bytes per thread per execution, when the instruction states them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u32>,
+    pub predicated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unknown: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

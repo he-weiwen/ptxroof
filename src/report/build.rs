@@ -21,16 +21,19 @@
 //! below that loop, which is why a guarded kernel still has exact
 //! per-iteration numbers — the altitude where the verdict lives.
 
+use crate::affine::{Affine, Var};
 use crate::cfg::loops::{LoopForest, LoopId};
 use crate::cfg::naming::{LoopName, basename, demangle, loop_names};
 use crate::cfg::{BlockId, Cfg, build_cfg, loop_forest};
 use crate::classify::{ArithKind, Direction, OpClass, Pipe, Precision, Space};
+use crate::core::Operand;
 use crate::core::measurement::MeasureKind;
 use crate::core::symexpr::SymExpr;
 use crate::core::{Instr, Kernel, Module, Stmt};
 use crate::parse::parser::{ParseError, parse};
 use crate::report::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::report::tree::*;
+use crate::tracer::Tracer;
 use crate::trips::{TripInfo, trip_counts};
 use std::collections::{BTreeMap, HashMap};
 
@@ -99,7 +102,13 @@ pub fn analyze(
     let mut bindings_echo = Vec::new();
 
     for kernel in &module.kernels {
-        let bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings_echo)?;
+        let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings_echo)?;
+        // The block shape, when it is the launch's: --launch, else .reqntid.
+        if let Some([x, y, z]) = opts.launch.or(kernel.reqntid) {
+            for (name, n) in [("%ntid.x", x), ("%ntid.y", y), ("%ntid.z", z)] {
+                bind_map.insert(name.to_owned(), i64::from(n));
+            }
+        }
         let k = KernelBuilder::new(&module, kernel, &bind_map).build(opts.launch);
         classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
         classified.den += k.instruction_classes.total;
@@ -180,6 +189,146 @@ fn resolve_bindings(
     Ok(map)
 }
 
+/// Every memory operand of every memory instruction, traced to an
+/// affine address at its own position, grouped by the innermost loop
+/// of its block. `cp.async` gives a store row for its shared
+/// destination and a load row for its global source; an atomic gives
+/// one `load+store` row. Parameter loads are not accesses.
+fn accesses_by_scope(
+    module: &Module,
+    kernel: &Kernel,
+    cfg: &Cfg,
+    forest: &LoopForest,
+    display: &[String],
+    bind_map: &HashMap<String, i64>,
+) -> HashMap<Option<LoopId>, Vec<Access>> {
+    let tracer = Tracer::new(module, kernel, cfg, forest).with_bindings(bind_map);
+    let name = |v: &Var| match v {
+        Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
+        other => other.to_string(),
+    };
+    // A shared array's mangled name reads as its source name.
+    let arrays: Vec<(String, String)> = kernel
+        .shared_decls
+        .iter()
+        .chain(&module.shared_decls)
+        .map(|d| {
+            let raw = module.interner.resolve(d.name).to_owned();
+            let short = demangle(&raw)
+                .rsplit("::")
+                .next()
+                .unwrap_or(&raw)
+                .to_owned();
+            (raw, short)
+        })
+        .collect();
+    let shorten = |mut text: String| {
+        for (raw, short) in &arrays {
+            text = text.replace(raw, short);
+        }
+        text
+    };
+    let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
+    for (bid, block) in cfg.blocks.iter_enumerated() {
+        let scope = forest.block_loop[bid.0 as usize];
+        for (si, stmt) in kernel.stmts[block.start..block.end].iter().enumerate() {
+            let Stmt::Instr(instr) = stmt else { continue };
+            let pos = block.start + si;
+            let mem_ops: Vec<_> = module
+                .operand_ids(instr.operands)
+                .iter()
+                .copied()
+                .filter(|&id| matches!(module.operand(id), Operand::Memory { .. }))
+                .collect();
+            let rows: Vec<(usize, Space, &str, Option<u32>)> =
+                match crate::classify::classify(module, instr) {
+                    OpClass::Memory {
+                        space,
+                        direction,
+                        bytes,
+                    } => {
+                        let d = match direction {
+                            Direction::Load => "load",
+                            Direction::Store => "store",
+                        };
+                        (0..mem_ops.len()).map(|i| (i, space, d, bytes)).collect()
+                    }
+                    OpClass::Copy {
+                        from,
+                        to,
+                        read_bytes,
+                        written_bytes,
+                    } if mem_ops.len() >= 2 => {
+                        vec![
+                            (0, to, "store", written_bytes),
+                            (1, from, "load", read_bytes),
+                        ]
+                    }
+                    OpClass::Copy {
+                        from, read_bytes, ..
+                    } => (0..mem_ops.len())
+                        .map(|i| (i, from, "load+store", read_bytes))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+            for (i, space, direction, bytes) in rows {
+                if space == Space::Param {
+                    continue;
+                }
+                let Operand::Memory { base, offset } = module.operand(mem_ops[i]) else {
+                    continue;
+                };
+                let (address, unknown) = match module.operand(*base) {
+                    Operand::SymbolRef(s) => {
+                        let sym = shorten(module.interner.resolve(*s).to_owned());
+                        let addr = if *offset == 0 {
+                            sym
+                        } else {
+                            format!("{sym} + {offset}")
+                        };
+                        (Some(addr), None)
+                    }
+                    Operand::Register(_) => match tracer.trace_operand(*base, pos, scope, 0) {
+                        Ok(a) => {
+                            let a = (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map);
+                            (Some(shorten(a.render(name))), None)
+                        }
+                        Err(reason) => (
+                            None,
+                            Some(
+                                reason
+                                    .strip_prefix("latch condition ")
+                                    .unwrap_or(&reason)
+                                    .to_owned(),
+                            ),
+                        ),
+                    },
+                    _ => (None, Some("address operand form not traced".to_owned())),
+                };
+                let site = match instr.loc.filter(|l| l.line != 0) {
+                    Some(loc) => format!(
+                        "{}:{}",
+                        basename(module.file_path(loc.file).unwrap_or("<unknown file>")),
+                        loc.line
+                    ),
+                    None => cfg.block_name(module, bid),
+                };
+                out.entry(scope).or_default().push(Access {
+                    site,
+                    opcode: module.opcode(instr),
+                    space: space.key().to_owned(),
+                    direction: direction.to_owned(),
+                    bytes,
+                    predicated: instr.predicate.is_some(),
+                    address,
+                    unknown,
+                });
+            }
+        }
+    }
+    out
+}
+
 /// The direction a count is known in; `None` when bounded in neither.
 fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
     match (at_most, at_least) {
@@ -221,7 +370,7 @@ struct TermSum {
 
 impl TermSum {
     fn add(&mut self, count: i64, mult: &SymExpr, at_most: bool) {
-        let (coeff, rest) = split_const(mult.clone());
+        let (coeff, rest) = SymExpr::split_const(mult.clone());
         match self.groups.iter_mut().find(|(m, _)| *m == rest) {
             Some((_, n)) => *n += coeff * count,
             None => self.groups.push((rest, coeff * count)),
@@ -341,24 +490,6 @@ impl FlopTable {
 }
 
 /// `(constant coefficient, the rest)` of a product.
-fn split_const(e: SymExpr) -> (i64, SymExpr) {
-    match e {
-        SymExpr::Const(c) => (c, SymExpr::Const(1)),
-        SymExpr::Prod(fs) => match fs.first() {
-            Some(&SymExpr::Const(c)) => {
-                let rest = fs[1..]
-                    .iter()
-                    .cloned()
-                    .reduce(SymExpr::mul)
-                    .unwrap_or(SymExpr::Const(1));
-                (c, rest)
-            }
-            _ => (1, SymExpr::Prod(fs)),
-        },
-        other => (1, other),
-    }
-}
-
 struct KernelBuilder<'a> {
     module: &'a Module,
     kernel: &'a Kernel,
@@ -375,6 +506,9 @@ struct KernelBuilder<'a> {
     cond_entry: Vec<bool>,
     /// Display names with the remainder suffix applied.
     display: Vec<String>,
+    /// Memory operands per scope: the innermost loop of their block, or
+    /// `None` outside every loop.
+    accesses: HashMap<Option<LoopId>, Vec<Access>>,
 }
 
 impl<'a> KernelBuilder<'a> {
@@ -416,6 +550,7 @@ impl<'a> KernelBuilder<'a> {
             })
             .collect();
 
+        let accesses = accesses_by_scope(module, kernel, &cfg, &forest, &display, bind_map);
         KernelBuilder {
             module,
             kernel,
@@ -428,6 +563,7 @@ impl<'a> KernelBuilder<'a> {
             trip_exprs,
             cond_entry,
             display,
+            accesses,
         }
     }
 
@@ -709,6 +845,7 @@ impl<'a> KernelBuilder<'a> {
             trips,
             unroll,
             per_iteration: self.aggregates(Some(id), None),
+            accesses: self.accesses.get(&Some(id)).cloned().unwrap_or_default(),
             loops: self
                 .forest
                 .children_of(id)
@@ -950,6 +1087,7 @@ impl<'a> KernelBuilder<'a> {
             instruction_classes: classes,
             most_instructions_loop: ranking.first().map(|(_, r)| r.loop_name.clone()),
             launch,
+            accesses: self.accesses.get(&None).cloned().unwrap_or_default(),
             totals_per_cta,
             ranking: ranking.into_iter().map(|(_, r)| r).collect(),
             loops: self
@@ -990,6 +1128,40 @@ mod tests {
         assert!(parse_bind("K=x").is_err());
         assert!(parse_bind("=4").is_err());
         assert!(parse_bind("a:K=4").is_err());
+    }
+
+    /// Each memory operand's address as an affine form: a 2D tile's
+    /// shared row and column from the thread index, and a pointer that
+    /// steps through a loop, read before its increment.
+    #[test]
+    fn accesses_are_affine_addresses() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   .shared .align 2 .b8 _ZZ1kE2As[128];\n\
+                   ld.param.u64 %rd1, [k_param_0];\ncvta.to.global.u64 %rd2, %rd1;\n\
+                   mov.u32 %r1, %tid.x;\nshr.u32 %r2, %r1, 3;\nand.b32 %r3, %r1, 7;\n\
+                   shl.b32 %r4, %r2, 4;\nshl.b32 %r5, %r3, 1;\nadd.s32 %r6, %r4, %r5;\n\
+                   mov.u32 %r7, _ZZ1kE2As;\nadd.s32 %r8, %r7, %r6;\nld.shared.u16 %rs1, [%r8+2];\n\
+                   mov.u64 %rd3, %rd2;\nmov.u32 %r9, 0;\n\
+                   $L__L:\nld.global.f32 %f1, [%rd3];\nadd.s64 %rd3, %rd3, 4;\n\
+                   add.s32 %r9, %r9, 1;\nsetp.lt.s32 %p1, %r9, 8;\n@%p1 bra $L__L;\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let k = &r.kernels[0];
+        assert_eq!(k.accesses.len(), 1);
+        assert_eq!(k.accesses[0].opcode, "ld.shared.u16");
+        assert_eq!(
+            k.accesses[0].address.as_deref(),
+            Some("16 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + As + 2")
+        );
+        let inner = &k.loops[0].accesses;
+        assert_eq!(inner.len(), 1);
+        assert_eq!(inner[0].direction, "load");
+        assert_eq!(inner[0].bytes, Some(4));
+        assert_eq!(
+            inner[0].address.as_deref(),
+            Some("4 * k[$L__L] + param_0 - 4")
+        );
     }
 
     /// A scope holding an unclassified instruction or an unquantified

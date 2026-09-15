@@ -82,6 +82,7 @@ pub fn render(report: &Report) -> String {
         for l in &k.loops {
             render_loop(w, l, 1);
         }
+        render_accesses(w, "  ", "accesses outside loops", &k.accesses);
 
         let _ = writeln!(w, "  totals [static]:");
         render_aggregates(w, &k.totals, "    ");
@@ -263,6 +264,7 @@ fn render_loop(w: &mut String, l: &LoopNode, depth: usize) {
     }
     let _ = writeln!(w, "{pad}  per iteration:");
     render_aggregates(w, &l.per_iteration, &format!("{pad}    "));
+    render_accesses(w, &format!("{pad}  "), "accesses", &l.accesses);
     for child in &l.loops {
         render_loop(w, child, depth + 1);
     }
@@ -275,6 +277,38 @@ fn intensity(ai: &Intensity) -> String {
         Bound::AtMost => "<=",
     };
     format!("{sign} {}", ai.value)
+}
+
+/// One row per memory operand: site, opcode, what moves, and where it
+/// points or why that is unknown.
+fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
+    if rows.is_empty() {
+        return;
+    }
+    let _ = writeln!(w, "{pad}{title}:");
+    let cols: Vec<[String; 4]> = rows
+        .iter()
+        .map(|a| {
+            let bytes = a.bytes.map(|b| format!(" {b} B")).unwrap_or_default();
+            let pred = if a.predicated { " (predicated)" } else { "" };
+            let what = format!("{} {}{bytes}{pred}", a.space, a.direction);
+            let addr = match (&a.address, &a.unknown) {
+                (Some(x), _) => format!("[{x}]"),
+                (None, Some(why)) => format!("unknown: {why}"),
+                (None, None) => String::new(),
+            };
+            [a.site.clone(), a.opcode.clone(), what, addr]
+        })
+        .collect();
+    let width = |i: usize| cols.iter().map(|c| c[i].len()).max().unwrap_or(0);
+    let (w0, w1, w2) = (width(0), width(1), width(2));
+    for c in &cols {
+        let _ = writeln!(
+            w,
+            "{pad}  {:<w0$}  {:<w1$}  {:<w2$}  {}",
+            c[0], c[1], c[2], c[3]
+        );
+    }
 }
 
 fn describe(at_most: bool, at_least: bool) -> &'static str {

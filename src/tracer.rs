@@ -163,6 +163,11 @@ impl<'a> Tracer<'a> {
     /// `mov i, t` in the latch, LLVM's two-register counter); the step
     /// is the sum of the constants along that chain, and phi is the
     /// chain's register defined before the loop.
+    pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<String, i64>) -> Self {
+        self.bindings = Some(bindings);
+        self
+    }
+
     /// A constant, after the bindings if there are any.
     fn constant(&self, a: &Affine) -> Option<i64> {
         match self.bindings {

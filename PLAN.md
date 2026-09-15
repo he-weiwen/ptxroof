@@ -9,7 +9,9 @@ before 2026-09-08 is in git: `git show 3ba19b5:PLAN.md`.
 Reads a PTX file. Per kernel: the block table (CFG), the loop forest
 with trip counts as symbolic expressions over the kernel parameters,
 instruction counts by kind and opcode per loop iteration and in total,
-flops by pipe and precision, bytes by state space, AI(global). Text
+flops by pipe and precision, bytes by state space, AI(global), and per
+memory operand its address as an affine form over the thread and CTA
+indices, the loop counters and the parameters. Text
 and JSON views of the same tree. Every number is static, per thread,
 as requested by the PTX; nothing is measured (README).
 
@@ -17,6 +19,15 @@ as requested by the PTX; nothing is measured (README).
 
 ### Wrong output
 
+- **Addresses the tracer cannot read are unknown rows**, with the
+  reason. Not read: xor swizzles of shared addresses (every ldmatrix
+  and cp.async destination in the Gluon GEMM and attention kernels,
+  "behind `xor.b32`"); divisions by a runtime value, such as the
+  grouped tile schedule's `pid / num_pid_n` (the GEMM's global copies,
+  a `min` of non-constants even with `--bind`); masks that are not
+  one run of bits (the attention backward's dQ stores, `0xdc`); a
+  counter's value after its loop (k1's remainder loop reads the main
+  loop's final k: "more than one reaching definition"); `selp`.
 - **Warp-specialized kernels are bounded, not counted.** Every count
   is per thread and every block is assumed to run on every thread.
   `attn_fwd_ws_kernel.sm_89.ptx` splits on `tid.x >> 5 < 4`: warps 0
@@ -107,12 +118,10 @@ One line each, with the trigger that would start it.
 - Local memory per thread from the `.local` depot declaration (k14:
   `__local_depot0[512]`), where spills go; keeping the declaration
   also lets k14's dump reassemble. Trigger: the same hunt.
-- Access patterns, in three steps on the trip matcher's tracer
-  (special registers as variables, a coefficient map instead of one
-  induction variable, the memory operand traced instead of the latch
-  compare; non-affine addresses such as the xor swizzles and the
-  cross-entropy gather become a named unknown per reference):
-  1. per-reference affine address over lane, CTA, counters, params;
+- Access patterns, in three steps on the tracer; the first is done
+  (the `accesses` rows: every fixture's global and shared operands
+  except those listed above, including 2D tiles' `⌊%tid.x/8⌋` and
+  `(%tid.x mod 8)` and counters stepped by `4·N`):
   2. sectors and lines per warp request (k1 vs k2 differ only here),
      with the cache path from the modifiers (`.cg`, `.nc`, `.cs`,
      `cp.async.cg` never hits L1); oracle: ncu sectors per request;
