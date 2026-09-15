@@ -25,15 +25,16 @@ use crate::parse::parser::parse_int;
 use std::collections::{HashMap, HashSet};
 
 /// Where a register's value at a statement comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Reach {
     /// One definition, and no other can reach the statement.
     Def(usize),
     /// Defined again inside a loop containing the statement: the value
     /// is the header's merge of the entry value and the back edge.
     Carried(LoopId),
-    /// Definitions from more than one path meet before the statement.
-    Merged,
+    /// Definitions from more than one path meet before the statement:
+    /// these ones.
+    Merged(Vec<usize>),
     None,
 }
 
@@ -50,7 +51,9 @@ pub(crate) struct Tracer<'a> {
     pub(crate) reach: Vec<Vec<bool>>,
     /// Per loop: counter register ↦ (step, the chain register defined
     /// before the loop).
-    pub(crate) ivs: Vec<HashMap<Symbol, (i64, Symbol)>>,
+    pub(crate) ivs: Vec<HashMap<Symbol, (SymExpr, Symbol)>>,
+    /// `--bind` values, applied where a trace needs a constant.
+    pub(crate) bindings: Option<&'a HashMap<String, i64>>,
 }
 
 impl<'a> Tracer<'a> {
@@ -96,11 +99,42 @@ impl<'a> Tracer<'a> {
             params,
             reach,
             ivs: Vec::new(),
+            bindings: None,
         };
-        t.ivs = (0..forest.loops.len() as u32)
-            .map(|i| t.induction_vars(LoopId(i)))
-            .collect();
+        // Outer loops first: a step register may be an enclosing counter.
+        t.ivs = vec![HashMap::new(); forest.loops.len()];
+        let mut order: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
+        order.sort_by_key(|&l| forest.get(l).depth);
+        for l in order {
+            let m = t.induction_vars(l);
+            t.ivs[l.0 as usize] = m;
+        }
         t
+    }
+
+    /// Every one of these definitions is `mov r, imm` with one immediate.
+    fn same_immediate(&self, defs: &[usize]) -> Option<i64> {
+        let mut value = None;
+        for &d in defs {
+            let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
+                return None;
+            };
+            let [_, src] = self.module.operand_ids(instr.operands) else {
+                return None;
+            };
+            let Operand::Immediate(text) = self.module.operand(*src) else {
+                return None;
+            };
+            if self.module.interner.resolve(instr.mnemonic) != "mov" {
+                return None;
+            }
+            let c = parse_int(self.module.interner.resolve(*text))?;
+            if value.is_some_and(|v| v != c) {
+                return None;
+            }
+            value = Some(c);
+        }
+        value
     }
 
     /// A merged value: the obstacle on any of its definitions' chains.
@@ -129,7 +163,15 @@ impl<'a> Tracer<'a> {
     /// `mov i, t` in the latch, LLVM's two-register counter); the step
     /// is the sum of the constants along that chain, and phi is the
     /// chain's register defined before the loop.
-    pub(crate) fn induction_vars(&self, id: LoopId) -> HashMap<Symbol, (i64, Symbol)> {
+    /// A constant, after the bindings if there are any.
+    fn constant(&self, a: &Affine) -> Option<i64> {
+        match self.bindings {
+            Some(b) => a.bind(b).as_const(),
+            None => a.as_const(),
+        }
+    }
+
+    pub(crate) fn induction_vars(&self, id: LoopId) -> HashMap<Symbol, (SymExpr, Symbol)> {
         let l = self.forest.get(id);
         let header_start = self.cfg.block(l.header).start;
         let mut in_loop_defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
@@ -145,21 +187,33 @@ impl<'a> Tracer<'a> {
                 }
             }
         }
-        let add_const = |site: usize| -> Option<(Symbol, i64)> {
+        // A loop-invariant step register: its value at the increment is
+        // a plain expression (4·N, say), whether it was computed before
+        // the loop or recomputed from invariants inside it. This loop's
+        // own counters are not known yet, so a read of one is refused.
+        let invariant_step = |s: Symbol, site: usize| -> Option<SymExpr> {
+            let v = self.trace_reg(s, site, Some(id), 0, None).ok()?;
+            v.is_invariant().then_some(v.base)
+        };
+        let add_const = |site: usize| -> Option<(Symbol, SymExpr)> {
             let Stmt::Instr(instr) = &self.kernel.stmts[site] else {
                 return None;
             };
             let ops = self.module.operand_ids(instr.operands);
             match (self.module.interner.resolve(instr.mnemonic), ops) {
                 ("mov", [_, src]) => match self.module.operand(*src) {
-                    Operand::Register(r) => Some((*r, 0)),
+                    Operand::Register(r) => Some((*r, SymExpr::Const(0))),
                     _ => None,
                 },
                 ("add", [_, a, b]) => match (self.module.operand(*a), self.module.operand(*b)) {
                     (Operand::Register(r), Operand::Immediate(c))
-                    | (Operand::Immediate(c), Operand::Register(r)) => {
-                        Some((*r, parse_int(self.module.interner.resolve(*c))?))
-                    }
+                    | (Operand::Immediate(c), Operand::Register(r)) => Some((
+                        *r,
+                        SymExpr::Const(parse_int(self.module.interner.resolve(*c))?),
+                    )),
+                    (Operand::Register(r), Operand::Register(s)) => invariant_step(*s, site)
+                        .map(|step| (*r, step))
+                        .or_else(|| invariant_step(*r, site).map(|step| (*s, step))),
                     _ => None,
                 },
                 _ => None,
@@ -177,22 +231,22 @@ impl<'a> Tracer<'a> {
             {
                 continue;
             }
-            let mut step = 0;
+            let mut step = SymExpr::Const(0);
             let mut chain = vec![*reg];
             for _ in 0..8 {
                 let Some((src, c)) = add_const(site) else {
                     break;
                 };
-                step += c;
+                step = SymExpr::add(step, c);
                 if src == *reg {
                     let phi = chain.iter().copied().find(|&r| {
                         matches!(
                             self.reach_def(r, header_start, Some(id)),
-                            Reach::Def(_) | Reach::Merged
+                            Reach::Def(_) | Reach::Merged(_)
                         )
                     });
                     if let Some(phi) = phi
-                        && step != 0
+                        && step != SymExpr::Const(0)
                     {
                         ivs.insert(*reg, (step, phi));
                     }
@@ -340,7 +394,9 @@ impl<'a> Tracer<'a> {
                     }
                     l = self.forest.get(id).parent;
                 }
-                return Reach::Merged;
+                let mut merged = vec![d];
+                merged.extend(interfering);
+                return Reach::Merged(merged);
             }
             if b == Cfg::ENTRY {
                 break;
@@ -367,7 +423,7 @@ impl<'a> Tracer<'a> {
             }
             l = self.forest.get(id).parent;
         }
-        Reach::Merged
+        Reach::Merged(arriving)
     }
 
     pub(crate) fn trace_operand(
@@ -385,6 +441,11 @@ impl<'a> Tracer<'a> {
                     .map(|c| Affine::invariant(SymExpr::Const(c)))
                     .ok_or_else(|| format!("non-integer immediate {text}"))
             }
+            // A named location (a shared array, the dynamic shared base):
+            // its address is an invariant symbol.
+            Operand::SymbolRef(s) => Ok(Affine::invariant(SymExpr::sym(
+                self.module.interner.resolve(*s),
+            ))),
             other => Err(format!(
                 "unsupported operand form in latch trace: {other:?}"
             )),
@@ -408,17 +469,22 @@ impl<'a> Tracer<'a> {
             Reach::Carried(l) => {
                 // The counter of loop l read before its increment: the
                 // previous iteration's value, init + (k − 1)·step.
-                if let Some(&(step, phi)) = self.ivs[l.0 as usize].get(&reg) {
-                    let init = self.iv_init(phi, l, depth + 1)?;
-                    return Ok(Affine::term(Var::Iter(l), SymExpr::Const(step))
+                if let Some((step, phi)) = self.ivs[l.0 as usize].get(&reg) {
+                    let init = self.iv_init(*phi, l, depth + 1)?;
+                    let back = SymExpr::mul(SymExpr::Const(-1), step.clone());
+                    return Ok(Affine::term(Var::Iter(l), step.clone())
                         + init
-                        + Affine::invariant(SymExpr::Const(-step)));
+                        + Affine::invariant(back));
                 }
                 return Err(self.obstacle_of_any_def(reg, id).unwrap_or_else(|| {
                     format!("latch condition depends on {name}, carried around an enclosing loop")
                 }));
             }
-            Reach::Merged => {
+            Reach::Merged(defs) => {
+                // The same immediate on every path is that value.
+                if let Some(c) = self.same_immediate(&defs) {
+                    return Ok(Affine::invariant(SymExpr::Const(c)));
+                }
                 return Err(self
                     .obstacle_of_any_def(reg, id)
                     .unwrap_or_else(|| format!("{name} has more than one reaching definition")));
@@ -426,6 +492,10 @@ impl<'a> Tracer<'a> {
             Reach::None => {
                 return match Var::special(name) {
                     Some(v) => Ok(Affine::var(v)),
+                    // The launch shape is uniform: a symbol, bound when known.
+                    None if name.starts_with("%ntid") || name.starts_with("%nctaid") => {
+                        Ok(Affine::invariant(SymExpr::sym(name)))
+                    }
                     None if is_special_register(name) => Err(format!(
                         "latch condition depends on special register {name}"
                     )),
@@ -438,13 +508,13 @@ impl<'a> Tracer<'a> {
         // its increment: init + k·step.
         let mut l = id;
         while let Some(cur) = l {
-            if let Some(&(step, phi)) = self.ivs[cur.0 as usize].get(&reg)
+            if let Some((step, phi)) = self.ivs[cur.0 as usize].get(&reg)
                 && self.in_loop(cur, def)
                 && let Stmt::Instr(instr) = &self.kernel.stmts[def]
                 && matches!(self.module.interner.resolve(instr.mnemonic), "add" | "mov")
             {
-                let init = self.iv_init(phi, cur, depth + 1)?;
-                return Ok(Affine::term(Var::Iter(cur), SymExpr::Const(step)) + init);
+                let init = self.iv_init(*phi, cur, depth + 1)?;
+                return Ok(Affine::term(Var::Iter(cur), step.clone()) + init);
             }
             l = self.forest.get(cur).parent;
         }
@@ -489,34 +559,113 @@ impl<'a> Tracer<'a> {
             "and" if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
                 let (val, mask) = (arg(1)?, arg(2)?);
-                let (affine, konst) = match (mask.as_const(), val.as_const()) {
+                let (affine, konst) = match (self.constant(&mask), self.constant(&val)) {
                     (Some(c), _) => (val, c),
                     (_, Some(c)) => (mask, c),
                     _ => return Err("and-mask with two non-constant operands".to_owned()),
                 };
-                let modulus = konst
-                    .checked_add(1)
-                    .filter(|m| *m > 0 && (m & (m - 1)) == 0)
-                    .ok_or_else(|| format!("and-mask {konst:#x} is not 2^n − 1"))?;
-                if !affine.is_invariant() {
-                    return Err(refuse(&affine, id, "mod applied to an induction variable"));
+                // A contiguous run of ones from bit `low` up to bit `top`:
+                // x mod 2^top − x mod 2^low, and x itself above the register
+                // width in the nonneg domain.
+                let width = if mods.iter().any(|m| m.ends_with("64")) {
+                    64
+                } else {
+                    32
+                };
+                let bits = konst as u64;
+                let low = bits.trailing_zeros();
+                let run = (bits >> low).trailing_ones();
+                if bits == 0 || (bits >> low) >> run != 0 {
+                    return Err(format!("and-mask {konst:#x} is not one run of bits"));
                 }
-                Ok(Affine::invariant(SymExpr::modulo(affine.base, modulus)))
+                let top = low + run;
+                let modulo = |x: Affine, k: u32| -> Result<Affine, String> {
+                    x.clone()
+                        .modulo_const(1i64 << k)
+                        .ok_or_else(|| refuse(&x, id, "mod"))
+                };
+                let hi = if top >= width - 1 {
+                    affine.clone()
+                } else {
+                    modulo(affine.clone(), top)?
+                };
+                if low == 0 {
+                    return Ok(hi);
+                }
+                hi.clone()
+                    .align_down(1i64 << low)
+                    .ok_or_else(|| refuse(&hi, id, "mod"))
+            }
+            "or" if ops.len() == 3 => {
+                // LLVM writes an add as `or` when no bits can overlap: every
+                // part of the other side is a multiple of a power of two above
+                // the constant.
+                let (a, b) = (arg(1)?, arg(2)?);
+                // The bounded side: a constant, or a form of moduli whose
+                // largest value is known.
+                let bound = |x: &Affine| self.constant(x).or_else(|| x.max_value());
+                let (small, max, big) = match (bound(&a), bound(&b)) {
+                    (_, Some(m)) => (b, m, a),
+                    (Some(m), _) => (a, m, b),
+                    _ => return Err("or of two values neither of known range".to_owned()),
+                };
+                if max < 0 {
+                    return Err(format!("or with a negative value {max:#x}"));
+                }
+                let m = 1i64 << (64 - (max as u64).leading_zeros());
+                if big.clone().div_exact(m).is_some() {
+                    Ok(big + small)
+                } else {
+                    Err(format!(
+                        "or with a value below {m:#x} on a value not known to have those bits clear"
+                    ))
+                }
+            }
+            "bfe" if ops.len() == 4 => {
+                // bfe d, a, pos, len: bits [pos, pos + len) of a. Signed from
+                // bit 0 is a width change, value-preserving in the nonneg
+                // domain like cvt; unsigned is (a >> pos) mod 2^len.
+                let a = arg(1)?;
+                let (Some(pos), Some(len)) = (self.constant(&arg(2)?), self.constant(&arg(3)?))
+                else {
+                    return Err("bfe with a non-constant position or length".to_owned());
+                };
+                let signed = mods.iter().any(|m| m.starts_with('s'));
+                if signed && pos == 0 {
+                    return Ok(a);
+                }
+                if signed || !(0..63).contains(&pos) || !(1..63).contains(&len) {
+                    return Err(format!("bfe at {pos} of {len} bits"));
+                }
+                let shifted = a
+                    .clone()
+                    .div_const(1i64 << pos)
+                    .ok_or_else(|| refuse(&a, id, "bit field"))?;
+                shifted
+                    .clone()
+                    .modulo_const(1i64 << len)
+                    .ok_or_else(|| refuse(&shifted, id, "bit field"))
             }
             "shl" if ops.len() == 3 => {
                 let v = arg(1)?;
-                match arg(2)?.as_const() {
+                match self.constant(&arg(2)?) {
                     Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".to_owned()),
                 }
             }
             "shr" if ops.len() == 3 => {
                 let v = arg(1)?;
-                let Some(c) = arg(2)?.as_const() else {
+                let Some(c) = self.constant(&arg(2)?) else {
                     return Err("shift by a non-constant amount".to_owned());
                 };
                 if !v.is_invariant() {
-                    return Err(refuse(&v, id, "shift applied to an induction variable"));
+                    if !(0..63).contains(&c) {
+                        return Err(format!("shift by {c} is out of range"));
+                    }
+                    return v
+                        .clone()
+                        .div_const(1i64 << c)
+                        .ok_or_else(|| refuse(&v, id, "shift"));
                 }
                 let signed_width = mods.iter().find_map(|m| match *m {
                     "s16" => Some(16),
@@ -536,6 +685,35 @@ impl<'a> Tracer<'a> {
                     Err(format!("shift by {c} is out of range"))
                 }
             }
+            "div" | "rem" if ops.len() == 3 => {
+                let a = arg(1)?;
+                let Some(d) = self.constant(&arg(2)?).filter(|&d| d > 0) else {
+                    return Err(format!("{mnemonic} by a non-constant divisor"));
+                };
+                let result = if mnemonic == "div" {
+                    a.clone().div_const(d)
+                } else {
+                    a.clone().modulo_const(d)
+                };
+                result.ok_or_else(|| refuse(&a, id, "division"))
+            }
+            "min" | "max" if ops.len() == 3 => {
+                // A clamp of two constants (after bindings) is a constant.
+                let (a, b) = (arg(1)?, arg(2)?);
+                match (self.constant(&a), self.constant(&b)) {
+                    (Some(x), Some(y)) => {
+                        Ok(Affine::invariant(SymExpr::Const(if mnemonic == "min" {
+                            x.min(y)
+                        } else {
+                            x.max(y)
+                        })))
+                    }
+                    _ if a.is_invariant() && b.is_invariant() => {
+                        Err(format!("{mnemonic} of values not both constant"))
+                    }
+                    _ => Err(refuse(&(a + b), id, &mnemonic)),
+                }
+            }
             "mul" if ops.len() == 3 => {
                 let (a, b) = (arg(1)?, arg(2)?);
                 if a.is_invariant() {
@@ -543,11 +721,7 @@ impl<'a> Tracer<'a> {
                 } else if b.is_invariant() {
                     Ok(a.scale(b.base))
                 } else {
-                    Err(refuse(
-                        &(a + b),
-                        id,
-                        "product involving an induction variable",
-                    ))
+                    Err(refuse(&(a + b), id, "product"))
                 }
             }
             "mad" if ops.len() == 4 => {
@@ -557,11 +731,7 @@ impl<'a> Tracer<'a> {
                 } else if b.is_invariant() {
                     a.scale(b.base)
                 } else {
-                    return Err(refuse(
-                        &(a + b),
-                        id,
-                        "product involving an induction variable",
-                    ));
+                    return Err(refuse(&(a + b), id, "product"));
                 };
                 Ok(prod + c)
             }
@@ -574,9 +744,10 @@ impl<'a> Tracer<'a> {
                             Operand::Register(r) => self.obstacle(*r, def, id, &mut seen),
                             _ => None,
                         });
-                Err(fundamental.unwrap_or_else(|| {
-                    format!("value defined by unsupported instruction `{other}`")
-                }))
+                Err(match fundamental {
+                    Some(reason) => format!("{reason}, behind `{}`", self.module.opcode(instr)),
+                    None => format!("value defined by unsupported instruction `{other}`"),
+                })
             }
         }
     }
@@ -602,7 +773,7 @@ impl<'a> Tracer<'a> {
                 return is_special_register(name)
                     .then(|| format!("latch condition depends on special register {name}"));
             }
-            Reach::Carried(_) | Reach::Merged => return self.obstacle_of_any_def(reg, id),
+            Reach::Carried(_) | Reach::Merged(_) => return self.obstacle_of_any_def(reg, id),
         };
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return None;
@@ -644,17 +815,19 @@ impl<'a> Tracer<'a> {
 
 /// Why an arithmetic form is refused: a special register or an enclosing
 /// loop's counter among its variables outranks the generic reason.
-pub(crate) fn refuse(a: &Affine, id: Option<LoopId>, generic: &str) -> String {
+pub(crate) fn refuse(a: &Affine, id: Option<LoopId>, what: &str) -> String {
     for v in a.terms.keys() {
         match v {
             Var::Iter(l) if Some(*l) == id => {}
             Var::Iter(_) => {
                 return "latch condition depends on an enclosing loop's counter".to_owned();
             }
-            other => return format!("latch condition depends on special register {other}"),
+            other => {
+                return format!("latch condition depends on special register {other}, in a {what}");
+            }
         }
     }
-    generic.to_owned()
+    format!("{what} of an induction variable")
 }
 
 pub(crate) fn is_special_register(name: &str) -> bool {

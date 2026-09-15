@@ -53,6 +53,40 @@ impl SymExpr {
         SymExpr::Sym(name.into())
     }
 
+    /// `(c, rest)` with `self = c·rest`: the leading constant of a
+    /// product, or 1.
+    pub fn split_const(e: SymExpr) -> (i64, SymExpr) {
+        match e {
+            SymExpr::Const(c) => (c, SymExpr::Const(1)),
+            SymExpr::Prod(fs) => match fs.first() {
+                Some(&SymExpr::Const(c)) => {
+                    let rest = fs[1..]
+                        .iter()
+                        .cloned()
+                        .reduce(SymExpr::mul)
+                        .unwrap_or(SymExpr::Const(1));
+                    (c, rest)
+                }
+                _ => (1, SymExpr::Prod(fs)),
+            },
+            other => (1, other),
+        }
+    }
+
+    /// Every value of the expression is a multiple of `m` (m > 0): a
+    /// constant, a product with a leading constant, or a sum of such.
+    /// Symbols and divisions are not known to be.
+    pub fn divisible_by(&self, m: i64) -> bool {
+        match self {
+            SymExpr::Const(c) => c % m == 0,
+            SymExpr::Prod(fs) => matches!(fs.first(), Some(SymExpr::Const(c)) if c % m == 0),
+            SymExpr::Sum(ts) => ts.iter().all(|t| t.divisible_by(m)),
+            SymExpr::Sym(_) | SymExpr::CeilDiv(..) | SymExpr::FloorDiv(..) | SymExpr::Mod(..) => {
+                false
+            }
+        }
+    }
+
     pub fn as_const(&self) -> Option<i64> {
         match self {
             SymExpr::Const(c) => Some(*c),
@@ -90,6 +124,26 @@ impl SymExpr {
                 other => terms.push(other),
             }
         }
+        // Like terms: `2·x + 3·x` is `5·x`; a term whose multiplier sums
+        // to zero disappears.
+        let mut grouped: Vec<(SymExpr, i64)> = Vec::new();
+        let mut kept: Vec<SymExpr> = Vec::new();
+        for t in terms.drain(..) {
+            let (c, rest) = SymExpr::split_const(t);
+            match grouped.iter_mut().find(|(r, _)| *r == rest) {
+                Some((_, n)) => match n.checked_add(c) {
+                    Some(v) => *n = v,
+                    None => kept.push(SymExpr::mul(SymExpr::Const(c), rest)),
+                },
+                None => grouped.push((rest, c)),
+            }
+        }
+        for (rest, n) in grouped {
+            if n != 0 {
+                terms.push(SymExpr::mul(SymExpr::Const(n), rest));
+            }
+        }
+        terms.extend(kept);
         if konst != 0 || terms.is_empty() {
             terms.push(SymExpr::Const(konst));
         }
@@ -216,9 +270,11 @@ impl SymExpr {
         if c == 1 {
             return SymExpr::Const(0);
         }
-        match e.as_const() {
-            Some(v) => SymExpr::Const(v.rem_euclid(c)),
-            None => SymExpr::Mod(Box::new(e), c),
+        match e {
+            SymExpr::Const(v) => SymExpr::Const(v.rem_euclid(c)),
+            // (x mod a) mod c = x mod c when c divides a.
+            SymExpr::Mod(inner, a) if a % c == 0 => SymExpr::modulo(*inner, c),
+            other => SymExpr::Mod(Box::new(other), c),
         }
     }
 
@@ -391,6 +447,8 @@ mod tests {
         assert_eq!(E::modulo(E::Const(9), 8), E::Const(1));
         assert_eq!(E::ceil_div(k(), 1), k());
         assert_eq!(E::floor_div(k(), 1), k());
+        assert_eq!(E::modulo(E::modulo(k(), 64), 8), E::modulo(k(), 8));
+        assert!(matches!(E::modulo(E::modulo(k(), 8), 64), E::Mod(..)));
         assert_eq!(E::modulo(k(), 1), E::Const(0));
     }
 

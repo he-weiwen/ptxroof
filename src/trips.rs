@@ -194,7 +194,7 @@ impl<'a> Tracer<'a> {
 
         // D(k) = A1·k + A0 in this loop's iteration number alone.
         let k = Var::Iter(id);
-        if let Some(v) = d.terms.keys().find(|&&v| v != k) {
+        if let Some(v) = d.terms.keys().find(|v| **v != k) {
             return Err(match v {
                 Var::Iter(_) => "latch condition depends on an enclosing loop's counter".to_owned(),
                 other => format!("latch condition depends on special register {other}"),
@@ -578,7 +578,10 @@ mod tests {
              $L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
         );
         let err = trips_of(&src)[0].1.clone().unwrap_err();
-        assert_eq!(err, "value defined by unsupported instruction `or`");
+        assert_eq!(
+            err,
+            "or with a value below 0x2 on a value not known to have those bits clear"
+        );
     }
 
     #[test]
@@ -648,6 +651,60 @@ mod tests {
         let trips = trips_of(&src);
         let err = trips[0].1.clone().unwrap_err();
         assert_eq!(err, "%r3 has more than one reaching definition");
+    }
+
+    #[test]
+    fn arithmetic_forms_the_tracer_reads() {
+        // or on a value with the low bits provably clear is an add.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nshl.b32 %r2, %r1, 7;\nor.b32 %r3, %r2, 127;\n\
+             mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(
+            trips_of(&src)[0].1.as_ref().unwrap().to_string(),
+            "128 * param_0 + 127"
+        );
+        // bfe.s32 from bit 0 is a width change; bfe.u32 a shift and a mask.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nbfe.s32 %r3, %r1, 0, 26;\nbfe.u32 %r6, %r3, 3, 5;\n\
+             mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r6;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(
+            trips_of(&src)[0].1.as_ref().unwrap().to_string(),
+            "(param_0 / 8) mod 32"
+        );
+        // div and rem by a constant; and-masks as one run of bits.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\ndiv.u32 %r2, %r1, 8;\nrem.u32 %r3, %r1, 8;\n\
+             and.b32 %r5, %r1, 0x38;\nadd.s32 %r6, %r2, %r3;\nadd.s32 %r6, %r6, %r5;\n\
+             mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r6;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(
+            trips_of(&src)[0].1.as_ref().unwrap().to_string(),
+            "param_0 / 8 + param_0 mod 64"
+        );
+        // A step that is a loop-invariant register: the count is not a
+        // constant multiple, so it is refused with that reason.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nshl.b32 %r2, %r1, 2;\nmov.u32 %r4, 0;\n\
+             $L__L:\nadd.s32 %r4, %r4, %r2;\nsetp.lt.s32 %p1, %r4, 1024;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(
+            trips_of(&src)[0].1.clone().unwrap_err(),
+            "induction step is not a constant"
+        );
+        // Two merged initial values that are the same immediate.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nsetp.lt.s32 %p2, %r1, 8;\n@%p2 bra $L__A;\n\
+             mov.u32 %r4, 0;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r4, 0;\n$L__J:\n\
+             $L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r1;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(trips_of(&src)[0].1.as_ref().unwrap().to_string(), "param_0");
     }
 
     #[test]
