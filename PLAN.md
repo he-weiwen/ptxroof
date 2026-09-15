@@ -62,8 +62,9 @@ as requested by the PTX; nothing is measured (README).
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
   identical to the original's for 29 of the 30 fixtures; k14's is
   rejected because the in-kernel `.local` depot declaration is
-  discarded (`Unknown symbol '__local_depot0'`). Not a CI step: it
-  needs the CUDA toolkit.
+  discarded (`Unknown symbol '__local_depot0'`) and is allowlisted in
+  `tests/roundtrip-allowlist.txt`. A `tests/run.py` stage when the
+  toolkit is on PATH, skipped otherwise.
 - Hardware cross-check on an RTX 4090 with Nsight Compute: k5's
   counts, and the c_fc fp8 GEMM's launch (M=4096, N=3072, K=768):
   `sm__ops_path_tensor_src_fp8.sum` = 19,327,352,832 = 2·M·N·K, the

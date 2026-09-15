@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # PR-blocking CI : T1 via cargo, then T2/T3 via the CLI test
 # runner. Hermetic — needs only a rustup-managed toolchain (pinned by
-# rust-toolchain.toml) and python3 >= 3.11. No CUDA, no LLVM, no C++.
+# rust-toolchain.toml) and python3 >= 3.11. No LLVM, no C++; the ptxas
+# round trip of every fixture runs when the CUDA toolkit is on PATH and
+# is skipped otherwise (PTXROOF_REQUIRE_CUDA=1 turns the skip into a
+# failure, for the machine that has it).
 set -euo pipefail
 cd "$(dirname "$0")"
 

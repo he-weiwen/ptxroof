@@ -1,0 +1,8 @@
+# Fixtures whose --dump-ast output ptxas rejects or assembles differently,
+# one relative path per line. Every entry is a named hole in what the
+# parser keeps (PLAN.md); an entry that starts round-tripping fails the
+# run until it is removed.
+
+# The in-kernel .local depot declaration is discarded (PLAN.md, missing
+# features: local memory per thread).
+k14/k14.sm_80.ptx

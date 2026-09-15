@@ -75,8 +75,11 @@ Usage:
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 if sys.version_info < (3, 11):
@@ -90,6 +93,7 @@ ACCEPTANCE_DIR = REPO_ROOT / "tests" / "acceptance"
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures"
 STATUS_FILE = ACCEPTANCE_DIR / "status.toml"
 DEFAULT_BIN = REPO_ROOT / "target" / "debug" / "ptxroof"
+ROUNDTRIP_ALLOWLIST = REPO_ROOT / "tests" / "roundtrip-allowlist.txt"
 CASE_TIMEOUT_S = 120
 
 # --------------------------------------------------------------------------
@@ -284,6 +288,76 @@ def lint_fixtures(fixtures_dir):
                 f"{rel}: no Provenance / HAND-WRITTEN / HAND-EDITED header"
             )
     return errs
+
+
+# --------------------------------------------------------------------------
+# ptxas round trip: the dump must assemble to the fixture's own SASS.
+# Needs the CUDA toolkit; skipped without it.
+
+
+def sass_text(cubin):
+    out = subprocess.run(
+        ["cuobjdump", "-sass", str(cubin)], capture_output=True, text=True, check=True
+    ).stdout
+    return "\n".join(l for l in out.splitlines() if not l.lstrip().startswith("/*"))
+
+
+def roundtrip_fixture(binary, ptx, tmp):
+    """None when the dump assembles to the same SASS as the fixture; else why not."""
+    lines = ptx.read_text().splitlines()
+    arch = next((l.split()[1] for l in lines if l.startswith(".target")), None)
+    if arch is None:
+        return "no .target line"
+    orig, dump, redo = tmp / "orig.cubin", tmp / "dump.ptx", tmp / "dump.cubin"
+    r = subprocess.run(
+        ["ptxas", f"-arch={arch}", str(ptx), "-o", str(orig)], capture_output=True, text=True
+    )
+    if r.returncode:
+        return f"the fixture itself does not assemble: {r.stderr.strip()[:160]}"
+    d = subprocess.run(
+        [str(binary), "analyze", "--dump-ast", str(ptx)], capture_output=True, text=True
+    )
+    dump.write_text(d.stdout)
+    r = subprocess.run(
+        ["ptxas", f"-arch={arch}", str(dump), "-o", str(redo)], capture_output=True, text=True
+    )
+    if r.returncode:
+        first = (r.stderr.strip().splitlines() or [""])[0]
+        return f"ptxas rejects the dump: {first[-160:]}"
+    if sass_text(orig) != sass_text(redo):
+        return "the dump assembles to different SASS"
+    return None
+
+
+def read_allowlist(path):
+    if not path.is_file():
+        return []
+    return [
+        l.strip()
+        for l in path.read_text().splitlines()
+        if l.strip() and not l.lstrip().startswith("#")
+    ]
+
+
+def run_roundtrips(binary):
+    """Return (results, failures): results are (label, rel, detail) rows."""
+    rows, failures = [], 0
+    allow = read_allowlist(ROUNDTRIP_ALLOWLIST)
+    with tempfile.TemporaryDirectory() as tmp:
+        for ptx in sorted(FIXTURES_DIR.rglob("*.ptx")):
+            rel = str(ptx.relative_to(FIXTURES_DIR))
+            reason = roundtrip_fixture(binary, ptx, Path(tmp))
+            if reason is None and rel in allow:
+                rows.append(("FAIL", rel, "round-trips now: remove it from roundtrip-allowlist.txt"))
+                failures += 1
+            elif reason is None:
+                rows.append(("PASS", rel, ""))
+            elif rel in allow:
+                rows.append(("XFAIL", rel, reason))
+            else:
+                rows.append(("FAIL", rel, reason))
+                failures += 1
+    return rows, failures
 
 
 # --------------------------------------------------------------------------
@@ -574,8 +648,22 @@ def main():
                 )
                 failures += 1
 
+    # 5: ptxas round trip of every fixture's dump
+    n_roundtrips = 0
+    if shutil.which("ptxas") and shutil.which("cuobjdump"):
+        rows, rt_failures = run_roundtrips(opts.bin)
+        for label, rel, detail in rows:
+            print(f"{label:5} ptxas   {rel}" + (f": {detail}" if detail else ""))
+        failures += rt_failures
+        n_roundtrips = len(rows)
+    elif os.environ.get("PTXROOF_REQUIRE_CUDA"):
+        print("FAIL  ptxas   CUDA toolkit not on PATH and PTXROOF_REQUIRE_CUDA is set")
+        failures += 1
+    else:
+        print("SKIP  ptxas   CUDA toolkit not on PATH (set PTXROOF_REQUIRE_CUDA=1 to fail instead)")
+
     n_cases = len(case_dirs) + len(status.get("scenario", []))
-    print(f"run.py: {n_cases} case(s), {failures} failure(s)")
+    print(f"run.py: {n_cases} case(s), {n_roundtrips} round trip(s), {failures} failure(s)")
     return 1 if failures else 0
 
 
@@ -749,6 +837,13 @@ def self_test():
        "unparsed statement missing from unknowns is named")
     bad["kernels"][0]["unknowns"] = [{"what": "unparsed statement", "count": 1}]
     ok(verify_report(bad) == [], "unparsed statement listed in unknowns passes")
+
+    # round-trip allowlist: comments and blanks ignored, paths as written
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "allow.txt"
+        f.write_text("# why\n\nk14/k14.sm_80.ptx\n  micro/x.ptx  \n")
+        ok(read_allowlist(f) == ["k14/k14.sm_80.ptx", "micro/x.ptx"], "allowlist reader")
+        ok(read_allowlist(Path(tmp) / "missing.txt") == [], "missing allowlist is empty")
 
     print(f"run.py --self-test: {n} assertions passed")
     return 0
