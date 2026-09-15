@@ -74,5 +74,4 @@ and for what a part sustains, use Nsight Compute.
 
 `./ci.sh` runs everything: rustfmt, clippy (warnings deny), unit and
 corpus tests, and the CLI/acceptance suite (`tests/run.py`, stdlib-only
-Python ≥ 3.11). The design, the audience boundary, the anti-scope
-list and the execution plan live in `PLAN.md`.
+Python ≥ 3.11).
