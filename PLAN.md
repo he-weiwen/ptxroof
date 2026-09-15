@@ -17,9 +17,6 @@ as requested by the PTX; nothing is measured (README).
 
 ### Wrong output
 
-- **Triangular loop nests report the inner loop's trips as 0.** The
-  latch tracer follows the outer induction variable to its pre-loop
-  initial value. Found with a hand-written nest; no fixture yet.
 - **Warp-specialized kernels are bounded, not counted.** Every count
   is per thread and every block is assumed to run on every thread.
   `attn_fwd_ws_kernel.sm_89.ptx` splits on `tid.x >> 5 < 4`: warps 0
@@ -34,7 +31,8 @@ as requested by the PTX; nothing is measured (README).
   unroll main+remainder pair, LLVM's two-register counter and its
   predicate-phi two-trip loop. Not recognised, reported as
   `trips = unknown`: grid-stride loops (special registers),
-  data-dependent bounds, multi-exit loops, and the attention kernels'
+  data-dependent bounds, multi-exit loops, inner loops bounded by an
+  enclosing loop's counter (`micro/triangular.ptx`), and the attention kernels'
   causal loops, bounded by the CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition.
@@ -62,7 +60,7 @@ as requested by the PTX; nothing is measured (README).
   every instruction classifies), and hand-written micro kernels.
   clang is untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 28 of the 29 fixtures; k14's is
+  identical to the original's for 29 of the 30 fixtures; k14's is
   rejected because the in-kernel `.local` depot declaration is
   discarded (`Unknown symbol '__local_depot0'`). Not a CI step: it
   needs the CUDA toolkit.

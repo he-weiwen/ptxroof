@@ -1,0 +1,43 @@
+//
+// HAND-WRITTEN: a triangular nest, the inner loop bounded by the outer
+// loop's counter (j < i). The inner latch reads a value that is
+// redefined around the enclosing loop, so its trip count depends on
+// which outer iteration is running: no single expression in the
+// parameters exists, and the honest answer is a named unknown, not the
+// outer counter's initial value.
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_triangular(
+	.param .u32 micro_triangular_param_0
+)
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<5>;
+	.loc	1 3 0
+
+	ld.param.u32 	%r1, [micro_triangular_param_0];
+	mov.u32 	%r2, 0;
+
+$L__BB0_1:
+	.loc	1 5 5
+	mov.u32 	%r3, 0;
+
+$L__BB0_2:
+	.loc	1 6 9
+	add.s32 	%r3, %r3, 1;
+	setp.lt.s32 	%p1, %r3, %r2;
+	@%p1 bra 	$L__BB0_2;
+
+	.loc	1 5 5
+	add.s32 	%r2, %r2, 1;
+	setp.lt.s32 	%p2, %r2, %r1;
+	@%p2 bra 	$L__BB0_1;
+
+	.loc	1 9 1
+	ret;
+
+}
+	.file	1 "micro/triangular.cu"

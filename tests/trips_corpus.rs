@@ -111,6 +111,20 @@ fn attention_trip_reasons_are_pinned() {
 }
 
 #[test]
+fn a_triangular_nest_is_an_honest_unknown() {
+    let (trips, _) = info_of("micro/triangular.ptx");
+    let mut sorted = trips.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted,
+        [
+            "ok: param_0",
+            "unknown: latch condition depends on %r2, carried around an enclosing loop",
+        ]
+    );
+}
+
+#[test]
 fn scoped_labels_are_separate_loops() {
     let (trips, _) = info_of("micro/scoped_labels.ptx");
     assert_eq!(trips, ["ok: param_0", "ok: param_1"]);
