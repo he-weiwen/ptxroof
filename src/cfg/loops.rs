@@ -16,7 +16,7 @@ use super::dominators::{Dominators, dominators};
 use super::graph::{BlockId, Cfg};
 
 /// Index into [`LoopForest::loops`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LoopId(pub u32);
 
 #[derive(Debug)]

@@ -119,7 +119,7 @@ fn a_triangular_nest_is_an_honest_unknown() {
         sorted,
         [
             "ok: param_0",
-            "unknown: latch condition depends on %r2, carried around an enclosing loop",
+            "unknown: latch condition depends on an enclosing loop's counter",
         ]
     );
 }

@@ -12,8 +12,8 @@
 //! loop-invariant values.
 //!
 //! With the latch normalized to `continue while A1·k + A0  cmp  0`
-//! (k = iteration number, IV read after its increment — every corpus
-//! latch increments before it compares, and the tracer checks), trips
+//! (k = iteration number; a counter read after its increment is
+//! init + k·step, read before it init + (k − 1)·step), trips
 //! solve to:  `ne` → −A0/A1 (exact division — compiler-generated
 //! not-equal latches step in divisor units);  `lt` → ceildiv(−A0, A1);
 //! `le` → floordiv(−A0, A1) + 1;  `gt`/`ge` → mirrored.
@@ -30,6 +30,7 @@
 //! `(X − X mod c)/c` and `X mod c` — into one logical loop with
 //! factor c.
 
+use crate::affine::{Affine, Var};
 use crate::cfg::loops::{LoopForest, LoopId};
 use crate::cfg::naming::LoopName;
 use crate::cfg::{BlockId, Cfg};
@@ -128,47 +129,6 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
 // -------------------------------------------------------------------------
 // The scalar affine tracer.
 
-/// An affine value: `coeff·IV + base`, with at most one IV involved.
-#[derive(Debug, Clone)]
-struct Affine {
-    /// (IV register, coefficient); `None` = loop-invariant.
-    iv: Option<(Symbol, i64)>,
-    base: SymExpr,
-}
-
-impl Affine {
-    fn invariant(base: SymExpr) -> Affine {
-        Affine { iv: None, base }
-    }
-
-    fn combine(self, other: Affine, sign: i64) -> Result<Affine, String> {
-        let iv = match (self.iv, other.iv) {
-            (a, None) => a,
-            (None, Some((r, c))) => Some((r, sign * c)),
-            (Some((ra, ca)), Some((rb, cb))) if ra == rb => {
-                let c = ca + sign * cb;
-                (c != 0).then_some((ra, c))
-            }
-            _ => {
-                return Err("latch condition mixes two induction variables".to_owned());
-            }
-        };
-        let base = if sign >= 0 {
-            SymExpr::add(self.base, other.base)
-        } else {
-            SymExpr::sub(self.base, other.base)
-        };
-        Ok(Affine { iv, base })
-    }
-
-    fn scale(self, c: i64) -> Affine {
-        Affine {
-            iv: self.iv.map(|(r, k)| (r, k * c)),
-            base: SymExpr::mul(SymExpr::Const(c), self.base),
-        }
-    }
-}
-
 /// Where a register's value at a statement comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reach {
@@ -193,6 +153,9 @@ struct Tracer<'a> {
     params: HashMap<Symbol, usize>,
     /// `reach[a][b]`: a path of at least one edge from block a to b.
     reach: Vec<Vec<bool>>,
+    /// Per loop: counter register ↦ (step, the chain register defined
+    /// before the loop).
+    ivs: Vec<HashMap<Symbol, (i64, Symbol)>>,
 }
 
 impl<'a> Tracer<'a> {
@@ -224,7 +187,7 @@ impl<'a> Tracer<'a> {
                 }
             }
         }
-        Tracer {
+        let mut t = Tracer {
             module,
             kernel,
             cfg,
@@ -232,7 +195,12 @@ impl<'a> Tracer<'a> {
             defs,
             params,
             reach,
-        }
+            ivs: Vec::new(),
+        };
+        t.ivs = (0..forest.loops.len() as u32)
+            .map(|i| t.induction_vars(LoopId(i)))
+            .collect();
+        t
     }
 
     fn loop_trips(&self, id: LoopId) -> TripCount {
@@ -288,47 +256,30 @@ impl<'a> Tracer<'a> {
             .map(|&m| self.module.interner.resolve(m).to_owned())
             .ok_or_else(|| "setp without comparison modifier".to_owned())?;
 
-        // Induction variables of this loop.
-        let ivs = self.induction_vars(id);
-
         // Trace both operands at the setp.
         let ops = self.module.operand_ids(setp.operands);
         if ops.len() < 3 {
             return Err("setp with unexpected operand count".to_owned());
         }
-        let a = self.trace_operand(ops[1], setp_idx, id, &ivs, 0)?;
-        let b = self.trace_operand(ops[2], setp_idx, id, &ivs, 0)?;
-        let d = a.combine(b, -1)?; // D = A − B; condition is `D cmp 0`
+        let a = self.trace_operand(ops[1], setp_idx, id, 0)?;
+        let b = self.trace_operand(ops[2], setp_idx, id, 0)?;
+        let d = a - b; // D = A − B; condition is `D cmp 0`
 
-        let Some((iv_reg, coeff)) = d.iv else {
+        // D(k) = A1·k + A0 in this loop's iteration number alone.
+        let k = Var::Iter(id);
+        if let Some(v) = d.terms.keys().find(|&&v| v != k) {
+            return Err(match v {
+                Var::Iter(_) => "latch condition depends on an enclosing loop's counter".to_owned(),
+                other => format!("latch condition depends on special register {other}"),
+            });
+        }
+        let Some(coeff) = d.terms.get(&k) else {
             return Err("latch condition does not involve an induction variable".to_owned());
         };
-        let (step, phi) = ivs[&iv_reg];
-
-        // The compare must read the post-increment value: the in-loop
-        // definition precedes it in the latch block, or sits in a block
-        // that dominates the latch.
-        let increment_precedes_compare = self.defs[&iv_reg].iter().any(|&d| {
-            self.in_loop(id, d)
-                && if d >= latch_block.start && d < latch_block.end {
-                    d < setp_idx
-                } else {
-                    self.forest.doms.dominates(self.block_of(d), latch)
-                }
-        });
-        if !increment_precedes_compare {
-            return Err("induction increment does not precede the latch compare".to_owned());
-        }
-
-        // IV value at the latch on iteration k (k = 1, 2, ...):
-        // init + k·step, so D(k) = coeff·step·k + (coeff·init + base).
-        let init = self.iv_init(phi, l.header, id)?;
         let a1 = coeff
-            .checked_mul(step)
-            .ok_or_else(|| "induction step overflows".to_owned())?;
-        let a0 = SymExpr::add(SymExpr::mul(SymExpr::Const(coeff), init), d.base);
-
-        solve(&cmp, continue_if_true, a1, a0)
+            .as_const()
+            .ok_or_else(|| "induction step is not a constant".to_owned())?;
+        solve(&cmp, continue_if_true, a1, d.base)
     }
 
     /// A merged value: the obstacle on any of its definitions' chains.
@@ -484,6 +435,15 @@ impl<'a> Tracer<'a> {
         let mut ivs = HashMap::new();
         for (reg, sites) in &in_loop_defs {
             let [mut site] = sites[..] else { continue };
+            // The increment must run every iteration.
+            let own = self.block_of(site);
+            if !l
+                .latches
+                .iter()
+                .all(|&lt| self.forest.doms.dominates(own, lt))
+            {
+                continue;
+            }
             let mut step = 0;
             let mut chain = vec![*reg];
             for _ in 0..8 {
@@ -515,14 +475,11 @@ impl<'a> Tracer<'a> {
         ivs
     }
 
-    /// Initial IV value: its reaching definition at loop entry.
-    fn iv_init(&self, reg: Symbol, header: BlockId, id: LoopId) -> Result<SymExpr, String> {
-        let hdr = self.cfg.block(header);
-        let init = self.trace_reg(reg, hdr.start, id, &HashMap::new(), 0, Some(id))?;
-        match init.iv {
-            None => Ok(init.base),
-            Some(_) => Err("induction initial value depends on an induction variable".to_owned()),
-        }
+    /// The counter's value on entry to loop `l`: its chain register's
+    /// reaching definition at the header, ignoring the loop's own.
+    fn iv_init(&self, reg: Symbol, l: LoopId, depth: u32) -> Result<Affine, String> {
+        let hdr = self.cfg.block(self.forest.get(l).header);
+        self.trace_reg(reg, hdr.start, l, depth, Some(l))
     }
 
     fn last_instr(&self, b: BlockId) -> Option<(usize, &Instr)> {
@@ -680,11 +637,10 @@ impl<'a> Tracer<'a> {
         op: crate::core::OperandId,
         pos: usize,
         id: LoopId,
-        ivs: &HashMap<Symbol, (i64, Symbol)>,
         depth: u32,
     ) -> Result<Affine, String> {
         match self.module.operand(op) {
-            Operand::Register(reg) => self.trace_reg(*reg, pos, id, ivs, depth, None),
+            Operand::Register(reg) => self.trace_reg(*reg, pos, id, depth, None),
             Operand::Immediate(text) => {
                 let text = self.module.interner.resolve(*text);
                 parse_int(text)
@@ -702,7 +658,6 @@ impl<'a> Tracer<'a> {
         reg: Symbol,
         pos: usize,
         id: LoopId,
-        ivs: &HashMap<Symbol, (i64, Symbol)>,
         depth: u32,
         exclude: Option<LoopId>,
     ) -> Result<Affine, String> {
@@ -713,14 +668,13 @@ impl<'a> Tracer<'a> {
         let def = match self.reach_def(reg, pos, exclude) {
             Reach::Def(d) => d,
             Reach::Carried(l) => {
-                // Read before its increment: the previous iteration's value.
-                if l == id
-                    && let Some(&(step, _)) = ivs.get(&reg)
-                {
-                    return Ok(Affine {
-                        iv: Some((reg, 1)),
-                        base: SymExpr::Const(-step),
-                    });
+                // The counter of loop l read before its increment: the
+                // previous iteration's value, init + (k − 1)·step.
+                if let Some(&(step, phi)) = self.ivs[l.0 as usize].get(&reg) {
+                    let init = self.iv_init(phi, l, depth + 1)?;
+                    return Ok(Affine::term(Var::Iter(l), SymExpr::Const(step))
+                        + init
+                        + Affine::invariant(SymExpr::Const(-step)));
                 }
                 return Err(self.obstacle_of_any_def(reg, id).unwrap_or_else(|| {
                     format!("latch condition depends on {name}, carried around an enclosing loop")
@@ -732,26 +686,29 @@ impl<'a> Tracer<'a> {
                     .unwrap_or_else(|| format!("{name} has more than one reaching definition")));
             }
             Reach::None => {
-                return Err(if is_special_register(name) {
-                    format!("latch condition depends on special register {name}")
-                } else {
-                    format!("no definition found for {name}")
-                });
+                return match Var::special(name) {
+                    Some(v) => Ok(Affine::var(v)),
+                    None if is_special_register(name) => Err(format!(
+                        "latch condition depends on special register {name}"
+                    )),
+                    None => Err(format!("no definition found for {name}")),
+                };
             }
         };
 
-        // The IV itself: its single in-loop def is the self-add (or the
-        // copy closing a two-register chain); reading it at/after that
-        // def yields the post-increment latch value.
-        if ivs.contains_key(&reg)
-            && let Stmt::Instr(instr) = &self.kernel.stmts[def]
-            && self.in_loop(id, def)
-            && matches!(self.module.interner.resolve(instr.mnemonic), "add" | "mov")
-        {
-            return Ok(Affine {
-                iv: Some((reg, 1)),
-                base: SymExpr::Const(0),
-            });
+        // The counter of this loop or an enclosing one, read at or after
+        // its increment: init + k·step.
+        let mut l = Some(id);
+        while let Some(cur) = l {
+            if let Some(&(step, phi)) = self.ivs[cur.0 as usize].get(&reg)
+                && self.in_loop(cur, def)
+                && let Stmt::Instr(instr) = &self.kernel.stmts[def]
+                && matches!(self.module.interner.resolve(instr.mnemonic), "add" | "mov")
+            {
+                let init = self.iv_init(phi, cur, depth + 1)?;
+                return Ok(Affine::term(Var::Iter(cur), SymExpr::Const(step)) + init);
+            }
+            l = self.forest.get(cur).parent;
         }
 
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
@@ -765,21 +722,14 @@ impl<'a> Tracer<'a> {
             .map(|&m| self.module.interner.resolve(m))
             .collect();
         let ops = self.module.operand_ids(instr.operands).to_vec();
-        let arg = |i: usize| -> Result<Affine, String> {
-            self.trace_operand(ops[i], def, id, ivs, depth + 1)
-        };
+        let arg =
+            |i: usize| -> Result<Affine, String> { self.trace_operand(ops[i], def, id, depth + 1) };
 
         match mnemonic.as_str() {
             "mov" => arg(1),
             "cvt" | "cvta" => {
                 // Width changes are value-preserving in the nonneg domain.
-                self.trace_operand(
-                    *ops.last().expect("cvt has operands"),
-                    def,
-                    id,
-                    ivs,
-                    depth + 1,
-                )
+                self.trace_operand(*ops.last().expect("cvt has operands"), def, id, depth + 1)
             }
             "ld" => {
                 if mods.contains(&"param")
@@ -796,45 +746,39 @@ impl<'a> Tracer<'a> {
                     Err("latch condition depends on a value loaded from memory".to_owned())
                 }
             }
-            "add" if ops.len() == 3 => arg(1)?.combine(arg(2)?, 1),
-            "sub" if ops.len() == 3 => arg(1)?.combine(arg(2)?, -1),
+            "add" if ops.len() == 3 => Ok(arg(1)? + arg(2)?),
+            "sub" if ops.len() == 3 => Ok(arg(1)? - arg(2)?),
             "and" if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
-                let (val, mask) = (arg(1), arg(2));
-                let (val, mask) = match (val, mask) {
-                    (Ok(v), Ok(m)) => (v, m),
-                    (Err(e), _) | (_, Err(e)) => return Err(e),
-                };
-                let (affine, konst) = match (mask.base.as_const(), val.base.as_const()) {
-                    (Some(c), _) if mask.iv.is_none() => (val, c),
-                    (_, Some(c)) if val.iv.is_none() => (mask, c),
+                let (val, mask) = (arg(1)?, arg(2)?);
+                let (affine, konst) = match (mask.as_const(), val.as_const()) {
+                    (Some(c), _) => (val, c),
+                    (_, Some(c)) => (mask, c),
                     _ => return Err("and-mask with two non-constant operands".to_owned()),
                 };
                 let modulus = konst
                     .checked_add(1)
                     .filter(|m| *m > 0 && (m & (m - 1)) == 0)
                     .ok_or_else(|| format!("and-mask {konst:#x} is not 2^n − 1"))?;
-                if affine.iv.is_some() {
-                    return Err("mod applied to an induction variable".to_owned());
+                if !affine.is_invariant() {
+                    return Err(refuse(&affine, id, "mod applied to an induction variable"));
                 }
                 Ok(Affine::invariant(SymExpr::modulo(affine.base, modulus)))
             }
             "shl" if ops.len() == 3 => {
                 let v = arg(1)?;
-                let sh = arg(2)?;
-                match (sh.iv, sh.base.as_const()) {
-                    (None, Some(c)) if (0..63).contains(&c) => Ok(v.scale(1i64 << c)),
+                match arg(2)?.as_const() {
+                    Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".to_owned()),
                 }
             }
             "shr" if ops.len() == 3 => {
                 let v = arg(1)?;
-                let sh = arg(2)?;
-                let Some(c) = sh.iv.is_none().then(|| sh.base.as_const()).flatten() else {
+                let Some(c) = arg(2)?.as_const() else {
                     return Err("shift by a non-constant amount".to_owned());
                 };
-                if v.iv.is_some() {
-                    return Err("shift applied to an induction variable".to_owned());
+                if !v.is_invariant() {
+                    return Err(refuse(&v, id, "shift applied to an induction variable"));
                 }
                 let signed_width = mods.iter().find_map(|m| match *m {
                     "s16" => Some(16),
@@ -855,36 +799,33 @@ impl<'a> Tracer<'a> {
                 }
             }
             "mul" if ops.len() == 3 => {
-                let a = arg(1)?;
-                let b = arg(2)?;
-                match (
-                    a.iv.is_none().then(|| a.base.as_const()).flatten(),
-                    b.iv.is_none().then(|| b.base.as_const()).flatten(),
-                ) {
-                    (Some(c), _) => Ok(b.scale(c)),
-                    (_, Some(c)) => Ok(a.scale(c)),
-                    _ if a.iv.is_none() && b.iv.is_none() => {
-                        Ok(Affine::invariant(SymExpr::mul(a.base, b.base)))
-                    }
-                    _ => Err("product involving an induction variable".to_owned()),
+                let (a, b) = (arg(1)?, arg(2)?);
+                if a.is_invariant() {
+                    Ok(b.scale(a.base))
+                } else if b.is_invariant() {
+                    Ok(a.scale(b.base))
+                } else {
+                    Err(refuse(
+                        &(a + b),
+                        id,
+                        "product involving an induction variable",
+                    ))
                 }
             }
             "mad" if ops.len() == 4 => {
-                let a = arg(1)?;
-                let b = arg(2)?;
-                let c = arg(3)?;
-                let prod = match (
-                    a.iv.is_none().then(|| a.base.as_const()).flatten(),
-                    b.iv.is_none().then(|| b.base.as_const()).flatten(),
-                ) {
-                    (Some(k), _) => b.scale(k),
-                    (_, Some(k)) => a.scale(k),
-                    _ if a.iv.is_none() && b.iv.is_none() => {
-                        Affine::invariant(SymExpr::mul(a.base, b.base))
-                    }
-                    _ => return Err("product involving an induction variable".to_owned()),
+                let (a, b, c) = (arg(1)?, arg(2)?, arg(3)?);
+                let prod = if a.is_invariant() {
+                    b.scale(a.base)
+                } else if b.is_invariant() {
+                    a.scale(b.base)
+                } else {
+                    return Err(refuse(
+                        &(a + b),
+                        id,
+                        "product involving an induction variable",
+                    ));
                 };
-                prod.combine(c, 1)
+                Ok(prod + c)
             }
             other => {
                 let mut seen = HashSet::new();
@@ -961,6 +902,21 @@ impl<'a> Tracer<'a> {
             blk.start <= stmt && stmt < blk.end
         })
     }
+}
+
+/// Why an arithmetic form is refused: a special register or an enclosing
+/// loop's counter among its variables outranks the generic reason.
+fn refuse(a: &Affine, id: LoopId, generic: &str) -> String {
+    for v in a.terms.keys() {
+        match v {
+            Var::Iter(l) if *l == id => {}
+            Var::Iter(_) => {
+                return "latch condition depends on an enclosing loop's counter".to_owned();
+            }
+            other => return format!("latch condition depends on special register {other}"),
+        }
+    }
+    generic.to_owned()
 }
 
 fn is_special_register(name: &str) -> bool {
@@ -1319,9 +1275,9 @@ mod tests {
             .find(|(n, _)| n == "$L__I")
             .expect("inner loop");
         let err = inner.1.clone().unwrap_err();
-        assert!(
-            err.contains("%r2, carried around an enclosing loop"),
-            "{err}"
+        assert_eq!(
+            err,
+            "latch condition depends on an enclosing loop's counter"
         );
         let outer = trips
             .iter()
