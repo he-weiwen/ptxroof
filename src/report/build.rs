@@ -30,6 +30,7 @@ use crate::core::Operand;
 use crate::core::measurement::MeasureKind;
 use crate::core::symexpr::SymExpr;
 use crate::core::{Instr, Kernel, Module, Stmt};
+use crate::footprint::warp_footprint;
 use crate::parse::parser::{ParseError, parse};
 use crate::report::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::report::tree::*;
@@ -228,6 +229,8 @@ fn accesses_by_scope(
         }
         text
     };
+    let shape =
+        ["%ntid.x", "%ntid.y", "%ntid.z"].map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
     let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
     for (bid, block) in cfg.blocks.iter_enumerated() {
         let scope = forest.block_loop[bid.0 as usize];
@@ -278,7 +281,7 @@ fn accesses_by_scope(
                 let Operand::Memory { base, offset } = module.operand(mem_ops[i]) else {
                     continue;
                 };
-                let (address, unknown) = match module.operand(*base) {
+                let (address, unknown, form) = match module.operand(*base) {
                     Operand::SymbolRef(s) => {
                         let sym = shorten(module.interner.resolve(*s).to_owned());
                         let addr = if *offset == 0 {
@@ -286,12 +289,12 @@ fn accesses_by_scope(
                         } else {
                             format!("{sym} + {offset}")
                         };
-                        (Some(addr), None)
+                        (Some(addr), None, None)
                     }
                     Operand::Register(_) => match tracer.trace_operand(*base, pos, scope, 0) {
                         Ok(a) => {
                             let a = (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map);
-                            (Some(shorten(a.render(name))), None)
+                            (Some(shorten(a.render(name))), None, Some(a))
                         }
                         Err(reason) => (
                             None,
@@ -301,9 +304,25 @@ fn accesses_by_scope(
                                     .unwrap_or(&reason)
                                     .to_owned(),
                             ),
+                            None,
                         ),
                     },
-                    _ => (None, Some("address operand form not traced".to_owned())),
+                    _ => (
+                        None,
+                        Some("address operand form not traced".to_owned()),
+                        None,
+                    ),
+                };
+                let footprint = match (&form, bytes) {
+                    (Some(a), Some(b)) if matches!(space, Space::Global | Space::Generic) => {
+                        Some(warp_footprint(a, b, shape))
+                    }
+                    _ => None,
+                };
+                let (sectors_per_request, lines_per_request, footprint_unknown) = match footprint {
+                    Some(Ok(f)) => (Some(f.sectors), Some(f.lines), None),
+                    Some(Err(why)) => (None, None, Some(why)),
+                    None => (None, None, None),
                 };
                 let site = match instr.loc.filter(|l| l.line != 0) {
                     Some(loc) => format!(
@@ -322,6 +341,9 @@ fn accesses_by_scope(
                     predicated: instr.predicate.is_some(),
                     address,
                     unknown,
+                    sectors_per_request,
+                    lines_per_request,
+                    footprint_unknown,
                 });
             }
         }

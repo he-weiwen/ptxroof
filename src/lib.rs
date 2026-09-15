@@ -10,6 +10,7 @@ pub mod affine;
 pub mod cfg;
 pub mod classify;
 pub mod core;
+pub mod footprint;
 pub mod parse;
 pub mod report;
 pub mod tracer;

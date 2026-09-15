@@ -1,0 +1,7 @@
+# k1 at M=N=K=256, block 32x32: every lane of a warp reads the same A
+# element (1 sector) and consecutive B and C elements (2). Nsight
+# Compute on this launch: 1,050,624 load requests over 1,576,960
+# sectors and 2,048 store requests over 4,096, exactly these rows times
+# their counts.
+args = ["analyze", "{fixtures}/k1/k1.sm_80.ptx", "--bind", "1:N=256", "--bind", "2:K=256", "--launch", "32,32,1"]
+exit = 0

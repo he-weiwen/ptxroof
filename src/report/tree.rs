@@ -210,6 +210,16 @@ pub struct Access {
     pub address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unknown: Option<String>,
+    /// The 32-byte sectors and 128-byte lines one warp's request
+    /// touches, as a range over the alignment of the address's uniform
+    /// part; global and generic spaces with a known address only. An
+    /// upper bound when the instruction is predicated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sectors_per_request: Option<crate::footprint::Range>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_per_request: Option<crate::footprint::Range>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footprint_unknown: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

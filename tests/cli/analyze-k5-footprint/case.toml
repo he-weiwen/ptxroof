@@ -1,0 +1,8 @@
+# k5 at M=N=K=256, block 64: what one warp's request touches. The A
+# tile load is 4 rows of 8 halves 512 B apart (4 sectors when the base
+# is sector-aligned), the B tile load 32 consecutive halves (2), and the
+# epilogue's C accesses 8 lanes 16 B apart per row (16). Nsight Compute
+# on this launch: 18,432 load requests over 81,920 sectors and 2,048
+# store requests over 32,768, exactly these rows times their counts.
+args = ["analyze", "{fixtures}/k5/k5.sm_80.ptx", "--bind", "1:N=256", "--bind", "2:K=256", "--launch", "64,1,1"]
+exit = 0

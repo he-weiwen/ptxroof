@@ -11,7 +11,9 @@ with trip counts as symbolic expressions over the kernel parameters,
 instruction counts by kind and opcode per loop iteration and in total,
 flops by pipe and precision, bytes by state space, AI(global), and per
 memory operand its address as an affine form over the thread and CTA
-indices, the loop counters and the parameters. Text
+indices, the loop counters and the parameters, with the 32-byte
+sectors and 128-byte lines one warp's request touches once the block
+shape and the parameters in the lane coefficients are bound. Text
 and JSON views of the same tree. Every number is static, per thread,
 as requested by the PTX; nothing is measured (README).
 
@@ -100,7 +102,11 @@ as requested by the PTX; nothing is measured (README).
   for the backward, 6,336 visits times 160 per warp; the pre and post
   kernels' cuda-core flops (2·ffma + fadd + fmul) 6,684,672 and
   3,145,728 are the tool's per-CTA 17,408 and 8,192 times 384 CTAs.
-  Nothing else.
+  Sectors per warp request, k5 and k1 at M=N=K=256 (`tests/cli/
+  analyze-k5-footprint`, `analyze-k1-footprint`): l1tex global load
+  requests and sectors 18,432 / 81,920 (k5) and 1,050,624 / 1,576,960
+  (k1), stores 2,048 / 32,768 and 2,048 / 4,096, each the rows'
+  aligned counts times their execution counts. Nothing else.
 - Counts are PTX, not SASS: ptxas removes most register moves, folds
   address arithmetic into addressing modes, expands `.rn` divides, and
   may add spills.
@@ -118,13 +124,17 @@ One line each, with the trigger that would start it.
 - Local memory per thread from the `.local` depot declaration (k14:
   `__local_depot0[512]`), where spills go; keeping the declaration
   also lets k14's dump reassemble. Trigger: the same hunt.
-- Access patterns, in three steps on the tracer; the first is done
-  (the `accesses` rows: every fixture's global and shared operands
-  except those listed above, including 2D tiles' `⌊%tid.x/8⌋` and
-  `(%tid.x mod 8)` and counters stepped by `4·N`):
-  2. sectors and lines per warp request (k1 vs k2 differ only here),
-     with the cache path from the modifiers (`.cg`, `.nc`, `.cs`,
-     `cp.async.cg` never hits L1); oracle: ncu sectors per request;
+- Access patterns, in three steps on the tracer; the first two are
+  done (the `accesses` rows: every fixture's global and shared
+  operands except those listed above, including 2D tiles'
+  `⌊%tid.x/8⌋` and `(%tid.x mod 8)` and counters stepped by `4·N`;
+  sectors and lines per warp request by enumerating the lanes under
+  every alignment of the uniform part, since pointer parameters carry
+  no alignment in the PTX, so a coalesced 4-byte access reads
+  `4–5 sectors`; needs `--launch` or `.reqntid` and `--bind` for a
+  parameter in a lane coefficient):
+  2. the cache path from the modifiers (`.cg`, `.nc`, `.cs`,
+     `cp.async.cg` never hits L1);
   3. per loop, whether a reference is invariant or strided, the
      per-thread reuse distance for self-reuse (the body's footprint),
      and the unique-byte span per scope: compulsory ≤ moved ≤ requested;

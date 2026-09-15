@@ -286,28 +286,51 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
         return;
     }
     let _ = writeln!(w, "{pad}{title}:");
-    let cols: Vec<[String; 4]> = rows
+    let range = |r: &crate::footprint::Range| {
+        if r.min == r.max {
+            r.min.to_string()
+        } else {
+            format!("{}–{}", r.min, r.max)
+        }
+    };
+    let cols: Vec<[String; 5]> = rows
         .iter()
         .map(|a| {
             let bytes = a.bytes.map(|b| format!(" {b} B")).unwrap_or_default();
             let pred = if a.predicated { " (predicated)" } else { "" };
             let what = format!("{} {}{bytes}{pred}", a.space, a.direction);
+            let plural = |r: &crate::footprint::Range, one: &str, many: &str| {
+                format!("{} {}", range(r), if r.max == 1 { one } else { many })
+            };
+            let warp = match (
+                &a.sectors_per_request,
+                &a.lines_per_request,
+                &a.footprint_unknown,
+            ) {
+                (Some(s), Some(l), _) => format!(
+                    "warp: {}, {}",
+                    plural(s, "sector", "sectors"),
+                    plural(l, "line", "lines")
+                ),
+                (_, _, Some(why)) => format!("warp: ? ({why})"),
+                _ => String::new(),
+            };
             let addr = match (&a.address, &a.unknown) {
                 (Some(x), _) => format!("[{x}]"),
                 (None, Some(why)) => format!("unknown: {why}"),
                 (None, None) => String::new(),
             };
-            [a.site.clone(), a.opcode.clone(), what, addr]
+            [a.site.clone(), a.opcode.clone(), what, warp, addr]
         })
         .collect();
     let width = |i: usize| cols.iter().map(|c| c[i].len()).max().unwrap_or(0);
-    let (w0, w1, w2) = (width(0), width(1), width(2));
+    let (w0, w1, w2, w3) = (width(0), width(1), width(2), width(3));
     for c in &cols {
-        let _ = writeln!(
-            w,
-            "{pad}  {:<w0$}  {:<w1$}  {:<w2$}  {}",
-            c[0], c[1], c[2], c[3]
+        let line = format!(
+            "{pad}  {:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}",
+            c[0], c[1], c[2], c[3], c[4]
         );
+        let _ = writeln!(w, "{}", line.trim_end());
     }
 }
 

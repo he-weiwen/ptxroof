@@ -13,8 +13,8 @@ global bytes: load <= 128 B, store 0 B
 shared bytes: load 256 B, store <= 128 B
 AI(global) >= 128 flop/B
 accesses:
-gluon_fp8.py:188  ldmatrix.sync.aligned.m8n8.x4.shared.b16  shared load 16 B   unknown: depends on special register %tid.x, behind `xor.b32`
-gluon_fp8.py:199  cp.async.cg.shared.global                 global load 16 B   unknown: div by a non-constant divisor
+gluon_fp8.py:188  ldmatrix.sync.aligned.m8n8.x4.shared.b16  shared load 16 B     unknown: depends on special register %tid.x, behind `xor.b32`
+gluon_fp8.py:199  cp.async.cg.shared.global                 global load 16 B     unknown: div by a non-constant divisor
 totals [static]:
 flops = 129  (f32 129)
 tensor flops = <= 16384 * ⌈param_10/64⌉  (fp8 <= 16384 * ⌈param_10/64⌉)
