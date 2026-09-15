@@ -81,6 +81,36 @@ fn two_register_counter_is_an_induction_variable() {
 }
 
 #[test]
+fn attention_trip_reasons_are_pinned() {
+    // Causal bounds depend on the CTA index; the reasons name the first
+    // arithmetic form the tracer could not read (PLAN.md, trip shapes).
+    let (trips, _) = info_of("gluon/attn_bwd_kernel.sm_89.ptx");
+    assert_eq!(
+        trips,
+        ["unknown: value defined by unsupported instruction `bfe`"]
+    );
+    for f in [
+        "gluon/attn_bwd_pre_kernel.sm_89.ptx",
+        "gluon/attn_bwd_post_kernel.sm_89.ptx",
+    ] {
+        assert!(info_of(f).0.is_empty(), "{f}: no loops");
+    }
+    let (trips, _) = info_of("gluon/attn_fwd_ws_kernel.sm_89.ptx");
+    let mut reasons: Vec<&str> = trips.iter().map(String::as_str).collect();
+    reasons.sort();
+    reasons.dedup();
+    assert_eq!(
+        reasons,
+        [
+            "unknown: latch predicate is not defined in the latch block",
+            "unknown: loop exit is not at the latch",
+            "unknown: loop has multiple latches",
+            "unknown: value defined by unsupported instruction `div`",
+        ]
+    );
+}
+
+#[test]
 fn scoped_labels_are_separate_loops() {
     let (trips, _) = info_of("micro/scoped_labels.ptx");
     assert_eq!(trips, ["ok: param_0", "ok: param_1"]);

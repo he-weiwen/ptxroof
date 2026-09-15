@@ -1,0 +1,3 @@
+# Backward preprocess: D = sum(dO * O) per row, one block, masked store.
+args = ["analyze", "{fixtures}/gluon/attn_bwd_pre_kernel.sm_89.ptx"]
+exit = 0

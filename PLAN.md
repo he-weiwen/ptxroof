@@ -20,6 +20,12 @@ as requested by the PTX; nothing is measured (README).
 - **Triangular loop nests report the inner loop's trips as 0.** The
   latch tracer follows the outer induction variable to its pre-loop
   initial value. Found with a hand-written nest; no fixture yet.
+- **Warp-specialized kernels are bounded, not counted.** Every count
+  is per thread and every block is assumed to run on every thread.
+  `attn_fwd_ws_kernel.sm_89.ptx` splits on `tid.x >> 5 < 4`: warps 0
+  to 3 and 4 to 7 run different code, so the per-thread totals are
+  `<=` the sum of both partitions and the per-CTA bound is loose by
+  up to 2. The model has no term for which threads execute a block.
 
 ### Reported as unknowns
 
@@ -28,7 +34,14 @@ as requested by the PTX; nothing is measured (README).
   unroll main+remainder pair, LLVM's two-register counter and its
   predicate-phi two-trip loop. Not recognised, reported as
   `trips = unknown`: grid-stride loops (special registers),
-  data-dependent bounds, multi-exit loops.
+  data-dependent bounds, multi-exit loops. The attention kernels'
+  causal loops are bounded by the CTA index and are unknown for that
+  reason, but the reason printed is the first arithmetic the tracer
+  could not read: `or`, `bfe` (`attn_bwd_kernel.sm_89.ptx`), `div`
+  (`attn_fwd_ws_kernel.sm_89.ptx`). The mbarrier wait loops say
+  "latch predicate is not defined in the latch block" when
+  `mbarrier.test_wait` defines it there. The persistent tile loop has
+  a latch and an exit per partition.
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
@@ -47,11 +60,13 @@ as requested by the PTX; nothing is measured (README).
 
 - Fixture corpus: nvcc output for one CUDA header ladder (k1, k2, k5,
   k11, k12, k14, mma_demo), Triton 3.8.0 (Gluon) output for five
-  nanochat kernels (`tests/fixtures/gluon`: seven PTX files, the GEMM
-  and the cross-entropy chunk at two shapes each; every instruction
-  classifies), and hand-written micro kernels. clang is untested.
+  nanochat kernels (`tests/fixtures/gluon`: twelve PTX files; the
+  GEMM, the cross-entropy chunk and the warp-specialized attention
+  forward at two shapes each, the attention backward's three kernels;
+  every instruction classifies), and hand-written micro kernels.
+  clang is untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 23 of the 24 fixtures; k14's is
+  identical to the original's for 28 of the 29 fixtures; k14's is
   rejected because the in-kernel `.local` depot declaration is
   discarded (`Unknown symbol '__local_depot0'`). Not a CI step: it
   needs the CUDA toolkit.
@@ -65,7 +80,14 @@ as requested by the PTX; nothing is measured (README).
   prologue stages plus ten of the twelve iterations, the predicated
   prefetches off at the end) plus 256 B per CTA for the two scale
   loads at sector granularity, under the tool's `<=` bound of
-  176,947,200. Nothing else.
+  176,947,200. The attention launches at B=2, T=2048, H=6, D=128:
+  `sm__inst_executed_pipe_tensor` = 3,244,032 for the forward, the
+  3,264 key-block visits times the tool's 1,024 warp-`mma` per CTA
+  visit minus the 192 masked half-blocks it skips at 512; 8,110,080
+  for the backward, 6,336 visits times 160 per warp; the pre and post
+  kernels' cuda-core flops (2·ffma + fadd + fmul) 6,684,672 and
+  3,145,728 are the tool's per-CTA 17,408 and 8,192 times 384 CTAs.
+  Nothing else.
 - Counts are PTX, not SASS: ptxas removes most register moves, folds
   address arithmetic into addressing modes, expands `.rn` divides, and
   may add spills.

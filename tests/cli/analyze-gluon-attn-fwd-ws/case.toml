@@ -1,0 +1,11 @@
+# Flash-attention forward, warp-specialized: one persistent CTA walks
+# tiles, two 4-warp partitions each own 64 query rows, mbarrier waits
+# are scoped self-loops. Every trip count is unknown: the persistent
+# tile loop has a latch per partition, the key loop's bound is the
+# tile's query block (a CTA-index dependence reported here by the
+# first arithmetic the tracer cannot read, `div`), the wait loops spin
+# on `mbarrier.test_wait` (PLAN.md). Per key block per thread the
+# partition body is 128 bf16 mma, 16384 tensor flops and 128 B of
+# copies, bounded because SKIP_MASKED skips the masked half-block.
+args = ["analyze", "{fixtures}/gluon/attn_fwd_ws_kernel.sm_89.ptx"]
+exit = 0

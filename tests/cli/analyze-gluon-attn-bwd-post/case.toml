@@ -1,0 +1,3 @@
+# Backward postprocess: the fp32 dQ accumulator scaled to bf16, one block.
+args = ["analyze", "{fixtures}/gluon/attn_bwd_post_kernel.sm_89.ptx"]
+exit = 0

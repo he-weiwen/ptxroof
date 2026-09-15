@@ -1,0 +1,4 @@
+# The same kernel with a left window of 768: the key loop's lower bound
+# adds a branch, and its reason names `or` instead of `div`.
+args = ["analyze", "{fixtures}/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx"]
+exit = 0

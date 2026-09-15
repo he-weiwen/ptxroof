@@ -13,7 +13,7 @@ src_dir, out_dir = sys.argv[1], sys.argv[2]
 os.environ["TRITON_CACHE_DIR"] = cache = tempfile.mkdtemp(prefix="ptxroof-triton-")
 sys.path.insert(0, src_dir)
 import torch  # noqa: E402
-import gluon_ce, gluon_fp8, gluon_norm, gluon_rope_norm  # noqa: E401,E402
+import gluon_attn_bwd, gluon_attn_fwd, gluon_ce, gluon_fp8, gluon_norm, gluon_rope_norm  # noqa: E401,E402
 
 torch.manual_seed(0)
 dev = "cuda"
@@ -30,6 +30,9 @@ T, H, D = 2048, 6, 128
 xq = torch.randn(1, T, H, D, device=dev, dtype=torch.bfloat16)
 ang = torch.randn(1, T, 1, D // 2, device=dev)
 cos, sin = ang.cos().to(torch.bfloat16), ang.sin().to(torch.bfloat16)
+B = 2  # attention at nanochat's T, H and D for two sequences
+q, k, v = (torch.randn(B, T, H, D, device=dev, dtype=torch.bfloat16) for _ in range(3))
+do = torch.randn_like(q)
 
 
 def ce(V):
@@ -49,6 +52,12 @@ launches = [
      lambda: gluon_norm.rmsnorm_fp8(xr, z, x0)),
     ("", "gluon_rope_norm.py", "gluon_rope_norm(bf16 [1, 2048, 6, 128])",
      lambda: gluon_rope_norm.gluon_rope_norm(xq, cos, sin)),
+    ("", "gluon_attn_fwd.py", "attn_fwd(bf16 [2, 2048, 6, 128]): causal; persistent, two 4-warp partitions, BLOCK_M=128, BLOCK_N=64",
+     lambda: gluon_attn_fwd.attn_fwd(q, k, v)),
+    ("w768", "gluon_attn_fwd.py", "attn_fwd(bf16 [2, 2048, 6, 128], window=768)",
+     lambda: gluon_attn_fwd.attn_fwd(q, k, v, 768)),
+    ("", "gluon_attn_bwd.py", "attn_bwd(q, k, v, o, do, lse) causal, BLOCK 64, 8 warps: pre, main and post kernels",
+     lambda: gluon_attn_bwd.attn_bwd(q, k, v, *gluon_attn_fwd.attn_fwd(q, k, v)[:1], do, gluon_attn_fwd.attn_fwd(q, k, v)[1])),
 ]
 seen = set()
 for site, module, wrapper, run in launches:
