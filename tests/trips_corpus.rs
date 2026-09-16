@@ -5,12 +5,12 @@
 
 use ptxroof::analysis::control_flow::{build_cfg, loop_forest};
 use ptxroof::analysis::loop_names::loop_names;
-use ptxroof::analysis::scalar::trip_counts::{TripInfo, trip_counts};
+use ptxroof::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
 use ptxroof::ptx::parse::parser::parse;
 use std::fs;
 use std::path::PathBuf;
 
-fn info_of(fixture: &str) -> (Vec<String>, TripInfo) {
+fn info_of(fixture: &str) -> (Vec<String>, TripCountResults) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(fixture);

@@ -22,7 +22,7 @@
 //! per-iteration numbers — the altitude where the verdict lives.
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::control_flow::{BlockId, Cfg, build_cfg, loop_forest};
+use crate::analysis::control_flow::{BlockId, ControlFlowGraph, build_cfg, loop_forest};
 use crate::analysis::instruction_counts::classify::{
     ArithKind, Direction, OpClass, Pipe, Precision, Space,
 };
@@ -32,8 +32,8 @@ use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::warp_footprint;
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
-use crate::analysis::scalar::trace::Tracer;
-use crate::analysis::scalar::trip_counts::{TripInfo, trip_counts};
+use crate::analysis::scalar::trace::AffineValueTracer;
+use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
 use crate::analysis::thread_participation::{Constraint, ThreadSet, block_thread_sets};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
@@ -115,7 +115,7 @@ pub fn analyze(
                 bind_map.insert(name.to_owned(), i64::from(n));
             }
         }
-        let k = KernelBuilder::new(&module, kernel, &bind_map).build(opts.launch);
+        let k = KernelReportBuilder::new(&module, kernel, &bind_map).build(opts.launch);
         classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
         classified.den += k.instruction_classes.total;
         let mut count_loops = |nodes: &[LoopNode]| {
@@ -203,11 +203,11 @@ fn resolve_bindings(
 fn accesses_by_scope(
     module: &Module,
     kernel: &Kernel,
-    cfg: &Cfg,
+    cfg: &ControlFlowGraph,
     forest: &LoopForest,
     display: &[String],
     bind_map: &HashMap<String, i64>,
-    tracer: &Tracer,
+    tracer: &AffineValueTracer,
 ) -> (ByScope<Access>, ByScope<AccessForm>) {
     let mut forms: ByScope<AccessForm> = HashMap::new();
     let name = |v: &Var| match v {
@@ -460,14 +460,14 @@ fn ratio_bound(flops: Option<Bound>, bytes: Option<Bound>) -> Option<Bound> {
 /// "2 * param_1 + 2 * param_1"). `at_most` is the OR over
 /// contributions — an upper bound on any term makes the sum one.
 #[derive(Default)]
-struct TermSum {
+struct CountAccumulator {
     groups: Vec<(SymExpr, i64)>,
     at_most: bool,
     at_least: bool,
     touched: bool,
 }
 
-impl TermSum {
+impl CountAccumulator {
     fn add(&mut self, count: i64, mult: &SymExpr, at_most: bool) {
         let (coeff, rest) = SymExpr::split_const(mult.clone());
         match self.groups.iter_mut().find(|(m, _)| *m == rest) {
@@ -549,19 +549,19 @@ fn instruction_kind(class: OpClass) -> String {
     }
 }
 
-struct FlopTable {
-    by_precision: BTreeMap<Precision, TermSum>,
-    total: TermSum,
+struct FlopAccumulator {
+    by_precision: BTreeMap<Precision, CountAccumulator>,
+    total: CountAccumulator,
 }
 
-impl FlopTable {
+impl FlopAccumulator {
     fn new() -> Self {
-        FlopTable {
+        FlopAccumulator {
             by_precision: Precision::ALL
                 .iter()
-                .map(|&p| (p, TermSum::default()))
+                .map(|&p| (p, CountAccumulator::default()))
                 .collect(),
-            total: TermSum::default(),
+            total: CountAccumulator::default(),
         }
     }
 
@@ -589,13 +589,13 @@ impl FlopTable {
 }
 
 /// `(constant coefficient, the rest)` of a product.
-struct KernelBuilder<'a> {
+struct KernelReportBuilder<'a> {
     module: &'a Module,
     kernel: &'a Kernel,
-    cfg: Cfg,
+    cfg: ControlFlowGraph,
     forest: LoopForest,
     names: Vec<LoopName>,
-    trip_info: TripInfo,
+    trip_info: TripCountResults,
     blocks: Vec<BlockMeasurements>,
     bind_map: &'a HashMap<String, i64>,
     /// Trip expression per loop for aggregation (opaque symbol when
@@ -616,7 +616,7 @@ struct KernelBuilder<'a> {
     shape: [u32; 3],
 }
 
-impl<'a> KernelBuilder<'a> {
+impl<'a> KernelReportBuilder<'a> {
     fn new(module: &'a Module, kernel: &'a Kernel, bind_map: &'a HashMap<String, i64>) -> Self {
         let cfg = build_cfg(module, kernel);
         let forest = loop_forest(&cfg);
@@ -655,13 +655,13 @@ impl<'a> KernelBuilder<'a> {
             })
             .collect();
 
-        let tracer = Tracer::new(module, kernel, &cfg, &forest).with_bindings(bind_map);
+        let tracer = AffineValueTracer::new(module, kernel, &cfg, &forest).with_bindings(bind_map);
         let (accesses, access_forms) =
             accesses_by_scope(module, kernel, &cfg, &forest, &display, bind_map, &tracer);
         let thread_sets = block_thread_sets(module, kernel, &cfg, &forest, &tracer);
         let shape = ["%ntid.x", "%ntid.y", "%ntid.z"]
             .map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
-        KernelBuilder {
+        KernelReportBuilder {
             module,
             kernel,
             cfg,
@@ -845,13 +845,18 @@ impl<'a> KernelBuilder<'a> {
     /// `cta`, every per-thread count additionally scales by the CTA's
     /// thread count, and is an upper bound when that count is one.
     fn aggregates(&self, below: Option<LoopId>, cta: Option<&LaunchInfo>) -> Aggregates {
-        let mut flops: BTreeMap<Pipe, FlopTable> =
-            Pipe::ALL.iter().map(|&p| (p, FlopTable::new())).collect();
-        let mut bytes: BTreeMap<&'static str, (TermSum, TermSum)> = BTreeMap::new();
-        let mut conversions = TermSum::default();
-        let mut instructions: BTreeMap<String, (TermSum, BTreeMap<String, TermSum>)> =
+        let mut flops: BTreeMap<Pipe, FlopAccumulator> = Pipe::ALL
+            .iter()
+            .map(|&p| (p, FlopAccumulator::new()))
+            .collect();
+        let mut bytes: BTreeMap<&'static str, (CountAccumulator, CountAccumulator)> =
             BTreeMap::new();
-        let mut instruction_total = TermSum::default();
+        let mut conversions = CountAccumulator::default();
+        let mut instructions: BTreeMap<
+            String,
+            (CountAccumulator, BTreeMap<String, CountAccumulator>),
+        > = BTreeMap::new();
+        let mut instruction_total = CountAccumulator::default();
         for s in ["global", "shared", "local"] {
             bytes.insert(s, Default::default());
         }
@@ -924,7 +929,7 @@ impl<'a> KernelBuilder<'a> {
                         }
                     }
                     MeasureKind::UnknownOps { .. } => {
-                        flops.values_mut().for_each(FlopTable::add_unknown);
+                        flops.values_mut().for_each(FlopAccumulator::add_unknown);
                         for space in ["global", "shared"] {
                             let (l, s) = bytes.get_mut(space).expect("pre-inserted");
                             l.add_unknown();
@@ -1090,7 +1095,7 @@ impl<'a> KernelBuilder<'a> {
         let mut entries: Vec<(usize, String, SymExpr, i64)> = (0..self.forest.loops.len())
             .map(|i| {
                 let l = &self.forest.loops[i];
-                let mut weight = TermSum::default();
+                let mut weight = CountAccumulator::default();
                 for &b in &l.blocks {
                     let instrs = self.blocks[b.0 as usize].class_counts.total as i64;
                     let mut mult = SymExpr::Const(1);

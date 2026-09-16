@@ -241,9 +241,9 @@ pub struct Access {
     /// part; global and generic spaces with a known address only. An
     /// upper bound when the instruction is predicated.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sectors_per_request: Option<crate::analysis::memory_footprint::Range>,
+    pub sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lines_per_request: Option<crate::analysis::memory_footprint::Range>,
+    pub lines_per_request: Option<crate::analysis::memory_footprint::CountRange>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footprint_unknown: Option<String>,
     /// How the address moves per iteration of each enclosing loop,

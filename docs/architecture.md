@@ -33,6 +33,20 @@ analysis framework is introduced.
 One crate remains sufficient. The CLI stays in `main.rs` and the library entry
 points remain available through `lib.rs`.
 
+## Type naming
+
+Program representations and recognizable structures use domain names:
+`Module`, `Kernel`, `ControlFlowGraph`, and `LoopForest`. `DominanceInfo`
+contains dominance and reachability information; `TripCountResults` bundles
+trip counts and unroll pairs. `AffineValueTracer` performs affine tracing,
+and `ReachingDefinition` describes its definition-lookup outcomes.
+
+Construction and aggregation helpers are named for their purpose:
+`KernelReportBuilder`, `CountAccumulator`, and `FlopAccumulator`.
+`CountRange` describes memory-footprint count bounds, and `PrintContext`
+is the private symbolic-expression formatting context. These names do not
+change storage, analysis semantics, or the report schema.
+
 ## Dependency boundaries
 
 Production code and integration tests import canonical modules directly. The old
@@ -47,7 +61,7 @@ points (`report::analyze`, its options/errors, and `report::Report`) remain.
   Unit tests may parse PTX to construct fixtures.
 - Analyses do not depend on report construction or rendering.
 - Report construction can depend on all analyses and the parser.
-- The report schema currently embeds the memory-footprint `Range` type; that
+- The report schema currently embeds the memory-footprint `CountRange` type; that
   dependency is preserved.
 
 Within analysis, the main dependencies are:
@@ -78,7 +92,7 @@ pass the collected measurement slice, selected block IDs, and filters explicitly
 They return owned tallies; there is no `Stats` wrapper or separate borrowed-view
 object. The slice must retain `collect`'s block ordering.
 
-Trip analysis uses private free functions that take `&Tracer`; it does not add
+Trip analysis uses private free functions that take `&AffineValueTracer`; it does not add
 methods to the tracer from another module. Trip matching constructs an unbound
 tracer, while report address/thread analysis uses one with parameter bindings.
 These distinct evaluation modes remain explicit.

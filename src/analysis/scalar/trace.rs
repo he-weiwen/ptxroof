@@ -17,7 +17,7 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::control_flow::{BlockId, Cfg};
+use crate::analysis::control_flow::{BlockId, ControlFlowGraph};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::ir::{Instr, Kernel, Module, Operand, Stmt};
@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Where a register's value at a statement comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Reach {
+pub(crate) enum ReachingDefinition {
     /// One definition, and no other can reach the statement.
     Def(usize),
     /// Defined again inside a loop containing the statement: the value
@@ -39,10 +39,10 @@ pub(crate) enum Reach {
     None,
 }
 
-pub(crate) struct Tracer<'a> {
+pub(crate) struct AffineValueTracer<'a> {
     pub(crate) module: &'a Module,
     pub(crate) kernel: &'a Kernel,
-    pub(crate) cfg: &'a Cfg,
+    pub(crate) cfg: &'a ControlFlowGraph,
     pub(crate) forest: &'a LoopForest,
     /// Definition sites (statement indices) per register symbol.
     pub(crate) defs: HashMap<Symbol, Vec<usize>>,
@@ -57,11 +57,11 @@ pub(crate) struct Tracer<'a> {
     pub(crate) bindings: Option<&'a HashMap<String, i64>>,
 }
 
-impl<'a> Tracer<'a> {
+impl<'a> AffineValueTracer<'a> {
     pub(crate) fn new(
         module: &'a Module,
         kernel: &'a Kernel,
-        cfg: &'a Cfg,
+        cfg: &'a ControlFlowGraph,
         forest: &'a LoopForest,
     ) -> Self {
         let mut defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
@@ -91,7 +91,7 @@ impl<'a> Tracer<'a> {
                 }
             }
         }
-        let mut t = Tracer {
+        let mut t = AffineValueTracer {
             module,
             kernel,
             cfg,
@@ -248,7 +248,7 @@ impl<'a> Tracer<'a> {
                     let phi = chain.iter().copied().find(|&r| {
                         matches!(
                             self.reach_def(r, header_start, Some(id)),
-                            Reach::Def(_) | Reach::Merged(_)
+                            ReachingDefinition::Def(_) | ReachingDefinition::Merged(_)
                         )
                     });
                     if let Some(phi) = phi
@@ -353,9 +353,14 @@ impl<'a> Tracer<'a> {
     /// provided no other definition lies on a path from that dominator
     /// to `pos` that avoids the dominator. With `exclude`, definitions
     /// inside that loop are ignored: the value on entry to the loop.
-    pub(crate) fn reach_def(&self, reg: Symbol, pos: usize, exclude: Option<LoopId>) -> Reach {
+    pub(crate) fn reach_def(
+        &self,
+        reg: Symbol,
+        pos: usize,
+        exclude: Option<LoopId>,
+    ) -> ReachingDefinition {
         let Some(all) = self.defs.get(&reg) else {
-            return Reach::None;
+            return ReachingDefinition::None;
         };
         let sites: Vec<usize> = all
             .iter()
@@ -369,7 +374,7 @@ impl<'a> Tracer<'a> {
             .rev()
             .find(|&&d| d >= blk.start && d < pos.min(blk.end))
         {
-            return Reach::Def(d);
+            return ReachingDefinition::Def(d);
         }
         let mut cur = self.forest.doms.idom[here.0 as usize];
         while let Some(b) = cur {
@@ -391,20 +396,20 @@ impl<'a> Tracer<'a> {
                     })
                     .collect();
                 if interfering.is_empty() {
-                    return Reach::Def(d);
+                    return ReachingDefinition::Def(d);
                 }
                 let mut l = self.forest.block_loop[here.0 as usize];
                 while let Some(id) = l {
                     if interfering.iter().any(|&o| self.in_loop(id, o)) {
-                        return Reach::Carried(id);
+                        return ReachingDefinition::Carried(id);
                     }
                     l = self.forest.get(id).parent;
                 }
                 let mut merged = vec![d];
                 merged.extend(interfering);
-                return Reach::Merged(merged);
+                return ReachingDefinition::Merged(merged);
             }
-            if b == Cfg::ENTRY {
+            if b == ControlFlowGraph::ENTRY {
                 break;
             }
             cur = self.forest.doms.idom[b.0 as usize];
@@ -420,16 +425,16 @@ impl<'a> Tracer<'a> {
             })
             .collect();
         if arriving.is_empty() {
-            return Reach::None;
+            return ReachingDefinition::None;
         }
         let mut l = self.forest.block_loop[here.0 as usize];
         while let Some(id) = l {
             if arriving.iter().any(|&o| self.in_loop(id, o)) {
-                return Reach::Carried(id);
+                return ReachingDefinition::Carried(id);
             }
             l = self.forest.get(id).parent;
         }
-        Reach::Merged(arriving)
+        ReachingDefinition::Merged(arriving)
     }
 
     pub(crate) fn trace_operand(
@@ -471,8 +476,8 @@ impl<'a> Tracer<'a> {
         }
         let name = self.module.interner.resolve(reg);
         let def = match self.reach_def(reg, pos, exclude) {
-            Reach::Def(d) => d,
-            Reach::Carried(l) => {
+            ReachingDefinition::Def(d) => d,
+            ReachingDefinition::Carried(l) => {
                 // The counter of loop l read before its increment: the
                 // previous iteration's value, init + (k − 1)·step.
                 if let Some((step, phi)) = self.ivs[l.0 as usize].get(&reg) {
@@ -486,7 +491,7 @@ impl<'a> Tracer<'a> {
                     format!("latch condition depends on {name}, carried around an enclosing loop")
                 }));
             }
-            Reach::Merged(defs) => {
+            ReachingDefinition::Merged(defs) => {
                 // The same immediate on every path is that value.
                 if let Some(c) = self.same_immediate(&defs) {
                     return Ok(Affine::invariant(SymExpr::Const(c)));
@@ -495,7 +500,7 @@ impl<'a> Tracer<'a> {
                     .obstacle_of_any_def(reg, id)
                     .unwrap_or_else(|| format!("{name} has more than one reaching definition")));
             }
-            Reach::None => {
+            ReachingDefinition::None => {
                 return match Var::special(name) {
                     Some(v) => Ok(Affine::var(v)),
                     // The launch shape is uniform: a symbol, bound when known.
@@ -824,13 +829,15 @@ impl<'a> Tracer<'a> {
             return None;
         }
         let def = match self.reach_def(reg, pos, None) {
-            Reach::Def(d) => d,
-            Reach::None => {
+            ReachingDefinition::Def(d) => d,
+            ReachingDefinition::None => {
                 let name = self.module.interner.resolve(reg);
                 return is_special_register(name)
                     .then(|| format!("latch condition depends on special register {name}"));
             }
-            Reach::Carried(_) | Reach::Merged(_) => return self.obstacle_of_any_def(reg, id),
+            ReachingDefinition::Carried(_) | ReachingDefinition::Merged(_) => {
+                return self.obstacle_of_any_def(reg, id);
+            }
         };
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return None;

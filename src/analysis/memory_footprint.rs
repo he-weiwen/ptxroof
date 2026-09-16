@@ -17,15 +17,15 @@ pub const SECTOR: i64 = 32;
 pub const LINE: i64 = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct Range {
+pub struct CountRange {
     pub min: u32,
     pub max: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Footprint {
-    pub sectors: Range,
-    pub lines: Range,
+    pub sectors: CountRange,
+    pub lines: CountRange,
 }
 
 /// Sectors and lines per warp request, or why they cannot be counted:
@@ -48,7 +48,7 @@ pub fn warp_footprint(a: &Affine, bytes: u32, shape: [u32; 3]) -> Result<Footpri
         return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
     }
     let bytes = i64::from(bytes.max(1));
-    let count = |unit: i64| -> Range {
+    let count = |unit: i64| -> CountRange {
         let (mut min, mut max) = (u32::MAX, 0u32);
         for warp in 0..(threads + 31) / 32 {
             let offsets: Vec<i64> = (warp * 32..((warp + 1) * 32).min(threads))
@@ -73,7 +73,7 @@ pub fn warp_footprint(a: &Affine, bytes: u32, shape: [u32; 3]) -> Result<Footpri
                 shift += bytes;
             }
         }
-        Range { min, max }
+        CountRange { min, max }
     };
     Ok(Footprint {
         sectors: count(SECTOR),

@@ -14,7 +14,7 @@
 //! are machine-specific, and the basename is what a human greps for.
 //!
 
-use crate::analysis::control_flow::graph::Cfg;
+use crate::analysis::control_flow::graph::ControlFlowGraph;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::ptx::ir::{Kernel, Module, SourceLoc};
 use crate::support::paths::basename;
@@ -36,7 +36,7 @@ pub struct LoopName {
 pub fn loop_names(
     module: &Module,
     kernel: &Kernel,
-    cfg: &Cfg,
+    cfg: &ControlFlowGraph,
     forest: &LoopForest,
 ) -> Vec<LoopName> {
     (0..forest.loops.len() as u32)
@@ -47,7 +47,7 @@ pub fn loop_names(
 fn loop_name(
     module: &Module,
     kernel: &Kernel,
-    cfg: &Cfg,
+    cfg: &ControlFlowGraph,
     forest: &LoopForest,
     id: LoopId,
 ) -> LoopName {

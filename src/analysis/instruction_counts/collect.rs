@@ -18,7 +18,7 @@
 //! The qualifier retains the upper bound.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::control_flow::{BlockId, Cfg};
+use crate::analysis::control_flow::{BlockId, ControlFlowGraph};
 use crate::analysis::instruction_counts::classify::{Direction, OpClass, classify};
 use crate::analysis::instruction_counts::measurement::{MeasureKind, Measurement};
 use crate::ptx::ir::{Kernel, Module, Stmt};
@@ -75,7 +75,7 @@ pub struct BlockMeasurements {
 pub fn collect(
     module: &Module,
     kernel: &Kernel,
-    cfg: &Cfg,
+    cfg: &ControlFlowGraph,
     forest: &LoopForest,
 ) -> Vec<BlockMeasurements> {
     let exit_blocks: Vec<BlockId> = (0..cfg.blocks.len() as u32)

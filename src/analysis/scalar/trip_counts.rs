@@ -31,11 +31,11 @@
 //! factor c.
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::control_flow::{BlockId, Cfg};
+use crate::analysis::control_flow::{BlockId, ControlFlowGraph};
 use crate::analysis::loop_names::LoopName;
 use crate::analysis::scalar::affine::Var;
 use crate::analysis::scalar::symexpr::SymExpr;
-use crate::analysis::scalar::trace::{Reach, Tracer};
+use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
 use crate::ptx::ir::{Kernel, Module, Operand, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
@@ -52,7 +52,7 @@ pub struct UnrollPair {
 }
 
 #[derive(Debug)]
-pub struct TripInfo {
+pub struct TripCountResults {
     /// Indexed by `LoopId`.
     pub trips: Vec<TripCount>,
     pub unroll_pairs: Vec<UnrollPair>,
@@ -61,11 +61,11 @@ pub struct TripInfo {
 pub fn trip_counts(
     module: &Module,
     kernel: &Kernel,
-    cfg: &Cfg,
+    cfg: &ControlFlowGraph,
     forest: &LoopForest,
     names: &[LoopName],
-) -> TripInfo {
-    let tracer = Tracer::new(module, kernel, cfg, forest);
+) -> TripCountResults {
+    let tracer = AffineValueTracer::new(module, kernel, cfg, forest);
     let trips: Vec<TripCount> = (0..forest.loops.len() as u32)
         .map(|i| loop_trips(&tracer, LoopId(i)))
         .collect();
@@ -94,7 +94,7 @@ pub fn trip_counts(
         }
     }
 
-    TripInfo {
+    TripCountResults {
         trips,
         unroll_pairs,
     }
@@ -127,7 +127,7 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
     (has_x && has_neg_mod).then_some(*c)
 }
 
-fn loop_trips(tracer: &Tracer<'_>, id: LoopId) -> TripCount {
+fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     let l = tracer.forest.get(id);
 
     // Structural requirements: one latch, one exit edge, at the latch.
@@ -207,7 +207,12 @@ fn loop_trips(tracer: &Tracer<'_>, id: LoopId) -> TripCount {
 
 /// No setp defines the latch predicate: say what does, if anything
 /// in the latch block does (`mbarrier.test_wait` in a spin-wait).
-fn predicate_reason(tracer: &Tracer<'_>, latch: BlockId, before: usize, pred: Symbol) -> String {
+fn predicate_reason(
+    tracer: &AffineValueTracer<'_>,
+    latch: BlockId,
+    before: usize,
+    pred: Symbol,
+) -> String {
     let blk = tracer.cfg.block(latch);
     let definer = tracer.kernel.stmts[blk.start..before]
         .iter()
@@ -238,7 +243,7 @@ fn predicate_reason(tracer: &Tracer<'_>, latch: BlockId, before: usize, pred: Sy
 /// -1; header: mov.pred %p, %q; latch: mov.pred %q, 0; @%p bra
 /// header`). Trips: 2 if the initial value continues, else 1.
 fn predicate_phi_trips(
-    tracer: &Tracer<'_>,
+    tracer: &AffineValueTracer<'_>,
     id: LoopId,
     latch: BlockId,
     branch_idx: usize,
@@ -257,7 +262,7 @@ fn predicate_phi_trips(
         };
         Some(tracer.module.operand(*src))
     };
-    let Reach::Def(copy) = tracer.reach_def(pred, branch_idx, None) else {
+    let ReachingDefinition::Def(copy) = tracer.reach_def(pred, branch_idx, None) else {
         return None;
     };
     let Operand::Register(phi) = mov_src(copy)? else {
@@ -279,7 +284,8 @@ fn predicate_phi_trips(
         return None;
     }
     let header = tracer.forest.get(id).header;
-    let Reach::Def(init_def) = tracer.reach_def(*phi, tracer.cfg.block(header).start, Some(id))
+    let ReachingDefinition::Def(init_def) =
+        tracer.reach_def(*phi, tracer.cfg.block(header).start, Some(id))
     else {
         return None;
     };

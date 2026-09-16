@@ -302,7 +302,7 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
         return;
     }
     let _ = writeln!(w, "{pad}{title}:");
-    let range = |r: &crate::analysis::memory_footprint::Range| {
+    let range = |r: &crate::analysis::memory_footprint::CountRange| {
         if r.min == r.max {
             r.min.to_string()
         } else {
@@ -320,9 +320,10 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                 format!(" via {}", a.path)
             };
             let what = format!("{} {}{bytes}{via}{pred}", a.space, a.direction);
-            let plural = |r: &crate::analysis::memory_footprint::Range, one: &str, many: &str| {
-                format!("{} {}", range(r), if r.max == 1 { one } else { many })
-            };
+            let plural =
+                |r: &crate::analysis::memory_footprint::CountRange, one: &str, many: &str| {
+                    format!("{} {}", range(r), if r.max == 1 { one } else { many })
+                };
             let warp = match (
                 &a.sectors_per_request,
                 &a.lines_per_request,

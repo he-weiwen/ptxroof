@@ -12,8 +12,8 @@
 //! at: the edges are recorded here, and the report surfaces the blocks
 //! as a named unknown.
 
-use super::dominators::{Dominators, dominators};
-use super::graph::{BlockId, Cfg};
+use super::dominators::{DominanceInfo, dominators};
+use super::graph::{BlockId, ControlFlowGraph};
 
 /// Index into [`LoopForest::loops`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -39,7 +39,7 @@ pub struct LoopForest {
     pub block_loop: Vec<Option<LoopId>>,
     /// Retreating-but-not-back edges: each names an irreducible region.
     pub irreducible_edges: Vec<(BlockId, BlockId)>,
-    pub doms: Dominators,
+    pub doms: DominanceInfo,
 }
 
 impl LoopForest {
@@ -65,7 +65,7 @@ impl LoopForest {
     }
 }
 
-pub fn loop_forest(cfg: &Cfg) -> LoopForest {
+pub fn loop_forest(cfg: &ControlFlowGraph) -> LoopForest {
     let doms = dominators(cfg);
     let n = cfg.blocks.len();
 
@@ -163,8 +163,8 @@ pub fn loop_forest(cfg: &Cfg) -> LoopForest {
     // DFS with an explicit on-stack mark.
     let mut irreducible = Vec::new();
     let mut state = vec![0u8; n]; // 0 unvisited, 1 on stack, 2 done
-    let mut stack: Vec<(BlockId, usize)> = vec![(Cfg::ENTRY, 0)];
-    state[Cfg::ENTRY.0 as usize] = 1;
+    let mut stack: Vec<(BlockId, usize)> = vec![(ControlFlowGraph::ENTRY, 0)];
+    state[ControlFlowGraph::ENTRY.0 as usize] = 1;
     while let Some(&mut (b, ref mut next)) = stack.last_mut() {
         let succs = &cfg.block(b).succs;
         if *next < succs.len() {
@@ -200,7 +200,7 @@ mod tests {
     use crate::analysis::control_flow::build_cfg;
     use crate::ptx::parse::parser::parse;
 
-    fn forest_of(body: &str) -> (Cfg, LoopForest) {
+    fn forest_of(body: &str) -> (ControlFlowGraph, LoopForest) {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
              .visible .entry k()\n{{\n{body}\n}}\n"

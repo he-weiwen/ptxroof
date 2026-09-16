@@ -9,10 +9,10 @@
 //! leaves the set unknown, and the block's counts stay bounds.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::control_flow::{BlockId, Cfg};
+use crate::analysis::control_flow::{BlockId, ControlFlowGraph};
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::lane_eval::eval_lane;
-use crate::analysis::scalar::trace::{Reach, Tracer};
+use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
 use crate::ptx::ir::{Kernel, Module, Stmt};
 
 /// One condition `form cmp 0` over the thread index.
@@ -131,9 +131,9 @@ impl ThreadSet {
 pub(crate) fn block_thread_sets(
     module: &Module,
     kernel: &Kernel,
-    cfg: &Cfg,
+    cfg: &ControlFlowGraph,
     forest: &LoopForest,
-    tracer: &Tracer,
+    tracer: &AffineValueTracer,
 ) -> Vec<ThreadSet> {
     let sym = |text: &str| module.interner.get(text);
     let sym_bra = sym("bra");
@@ -177,7 +177,7 @@ pub(crate) fn block_thread_sets(
                         }
                     }
                 }
-                if d == Cfg::ENTRY {
+                if d == ControlFlowGraph::ENTRY {
                     break;
                 }
                 cur = forest.doms.idom[d.0 as usize];
@@ -196,12 +196,12 @@ pub(crate) fn block_thread_sets(
 fn condition(
     module: &Module,
     kernel: &Kernel,
-    tracer: &Tracer,
+    tracer: &AffineValueTracer,
     pos: usize,
     pred: crate::support::intern::Symbol,
     sym_setp: Option<crate::support::intern::Symbol>,
 ) -> Option<(Affine, String)> {
-    let Reach::Def(def) = tracer.reach_def(pred, pos, None) else {
+    let ReachingDefinition::Def(def) = tracer.reach_def(pred, pos, None) else {
         return None;
     };
     let Stmt::Instr(setp) = &kernel.stmts[def] else {

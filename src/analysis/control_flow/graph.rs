@@ -21,7 +21,7 @@ use crate::support::intern::Symbol;
 use std::collections::HashSet;
 
 newtype_idx! {
-    /// Index into [`Cfg::blocks`].
+    /// Index into [`ControlFlowGraph::blocks`].
     pub struct BlockId;
 }
 
@@ -37,7 +37,7 @@ pub struct Block {
 }
 
 #[derive(Debug)]
-pub struct Cfg {
+pub struct ControlFlowGraph {
     pub blocks: IndexVec<BlockId, Block>,
     /// Statement indices of `call` instructions — surfaced by the
     /// report as a visible unknown (non-inlined callee).
@@ -51,7 +51,7 @@ pub struct Cfg {
     pub unresolved_branches: Vec<(BlockId, Symbol)>,
 }
 
-impl Cfg {
+impl ControlFlowGraph {
     pub const ENTRY: BlockId = BlockId(0);
 
     pub fn block(&self, id: BlockId) -> &Block {
@@ -77,7 +77,7 @@ impl Cfg {
     }
 }
 
-pub fn build_cfg(module: &Module, kernel: &Kernel) -> Cfg {
+pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
     let sym = |text: &str| module.interner.get(text);
     let sym_bra = sym("bra");
     let sym_brx = sym("brx");
@@ -258,7 +258,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> Cfg {
         blocks[bid].succs = succs;
     }
 
-    Cfg {
+    ControlFlowGraph {
         blocks,
         call_sites,
         unresolved_branches: unresolved,
@@ -284,7 +284,7 @@ mod tests {
     use super::*;
     use crate::ptx::parse::parser::parse;
 
-    fn cfg_of(body: &str) -> (Module, Cfg) {
+    fn cfg_of(body: &str) -> (Module, ControlFlowGraph) {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
              .visible .entry k()\n{{\n{body}\n}}\n"
@@ -294,7 +294,7 @@ mod tests {
         (module, cfg)
     }
 
-    fn shape(cfg: &Cfg) -> Vec<Vec<u32>> {
+    fn shape(cfg: &ControlFlowGraph) -> Vec<Vec<u32>> {
         cfg.blocks
             .iter()
             .map(|b| b.succs.iter().map(|s| s.0).collect())

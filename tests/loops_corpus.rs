@@ -3,13 +3,13 @@
 //! micro/irreducible. The k5 tree is also an insta snapshot — the
 //! human-reviewable form.
 
-use ptxroof::analysis::control_flow::{Cfg, LoopForest, build_cfg, loop_forest};
+use ptxroof::analysis::control_flow::{ControlFlowGraph, LoopForest, build_cfg, loop_forest};
 use ptxroof::ptx::ir::Module;
 use ptxroof::ptx::parse::parser::parse;
 use std::fs;
 use std::path::PathBuf;
 
-fn forest_of(fixture: &str) -> (Module, Cfg, LoopForest) {
+fn forest_of(fixture: &str) -> (Module, ControlFlowGraph, LoopForest) {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(fixture);
@@ -21,7 +21,7 @@ fn forest_of(fixture: &str) -> (Module, Cfg, LoopForest) {
 }
 
 /// (header label, depth) per loop, sorted by header block id.
-fn shape(m: &Module, cfg: &Cfg, f: &LoopForest) -> Vec<(String, u32)> {
+fn shape(m: &Module, cfg: &ControlFlowGraph, f: &LoopForest) -> Vec<(String, u32)> {
     let mut v: Vec<_> = f
         .loops
         .iter()
@@ -85,7 +85,7 @@ fn k5_loop_tree_snapshot() {
     let mut out = String::new();
     fn walk(
         m: &Module,
-        cfg: &Cfg,
+        cfg: &ControlFlowGraph,
         f: &LoopForest,
         id: ptxroof::analysis::control_flow::LoopId,
         out: &mut String,

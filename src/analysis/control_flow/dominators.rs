@@ -4,10 +4,10 @@
 //! Unreachable blocks have no RPO number and no idom; every consumer
 //! treats them as outside the analysis (they execute zero times).
 
-use super::graph::{BlockId, Cfg};
+use super::graph::{BlockId, ControlFlowGraph};
 
 #[derive(Debug)]
-pub struct Dominators {
+pub struct DominanceInfo {
     /// Immediate dominator per block; `None` for the entry block and
     /// for unreachable blocks.
     pub idom: Vec<Option<BlockId>>,
@@ -17,7 +17,7 @@ pub struct Dominators {
     pub rpo_index: Vec<usize>,
 }
 
-impl Dominators {
+impl DominanceInfo {
     pub fn is_reachable(&self, b: BlockId) -> bool {
         self.rpo_index[b.0 as usize] != usize::MAX
     }
@@ -40,15 +40,15 @@ impl Dominators {
     }
 }
 
-pub fn dominators(cfg: &Cfg) -> Dominators {
+pub fn dominators(cfg: &ControlFlowGraph) -> DominanceInfo {
     let n = cfg.blocks.len();
 
     // Iterative DFS postorder from the entry, then reverse.
     let mut postorder = Vec::with_capacity(n);
     let mut visited = vec![false; n];
     // Stack holds (block, next-successor-index).
-    let mut stack: Vec<(BlockId, usize)> = vec![(Cfg::ENTRY, 0)];
-    visited[Cfg::ENTRY.0 as usize] = true;
+    let mut stack: Vec<(BlockId, usize)> = vec![(ControlFlowGraph::ENTRY, 0)];
+    visited[ControlFlowGraph::ENTRY.0 as usize] = true;
     while let Some(&mut (b, ref mut next)) = stack.last_mut() {
         let succs = &cfg.block(b).succs;
         if *next < succs.len() {
@@ -71,7 +71,7 @@ pub fn dominators(cfg: &Cfg) -> Dominators {
 
     // CHK iteration to fixpoint.
     let mut idom: Vec<Option<BlockId>> = vec![None; n];
-    idom[Cfg::ENTRY.0 as usize] = Some(Cfg::ENTRY); // self, during iteration
+    idom[ControlFlowGraph::ENTRY.0 as usize] = Some(ControlFlowGraph::ENTRY); // self, during iteration
     let intersect = |idom: &[Option<BlockId>], rpo_index: &[usize], a: BlockId, b: BlockId| {
         let (mut x, mut y) = (a, b);
         while x != y {
@@ -106,8 +106,8 @@ pub fn dominators(cfg: &Cfg) -> Dominators {
         }
     }
 
-    idom[Cfg::ENTRY.0 as usize] = None; // entry has no idom in the result
-    Dominators {
+    idom[ControlFlowGraph::ENTRY.0 as usize] = None; // entry has no idom in the result
+    DominanceInfo {
         idom,
         rpo,
         rpo_index,
@@ -120,7 +120,7 @@ mod tests {
     use crate::analysis::control_flow::build_cfg;
     use crate::ptx::parse::parser::parse;
 
-    fn doms_of(body: &str) -> (Cfg, Dominators) {
+    fn doms_of(body: &str) -> (ControlFlowGraph, DominanceInfo) {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
              .visible .entry k()\n{{\n{body}\n}}\n"

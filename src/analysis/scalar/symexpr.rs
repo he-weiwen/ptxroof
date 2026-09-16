@@ -347,7 +347,7 @@ impl SymExpr {
 
 /// Where a subexpression is being printed; decides parenthesization.
 #[derive(Clone, Copy, PartialEq)]
-enum Ctx {
+enum PrintContext {
     Top,
     SumTerm,
     ProdFactor,
@@ -356,21 +356,23 @@ enum Ctx {
 
 impl fmt::Display for SymExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", render(self, Ctx::Top))
+        write!(f, "{}", render(self, PrintContext::Top))
     }
 }
 
-fn parens_needed(e: &SymExpr, ctx: Ctx) -> bool {
+fn parens_needed(e: &SymExpr, ctx: PrintContext) -> bool {
     match e {
         SymExpr::Const(_) | SymExpr::Sym(_) | SymExpr::CeilDiv(..) => false,
-        SymExpr::Sum(_) => matches!(ctx, Ctx::ProdFactor | Ctx::DivOrModLeft),
-        SymExpr::Prod(_) => ctx == Ctx::DivOrModLeft,
-        SymExpr::FloorDiv(..) => matches!(ctx, Ctx::ProdFactor | Ctx::DivOrModLeft),
-        SymExpr::Mod(..) => matches!(ctx, Ctx::ProdFactor | Ctx::DivOrModLeft),
+        SymExpr::Sum(_) => matches!(ctx, PrintContext::ProdFactor | PrintContext::DivOrModLeft),
+        SymExpr::Prod(_) => ctx == PrintContext::DivOrModLeft,
+        SymExpr::FloorDiv(..) => {
+            matches!(ctx, PrintContext::ProdFactor | PrintContext::DivOrModLeft)
+        }
+        SymExpr::Mod(..) => matches!(ctx, PrintContext::ProdFactor | PrintContext::DivOrModLeft),
     }
 }
 
-fn render(e: &SymExpr, ctx: Ctx) -> String {
+fn render(e: &SymExpr, ctx: PrintContext) -> String {
     let body = match e {
         SymExpr::Const(c) => c.to_string(),
         SymExpr::Sym(name) => name.clone(),
@@ -398,30 +400,30 @@ fn render(e: &SymExpr, ctx: Ctx) -> String {
                 if i == 0 {
                     if neg {
                         out.push_str("-(");
-                        out.push_str(&render(&mag, Ctx::SumTerm));
+                        out.push_str(&render(&mag, PrintContext::SumTerm));
                         out.push(')');
                         continue;
                     }
-                    out.push_str(&render(&mag, Ctx::SumTerm));
+                    out.push_str(&render(&mag, PrintContext::SumTerm));
                     continue;
                 }
                 out.push_str(if neg { " - " } else { " + " });
-                out.push_str(&render(&mag, Ctx::SumTerm));
+                out.push_str(&render(&mag, PrintContext::SumTerm));
             }
             out
         }
         SymExpr::Prod(factors) => match &factors[..] {
             // A bare negation reads better than "-1 * x".
-            [SymExpr::Const(-1), x] => format!("-{}", render(x, Ctx::ProdFactor)),
+            [SymExpr::Const(-1), x] => format!("-{}", render(x, PrintContext::ProdFactor)),
             _ => factors
                 .iter()
-                .map(|f| render(f, Ctx::ProdFactor))
+                .map(|f| render(f, PrintContext::ProdFactor))
                 .collect::<Vec<_>>()
                 .join(" * "),
         },
-        SymExpr::CeilDiv(e, c) => format!("⌈{}/{c}⌉", render(e, Ctx::DivOrModLeft)),
-        SymExpr::FloorDiv(e, c) => format!("{} / {c}", render(e, Ctx::DivOrModLeft)),
-        SymExpr::Mod(e, c) => format!("{} mod {c}", render(e, Ctx::DivOrModLeft)),
+        SymExpr::CeilDiv(e, c) => format!("⌈{}/{c}⌉", render(e, PrintContext::DivOrModLeft)),
+        SymExpr::FloorDiv(e, c) => format!("{} / {c}", render(e, PrintContext::DivOrModLeft)),
+        SymExpr::Mod(e, c) => format!("{} mod {c}", render(e, PrintContext::DivOrModLeft)),
     };
     if parens_needed(e, ctx) {
         format!("({body})")
