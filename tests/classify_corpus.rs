@@ -5,7 +5,7 @@
 //! when a new toolchain or kernel family introduces an idiom we don't
 //! classify, this names it before any user files a bug.
 
-use ptxroof::classify::{OpClass, classify};
+use ptxroof::analysis::instruction_counts::classify::{OpClass, classify};
 use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
 use std::collections::BTreeMap;

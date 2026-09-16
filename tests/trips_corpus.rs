@@ -5,8 +5,8 @@
 
 use ptxroof::analysis::control_flow::{build_cfg, loop_forest};
 use ptxroof::analysis::loop_names::loop_names;
+use ptxroof::analysis::scalar::trip_counts::{TripInfo, trip_counts};
 use ptxroof::ptx::parse::parser::parse;
-use ptxroof::trips::{TripInfo, trip_counts};
 use std::fs;
 use std::path::PathBuf;
 

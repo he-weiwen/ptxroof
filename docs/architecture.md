@@ -35,13 +35,11 @@ points remain available through `lib.rs`.
 
 ## Dependency boundaries
 
-Production code imports canonical modules directly. The old `core`, `cfg`,
-and `parse` compatibility modules have been removed; integration tests now use
-`ptx::ir`, `ptx::parse`, `ptx::print`, `analysis::control_flow`, and
-`analysis::loop_names` instead. Callers using the removed paths must migrate.
-Root analysis aliases and `report::{collect, stats, tree}` remain for compatibility.
-Those aliases are not architectural layers: resolve them to their implementations
-when assessing dependencies.
+Production code and integration tests import canonical modules directly. The old
+`core`, `cfg`, `parse`, root analysis aliases, and `report::{collect, stats, tree}`
+compatibility exports have been removed. Analysis types and functions live under
+`analysis`; report types live under `report::schema`. The public report entry
+points (`report::analyze`, its options/errors, and `report::Report`) remain.
 
 - Support utilities do not depend on PTX, analyses, or reports.
 - PTX representation and parsing do not depend on analyses or reports.
@@ -78,8 +76,12 @@ renaming it a driver would not separate those responsibilities.
 Measurement queries in `analysis::instruction_counts::stats` are free functions:
 pass the collected measurement slice, selected block IDs, and filters explicitly.
 They return owned tallies; there is no `Stats` wrapper or separate borrowed-view
-object. The slice must retain `collect`'s block ordering. The `report::stats`
-module alias remains available, but the former `report::Stats` type is removed.
+object. The slice must retain `collect`'s block ordering.
+
+Trip analysis uses private free functions that take `&Tracer`; it does not add
+methods to the tracer from another module. Trip matching constructs an unbound
+tracer, while report address/thread analysis uses one with parameter bindings.
+These distinct evaluation modes remain explicit.
 
 ## Planned SSA addition
 

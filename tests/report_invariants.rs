@@ -14,13 +14,14 @@
 //!    the check that catches two code paths disagreeing.
 
 use ptxroof::analysis::control_flow::{build_cfg, loop_forest};
+use ptxroof::analysis::instruction_counts::classify::Precision;
+use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::stats;
 use ptxroof::analysis::loop_names::loop_names;
-use ptxroof::classify::Precision;
+use ptxroof::analysis::scalar::trip_counts::trip_counts;
 use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
-use ptxroof::report::{AnalyzeOptions, BindingSpec, analyze, collect};
-use ptxroof::trips::trip_counts;
+use ptxroof::report::{AnalyzeOptions, BindingSpec, analyze};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -107,8 +108,8 @@ fn block_table_matches_the_cfg() {
                 }
             }
             fn walk<'a>(
-                nodes: &'a [ptxroof::report::tree::LoopNode],
-                out: &mut Vec<&'a ptxroof::report::tree::LoopNode>,
+                nodes: &'a [ptxroof::report::schema::LoopNode],
+                out: &mut Vec<&'a ptxroof::report::schema::LoopNode>,
             ) {
                 for n in nodes {
                     out.push(n);
@@ -178,7 +179,7 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
         let report = analyze(&src, fixture, &opts).expect("analyzes");
         let totals = &report.kernels[0].totals;
         let table_total =
-            |t: &std::collections::BTreeMap<String, ptxroof::report::tree::Count>| -> i64 {
+            |t: &std::collections::BTreeMap<String, ptxroof::report::schema::Count>| -> i64 {
                 t["total"].expr.parse().expect("bound total is numeric")
             };
         let reported = table_total(&totals.flops)

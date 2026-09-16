@@ -67,7 +67,7 @@ pub fn trip_counts(
 ) -> TripInfo {
     let tracer = Tracer::new(module, kernel, cfg, forest);
     let trips: Vec<TripCount> = (0..forest.loops.len() as u32)
-        .map(|i| tracer.loop_trips(LoopId(i)))
+        .map(|i| loop_trips(&tracer, LoopId(i)))
         .collect();
 
     // -- unroll main+remainder linking ----------------------------------
@@ -127,176 +127,174 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
     (has_x && has_neg_mod).then_some(*c)
 }
 
-// -------------------------------------------------------------------------
-// The scalar affine tracer.
+fn loop_trips(tracer: &Tracer<'_>, id: LoopId) -> TripCount {
+    let l = tracer.forest.get(id);
 
-impl<'a> Tracer<'a> {
-    fn loop_trips(&self, id: LoopId) -> TripCount {
-        let l = self.forest.get(id);
-
-        // Structural requirements: one latch, one exit edge, at the latch.
-        if l.latches.len() != 1 {
-            return Err("loop has multiple latches".to_owned());
-        }
-        let latch = l.latches[0];
-        let in_loop = |b: BlockId| l.blocks.binary_search(&b).is_ok();
-        let mut exit_edges = Vec::new();
-        for &b in &l.blocks {
-            for &s in &self.cfg.block(b).succs {
-                if !in_loop(s) {
-                    exit_edges.push((b, s));
-                }
+    // Structural requirements: one latch, one exit edge, at the latch.
+    if l.latches.len() != 1 {
+        return Err("loop has multiple latches".to_owned());
+    }
+    let latch = l.latches[0];
+    let in_loop = |b: BlockId| l.blocks.binary_search(&b).is_ok();
+    let mut exit_edges = Vec::new();
+    for &b in &l.blocks {
+        for &s in &tracer.cfg.block(b).succs {
+            if !in_loop(s) {
+                exit_edges.push((b, s));
             }
         }
-        if exit_edges.len() != 1 {
-            return Err(format!("loop has {} exit edges", exit_edges.len()));
-        }
-        if exit_edges[0].0 != latch {
-            return Err("loop exit is not at the latch".to_owned());
-        }
-
-        // The latch terminator: `@%p bra HEADER` (or inverted).
-        let latch_block = self.cfg.block(latch);
-        let branch = self
-            .last_instr(latch)
-            .ok_or_else(|| "latch block has no instructions".to_owned())?;
-        let pred = branch
-            .1
-            .predicate
-            .ok_or_else(|| "latch branch is unconditional".to_owned())?;
-        // succs[0] is the taken target (graph contract). Taken = header
-        // means continue-if-true; predicate negation flips once more.
-        let mut continue_if_true = latch_block.succs.first() == Some(&l.header);
-        if pred.negated {
-            continue_if_true = !continue_if_true;
-        }
-
-        // The setp defining the branch predicate, inside the latch block.
-        let Some((setp_idx, setp)) = self.find_setp(latch, branch.0, pred.reg) else {
-            return self
-                .predicate_phi_trips(id, latch, branch.0, pred.reg, continue_if_true)
-                .unwrap_or_else(|| Err(self.predicate_reason(latch, branch.0, pred.reg)));
-        };
-        let cmp = self
-            .module
-            .modifiers(setp)
-            .first()
-            .map(|&m| self.module.interner.resolve(m).to_owned())
-            .ok_or_else(|| "setp without comparison modifier".to_owned())?;
-
-        // Trace both operands at the setp.
-        let ops = self.module.operand_ids(setp.operands);
-        if ops.len() < 3 {
-            return Err("setp with unexpected operand count".to_owned());
-        }
-        let a = self.trace_operand(ops[1], setp_idx, Some(id), 0)?;
-        let b = self.trace_operand(ops[2], setp_idx, Some(id), 0)?;
-        let d = a - b; // D = A − B; condition is `D cmp 0`
-
-        // D(k) = A1·k + A0 in this loop's iteration number alone.
-        let k = Var::Iter(id);
-        if let Some(v) = d.terms.keys().find(|v| **v != k) {
-            return Err(match v {
-                Var::Iter(_) => "latch condition depends on an enclosing loop's counter".to_owned(),
-                other => format!("latch condition depends on special register {other}"),
-            });
-        }
-        let Some(coeff) = d.terms.get(&k) else {
-            return Err("latch condition does not involve an induction variable".to_owned());
-        };
-        let a1 = coeff
-            .as_const()
-            .ok_or_else(|| "induction step is not a constant".to_owned())?;
-        solve(&cmp, continue_if_true, a1, d.base)
+    }
+    if exit_edges.len() != 1 {
+        return Err(format!("loop has {} exit edges", exit_edges.len()));
+    }
+    if exit_edges[0].0 != latch {
+        return Err("loop exit is not at the latch".to_owned());
     }
 
-    /// No setp defines the latch predicate: say what does, if anything
-    /// in the latch block does (`mbarrier.test_wait` in a spin-wait).
-    fn predicate_reason(&self, latch: BlockId, before: usize, pred: Symbol) -> String {
-        let blk = self.cfg.block(latch);
-        let definer = self.kernel.stmts[blk.start..before]
-            .iter()
-            .rev()
-            .find_map(|s| match s {
-                Stmt::Instr(i)
-                    if self
-                        .module
-                        .operand_ids(i.operands)
-                        .first()
-                        .is_some_and(|&id| {
-                            matches!(self.module.operand(id),
-                                 Operand::Register(r) | Operand::SymbolRef(r) if *r == pred)
-                        }) =>
-                {
-                    Some(self.module.opcode(i))
-                }
-                _ => None,
-            });
-        match definer {
-            Some(op) => format!("latch predicate is defined by `{op}`, not a comparison"),
-            None => "latch predicate is not defined in the latch block".to_owned(),
-        }
+    // The latch terminator: `@%p bra HEADER` (or inverted).
+    let latch_block = tracer.cfg.block(latch);
+    let branch = tracer
+        .last_instr(latch)
+        .ok_or_else(|| "latch block has no instructions".to_owned())?;
+    let pred = branch
+        .1
+        .predicate
+        .ok_or_else(|| "latch branch is unconditional".to_owned())?;
+    // succs[0] is the taken target (graph contract). Taken = header
+    // means continue-if-true; predicate negation flips once more.
+    let mut continue_if_true = latch_block.succs.first() == Some(&l.header);
+    if pred.negated {
+        continue_if_true = !continue_if_true;
     }
 
-    /// LLVM's two-trip loop: the latch predicate is a copy of a register
-    /// set true before the loop and false in the latch (`mov.pred %q,
-    /// -1; header: mov.pred %p, %q; latch: mov.pred %q, 0; @%p bra
-    /// header`). Trips: 2 if the initial value continues, else 1.
-    fn predicate_phi_trips(
-        &self,
-        id: LoopId,
-        latch: BlockId,
-        branch_idx: usize,
-        pred: Symbol,
-        continue_if_true: bool,
-    ) -> Option<TripCount> {
-        let mov_src = |site: usize| -> Option<&Operand> {
-            let Stmt::Instr(instr) = &self.kernel.stmts[site] else {
-                return None;
-            };
-            if self.module.interner.resolve(instr.mnemonic) != "mov" {
-                return None;
+    // The setp defining the branch predicate, inside the latch block.
+    let Some((setp_idx, setp)) = tracer.find_setp(latch, branch.0, pred.reg) else {
+        return predicate_phi_trips(tracer, id, latch, branch.0, pred.reg, continue_if_true)
+            .unwrap_or_else(|| Err(predicate_reason(tracer, latch, branch.0, pred.reg)));
+    };
+    let cmp = tracer
+        .module
+        .modifiers(setp)
+        .first()
+        .map(|&m| tracer.module.interner.resolve(m).to_owned())
+        .ok_or_else(|| "setp without comparison modifier".to_owned())?;
+
+    // Trace both operands at the setp.
+    let ops = tracer.module.operand_ids(setp.operands);
+    if ops.len() < 3 {
+        return Err("setp with unexpected operand count".to_owned());
+    }
+    let a = tracer.trace_operand(ops[1], setp_idx, Some(id), 0)?;
+    let b = tracer.trace_operand(ops[2], setp_idx, Some(id), 0)?;
+    let d = a - b; // D = A − B; condition is `D cmp 0`
+
+    // D(k) = A1·k + A0 in this loop's iteration number alone.
+    let k = Var::Iter(id);
+    if let Some(v) = d.terms.keys().find(|v| **v != k) {
+        return Err(match v {
+            Var::Iter(_) => "latch condition depends on an enclosing loop's counter".to_owned(),
+            other => format!("latch condition depends on special register {other}"),
+        });
+    }
+    let Some(coeff) = d.terms.get(&k) else {
+        return Err("latch condition does not involve an induction variable".to_owned());
+    };
+    let a1 = coeff
+        .as_const()
+        .ok_or_else(|| "induction step is not a constant".to_owned())?;
+    solve(&cmp, continue_if_true, a1, d.base)
+}
+
+/// No setp defines the latch predicate: say what does, if anything
+/// in the latch block does (`mbarrier.test_wait` in a spin-wait).
+fn predicate_reason(tracer: &Tracer<'_>, latch: BlockId, before: usize, pred: Symbol) -> String {
+    let blk = tracer.cfg.block(latch);
+    let definer = tracer.kernel.stmts[blk.start..before]
+        .iter()
+        .rev()
+        .find_map(|s| match s {
+            Stmt::Instr(i)
+                if tracer
+                    .module
+                    .operand_ids(i.operands)
+                    .first()
+                    .is_some_and(|&id| {
+                        matches!(tracer.module.operand(id),
+                             Operand::Register(r) | Operand::SymbolRef(r) if *r == pred)
+                    }) =>
+            {
+                Some(tracer.module.opcode(i))
             }
-            let [_, src] = self.module.operand_ids(instr.operands) else {
-                return None;
-            };
-            Some(self.module.operand(*src))
-        };
-        let Reach::Def(copy) = self.reach_def(pred, branch_idx, None) else {
-            return None;
-        };
-        let Operand::Register(phi) = mov_src(copy)? else {
-            return None;
-        };
-        if !self.in_loop(id, copy) {
-            return None;
-        }
-        let latch_blk = self.cfg.block(latch);
-        let mut in_loop = self.defs.get(phi)?.iter().filter(|&&d| self.in_loop(id, d));
-        let (&latch_def, None) = (in_loop.next()?, in_loop.next()) else {
-            return None;
-        };
-        if latch_def < latch_blk.start || latch_def >= latch_blk.end {
-            return None;
-        }
-        let header = self.forest.get(id).header;
-        let Reach::Def(init_def) = self.reach_def(*phi, self.cfg.block(header).start, Some(id))
-        else {
-            return None;
-        };
-        let (Operand::Immediate(latch_val), Operand::Immediate(init_val)) =
-            (mov_src(latch_def)?, mov_src(init_def)?)
-        else {
-            return None;
-        };
-        let continues = |text: &Symbol| {
-            parse_int(self.module.interner.resolve(*text)).map(|v| (v != 0) == continue_if_true)
-        };
-        if continues(latch_val)? {
-            return None;
-        }
-        Some(Ok(SymExpr::Const(if continues(init_val)? { 2 } else { 1 })))
+            _ => None,
+        });
+    match definer {
+        Some(op) => format!("latch predicate is defined by `{op}`, not a comparison"),
+        None => "latch predicate is not defined in the latch block".to_owned(),
     }
+}
+
+/// LLVM's two-trip loop: the latch predicate is a copy of a register
+/// set true before the loop and false in the latch (`mov.pred %q,
+/// -1; header: mov.pred %p, %q; latch: mov.pred %q, 0; @%p bra
+/// header`). Trips: 2 if the initial value continues, else 1.
+fn predicate_phi_trips(
+    tracer: &Tracer<'_>,
+    id: LoopId,
+    latch: BlockId,
+    branch_idx: usize,
+    pred: Symbol,
+    continue_if_true: bool,
+) -> Option<TripCount> {
+    let mov_src = |site: usize| -> Option<&Operand> {
+        let Stmt::Instr(instr) = &tracer.kernel.stmts[site] else {
+            return None;
+        };
+        if tracer.module.interner.resolve(instr.mnemonic) != "mov" {
+            return None;
+        }
+        let [_, src] = tracer.module.operand_ids(instr.operands) else {
+            return None;
+        };
+        Some(tracer.module.operand(*src))
+    };
+    let Reach::Def(copy) = tracer.reach_def(pred, branch_idx, None) else {
+        return None;
+    };
+    let Operand::Register(phi) = mov_src(copy)? else {
+        return None;
+    };
+    if !tracer.in_loop(id, copy) {
+        return None;
+    }
+    let latch_blk = tracer.cfg.block(latch);
+    let mut in_loop = tracer
+        .defs
+        .get(phi)?
+        .iter()
+        .filter(|&&d| tracer.in_loop(id, d));
+    let (&latch_def, None) = (in_loop.next()?, in_loop.next()) else {
+        return None;
+    };
+    if latch_def < latch_blk.start || latch_def >= latch_blk.end {
+        return None;
+    }
+    let header = tracer.forest.get(id).header;
+    let Reach::Def(init_def) = tracer.reach_def(*phi, tracer.cfg.block(header).start, Some(id))
+    else {
+        return None;
+    };
+    let (Operand::Immediate(latch_val), Operand::Immediate(init_val)) =
+        (mov_src(latch_def)?, mov_src(init_def)?)
+    else {
+        return None;
+    };
+    let continues = |text: &Symbol| {
+        parse_int(tracer.module.interner.resolve(*text)).map(|v| (v != 0) == continue_if_true)
+    };
+    if continues(latch_val)? {
+        return None;
+    }
+    Some(Ok(SymExpr::Const(if continues(init_val)? { 2 } else { 1 })))
 }
 
 /// Solve `continue while A1·k + A0 cmp 0` (k = 1, 2, ...) for the
