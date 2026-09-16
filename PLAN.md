@@ -18,9 +18,9 @@ block, which threads of the CTA run it when thread-index branches
 select them, so per-CTA totals count each block on its own threads;
 and per loop with a numeric trip count, the global bytes one CTA
 requests over the loop's own blocks and the distinct bytes it touches.
-Text
-and JSON views of the same tree. Every number is static, per thread,
-as requested by the PTX; nothing is measured (README).
+Text and JSON views of the same tree. Counts are static: per-thread
+unless labeled per-CTA or per-warp, as requested by the PTX; nothing
+is measured (README).
 
 ## Known limitations
 
@@ -77,6 +77,12 @@ as requested by the PTX; nothing is measured (README).
 
 ### Producers and validation
 
+- **The frontend is not panic-free for arbitrary UTF-8.** An input file
+  containing only `é` causes `ptxroof analyze` to exit with a panic:
+  `end byte index 1 is not a char boundary`. The byte-oriented lexer
+  slices an unexpected multibyte character after advancing one byte
+  (`src/ptx/parse/lexer.rs`, `make` and `next_token`).
+
 - Fixture corpus: nvcc output for one CUDA header ladder (k1, k2, k5,
   k11, k12, k14, mma_demo), Triton 3.8.0 (Gluon) output for five
   nanochat kernels (`tests/fixtures/gluon`: twelve PTX files; the
@@ -87,7 +93,8 @@ as requested by the PTX; nothing is measured (README).
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
   identical to the original's for 29 of the 30 fixtures; k14's is
   rejected because the in-kernel `.local` depot declaration is
-  discarded (`Unknown symbol '__local_depot0'`) and is allowlisted in
+  discarded; assembler diagnostics can vary (the current round trip reports
+  `Arguments mismatch for instruction 'mov'`). This is allowlisted in
   `tests/roundtrip-allowlist.txt`. A `tests/run.py` stage when the
   toolkit is on PATH, skipped otherwise.
 - Generated loops (`tests/gen_loops.py`, a CI step): single counted
@@ -131,6 +138,11 @@ as requested by the PTX; nothing is measured (README).
   names a family, not a part.
 
 ## Missing features
+
+- SSA representation and migration of suitable dataflow analyses: planned,
+  not implemented. The current tracer combines definition lookup and affine
+  interpretation (`src/analysis/scalar/trace.rs`); construction semantics and
+  migration boundaries are described in `docs/architecture.md`.
 
 One line each, with the trigger that would start it.
 

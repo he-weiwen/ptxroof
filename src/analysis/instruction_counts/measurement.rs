@@ -14,8 +14,8 @@
 //! its mnemonic — the v1 `AsyncCopy{bytes unset} → 0` silent-zero bug
 //! class is unrepresentable.
 
-use super::intern::Symbol;
-use crate::classify::{ArithKind, Direction, Pipe, Precision, Space};
+use crate::analysis::instruction_counts::classify::{ArithKind, Direction, Pipe, Precision, Space};
+use crate::support::intern::Symbol;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasureKind {

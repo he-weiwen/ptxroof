@@ -1,9 +1,10 @@
 //! Pinned loop display names on the corpus: every
-//! loop in the Phase 1 corpus gets a human-readable name — source line
+//! loop in the committed corpus gets a human-readable name — source line
 //! where debug info exists, label where it doesn't.
 
-use ptxroof::cfg::{build_cfg, loop_forest, loop_names};
-use ptxroof::parse::parser::parse;
+use ptxroof::analysis::control_flow::{build_cfg, loop_forest};
+use ptxroof::analysis::loop_names::loop_names;
+use ptxroof::ptx::parse::parser::parse;
 use std::fs;
 use std::path::PathBuf;
 

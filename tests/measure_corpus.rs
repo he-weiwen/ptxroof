@@ -2,10 +2,10 @@
 //! value is hand-computed directly from the committed PTX and kept as a
 //! comment beside its assertion.
 
-use ptxroof::cfg::{BlockId, Cfg, build_cfg, loop_forest};
+use ptxroof::analysis::control_flow::{BlockId, Cfg, build_cfg, loop_forest};
 use ptxroof::classify::{Direction, Precision, Space};
-use ptxroof::core::Module;
-use ptxroof::parse::parser::parse;
+use ptxroof::ptx::ir::Module;
+use ptxroof::ptx::parse::parser::parse;
 use ptxroof::report::{BlockMeasurements, CountQualifier, Stats, collect};
 use std::fs;
 use std::path::PathBuf;

@@ -1,21 +1,22 @@
 //! ptxroof — static roofline analysis for PTX kernels (v2 of
 //! nvptx_analyzer).
 //!
-//! The library/binary
-//! split is architectural: everything analyzable lives here behind a
-//! `Result`-returning API; `main.rs` only parses arguments and renders
-//! errors.
+//! The library exposes parsing, analysis, and report construction.
+//! `main.rs` handles arguments, file input, output selection, and errors.
 
-pub mod affine;
-pub mod cfg;
-pub mod classify;
-pub mod core;
-pub mod footprint;
-pub mod parse;
+pub mod analysis;
+pub mod ptx;
 pub mod report;
-pub mod threads;
-pub mod tracer;
-pub mod trips;
+pub mod support;
+
+// Compatibility paths for existing library consumers.
+pub use analysis::instruction_counts::classify;
+pub use analysis::scalar::{affine, trace as tracer, trip_counts as trips};
+pub use analysis::thread_participation as threads;
+pub mod footprint {
+    pub use crate::analysis::memory_footprint::*;
+    pub use crate::analysis::scalar::lane_eval::{depends_on_lane, eval_lane};
+}
 
 /// Tool version, baked in from Cargo.toml at compile time.
 pub fn version() -> &'static str {

@@ -8,12 +8,12 @@
 //! involves anything else (a CTA index, a parameter, a loaded value)
 //! leaves the set unknown, and the block's counts stay bounds.
 
-use crate::affine::{Affine, Var};
-use crate::cfg::loops::LoopForest;
-use crate::cfg::{BlockId, Cfg};
-use crate::core::{Kernel, Module, Stmt};
-use crate::footprint::eval_lane;
-use crate::tracer::{Reach, Tracer};
+use crate::analysis::control_flow::loops::LoopForest;
+use crate::analysis::control_flow::{BlockId, Cfg};
+use crate::analysis::scalar::affine::{Affine, Var};
+use crate::analysis::scalar::lane_eval::eval_lane;
+use crate::analysis::scalar::trace::{Reach, Tracer};
+use crate::ptx::ir::{Kernel, Module, Stmt};
 
 /// One condition `form cmp 0` over the thread index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +67,7 @@ fn on_lane_only(a: &Affine) -> bool {
         && a.terms.iter().all(|(v, c)| {
             c.as_const().is_some()
                 && matches!(v, Var::Tid(_) | Var::Div(..) | Var::Mod(..))
-                && crate::footprint::depends_on_lane(v)
+                && crate::analysis::scalar::lane_eval::depends_on_lane(v)
         })
 }
 
@@ -77,7 +77,7 @@ impl Constraint {
         let c = self.form.base.as_const().unwrap_or(0);
         let lhs = Affine {
             terms: self.form.terms.clone(),
-            base: crate::core::symexpr::SymExpr::Const(0),
+            base: crate::analysis::scalar::symexpr::SymExpr::Const(0),
         };
         let op = match self.cmp.as_str() {
             "lt" => "<",
@@ -198,8 +198,8 @@ fn condition(
     kernel: &Kernel,
     tracer: &Tracer,
     pos: usize,
-    pred: crate::core::Symbol,
-    sym_setp: Option<crate::core::Symbol>,
+    pred: crate::support::intern::Symbol,
+    sym_setp: Option<crate::support::intern::Symbol>,
 ) -> Option<(Affine, String)> {
     let Reach::Def(def) = tracer.reach_def(pred, pos, None) else {
         return None;
@@ -236,8 +236,8 @@ fn condition(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::affine::Axis;
-    use crate::core::symexpr::SymExpr;
+    use crate::analysis::scalar::affine::Axis;
+    use crate::analysis::scalar::symexpr::SymExpr;
 
     #[test]
     fn a_constraint_counts_and_renders() {

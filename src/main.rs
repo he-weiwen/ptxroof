@@ -73,9 +73,9 @@ fn run() -> anyhow::Result<ExitCode> {
         std::fs::read_to_string(&input).with_context(|| format!("reading {}", input.display()))?;
 
     if dump_ast {
-        let module = ptxroof::parse::parser::parse(&source)
+        let module = ptxroof::ptx::parse::parser::parse(&source)
             .with_context(|| format!("parsing {}", input.display()))?;
-        print!("{}", ptxroof::parse::ast::dump(&module));
+        print!("{}", ptxroof::ptx::print::dump(&module));
         return Ok(ExitCode::SUCCESS);
     }
 

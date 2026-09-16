@@ -6,8 +6,8 @@
 //! classify, this names it before any user files a bug.
 
 use ptxroof::classify::{OpClass, classify};
-use ptxroof::core::Stmt;
-use ptxroof::parse::parser::parse;
+use ptxroof::ptx::ir::Stmt;
+use ptxroof::ptx::parse::parser::parse;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

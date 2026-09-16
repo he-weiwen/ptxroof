@@ -1,7 +1,7 @@
 # Mnemonics allowed to classify Unknown on the committed corpus, one
 # per line. Additions require review: every entry
 # is a named hole in classification coverage, and most should instead
-# trigger the Phase 2 instruction-family item.
+# trigger the instruction-family backlog in PLAN.md.
 
 # sm_90 family (PLAN.md, missing features); micro/unknown_in_loop.ptx
 # uses its fence to pin the lower-bound marking of an unmodelled op.

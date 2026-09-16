@@ -14,10 +14,10 @@
 //! unpredicated. An empty selection is exact (a true zero).
 
 use super::collect::{BlockMeasurements, CountQualifier};
-use crate::cfg::BlockId;
-use crate::classify::{ArithKind, Direction, Precision, Space};
-use crate::core::Symbol;
-use crate::core::measurement::MeasureKind;
+use crate::analysis::control_flow::BlockId;
+use crate::analysis::instruction_counts::classify::{ArithKind, Direction, Precision, Space};
+use crate::analysis::instruction_counts::measurement::MeasureKind;
+use crate::support::intern::Symbol;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tally {
@@ -135,8 +135,8 @@ impl<'a> Stats<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::classify::Pipe;
-    use crate::core::measurement::Measurement;
+    use crate::analysis::instruction_counts::classify::Pipe;
+    use crate::analysis::instruction_counts::measurement::Measurement;
 
     fn block(
         id: u32,

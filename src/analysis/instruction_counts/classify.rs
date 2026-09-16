@@ -25,8 +25,8 @@
 //! family = 1 per result (the operation, not its SASS expansion), all
 //! multiplied by packed lanes (`f16x2` = ×2).
 
-use crate::core::{Instr, Module, Operand};
-use crate::parse::parser::parse_int;
+use crate::ptx::ir::{Instr, Module, Operand};
+use crate::ptx::literal::parse_int;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Precision {
@@ -316,7 +316,7 @@ pub fn classify(module: &Module, instr: &Instr) -> OpClass {
         "nop" | "prefetch" | "prefetchu" | "discard" | "applypriority" | "griddepcontrol"
         | "createpolicy" | "nanosleep" | "pmevent" | "setmaxnreg" => OpClass::Ignore,
 
-        // -- everything else: Phase 2 families and genuine novelty ------
+        // -- everything else: unsupported instruction families ----------
         // (tensor/wmma/mma/ldmatrix, cp.async, atom/red, SFU
         // transcendentals incl. div/sqrt/rcp/sin/cos/ex2/lg2/tanh/rsqrt,
         // tex/surf). Counted and named by the coverage check.
@@ -597,8 +597,8 @@ pub(crate) fn type_width(ty: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::Stmt;
-    use crate::parse::parser::parse;
+    use crate::ptx::ir::Stmt;
+    use crate::ptx::parse::parser::parse;
 
     /// Classify the single instruction in `text`.
     fn class_of(text: &str) -> OpClass {

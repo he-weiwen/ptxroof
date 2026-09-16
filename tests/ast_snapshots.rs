@@ -3,8 +3,8 @@
 //! readable — no raw indices. Review with `cargo insta review` (or
 //! inspect the .snap diff directly; snapshots are committed).
 
-use ptxroof::parse::ast::dump;
-use ptxroof::parse::parser::parse;
+use ptxroof::ptx::parse::parser::parse;
+use ptxroof::ptx::print::dump;
 use std::fs;
 use std::path::PathBuf;
 

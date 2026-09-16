@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI test runner — tiers T2 and T3 of PLAN.md.
+"""CLI and acceptance test runner (historically called tiers T2 and T3).
 
 Deliberately implementation-language-neutral and dependency-free:
 stdlib only, Python >= 3.11 (for tomllib). If ptxroof were ever

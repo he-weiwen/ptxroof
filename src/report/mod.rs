@@ -1,13 +1,15 @@
-//! Measurement collection, queries, and the analyze report (text +
-//! JSON views over one result tree).
+//! Report construction, output schema, and text rendering.
 
 pub mod build;
-pub mod collect;
-pub mod stats;
+pub mod names;
+pub mod schema;
 pub mod text;
-pub mod tree;
 
 pub use build::{AnalyzeError, AnalyzeOptions, BindingSpec, analyze, parse_bind};
+pub use schema::Report;
+
+// Compatibility exports for existing callers.
+pub use crate::analysis::instruction_counts::{collect, stats};
 pub use collect::{BlockMeasurements, ClassCounts, CountQualifier, collect};
+pub use schema as tree;
 pub use stats::{Stats, Tally};
-pub use tree::Report;

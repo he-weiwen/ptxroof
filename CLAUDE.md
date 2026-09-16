@@ -13,8 +13,8 @@ commit, fold into it whatever the commit changes in either:
   feature says so in its line. Do not add design essays, predictions
   or "verified" notes: a claim either has a test or fixture that pins
   it, or it is listed as a limitation.
-- Any change to instruction handling (`src/classify.rs`, the parser's
-  instruction surface, the model axes in `src/core/measurement.rs`)
+- Any change to instruction handling (`src/analysis/instruction_counts/classify.rs`, the parser's
+  instruction surface, the model axes in `src/analysis/instruction_counts/measurement.rs`)
   updates the audit's affected rows and its assessment sections. If
   the pinned PTX ISA version changes, re-derive the instruction
   inventory from the manual before editing rows.

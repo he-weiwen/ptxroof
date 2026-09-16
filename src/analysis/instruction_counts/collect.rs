@@ -5,9 +5,8 @@
 //! the `classified + allowlisted-unknown = total` verifier identity
 //! reads) and the block's execution qualifier.
 //!
-//! Qualifier rule (the Phase 1 answer to "how often does this block
-//! run", documented here once): within its innermost scope — the
-//! containing loop, or the kernel for top-level blocks — a block's
+//! Within its innermost scope — the containing loop, or the kernel
+//! for top-level blocks — a block's
 //! execution count is **exact** iff the block dominates every latch of
 //! that loop (it runs every iteration), respectively every exit block
 //! of the kernel (it runs every invocation). Everything else is
@@ -15,14 +14,14 @@
 //! conditional inside a loop body, an unreachable block. This is
 //! deliberately conservative — nvcc's loop guards mirror the
 //! zero-trip case of their latch expressions, and recognizing that
-//! would be guard-implication analysis (anti-scope §1); an upper bound
-//! is always honest.
+//! would require guard-implication analysis (outside the scope in PLAN.md).
+//! The qualifier retains the upper bound.
 
-use crate::cfg::loops::LoopForest;
-use crate::cfg::{BlockId, Cfg};
-use crate::classify::{Direction, OpClass, classify};
-use crate::core::measurement::{MeasureKind, Measurement};
-use crate::core::{Kernel, Module, Stmt};
+use crate::analysis::control_flow::loops::LoopForest;
+use crate::analysis::control_flow::{BlockId, Cfg};
+use crate::analysis::instruction_counts::classify::{Direction, OpClass, classify};
+use crate::analysis::instruction_counts::measurement::{MeasureKind, Measurement};
+use crate::ptx::ir::{Kernel, Module, Stmt};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +126,9 @@ pub fn collect(
                     }
                     OpClass::NonFlopArith { kind } => {
                         counts.non_flop_arith += 1;
-                        if kind == crate::classify::ArithKind::Conversion {
+                        if kind
+                            == crate::analysis::instruction_counts::classify::ArithKind::Conversion
+                        {
                             push(MeasureKind::Conversions, 1);
                         } else {
                             push(MeasureKind::NonFlopOps { kind }, 1);
@@ -210,9 +211,9 @@ fn block_qualifier(forest: &LoopForest, exit_blocks: &[BlockId], block: BlockId)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cfg::{build_cfg, loop_forest};
-    use crate::classify::Space;
-    use crate::parse::parser::parse;
+    use crate::analysis::control_flow::{build_cfg, loop_forest};
+    use crate::analysis::instruction_counts::classify::Space;
+    use crate::ptx::parse::parser::parse;
 
     fn collect_body(body: &str) -> (Vec<BlockMeasurements>, Module) {
         let src = format!(
@@ -226,7 +227,7 @@ mod tests {
         let blocks = collect(&m, k, &cfg, &f);
         (blocks, m)
     }
-    use crate::core::Module;
+    use crate::ptx::ir::Module;
 
     #[test]
     fn conditional_block_inside_loop_is_at_most_loop_spine_is_exact() {

@@ -11,10 +11,10 @@ publish = false
 # binary (src/main.rs) is a thin CLI shell over it. Dependencies join the
 # manifest at the PR that first uses them, never earlier, so the
 # Cargo.lock diff of each PR attributes every new dependency to the code
-# that needed it. The full allowlist lives in PLAN.md §2.
+# that needed it.
 
 [dependencies]
-anyhow = "1"          # binary-only error rendering (PLAN.md §2)
+anyhow = "1"          # binary-only error rendering
 clap = { version = "4", features = ["derive"] }
 cpp_demangle = "0.4"  # kernel names; fallible -> plain names pass through
 serde = { version = "1", features = ["derive"] }  # the result tree derives Serialize
@@ -22,4 +22,4 @@ serde_json = "1"      # --json IS that derivation
 thiserror = "2"       # library error types
 
 [dev-dependencies]
-insta = "1"           # unit-level snapshots (AST dumps, loop trees)
+insta = "1"           # integration-test snapshots (PTX dumps, loop trees)

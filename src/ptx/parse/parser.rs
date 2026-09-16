@@ -12,18 +12,20 @@
 //! flattened, with the labels they define renamed per scope, since
 //! ptxas scopes a label to its block), and `.branchtargets`.
 //!
-//! Error policy: the library never panics on malformed
-//! input. Inside a kernel body a bad statement becomes `Stmt::Unparsed`
-//! and parsing resumes after the next `;` — one malformed instruction
-//! never poisons the kernel. Outside bodies the structure is rigid and
-//! small, so a malformed module-level construct is a loud `ParseError`
-//! naming the line.
+//! Malformed instructions in kernel bodies become `Stmt::Unparsed`; recovery
+//! skips to a semicolon, closing brace, or EOF. Unsupported top-level
+//! constructs and some structural errors return `ParseError` with a line
+//! number. Some declarations and directives are skipped. This is not full
+//! PTX validation, and lexer panics on arbitrary UTF-8 are not caught.
 
-use crate::core::{
-    FileDirective, IdxRange, IndexVec, Instr, Interner, Kernel, Module, Operand, OperandId, Param,
-    Predicate, RegDecl, SharedDecl, SourceLoc, Stmt, Symbol,
+use crate::ptx::ir::{
+    FileDirective, Instr, Kernel, Module, Operand, OperandId, Param, Predicate, RegDecl,
+    SharedDecl, SourceLoc, Stmt,
 };
-use crate::parse::lexer::{Token, TokenKind, tokenize};
+use crate::ptx::literal::parse_int;
+use crate::ptx::parse::lexer::{Token, TokenKind, tokenize};
+use crate::support::index::{IdxRange, IndexVec};
+use crate::support::intern::{Interner, Symbol};
 use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
@@ -848,21 +850,6 @@ impl<'a> Parser<'a> {
             _ => None,
         }
     }
-}
-
-/// Parse a PTX integer literal: decimal, hex (`0x..`), optionally
-/// negative.
-pub(crate) fn parse_int(text: &str) -> Option<i64> {
-    let (neg, rest) = match text.strip_prefix('-') {
-        Some(r) => (true, r),
-        None => (false, text),
-    };
-    let val = if let Some(hex) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
-        i64::from_str_radix(hex, 16).ok()?
-    } else {
-        rest.parse::<i64>().ok()?
-    };
-    Some(if neg { -val } else { val })
 }
 
 fn parse_version(text: &str) -> Option<(u32, u32)> {

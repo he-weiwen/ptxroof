@@ -2,7 +2,7 @@
 
 How every instruction in the PTX ISA manual's Instructions chapter
 ([§9.7](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#instructions))
-is handled by `src/classify.rs`; where handling is absent or wrong, a
+is handled by `src/analysis/instruction_counts/classify.rs`; where handling is absent or wrong, a
 recommendation; and an explicit list of instructions that do not fit
 the tool's current model. Tables follow the manual's own order and
 hierarchy, one row per instruction (sections that define several
@@ -12,24 +12,21 @@ Pinned to: **PTX ISA 9.3** (the docs page as fetched 2026-07-16) and
 `classify.rs` as of the last commit that touched this file
 (`git log -1 -- docs/ptx-instruction-coverage.md`).
 
-**This document is a point-in-time audit, not a living inventory.**
-PLAN.md's self-auditing item (Phase 2) is explicit that the only
-durable inventory of what the tool handles is the one the tool
-generates (`tools/extract-opcodes.py` + the `capabilities` verb). When
-that lands, the per-instruction tables become its first expected
-output and this file reduces to the assessment sections. Until then,
-re-verify any table row against `classify.rs` before relying on it.
+The instruction inventory is pinned to that ISA version; implementation
+coverage is maintained with changes to the classifier, as required by
+`CLAUDE.md`. The `capabilities` verb remains a missing feature in
+`PLAN.md`; these tables are maintained manually until it exists.
 
 ## The tool's model (what "fits" means)
 
-The lexer and parser are generic: any statement parses to
+The parser accepts instruction-shaped statements as
 `mnemonic + modifiers + operands` with no per-mnemonic knowledge
-(`src/parse/parser.rs`). A dotted opcode like `cp.async.bulk.tensor`
+(`src/ptx/parse/parser.rs`). A dotted opcode like `cp.async.bulk.tensor`
 becomes mnemonic `cp` with modifiers `async`, `bulk`, `tensor` — so
 one `match` arm in `classify.rs` covers every dotted variant of a base
 mnemonic; the "Today" column names the arm where routing matters.
 
-A statement the parser cannot parse at all becomes `Stmt::Unparsed`
+An instruction that fails parsing inside a kernel becomes `Stmt::Unparsed`
 and never reaches the classifier. Over the committed corpus that is
 policed by CI (`tests/parse-allowlist.txt`, empty today); at
 `analyze` time each one is counted in `instruction_classes.unparsed`
@@ -43,7 +40,7 @@ maps to exactly **one** class:
 
 | Class | Meaning | Roofline contribution |
 |---|---|---|
-| `Flop { precision, flops }` | CUDA-core FP work; fma/mad = 2, others = 1, × packed lanes (`f16x2` = ×2) | flops, bucketed by precision |
+| `Flop { pipe, precision, flops }` | CUDA-core, tensor-core, or SFU work under the documented counting convention | flops, bucketed by pipe and precision |
 | `NonFlopArith { Conversion / Integer / Predicate / Move }` | `cvt`; integer/bit ops; compares & selects; `mov`/`cvta` | none (instruction-mix reporting only) |
 | `Memory { space, direction, bytes }` | `bytes = None` feeds the unquantified counter, never zero | bytes, bucketed by state space |
 | `Copy { from, to, read_bytes, written_bytes }` | one instruction that reads one space and writes another (`cp.async`) — one memory instruction, two byte measurements | bytes on both sides |
@@ -53,8 +50,11 @@ maps to exactly **one** class:
 | `Ignore` | provably zero flop/byte (hints, `nop`) | none, by policy |
 | `Unknown` | no arm matched | **counted and named in the report, never dropped** |
 
-and to exactly one `Measurement { kind, count, predicated }`
-(`core/measurement.rs`). Every count is per thread per execution: a
+Collection emits zero, one, or two
+`Measurement { kind, count, predicated, provenance }` records per instruction:
+`Ignore` emits none, `Copy` emits separate read and write measurements, and
+other classes emit one. See `src/analysis/instruction_counts/collect.rs`
+and `measurement.rs`. Every measurement count is per thread per execution: a
 warp-collective instruction contributes its warp total divided by the
 32 lanes that issue it (PTX ISA §4.5.1: `WARP_SZ` is 32 on every
 target to date). Loop-trip and launch multiplication happen at report
@@ -67,15 +67,14 @@ honestly unquantifiable. Instructions that break one of those
 assumptions are flagged **⚠ model misfit** in the tables and
 collected in [Instructions that do not fit the model](#instructions-that-do-not-fit-the-model).
 
-Two invariants police coverage: the verifier identity
-`classified + allowlisted-unknown = total` and the corpus coverage
-check (every fixture instruction classifies non-Unknown or is
-allowlisted; the allowlist is empty). The committed corpus exercises
-22 base mnemonics, all classified: `mov fma ld add mul st shl and
-setp bra or mad cvta ret shr cvt bar sub wmma mma ldmatrix cp`.
+Coverage checks account for classified and unknown instructions and require
+every unknown corpus mnemonic to appear in `tests/classify-allowlist.txt`.
+That allowlist contains `wgmma`, used by `micro/unknown_in_loop.ptx` to
+pin lower-bound reporting. The corpus has expanded beyond the original
+nvcc ladder; see PLAN.md for its producers and fixtures.
 
 Row verdict vocabulary: **OK** (correct as-is), **OK (deferred)**
-(deliberately `Unknown` pending a Phase 2 family, with its tier),
+(deliberately `Unknown` pending a future family, with its tier),
 **Gap** (should have an arm today; recommendation given), **Wart**
 (handled, but with a defect), **⚠ model misfit** (needs a model
 decision, not just an arm).
@@ -245,7 +244,7 @@ requested.
 
 All rows below route through the bare `cp` (or `multimem`) mnemonic
 and classify `Unknown` today — deliberately: the async-copy family is
-a named Phase 2 item, and `Unknown` is visible and counted. The rows
+a missing feature in PLAN.md, and `Unknown` is visible and counted. The rows
 give the target class each should land as.
 
 | § | Instruction | Today | Verdict & recommendation |
@@ -482,14 +481,12 @@ just an arm to add. Rows above cite these by letter.
 `atom`, `red`, `red.async`, `cp.reduce.async.bulk(.tensor)`, `sured`,
 `multimem.ld_reduce`/`.red`/`.red.async`, `fabric.try_red`/
 `.try_pullred`; mildly `redux.sync` and `bar.red`. A read-modify-write
-with arithmetic is a load, a store, and an op; one `OpClass` per
-instruction (and one `MeasureKind` per `Measurement`) can express only
-one. Options: (1) a composite arm that makes `collect` emit two
-`Measurement`s sharing provenance; (2) a documented single-side policy
-(v1: `atom` = read+write bytes and no flops; `red` = write bytes).
-Recommendation: start with (2) — the bytes side is what a roofline
-needs — and move to (1) only if a precision audit ever needs atomic
-flops.
+with arithmetic combines memory traffic and computation. The current
+`Copy` class already emits read and write measurements sharing provenance:
+`atom` counts both byte directions, while `red` counts store bytes. Neither
+counts arithmetic FLOPs. Counting both arithmetic and memory work would need
+an expanded class or collection policy; multiple measurements per instruction
+are already supported.
 
 **§B — work not owned by the issuing thread.** Counts are per
 thread, and a warp-collective's per-thread share (warp total / 32)
@@ -528,10 +525,10 @@ integer MMA (`dp4a`, `dp2a`, `mma` with s8/u8/b1, `redux.sync`): real
 arithmetic with no home in an FP-flops roofline — needs an
 integer-ops axis if that audience ever materializes. Already-shipped
 precedent: `min`/`max`/`abs`/`neg` = 1 flop (Williams) even though
-the planned NCU cross-check formula won't see them. None of these
+an FMA/add/multiply-only NCU comparison will not see them. None of these
 have a wrong answer; all of them have an *undocumented* answer as the
 only failure mode. The existing pattern — a documented policy plus
-the `pipe` axis planned with the SFU item — covers all of them.
+the existing `pipe` axis — covers all of them.
 
 **§E — the cost is somewhere else.** `call`: the callee's flops and
 bytes are not attributed to the call site (recommend a report-level
@@ -576,9 +573,8 @@ flops or bytes. In descending order of importance:
    ops).
 4. ~~**One dead arm**: `ldg`.~~ Deleted.
 
-None justify preemptive fixing under the demand-driven rule — but
-when a Phase 2 family PR touches `classify.rs`, sweeping the
-one-liners in the same change is nearly free.
+The items above are resolved and retained as audit history; the remaining
+unhandled families are listed below.
 
 ## Priority tiers for unhandled instructions
 
@@ -589,7 +585,7 @@ corrupt AI, not just clutter the unknown list); (b) does the target
 audience — GEMM / conv / stencil / attention from nvcc, clang,
 Triton — actually emit it; (c) how soon.
 
-### Tier 1 — blocks the core audience today (the existing Phase 2 instruction-families item) — **landed** (PLAN.md §6, PRs 17–29); kept as the record of what was asked for
+### Tier 1 — core-audience families — landed (PRs 17–29); historical priorities
 
 Any tensor-core or reduction kernel on sm_80/sm_89 — including
 everything Triton emits for these targets — hits these. All carry
@@ -612,14 +608,14 @@ per-family**.
 
 - `wgmma.mma_async` (+ `.sp`), with `wgmma.fence` / `commit_group` / `wait_group` as `Sync`
 - TMA: `cp.async.bulk`, `cp.async.bulk.tensor`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`), with `cp.async.bulk.commit_group` / `wait_group` as `Sync`; tensor variants land as honest unquantified bytes (misfit §C)
-- Hopper warp-specialization boilerplate: `elect.sync` (`Sync`, plus the `d|p` operand form in the parser), `setmaxnreg` (`Ignore`)
+- Hopper warp-specialization boilerplate is already classified: `elect.sync` (`Communication`, with the `d|p` operand form in the parser), `setmaxnreg` (`Ignore`)
 - `red.async`, `movmatrix`, `mma.sp` (sparse policy, misfit §D), `st.async` remote-attribution review
 - `tcgen05.*` (all 14 entries) — tensor memory as a new `Space`, single-thread-issue scope
 
-### Tier 3 — cheap correctness sweep (trigger: any PR touching classify.rs, or the first corpus sighting)
+### Tier 3 — cheap correctness sweep — landed; historical priorities
 
-One-line arms where the only cost of absence is unknown-list noise.
-Bundle opportunistically; none justifies its own PR.
+These arms and the dead-arm cleanup have landed. The list records the
+original sweep rather than outstanding work.
 
 - To `Integer`: integer `div`, `addc`, `subc`, `madc`, `shf` (likeliest to appear first — nvcc funnel shifts), `cnot`, `fns`, `clmad`, `getctarank`
 - To `Predicate`: `istypep`
@@ -628,7 +624,7 @@ Bundle opportunistically; none justifies its own PR.
 - To `Sync`: `tensormap.cp_fenceproxy`, `clusterlaunchcontrol.try_cancel` / `.query_cancel`
 - Housekeeping: delete the dead `ldg` arm
 
-### Tier 4 — out of audience (trigger: an explicit audience change, i.e. an edit to README's anti-scope)
+### Tier 4 — out of audience (trigger: an explicit audience change, i.e. an edit to PLAN.md's scope)
 
 Families whose absence is a scope statement, not a gap. They stay
 `Unknown` deliberately: several move real bytes (`tex`, `suld`,

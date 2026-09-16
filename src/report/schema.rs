@@ -1,5 +1,5 @@
-//! The result tree: ergonomic, owned, resolved —
-//! the only structure that leaves the library. JSON output IS the
+//! The owned result tree returned by `report::analyze`. Lower-level IR
+//! and analysis types are also public. JSON output is the
 //! `Serialize` derivation of these structs; the text report renders
 //! the same values, so the two views cannot drift.
 //!
@@ -241,9 +241,9 @@ pub struct Access {
     /// part; global and generic spaces with a known address only. An
     /// upper bound when the instruction is predicated.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sectors_per_request: Option<crate::footprint::Range>,
+    pub sectors_per_request: Option<crate::analysis::memory_footprint::Range>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lines_per_request: Option<crate::footprint::Range>,
+    pub lines_per_request: Option<crate::analysis::memory_footprint::Range>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footprint_unknown: Option<String>,
     /// How the address moves per iteration of each enclosing loop,

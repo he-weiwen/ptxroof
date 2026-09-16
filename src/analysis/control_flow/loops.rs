@@ -197,8 +197,8 @@ pub fn loop_forest(cfg: &Cfg) -> LoopForest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cfg::build_cfg;
-    use crate::parse::parser::parse;
+    use crate::analysis::control_flow::build_cfg;
+    use crate::ptx::parse::parser::parse;
 
     fn forest_of(body: &str) -> (Cfg, LoopForest) {
         let src = format!(

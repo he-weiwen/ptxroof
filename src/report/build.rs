@@ -21,22 +21,26 @@
 //! below that loop, which is why a guarded kernel still has exact
 //! per-iteration numbers — the altitude where the verdict lives.
 
-use crate::affine::{Affine, Var};
-use crate::cfg::loops::{LoopForest, LoopId};
-use crate::cfg::naming::{LoopName, basename, demangle, loop_names};
-use crate::cfg::{BlockId, Cfg, build_cfg, loop_forest};
-use crate::classify::{ArithKind, Direction, OpClass, Pipe, Precision, Space};
-use crate::core::Operand;
-use crate::core::measurement::MeasureKind;
-use crate::core::symexpr::SymExpr;
-use crate::core::{Instr, Kernel, Module, Stmt};
-use crate::footprint::warp_footprint;
-use crate::parse::parser::{ParseError, parse};
-use crate::report::collect::{BlockMeasurements, CountQualifier, collect};
-use crate::report::tree::*;
-use crate::threads::{Constraint, ThreadSet, block_thread_sets};
-use crate::tracer::Tracer;
-use crate::trips::{TripInfo, trip_counts};
+use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::analysis::control_flow::{BlockId, Cfg, build_cfg, loop_forest};
+use crate::analysis::instruction_counts::classify::{
+    ArithKind, Direction, OpClass, Pipe, Precision, Space,
+};
+use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
+use crate::analysis::instruction_counts::measurement::MeasureKind;
+use crate::analysis::loop_names::{LoopName, loop_names};
+use crate::analysis::memory_footprint::warp_footprint;
+use crate::analysis::scalar::affine::{Affine, Var};
+use crate::analysis::scalar::symexpr::SymExpr;
+use crate::analysis::scalar::trace::Tracer;
+use crate::analysis::scalar::trip_counts::{TripInfo, trip_counts};
+use crate::analysis::thread_participation::{Constraint, ThreadSet, block_thread_sets};
+use crate::ptx::ir::Operand;
+use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
+use crate::ptx::parse::parser::{ParseError, parse};
+use crate::report::names::demangle;
+use crate::report::schema::*;
+use crate::support::paths::basename;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, thiserror::Error)]
@@ -246,7 +250,7 @@ fn accesses_by_scope(
                 .filter(|&id| matches!(module.operand(id), Operand::Memory { .. }))
                 .collect();
             let rows: Vec<(usize, Space, &str, Option<u32>)> =
-                match crate::classify::classify(module, instr) {
+                match crate::analysis::instruction_counts::classify::classify(module, instr) {
                     OpClass::Memory {
                         space,
                         direction,
@@ -708,19 +712,18 @@ impl<'a> KernelBuilder<'a> {
                 Some(c) => c.as_const()?,
                 None => 0,
             };
-            if f.form
-                .terms
-                .iter()
-                .any(|(v, c)| crate::footprint::depends_on_lane(v) && c.as_const().is_none())
-            {
+            if f.form.terms.iter().any(|(v, c)| {
+                crate::analysis::scalar::lane_eval::depends_on_lane(v) && c.as_const().is_none()
+            }) {
                 return None;
             }
             let set = &self.thread_sets[f.block.0 as usize];
             let bytes = i64::from(f.bytes);
             at_most |= f.predicated;
             let mut key = f.form.clone();
-            key.terms
-                .retain(|v, _| !crate::footprint::depends_on_lane(v) && *v != Var::Iter(id));
+            key.terms.retain(|v, _| {
+                !crate::analysis::scalar::lane_eval::depends_on_lane(v) && *v != Var::Iter(id)
+            });
             key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
             let intervals = per_base.entry(key).or_default();
             for t in 0..threads {
@@ -729,7 +732,7 @@ impl<'a> KernelBuilder<'a> {
                     continue;
                 }
                 requested += f.bytes as u64 * trips as u64;
-                let base = crate::footprint::eval_lane(&f.form, tid);
+                let base = crate::analysis::scalar::lane_eval::eval_lane(&f.form, tid);
                 if intervals.len() as i64 + trips > 1 << 22 {
                     return None;
                 }
@@ -1016,10 +1019,10 @@ impl<'a> KernelBuilder<'a> {
                     continue;
                 };
                 let is_workload = matches!(
-                    crate::classify::classify(self.module, instr),
-                    crate::classify::OpClass::Flop { .. }
-                        | crate::classify::OpClass::Memory { .. }
-                        | crate::classify::OpClass::Copy { .. }
+                    crate::analysis::instruction_counts::classify::classify(self.module, instr),
+                    crate::analysis::instruction_counts::classify::OpClass::Flop { .. }
+                        | crate::analysis::instruction_counts::classify::OpClass::Memory { .. }
+                        | crate::analysis::instruction_counts::classify::OpClass::Copy { .. }
                 );
                 if !is_workload {
                     continue;
@@ -1247,7 +1250,8 @@ impl<'a> KernelBuilder<'a> {
             match decl.size {
                 Some(count) => {
                     let ty = self.module.interner.resolve(decl.ty);
-                    let width = crate::classify::type_width(ty).unwrap_or(1) as u64;
+                    let width = crate::analysis::instruction_counts::classify::type_width(ty)
+                        .unwrap_or(1) as u64;
                     static_bytes += count * width;
                 }
                 None => dynamic = true,

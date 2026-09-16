@@ -2,14 +2,14 @@
 //! every `Symbol`/`OperandId` so no raw index ever reaches output;
 //! snapshots and expected outputs route through here.
 //!
-//! The dump is itself valid PTX, which makes idempotence testable:
-//! `dump(parse(dump(parse(src))))` must equal `dump(parse(src))` on the
-//! whole corpus. Normalizations applied (all loss-free for analysis):
-//! comments, `.section` data payloads, `.pragma`, and inline-asm scope
-//! braces are dropped; extended `.loc` collapses to its effective
-//! (inlined-at) location; whitespace is canonical.
+//! Corpus tests check `dump(parse(dump(parse(src)))) == dump(parse(src))`.
+//! This is a canonical view of the retained IR, not lossless PTX serialization
+//! or a guarantee that ptxas accepts the output. Parsing drops comments,
+//! selected declarations/directives, and scope braces; extended `.loc`
+//! collapses to its effective location. Unparsed statements print as comments.
+//! The k14 round-trip allowlist records a discarded `.local` declaration.
 
-use crate::core::{Kernel, Module, Operand, OperandId, SharedDecl, SourceLoc, Stmt};
+use crate::ptx::ir::{Kernel, Module, Operand, OperandId, SharedDecl, SourceLoc, Stmt};
 use std::fmt::Write;
 
 pub fn dump(module: &Module) -> String {
@@ -170,7 +170,7 @@ fn dump_operand(m: &Module, id: OperandId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::parser::parse;
+    use crate::ptx::parse::parser::parse;
 
     #[test]
     fn dump_is_reparseable_and_idempotent() {

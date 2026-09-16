@@ -3,7 +3,7 @@
 //! gate for the lexer — when a new fixture or toolchain introduces a
 //! token shape we don't handle, this test names the file and the byte.
 
-use ptxroof::parse::lexer::{TokenKind, tokenize};
+use ptxroof::ptx::parse::lexer::{TokenKind, tokenize};
 use std::fs;
 use std::path::{Path, PathBuf};
 

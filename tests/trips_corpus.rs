@@ -3,8 +3,9 @@
 //! unknown must carry a reason string — these are pinned too, because
 //! they are user-facing output.
 
-use ptxroof::cfg::{build_cfg, loop_forest, loop_names};
-use ptxroof::parse::parser::parse;
+use ptxroof::analysis::control_flow::{build_cfg, loop_forest};
+use ptxroof::analysis::loop_names::loop_names;
+use ptxroof::ptx::parse::parser::parse;
 use ptxroof::trips::{TripInfo, trip_counts};
 use std::fs;
 use std::path::PathBuf;

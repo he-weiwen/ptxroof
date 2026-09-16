@@ -9,19 +9,20 @@
 //! dominator: a value redefined inside a loop containing the read is
 //! loop-carried (a counter read before its increment is the previous
 //! iteration's value), and definitions meeting from several paths are
-//! refused. The tracer walks `mov/add/sub/and-mask/shl/shr/mul/mad/cvt`
-//! down to `ld.param`, constants and special registers; anything else
+//! refused. The tracer follows supported arithmetic and moves
+//! down to `ld.param`, constants and special registers; unsupported operations
 //! is a named reason, preferring the fundamental obstacle (a special
 //! register, a memory load, an atomic) behind arithmetic it does not
 //! read. The domain is nonnegative and non-overflowing, as documented
-//! in `trips`.
+//! in [`super::trip_counts`].
 
-use crate::affine::{Affine, Axis, Var};
-use crate::cfg::loops::{LoopForest, LoopId};
-use crate::cfg::{BlockId, Cfg};
-use crate::core::symexpr::SymExpr;
-use crate::core::{Instr, Kernel, Module, Operand, Stmt, Symbol};
-use crate::parse::parser::parse_int;
+use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::analysis::control_flow::{BlockId, Cfg};
+use crate::analysis::scalar::affine::{Affine, Axis, Var};
+use crate::analysis::scalar::symexpr::SymExpr;
+use crate::ptx::ir::{Instr, Kernel, Module, Operand, Stmt};
+use crate::ptx::literal::parse_int;
+use crate::support::intern::Symbol;
 use std::collections::{HashMap, HashSet};
 
 /// Where a register's value at a statement comes from.
@@ -433,7 +434,7 @@ impl<'a> Tracer<'a> {
 
     pub(crate) fn trace_operand(
         &self,
-        op: crate::core::OperandId,
+        op: crate::ptx::ir::OperandId,
         pos: usize,
         id: Option<LoopId>,
         depth: u32,

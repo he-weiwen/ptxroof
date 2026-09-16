@@ -30,14 +30,15 @@
 //! `(X − X mod c)/c` and `X mod c` — into one logical loop with
 //! factor c.
 
-use crate::affine::Var;
-use crate::cfg::loops::{LoopForest, LoopId};
-use crate::cfg::naming::LoopName;
-use crate::cfg::{BlockId, Cfg};
-use crate::core::symexpr::SymExpr;
-use crate::core::{Kernel, Module, Operand, Stmt, Symbol};
-use crate::parse::parser::parse_int;
-use crate::tracer::{Reach, Tracer};
+use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::analysis::control_flow::{BlockId, Cfg};
+use crate::analysis::loop_names::LoopName;
+use crate::analysis::scalar::affine::Var;
+use crate::analysis::scalar::symexpr::SymExpr;
+use crate::analysis::scalar::trace::{Reach, Tracer};
+use crate::ptx::ir::{Kernel, Module, Operand, Stmt};
+use crate::ptx::literal::parse_int;
+use crate::support::intern::Symbol;
 
 /// Trip count of one loop: an expression, or a named reason there
 /// isn't one.
@@ -353,8 +354,9 @@ fn solve(cmp: &str, continue_if_true: bool, a1: i64, a0: SymExpr) -> TripCount {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cfg::{build_cfg, loop_forest, loop_names};
-    use crate::parse::parser::parse;
+    use crate::analysis::control_flow::{build_cfg, loop_forest};
+    use crate::analysis::loop_names::loop_names;
+    use crate::ptx::parse::parser::parse;
 
     /// Trips of every loop in a one-kernel source, by display name.
     fn trips_of(src: &str) -> Vec<(String, TripCount)> {

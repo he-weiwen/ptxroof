@@ -49,7 +49,7 @@ kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(int, int, int, float, ...)
 ## Install
 
 ```sh
-cargo install --path .       # from this directory; needs stable Rust
+cargo install --path .       # uses the toolchain pinned in rust-toolchain.toml
 ```
 
 ## Usage
@@ -68,7 +68,7 @@ ptxroof analyze kernel.ptx --dump-ast      # parsed module, canonical PTX
 Generate PTX with `nvcc -ptx -lineinfo kernel.cu`; without
 `-lineinfo`, loops are named by label instead of source line.
 
-Every count is static and per thread: what the PTX requests, not what
+Counts are static; per-thread counts describe what the PTX requests, not what
 the hardware moves (a warp-collective instruction contributes its warp
 total over the 32 lanes). With a block shape and a numeric trip count
 each loop also reports the global bytes one CTA requests over it and
@@ -87,4 +87,5 @@ corpus tests, the CLI/acceptance suite (`tests/run.py`, stdlib-only
 Python ≥ 3.11), generated loop kernels checked against a simulator
 (`tests/gen_loops.py`) and, when the CUDA toolkit is on PATH, a ptxas
 round trip of every fixture's `--dump-ast` output against its SASS. Known limitations, missing features and the scope
-boundary are listed in `PLAN.md`.
+boundary are listed in `PLAN.md`. The [source layout and SSA migration plan](docs/architecture.md)
+describes module ownership, dependency boundaries, and compatibility exports.

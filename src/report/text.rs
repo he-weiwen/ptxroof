@@ -8,7 +8,7 @@
 //! zero rows are skipped in flop/byte tables but unknowns are always
 //! printed, even (especially) when present.
 
-use super::tree::*;
+use super::schema::*;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -302,7 +302,7 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
         return;
     }
     let _ = writeln!(w, "{pad}{title}:");
-    let range = |r: &crate::footprint::Range| {
+    let range = |r: &crate::analysis::memory_footprint::Range| {
         if r.min == r.max {
             r.min.to_string()
         } else {
@@ -320,7 +320,7 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                 format!(" via {}", a.path)
             };
             let what = format!("{} {}{bytes}{via}{pred}", a.space, a.direction);
-            let plural = |r: &crate::footprint::Range, one: &str, many: &str| {
+            let plural = |r: &crate::analysis::memory_footprint::Range, one: &str, many: &str| {
                 format!("{} {}", range(r), if r.max == 1 { one } else { many })
             };
             let warp = match (

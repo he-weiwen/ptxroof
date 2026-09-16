@@ -1,8 +1,8 @@
 //! Control-flow graph over index arenas.
 //!
-//! Hand-rolled, no graph crate (§2): blocks are a `Vec<Block>` indexed
-//! by `BlockId(u32)`, edges are id lists. Leaders are the kernel entry,
-//! every label, and every statement after a branch/terminator; edges
+//! Blocks are an `IndexVec<BlockId, Block>`; edges are block ID lists.
+//! Leaders are the kernel entry, branch-target labels, and statements
+//! after branches/terminators; untargeted labels do not split blocks. Edges
 //! come from `bra` (conditional via predicate, unconditional otherwise),
 //! `brx.idx` through its `.branchtargets` table, and fallthrough.
 //! `ret`/`exit` terminate; a *predicated* ret/exit falls through.
@@ -14,8 +14,10 @@
 //! for a conditional branch `succs[0]` is the taken target and
 //! `succs[1]` the fallthrough.
 
-use crate::core::arena::newtype_idx;
-use crate::core::{IndexVec, Instr, Kernel, Module, Operand, Stmt, Symbol};
+use crate::ptx::ir::{Instr, Kernel, Module, Operand, Stmt};
+use crate::support::index::IndexVec;
+use crate::support::index::newtype_idx;
+use crate::support::intern::Symbol;
 use std::collections::HashSet;
 
 newtype_idx! {
@@ -280,7 +282,7 @@ fn branch_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::parser::parse;
+    use crate::ptx::parse::parser::parse;
 
     fn cfg_of(body: &str) -> (Module, Cfg) {
         let src = format!(

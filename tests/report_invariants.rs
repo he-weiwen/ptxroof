@@ -13,10 +13,11 @@
 //!    (per-block flat tallies × numerically-evaluated trip chains) —
 //!    the check that catches two code paths disagreeing.
 
-use ptxroof::cfg::{build_cfg, loop_forest, loop_names};
+use ptxroof::analysis::control_flow::{build_cfg, loop_forest};
+use ptxroof::analysis::loop_names::loop_names;
 use ptxroof::classify::Precision;
-use ptxroof::core::Stmt;
-use ptxroof::parse::parser::parse;
+use ptxroof::ptx::ir::Stmt;
+use ptxroof::ptx::parse::parser::parse;
 use ptxroof::report::{AnalyzeOptions, BindingSpec, Stats, analyze, collect};
 use ptxroof::trips::trip_counts;
 use std::collections::HashMap;

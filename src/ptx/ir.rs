@@ -4,12 +4,12 @@
 //! No pointer structures anywhere: instructions live in per-kernel
 //! `Vec<Stmt>`, operands in a module-level arena referenced by spans,
 //! nested operands (memory bases, vector lists) via `OperandId` — never
-//! `Box`. The IR is built once by the parser and read-only ever after.
-//! Only the report tree (PR 12) is ergonomic/owned; these indices never
-//! leak into user-facing output — the dumper resolves them.
+//! `Box`. Parsing returns an owned module; analyses borrow it immutably by
+//! convention, but its public fields permit mutation. Handles are local to
+//! their owning module. The PTX printer resolves them for textual output.
 
-use super::arena::{IdxRange, IndexVec, newtype_idx};
-use super::intern::{Interner, Symbol};
+use crate::support::index::{IdxRange, IndexVec, newtype_idx};
+use crate::support::intern::{Interner, Symbol};
 
 newtype_idx! {
     /// Handle into the [`Module::operands`] arena.
@@ -62,8 +62,9 @@ pub struct Instr {
     pub operands: IdxRange<OperandId>,
     pub predicate: Option<Predicate>,
     pub loc: Option<SourceLoc>,
-    /// Byte offset of the mnemonic in the source — provenance for
-    /// diagnostics and the report verifier.
+    /// Byte offset of the instruction start: `@` for a predicated
+    /// instruction, otherwise the mnemonic. Measurement provenance instead
+    /// uses the index in `Kernel::stmts`.
     pub offset: u32,
 }
 

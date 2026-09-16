@@ -1,8 +1,6 @@
-# Pin the exact stable toolchain (PLAN.md §2). rustup reads this file and
+# Pin the exact stable toolchain. rustup reads this file and
 # auto-installs/selects this version for any cargo invocation inside this repo,
 # so every contributor and CI run compiles with the same compiler.
-# cargo-fuzz needs nightly, which is why fuzzing is confined to the
-# non-blocking T4 tier — this pin stays stable for PR-blocking CI.
 [toolchain]
 channel = "1.96.0"
 components = ["rustfmt", "clippy"]

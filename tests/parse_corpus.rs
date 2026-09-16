@@ -4,14 +4,15 @@
 //!    listed in tests/parse-allowlist.txt — additions there are named
 //!    holes in frontend coverage and require review.
 //! 2. dump → reparse → dump is idempotent on every fixture: the
-//!    canonical dump is valid PTX and a fixed point of the frontend.
+//!    dump is a fixed point for this frontend. Assembler acceptance is
+//!    checked separately by tests/run.py with a round-trip allowlist.
 //! 3. The k2/k5 param tables match the signatures nvcc emits — pinned
 //!    here because `--bind idx:name=value` (PR 12) addresses params by
 //!    these positions.
 
-use ptxroof::core::{Module, Stmt};
-use ptxroof::parse::ast::dump;
-use ptxroof::parse::parser::parse;
+use ptxroof::ptx::ir::{Module, Stmt};
+use ptxroof::ptx::parse::parser::parse;
+use ptxroof::ptx::print::dump;
 use std::fs;
 use std::path::{Path, PathBuf};
 

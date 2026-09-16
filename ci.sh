@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# PR-blocking CI : T1 via cargo, then T2/T3 via the CLI test
-# runner. Hermetic — needs only a rustup-managed toolchain (pinned by
+# CI: Rust checks, CLI/acceptance cases, and generated loops.
+# Requires a rustup-managed toolchain (pinned by
 # rust-toolchain.toml) and python3 >= 3.11. No LLVM, no C++; the ptxas
 # round trip of every fixture runs when the CUDA toolkit is on PATH and
 # is skipped otherwise (PTXROOF_REQUIRE_CUDA=1 turns the skip into a
@@ -20,7 +20,7 @@ cargo build --locked # the test runner drives target/debug/ptxroof
 
 python3 tests/run.py --self-test
 python3 tests/run.py
-# Generated loop kernels against a simulator: trip counts are never wrong.
+# Compare recognized trip counts with a simulator for generated loop kernels.
 python3 tests/gen_loops.py --self-test
 python3 tests/gen_loops.py --seed 1 --count 200
 

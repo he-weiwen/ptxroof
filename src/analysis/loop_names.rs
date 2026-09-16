@@ -1,4 +1,4 @@
-//! Display names for loops and kernels.
+//! Source-derived identities and display names for loops.
 //!
 //! A loop is named by the source line of its back-edge branch — for a
 //! `for` loop nvcc attributes the increment/compare/branch to the
@@ -13,13 +13,11 @@
 //! File paths are reduced to their basename: absolute fixture paths
 //! are machine-specific, and the basename is what a human greps for.
 //!
-//! Kernel names are demangled with `cpp_demangle`, fallible by type:
-//! a name that doesn't demangle (already plain, like the micro
-//! fixtures') passes through unchanged.
 
-use super::graph::Cfg;
-use super::loops::{LoopForest, LoopId};
-use crate::core::{Kernel, Module, SourceLoc};
+use crate::analysis::control_flow::graph::Cfg;
+use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::ptx::ir::{Kernel, Module, SourceLoc};
+use crate::support::paths::basename;
 
 /// Human-readable identity of one loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,23 +100,11 @@ fn loop_name(
     }
 }
 
-pub(crate) fn basename(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_owned()
-}
-
-/// Demangle an Itanium-mangled C++ name; plain names pass through.
-pub fn demangle(name: &str) -> String {
-    cpp_demangle::Symbol::new(name)
-        .ok()
-        .and_then(|s| s.demangle(&cpp_demangle::DemangleOptions::default()).ok())
-        .unwrap_or_else(|| name.to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cfg::{build_cfg, loop_forest};
-    use crate::parse::parser::parse;
+    use crate::analysis::control_flow::{build_cfg, loop_forest};
+    use crate::ptx::parse::parser::parse;
 
     fn names_of(body_and_trailer: &str) -> Vec<LoopName> {
         let src = format!(
@@ -163,23 +149,5 @@ mod tests {
         );
         assert_eq!(names[0].display, "$L__L");
         assert_eq!(names[0].file, None);
-    }
-
-    #[test]
-    fn demangle_ladder_kernel_names() {
-        assert_eq!(
-            demangle("_Z11hgemm_naiveiiifPK6__halfS1_fPS_"),
-            "hgemm_naive(int, int, int, float, __half const*, __half const*, float, __half*)"
-        );
-        assert!(
-            demangle("_Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0_")
-                .starts_with("void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(")
-        );
-    }
-
-    #[test]
-    fn plain_names_pass_through_demangling() {
-        assert_eq!(demangle("micro_single_loop"), "micro_single_loop");
-        assert_eq!(demangle("_not_mangled"), "_not_mangled");
     }
 }

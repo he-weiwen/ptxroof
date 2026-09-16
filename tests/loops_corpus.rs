@@ -3,9 +3,9 @@
 //! micro/irreducible. The k5 tree is also an insta snapshot — the
 //! human-reviewable form.
 
-use ptxroof::cfg::{Cfg, LoopForest, build_cfg, loop_forest};
-use ptxroof::core::Module;
-use ptxroof::parse::parser::parse;
+use ptxroof::analysis::control_flow::{Cfg, LoopForest, build_cfg, loop_forest};
+use ptxroof::ptx::ir::Module;
+use ptxroof::ptx::parse::parser::parse;
 use std::fs;
 use std::path::PathBuf;
 
@@ -83,7 +83,13 @@ fn k5_inner_loop_nests_inside_outer() {
 fn k5_loop_tree_snapshot() {
     let (m, cfg, f) = forest_of("k5/k5.sm_80.ptx");
     let mut out = String::new();
-    fn walk(m: &Module, cfg: &Cfg, f: &LoopForest, id: ptxroof::cfg::LoopId, out: &mut String) {
+    fn walk(
+        m: &Module,
+        cfg: &Cfg,
+        f: &LoopForest,
+        id: ptxroof::analysis::control_flow::LoopId,
+        out: &mut String,
+    ) {
         let l = f.get(id);
         let label = cfg
             .block(l.header)

@@ -25,8 +25,9 @@
 //! numeric run that continues with identifier characters is promoted to
 //! `Identifier` — except hex and float bit-patterns, which stay `Number`.
 //!
-//! On an unexpected byte the lexer emits one `Error` token and skips the
-//! byte; it never panics (ground rule: all frontend paths recover).
+//! Unexpected ASCII bytes become `Error` tokens. This byte-oriented lexer
+//! is not panic-free for arbitrary UTF-8: an unexpected multibyte character
+//! outside a string or comment can cause slicing at a non-character boundary.
 
 /// A single lexed token. `text` borrows from the source buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

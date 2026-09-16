@@ -2,14 +2,14 @@
 //!
 //! The flat IR stores objects in module-level `Vec`s and refers to them
 //! by integer handle, never by pointer. This module gives those handles
-//! *types*: a handle minted for one arena cannot index another, and the
+//! *types*: handles with different index types cannot be interchanged, and the
 //! two list pools that used to share an untyped `Span` can no longer be
 //! crossed — the mistake is now a compile error rather than a silent
 //! read of the wrong pool.
 //!
 //! Modeled on rustc's `rustc_index` (`IndexVec<I, T>`, the `Idx` trait,
 //! and `newtype_index!`), reduced to what this crate uses and
-//! hand-rolled to honor the no-dependencies rule (§2). Two shapes:
+//! implemented locally without an additional dependency. Two shapes:
 //!   * [`IndexVec<I, T>`] — one handle per element (the operand arena,
 //!     the CFG block arena).
 //!   * [`IdxRange<I>`] — a typed `(start, len)` slice into a flat pool
@@ -18,7 +18,7 @@
 use std::marker::PhantomData;
 
 /// A `u32` handle into an [`IndexVec`]. Mint distinct handle types with
-/// [`newtype_idx!`] so the handles for different arenas are themselves
+/// the internal `newtype_idx!` macro so the handles for different arenas are themselves
 /// distinct types.
 pub trait Idx: Copy {
     fn from_usize(i: usize) -> Self;
@@ -34,7 +34,7 @@ macro_rules! newtype_idx {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         $vis struct $name(pub u32);
 
-        impl $crate::core::arena::Idx for $name {
+        impl $crate::support::index::Idx for $name {
             #[inline]
             fn from_usize(i: usize) -> Self {
                 debug_assert!(i <= u32::MAX as usize, "arena index overflowed u32");
@@ -50,8 +50,8 @@ macro_rules! newtype_idx {
 pub(crate) use newtype_idx;
 
 /// A flat arena: push a `T` and get back its typed handle `I`; resolve a
-/// handle with `arena[id]`. A handle minted for one instantiation cannot
-/// index another — the wrong index type fails to compile.
+/// handle with `arena[id]`. Different index types cannot be interchanged;
+/// separate arenas with the same index type are not distinguished by Rust.
 #[derive(Debug, Clone)]
 pub struct IndexVec<I: Idx, T> {
     raw: Vec<T>,

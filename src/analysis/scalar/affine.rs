@@ -3,11 +3,11 @@
 //! coefficients over the kernel parameters and the launch shape
 //! (`K * %tid.y` is a term; `%ntid.x` is a symbol, bound when the
 //! shape is known).
-//! The trip matcher reads latch conditions in this form; addresses and
-//! branch conditions will be read in it too.
+//! Trip matching, address analysis, and thread-participation analysis
+//! read latch conditions, addresses, and branch conditions in this form.
 
-use crate::cfg::loops::LoopId;
-use crate::core::symexpr::SymExpr;
+use crate::analysis::control_flow::loops::LoopId;
+use crate::analysis::scalar::symexpr::SymExpr;
 use std::collections::BTreeMap;
 use std::fmt;
 
