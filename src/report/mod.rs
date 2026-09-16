@@ -12,4 +12,4 @@ pub use schema::Report;
 pub use crate::analysis::instruction_counts::{collect, stats};
 pub use collect::{BlockMeasurements, ClassCounts, CountQualifier, collect};
 pub use schema as tree;
-pub use stats::{Stats, Tally};
+pub use stats::Tally;

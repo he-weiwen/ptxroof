@@ -1,4 +1,7 @@
-//! Stats: filter queries over the per-block measurement stream.
+//! Free-function filter queries over the per-block measurement stream.
+//! Inputs borrow the collected measurements; queries return owned tallies.
+//! Selected block IDs index the measurement slice, which must retain the
+//! block ordering produced by `collect`.
 //!
 //! The soft-filter rule (v1's, documented once here): a `None` filter
 //! axis matches everything; a `Some` axis selects only measurements of
@@ -36,100 +39,104 @@ impl Tally {
     };
 }
 
-pub struct Stats<'a> {
-    blocks: &'a [BlockMeasurements],
+pub fn all_blocks(measurements: &[BlockMeasurements]) -> Vec<BlockId> {
+    measurements.iter().map(|b| b.block).collect()
 }
 
-impl<'a> Stats<'a> {
-    pub fn new(blocks: &'a [BlockMeasurements]) -> Self {
-        Stats { blocks }
-    }
-
-    pub fn all_blocks(&self) -> Vec<BlockId> {
-        self.blocks.iter().map(|b| b.block).collect()
-    }
-
-    fn tally(&self, blocks: &[BlockId], mut select: impl FnMut(&MeasureKind) -> bool) -> Tally {
-        let mut t = Tally::ZERO;
-        for &bid in blocks {
-            let b = &self.blocks[bid.0 as usize];
-            for m in &b.measurements {
-                if select(&m.kind) {
-                    t.value += m.count;
-                    t.ops += 1;
-                    let q = if m.predicated {
-                        CountQualifier::AtMost
-                    } else {
-                        b.qualifier
-                    };
-                    t.qualifier = t.qualifier.and(q);
-                }
+fn tally(
+    measurements: &[BlockMeasurements],
+    blocks: &[BlockId],
+    mut select: impl FnMut(&MeasureKind) -> bool,
+) -> Tally {
+    let mut t = Tally::ZERO;
+    for &bid in blocks {
+        let b = &measurements[bid.0 as usize];
+        for m in &b.measurements {
+            if select(&m.kind) {
+                t.value += m.count;
+                t.ops += 1;
+                let q = if m.predicated {
+                    CountQualifier::AtMost
+                } else {
+                    b.qualifier
+                };
+                t.qualifier = t.qualifier.and(q);
             }
         }
-        t
     }
+    t
+}
 
-    /// Flop total over `blocks`, optionally restricted to one precision.
-    pub fn flops(&self, blocks: &[BlockId], precision: Option<Precision>) -> Tally {
-        self.tally(blocks, |k| match k {
-            MeasureKind::Flops { precision: p, .. } => precision.is_none_or(|want| *p == want),
-            _ => false,
-        })
-    }
+/// Flop total over `blocks`, optionally restricted to one precision.
+pub fn flops(
+    measurements: &[BlockMeasurements],
+    blocks: &[BlockId],
+    precision: Option<Precision>,
+) -> Tally {
+    tally(measurements, blocks, |k| match k {
+        MeasureKind::Flops { precision: p, .. } => precision.is_none_or(|want| *p == want),
+        _ => false,
+    })
+}
 
-    /// Statically-known byte total over `blocks`, filtered by space
-    /// and/or direction. Pair with [`Stats::unquantified_memory_ops`].
-    pub fn bytes(
-        &self,
-        blocks: &[BlockId],
-        space: Option<Space>,
-        direction: Option<Direction>,
-    ) -> Tally {
-        self.tally(blocks, |k| match k {
-            MeasureKind::Bytes {
-                space: s,
-                direction: d,
-            } => space.is_none_or(|want| *s == want) && direction.is_none_or(|want| *d == want),
-            _ => false,
-        })
-    }
+/// Statically-known byte total over `blocks`, filtered by space
+/// and/or direction. Pair with [`unquantified_memory_ops`].
+pub fn bytes(
+    measurements: &[BlockMeasurements],
+    blocks: &[BlockId],
+    space: Option<Space>,
+    direction: Option<Direction>,
+) -> Tally {
+    tally(measurements, blocks, |k| match k {
+        MeasureKind::Bytes {
+            space: s,
+            direction: d,
+        } => space.is_none_or(|want| *s == want) && direction.is_none_or(|want| *d == want),
+        _ => false,
+    })
+}
 
-    /// Memory ops whose byte count is statically unknowable.
-    pub fn unquantified_memory_ops(&self, blocks: &[BlockId]) -> Tally {
-        self.tally(blocks, |k| {
-            matches!(k, MeasureKind::UnquantifiedBytes { .. })
-        })
-    }
+/// Memory ops whose byte count is statically unknowable.
+pub fn unquantified_memory_ops(measurements: &[BlockMeasurements], blocks: &[BlockId]) -> Tally {
+    tally(measurements, blocks, |k| {
+        matches!(k, MeasureKind::UnquantifiedBytes { .. })
+    })
+}
 
-    /// `cvt` op count (S8's conversion-overhead column).
-    pub fn conversions(&self, blocks: &[BlockId]) -> Tally {
-        self.tally(blocks, |k| matches!(k, MeasureKind::Conversions))
-    }
+/// `cvt` op count (S8's conversion-overhead column).
+pub fn conversions(measurements: &[BlockMeasurements], blocks: &[BlockId]) -> Tally {
+    tally(measurements, blocks, |k| {
+        matches!(k, MeasureKind::Conversions)
+    })
+}
 
-    pub fn non_flop_ops(&self, blocks: &[BlockId], kind: Option<ArithKind>) -> Tally {
-        self.tally(blocks, |k| match k {
-            MeasureKind::NonFlopOps { kind: g } => kind.is_none_or(|want| *g == want),
-            _ => false,
-        })
-    }
+pub fn non_flop_ops(
+    measurements: &[BlockMeasurements],
+    blocks: &[BlockId],
+    kind: Option<ArithKind>,
+) -> Tally {
+    tally(measurements, blocks, |k| match k {
+        MeasureKind::NonFlopOps { kind: g } => kind.is_none_or(|want| *g == want),
+        _ => false,
+    })
+}
 
-    pub fn sync_ops(&self, blocks: &[BlockId]) -> Tally {
-        self.tally(blocks, |k| matches!(k, MeasureKind::SyncOps))
-    }
+pub fn sync_ops(measurements: &[BlockMeasurements], blocks: &[BlockId]) -> Tally {
+    tally(measurements, blocks, |k| matches!(k, MeasureKind::SyncOps))
+}
 
-    /// Unknown-instruction tallies by mnemonic, sorted by symbol for
-    /// deterministic output.
-    pub fn unknown_ops(&self, blocks: &[BlockId]) -> Vec<(Symbol, u64)> {
-        let mut map: std::collections::BTreeMap<Symbol, u64> = Default::default();
-        for &bid in blocks {
-            for m in &self.blocks[bid.0 as usize].measurements {
-                if let MeasureKind::UnknownOps { mnemonic } = m.kind {
-                    *map.entry(mnemonic).or_default() += m.count;
-                }
+/// Unknown-instruction tallies by mnemonic, sorted by symbol for
+/// deterministic output.
+pub fn unknown_ops(measurements: &[BlockMeasurements], blocks: &[BlockId]) -> Vec<(Symbol, u64)> {
+    let mut map: std::collections::BTreeMap<Symbol, u64> = Default::default();
+    for &bid in blocks {
+        for m in &measurements[bid.0 as usize].measurements {
+            if let MeasureKind::UnknownOps { mnemonic } = m.kind {
+                *map.entry(mnemonic).or_default() += m.count;
             }
         }
-        map.into_iter().collect()
     }
+    map.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -248,53 +255,53 @@ mod tests {
     #[test]
     fn soft_filter_none_matches_all_some_restricts() {
         let blocks = fixture();
-        let s = Stats::new(&blocks);
-        assert_eq!(s.flops(&ids(3), None).value, 14);
-        assert_eq!(s.flops(&ids(3), Some(Precision::F32)).value, 10);
-        assert_eq!(s.flops(&ids(3), Some(Precision::F16)).value, 4);
-        assert_eq!(s.flops(&ids(3), Some(Precision::F64)).value, 0);
-        assert_eq!(s.bytes(&ids(3), Some(Space::Global), None).value, 18);
+        assert_eq!(flops(&blocks, &ids(3), None).value, 14);
+        assert_eq!(flops(&blocks, &ids(3), Some(Precision::F32)).value, 10);
+        assert_eq!(flops(&blocks, &ids(3), Some(Precision::F16)).value, 4);
+        assert_eq!(flops(&blocks, &ids(3), Some(Precision::F64)).value, 0);
+        assert_eq!(bytes(&blocks, &ids(3), Some(Space::Global), None).value, 18);
         assert_eq!(
-            s.bytes(&ids(3), Some(Space::Global), Some(Direction::Load))
-                .value,
+            bytes(&blocks, &ids(3), Some(Space::Global), Some(Direction::Load)).value,
             16
         );
-        assert_eq!(s.bytes(&ids(3), None, Some(Direction::Store)).value, 6);
+        assert_eq!(
+            bytes(&blocks, &ids(3), None, Some(Direction::Store)).value,
+            6
+        );
     }
 
     #[test]
     fn bytes_exclude_unquantified_which_has_its_own_query() {
         let blocks = fixture();
-        let s = Stats::new(&blocks);
         // The unquantified load contributes 0 bytes but 1 visible op.
         assert_eq!(
-            s.bytes(&ids(3), Some(Space::Global), Some(Direction::Load))
-                .ops,
+            bytes(&blocks, &ids(3), Some(Space::Global), Some(Direction::Load)).ops,
             1
         );
-        assert_eq!(s.unquantified_memory_ops(&ids(3)).ops, 1);
+        assert_eq!(unquantified_memory_ops(&blocks, &ids(3)).ops, 1);
     }
 
     #[test]
     fn qualifier_propagates_from_blocks_and_predication() {
         let blocks = fixture();
-        let s = Stats::new(&blocks);
         // Block 0 only: everything exact.
         assert_eq!(
-            s.flops(&[BlockId(0)], None).qualifier,
+            flops(&blocks, &[BlockId(0)], None).qualifier,
             CountQualifier::Exact
         );
         // Mixing in the at_most block taints the total.
-        assert_eq!(s.flops(&ids(2), None).qualifier, CountQualifier::AtMost);
+        assert_eq!(
+            flops(&blocks, &ids(2), None).qualifier,
+            CountQualifier::AtMost
+        );
         // A predicated instruction taints even an exact block.
         assert_eq!(
-            s.bytes(&[BlockId(2)], None, Some(Direction::Store))
-                .qualifier,
+            bytes(&blocks, &[BlockId(2)], None, Some(Direction::Store)).qualifier,
             CountQualifier::AtMost
         );
         // Empty selection is an exact zero.
         assert_eq!(
-            s.flops(&[], None),
+            flops(&blocks, &[], None),
             Tally {
                 value: 0,
                 ops: 0,
@@ -306,9 +313,8 @@ mod tests {
     #[test]
     fn block_subsets_select() {
         let blocks = fixture();
-        let s = Stats::new(&blocks);
-        assert_eq!(s.flops(&[BlockId(1)], None).value, 6);
-        assert_eq!(s.conversions(&[BlockId(0)]).ops, 1);
-        assert_eq!(s.conversions(&[BlockId(1)]).ops, 0);
+        assert_eq!(flops(&blocks, &[BlockId(1)], None).value, 6);
+        assert_eq!(conversions(&blocks, &[BlockId(0)]).ops, 1);
+        assert_eq!(conversions(&blocks, &[BlockId(1)]).ops, 0);
     }
 }

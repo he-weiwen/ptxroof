@@ -75,6 +75,12 @@ identity to pair unrolled main and remainder loops. It stays below reporting.
 `report/build` retains its current mixed orchestration and aggregation role;
 renaming it a driver would not separate those responsibilities.
 
+Measurement queries in `analysis::instruction_counts::stats` are free functions:
+pass the collected measurement slice, selected block IDs, and filters explicitly.
+They return owned tallies; there is no `Stats` wrapper or separate borrowed-view
+object. The slice must retain `collect`'s block ordering. The `report::stats`
+module alias remains available, but the former `report::Stats` type is removed.
+
 ## Planned SSA addition
 
 Add SSA as a second representation alongside `ptx`, when its semantics are

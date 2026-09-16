@@ -14,11 +14,12 @@
 //!    the check that catches two code paths disagreeing.
 
 use ptxroof::analysis::control_flow::{build_cfg, loop_forest};
+use ptxroof::analysis::instruction_counts::stats;
 use ptxroof::analysis::loop_names::loop_names;
 use ptxroof::classify::Precision;
 use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
-use ptxroof::report::{AnalyzeOptions, BindingSpec, Stats, analyze, collect};
+use ptxroof::report::{AnalyzeOptions, BindingSpec, analyze, collect};
 use ptxroof::trips::trip_counts;
 use std::collections::HashMap;
 use std::fs;
@@ -202,7 +203,6 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
             })
             .collect();
         let blocks = collect(&m, k, &cfg, &f);
-        let stats = Stats::new(&blocks);
         let mut independent = 0i64;
         for bm in &blocks {
             let mut mult = 1i64;
@@ -211,7 +211,7 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
                 mult *= trips_num[l.0 as usize];
                 cur = f.get(l).parent;
             }
-            let flat = stats.flops(&[bm.block], None).value as i64;
+            let flat = stats::flops(&blocks, &[bm.block], None).value as i64;
             independent += flat * mult;
         }
         assert_eq!(reported, independent, "{fixture}: two paths disagree");
