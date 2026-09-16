@@ -17,6 +17,12 @@ coverage is maintained with changes to the classifier, as required by
 `CLAUDE.md`. The `capabilities` verb remains a missing feature in
 `PLAN.md`; these tables are maintained manually until it exists.
 
+For register uses/definitions, execution effects, and SSA readiness, see the
+[register-effects audit](ptx-register-effects-audit.md). Counting classification
+is not a complete instruction-effects contract. That audit independently checks
+186 non-excluded manual sections and documents current parser/tracer gaps,
+including corrections to stale parsing claims in the tables below.
+
 ## The tool's model (what "fits" means)
 
 The parser accepts instruction-shaped statements as

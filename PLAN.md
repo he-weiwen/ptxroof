@@ -26,6 +26,17 @@ is measured (README).
 
 ### Wrong output
 
+- **Register effects are incomplete.** The affine tracer records only a
+  scalar first-operand register destination, misses tuple/pipe outputs and
+  barrier reductions, and does not model guarded definitions. Its blacklist
+  treats `stackrestore` and register-valued `nanosleep` inputs as definitions.
+  The parser drops TMA coordinates, leaves bare register names as symbol
+  references, and merges same-named registers in sibling scopes; negated
+  source predicates and parenthesized call operands become `Unparsed`.
+  The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a
+  fixed source-read size even with a runtime ignore-source predicate.
+  Source locations, reproducible parser/classifier probes, and their outputs
+  are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
