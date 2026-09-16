@@ -21,8 +21,8 @@
 //! below that loop, which is why a guarded kernel still has exact
 //! per-iteration numbers — the altitude where the verdict lives.
 
+use crate::analysis::control_flow::loop_forest;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::control_flow::{BlockId, ControlFlowGraph, build_cfg, loop_forest};
 use crate::analysis::instruction_counts::classify::{
     ArithKind, Direction, OpClass, Pipe, Precision, Space,
 };
@@ -35,6 +35,7 @@ use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
 use crate::analysis::thread_participation::{Constraint, ThreadSet, block_thread_sets};
+use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
 use crate::ptx::parse::parser::{ParseError, parse};

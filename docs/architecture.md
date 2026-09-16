@@ -15,7 +15,8 @@ analysis framework is introduced.
 | `ptx/literal` | Shared integer literal interpretation | helper in `parse/parser` |
 | `ptx/parse` | Lexing and parsing | `parse/lexer`, `parse/parser` |
 | `ptx/print` | Canonical PTX dump | `parse/ast` |
-| `analysis/control_flow` | PTX CFG construction, dominators, loop discovery | `cfg`, except naming |
+| `ptx/cfg` | PTX CFG representation and construction | `cfg/graph`, later `analysis/control_flow/graph` |
+| `analysis/control_flow` | Dominators and loop discovery | `cfg/dominators`, `cfg/loops` |
 | `analysis/loop_names` | Source-derived loop identities and display names | loop portion of `cfg/naming` |
 | `analysis/scalar/symexpr` | Symbolic count expressions | `core/symexpr` |
 | `analysis/scalar/affine` | Affine values over thread, CTA, and loop variables | `affine` |
@@ -63,6 +64,14 @@ points (`report::analyze`, its options/errors, and `report::Report`) remain.
 - Report construction can depend on all analyses and the parser.
 - The report schema currently embeds the memory-footprint `CountRange` type; that
   dependency is preserved.
+
+The CFG lives in `ptx/cfg.rs`: its blocks reference ranges in `Kernel::stmts`,
+and its accessors expose PTX instructions. `build_cfg` constructs that
+representation; dominance and loop discovery derive information about it.
+
+```text
+analysis/control_flow/loops -> analysis/control_flow/dominators -> ptx/cfg -> ptx/ir
+```
 
 Within analysis, the main dependencies are:
 

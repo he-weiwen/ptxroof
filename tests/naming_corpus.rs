@@ -2,8 +2,9 @@
 //! loop in the committed corpus gets a human-readable name — source line
 //! where debug info exists, label where it doesn't.
 
-use ptxroof::analysis::control_flow::{build_cfg, loop_forest};
+use ptxroof::analysis::control_flow::loop_forest;
 use ptxroof::analysis::loop_names::loop_names;
+use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
 use std::fs;
 use std::path::PathBuf;

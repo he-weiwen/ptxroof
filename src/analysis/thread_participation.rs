@@ -9,10 +9,10 @@
 //! leaves the set unknown, and the block's counts stay bounds.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::control_flow::{BlockId, ControlFlowGraph};
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::lane_eval::eval_lane;
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
+use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Stmt};
 
 /// One condition `form cmp 0` over the thread index.

@@ -4,7 +4,7 @@
 //! Unreachable blocks have no RPO number and no idom; every consumer
 //! treats them as outside the analysis (they execute zero times).
 
-use super::graph::{BlockId, ControlFlowGraph};
+use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 
 #[derive(Debug)]
 pub struct DominanceInfo {
@@ -117,7 +117,7 @@ pub fn dominators(cfg: &ControlFlowGraph) -> DominanceInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::control_flow::build_cfg;
+    use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
     fn doms_of(body: &str) -> (ControlFlowGraph, DominanceInfo) {

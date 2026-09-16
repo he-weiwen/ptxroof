@@ -13,7 +13,7 @@
 //! as a named unknown.
 
 use super::dominators::{DominanceInfo, dominators};
-use super::graph::{BlockId, ControlFlowGraph};
+use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 
 /// Index into [`LoopForest::loops`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -197,7 +197,7 @@ pub fn loop_forest(cfg: &ControlFlowGraph) -> LoopForest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::control_flow::build_cfg;
+    use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
     fn forest_of(body: &str) -> (ControlFlowGraph, LoopForest) {

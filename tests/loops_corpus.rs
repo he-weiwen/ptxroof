@@ -3,7 +3,8 @@
 //! micro/irreducible. The k5 tree is also an insta snapshot — the
 //! human-reviewable form.
 
-use ptxroof::analysis::control_flow::{ControlFlowGraph, LoopForest, build_cfg, loop_forest};
+use ptxroof::analysis::control_flow::{LoopForest, loop_forest};
+use ptxroof::ptx::cfg::{ControlFlowGraph, build_cfg};
 use ptxroof::ptx::ir::Module;
 use ptxroof::ptx::parse::parser::parse;
 use std::fs;

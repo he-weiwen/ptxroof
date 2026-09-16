@@ -31,11 +31,11 @@
 //! factor c.
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::control_flow::{BlockId, ControlFlowGraph};
 use crate::analysis::loop_names::LoopName;
 use crate::analysis::scalar::affine::Var;
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
+use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Operand, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
@@ -358,8 +358,9 @@ fn solve(cmp: &str, continue_if_true: bool, a1: i64, a0: SymExpr) -> TripCount {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::control_flow::{build_cfg, loop_forest};
+    use crate::analysis::control_flow::loop_forest;
     use crate::analysis::loop_names::loop_names;
+    use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
     /// Trips of every loop in a one-kernel source, by display name.

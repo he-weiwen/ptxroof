@@ -9,7 +9,7 @@
 //! reshapes a fixture's control flow shows up here as a reviewable
 //! diff, not silently.
 
-use ptxroof::analysis::control_flow::build_cfg;
+use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
 use std::fs;
 use std::path::PathBuf;

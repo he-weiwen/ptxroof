@@ -18,9 +18,9 @@
 //! The qualifier retains the upper bound.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::control_flow::{BlockId, ControlFlowGraph};
 use crate::analysis::instruction_counts::classify::{Direction, OpClass, classify};
 use crate::analysis::instruction_counts::measurement::{MeasureKind, Measurement};
+use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Stmt};
 use std::collections::BTreeMap;
 
@@ -211,8 +211,9 @@ fn block_qualifier(forest: &LoopForest, exit_blocks: &[BlockId], block: BlockId)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::control_flow::{build_cfg, loop_forest};
+    use crate::analysis::control_flow::loop_forest;
     use crate::analysis::instruction_counts::classify::Space;
+    use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
     fn collect_body(body: &str) -> (Vec<BlockMeasurements>, Module) {

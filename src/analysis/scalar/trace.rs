@@ -17,9 +17,9 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::control_flow::{BlockId, ControlFlowGraph};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
+use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Operand, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;

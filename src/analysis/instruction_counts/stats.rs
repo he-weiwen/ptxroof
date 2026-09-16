@@ -17,9 +17,9 @@
 //! unpredicated. An empty selection is exact (a true zero).
 
 use super::collect::{BlockMeasurements, CountQualifier};
-use crate::analysis::control_flow::BlockId;
 use crate::analysis::instruction_counts::classify::{ArithKind, Direction, Precision, Space};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
+use crate::ptx::cfg::BlockId;
 use crate::support::intern::Symbol;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
