@@ -9,7 +9,8 @@ before 2026-09-08 is in git: `git show 3ba19b5:PLAN.md`.
 Reads a PTX file. Per kernel: the block table (CFG), the loop forest
 with trip counts as symbolic expressions over the kernel parameters,
 instruction counts by kind and opcode per loop iteration and in total,
-flops by pipe and precision, bytes by state space, AI(global), and per
+flops by pipe and precision (including atomic FP work), bytes by state space,
+AI(global), and per
 memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
 sectors and 128-byte lines one warp's request touches once the block
@@ -20,7 +21,11 @@ and per loop with a numeric trip count, the global bytes one CTA
 requests over the loop's own blocks and the distinct bytes it touches.
 Text and JSON views of the same tree. Counts are static: per-thread
 unless labeled per-CTA or per-warp, as requested by the PTX; nothing
-is measured (README).
+is measured (README). Each instruction has one category and independent
+contributions; text expands instructions with multiple contributions and JSON
+retains variants for differing immediate sizes. Atomic FP arithmetic contributes
+to `atomic_flops` and AI, with the existing atom read+write / red write-only byte
+convention (`tests/instruction_contributions.rs`).
 
 ## Known limitations
 

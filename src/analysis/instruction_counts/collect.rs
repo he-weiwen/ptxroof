@@ -18,11 +18,12 @@
 //! The qualifier retains the upper bound.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::instruction_counts::classify::{Direction, OpClass, classify};
-use crate::analysis::instruction_counts::measurement::{MeasureKind, Measurement};
+use crate::analysis::instruction_counts::classify::{
+    ClassifiedInstruction, InstructionCategory, classify,
+};
+use crate::analysis::instruction_counts::measurement::Measurement;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Stmt};
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CountQualifier {
@@ -65,10 +66,19 @@ pub struct BlockMeasurements {
     pub qualifier: CountQualifier,
     pub measurements: Vec<Measurement>,
     pub class_counts: ClassCounts,
-    /// Instructions issued per execution of the block, by class and
-    /// opcode. A predicated instruction is issued whether or not its
+    /// Individual instructions issued per execution of the block.
+    /// A predicated instruction is issued whether or not its
     /// predicate holds, so it counts here in full.
-    pub instructions: BTreeMap<(OpClass, String), u32>,
+    pub instructions: Vec<InstructionRecord>,
+}
+
+/// One instruction, even when it contributes several measurements or none.
+#[derive(Debug)]
+pub struct InstructionRecord {
+    pub opcode: String,
+    pub classified: ClassifiedInstruction,
+    pub provenance: usize,
+    pub predicated: bool,
 }
 
 /// Collect measurements for every block; indexed by `BlockId`.
@@ -89,7 +99,7 @@ pub fn collect(
             let qualifier = block_qualifier(forest, &exit_blocks, bid);
             let mut measurements = Vec::new();
             let mut counts = ClassCounts::default();
-            let mut instructions: BTreeMap<(OpClass, String), u32> = BTreeMap::new();
+            let mut instructions = Vec::new();
             let b = cfg.block(bid);
             for (si, stmt) in kernel.stmts[b.start..b.end].iter().enumerate() {
                 let Stmt::Instr(instr) = stmt else {
@@ -99,84 +109,29 @@ pub fn collect(
                 let provenance = b.start + si;
                 counts.total += 1;
                 let predicated = instr.predicate.is_some();
-                let mut push = |kind, count| {
-                    measurements.push(Measurement {
-                        kind,
-                        count,
-                        predicated,
-                        provenance,
-                    });
-                };
-                let mut push_bytes = |space, direction, bytes: Option<u32>| match bytes {
-                    Some(n) => push(MeasureKind::Bytes { space, direction }, n as u64),
-                    None => push(MeasureKind::UnquantifiedBytes { space, direction }, 1),
-                };
-                let class = classify(module, instr);
-                *instructions
-                    .entry((class, module.opcode(instr)))
-                    .or_default() += 1;
-                match class {
-                    OpClass::Flop {
-                        pipe,
-                        precision,
-                        flops,
-                    } => {
-                        counts.flop += 1;
-                        push(MeasureKind::Flops { pipe, precision }, flops as u64);
-                    }
-                    OpClass::NonFlopArith { kind } => {
-                        counts.non_flop_arith += 1;
-                        if kind
-                            == crate::analysis::instruction_counts::classify::ArithKind::Conversion
-                        {
-                            push(MeasureKind::Conversions, 1);
-                        } else {
-                            push(MeasureKind::NonFlopOps { kind }, 1);
-                        }
-                    }
-                    OpClass::Memory {
-                        space,
-                        direction,
-                        bytes,
-                    } => {
-                        counts.memory += 1;
-                        push_bytes(space, direction, bytes);
-                    }
-                    OpClass::Copy {
-                        from,
-                        to,
-                        read_bytes,
-                        written_bytes,
-                    } => {
-                        counts.memory += 1;
-                        push_bytes(from, Direction::Load, read_bytes);
-                        push_bytes(to, Direction::Store, written_bytes);
-                    }
-                    OpClass::Sync => {
-                        counts.sync += 1;
-                        push(MeasureKind::SyncOps, 1);
-                    }
-                    OpClass::Communication => {
-                        counts.communication += 1;
-                        push(MeasureKind::CommunicationOps, 1);
-                    }
-                    OpClass::Control => {
-                        counts.control += 1;
-                        push(MeasureKind::ControlOps, 1);
-                    }
-                    OpClass::Ignore => {
-                        counts.ignore += 1;
-                    }
-                    OpClass::Unknown => {
-                        counts.unknown += 1;
-                        push(
-                            MeasureKind::UnknownOps {
-                                mnemonic: instr.mnemonic,
-                            },
-                            1,
-                        );
-                    }
+                let classified = classify(module, instr);
+                match classified.category {
+                    InstructionCategory::Flop => counts.flop += 1,
+                    InstructionCategory::NonFlopArith { .. } => counts.non_flop_arith += 1,
+                    InstructionCategory::Memory => counts.memory += 1,
+                    InstructionCategory::Sync => counts.sync += 1,
+                    InstructionCategory::Communication => counts.communication += 1,
+                    InstructionCategory::Control => counts.control += 1,
+                    InstructionCategory::Ignore => counts.ignore += 1,
+                    InstructionCategory::Unknown => counts.unknown += 1,
                 }
+                measurements.extend(classified.contributions.iter().map(|c| Measurement {
+                    kind: c.kind,
+                    count: c.count,
+                    predicated,
+                    provenance,
+                }));
+                instructions.push(InstructionRecord {
+                    opcode: module.opcode(instr),
+                    classified,
+                    provenance,
+                    predicated,
+                });
             }
             BlockMeasurements {
                 block: bid,
@@ -212,7 +167,8 @@ fn block_qualifier(forest: &LoopForest, exit_blocks: &[BlockId], block: BlockId)
 mod tests {
     use super::*;
     use crate::analysis::control_flow::loop_forest;
-    use crate::analysis::instruction_counts::classify::Space;
+    use crate::analysis::instruction_counts::classify::{Direction, Space};
+    use crate::analysis::instruction_counts::measurement::MeasureKind;
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 

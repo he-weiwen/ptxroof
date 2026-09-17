@@ -5,7 +5,7 @@
 //! when a new toolchain or kernel family introduces an idiom we don't
 //! classify, this names it before any user files a bug.
 
-use ptxroof::analysis::instruction_counts::classify::{OpClass, classify};
+use ptxroof::analysis::instruction_counts::classify::{InstructionCategory, classify};
 use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
 use std::collections::BTreeMap;
@@ -49,7 +49,7 @@ fn every_corpus_instruction_classifies_or_is_allowlisted() {
             for stmt in &k.stmts {
                 if let Stmt::Instr(i) = stmt {
                     total += 1;
-                    if classify(&m, i) == OpClass::Unknown {
+                    if classify(&m, i).category == InstructionCategory::Unknown {
                         let name = m.interner.resolve(i.mnemonic).to_owned();
                         *unknown.entry(name).or_default() += 1;
                     }

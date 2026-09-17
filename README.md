@@ -80,6 +80,27 @@ Requested bytes are not DRAM bytes, since cache reuse and uncoalesced
 access move the real figure in either direction; for measured traffic
 and for what a part sustains, use Nsight Compute.
 
+Each instruction retains one category in the instruction breakdown. Entries
+with multiple contributions show their work per thread per execution:
+
+```text
+  atom.global.add.f32  32
+    per thread per execution: global load 4 B; global store 4 B; atomic f32 FLOPs 1
+```
+
+The instruction count is issued work; the annotation describes work when its
+predicate is true. Different contributions under the same opcode (for example,
+`cp.async` copies with different source sizes) appear as separate variants.
+JSON retains the existing `opcodes` counts and adds `contribution_variants`,
+whose issued counts sum to each opcode's count. Contributions are available for
+single-contribution entries too; ignored instructions have an empty list and
+unsupported instructions have an explicit unknown contribution.
+
+FP atomic/reduction add/min/max count one FLOP per scalar element, including
+packed and vector elements, in a separate `atomic_flops` table. AI includes
+these FLOPs. Requested bytes retain the convention of read+write for `atom`
+and write-only for `red`; neither estimates internal atomic or DRAM traffic.
+
 ## Development
 
 `./ci.sh` runs everything: rustfmt, clippy (warnings deny), unit and

@@ -87,7 +87,7 @@ thread_participation -> lane_eval -> affine
 memory_footprint -----> lane_eval
 memory_footprint -----------------> affine
 
-instruction_counts::stats -> collect -> measurement -> classify
+instruction_counts::stats -> collect -> classify <-> measurement
                                +-> control_flow
 ```
 
@@ -99,7 +99,13 @@ renaming it a driver would not separate those responsibilities.
 Measurement queries in `analysis::instruction_counts::stats` are free functions:
 pass the collected measurement slice, selected block IDs, and filters explicitly.
 They return owned tallies; there is no `Stats` wrapper or separate borrowed-view
-object. The slice must retain `collect`'s block ordering.
+object. The slice must retain `collect`'s block ordering. `classify` returns one
+`InstructionCategory` and a list of `Contribution` records. `collect` retains
+individual instructions and attaches execution context to their contributions;
+`stats::Tally.ops` counts distinct instruction provenance. Report grouping can
+therefore show one opcode with multiple contributions without counting it twice.
+The classification axes and contribution types are shared between `classify`
+and `measurement`.
 
 Trip analysis uses private free functions that take `&AffineValueTracer`; it does not add
 methods to the tracer from another module. Trip matching constructs an unbound

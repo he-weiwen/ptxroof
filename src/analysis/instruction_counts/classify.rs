@@ -1,4 +1,4 @@
-//! Instruction → semantic record.
+//! Instruction → one exclusive category and zero or more contributions.
 //!
 //! Transcribed from v1's `lib/PTX/Classifier.cpp` (v1 lives only in
 //! git history now, last at 690d81d): cuda-core, tensor-core and SFU
@@ -24,6 +24,8 @@
 //! per invocation, add/sub/mul/min/max/abs/neg/copysign = 1, the SFU
 //! family = 1 per result (the operation, not its SASS expansion), all
 //! multiplied by packed lanes (`f16x2` = ×2).
+
+use super::measurement::{Contribution, MeasureKind};
 
 use crate::ptx::ir::{Instr, Module, Operand};
 use crate::ptx::literal::parse_int;
@@ -64,24 +66,27 @@ impl Precision {
     }
 }
 
-/// The execution unit a flop runs on; each gets its own flop table
-/// in the report.
+/// FLOP accounting bucket; each gets its own table in the report.
+/// Atomic work does not imply a fixed physical execution unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Pipe {
     CudaCore,
     Tensor,
     /// Special function unit: transcendentals, reciprocals, roots.
     Sfu,
+    /// Atomic/reduction arithmetic; an accounting bucket, not a fixed hardware unit.
+    Atomic,
 }
 
 impl Pipe {
-    pub const ALL: [Pipe; 3] = [Pipe::CudaCore, Pipe::Tensor, Pipe::Sfu];
+    pub const ALL: [Pipe; 4] = [Pipe::CudaCore, Pipe::Tensor, Pipe::Sfu, Pipe::Atomic];
 
     pub fn key(self) -> &'static str {
         match self {
             Pipe::CudaCore => "cuda-core",
             Pipe::Tensor => "tensor",
             Pipe::Sfu => "sfu",
+            Pipe::Atomic => "atomic",
         }
     }
 }
@@ -136,48 +141,83 @@ pub enum ArithKind {
     Move,
 }
 
+/// Exclusive instruction category. Work quantities live in contributions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum OpClass {
-    /// Cuda-core floating-point work. `flops` already includes the
-    /// base convention and packed lanes.
-    Flop {
-        pipe: Pipe,
-        precision: Precision,
-        flops: u32,
-    },
-    NonFlopArith {
-        kind: ArithKind,
-    },
-    /// `bytes` is per-thread per-execution; `None` = statically
-    /// unquantifiable (surfaces in the unquantified counter, never 0).
-    Memory {
-        space: Space,
-        direction: Direction,
-        bytes: Option<u32>,
-    },
-    /// One instruction that both reads and writes memory: a read of
-    /// `read_bytes` from `from` and a write of `written_bytes` to `to`,
-    /// each per thread per execution, each `None` when unquantifiable.
-    Copy {
-        from: Space,
-        to: Space,
-        read_bytes: Option<u32>,
-        written_bytes: Option<u32>,
-    },
-    /// Barriers, fences, and waits (PTX ISA §9.7.14, "Synchronization").
+pub enum InstructionCategory {
+    Flop,
+    NonFlopArith { kind: ArithKind },
+    Memory,
     Sync,
-    /// Lane-to-lane register exchange and warp votes (§9.7.14,
-    /// "Communication"): shuffles, votes, `match`, `redux`, `elect`.
     Communication,
-    /// Branches, returns, calls.
     Control,
-    /// Correctly contributes nothing (`nop`, cache hints).
     Ignore,
-    /// Not yet handled — counted and named, never dropped.
     Unknown,
 }
 
-pub fn classify(module: &Module, instr: &Instr) -> OpClass {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ClassifiedInstruction {
+    pub category: InstructionCategory,
+    pub contributions: Vec<Contribution>,
+}
+
+impl ClassifiedInstruction {
+    fn simple(category: InstructionCategory) -> Self {
+        let kind = match category {
+            InstructionCategory::Sync => Some(MeasureKind::SyncOps),
+            InstructionCategory::Communication => Some(MeasureKind::CommunicationOps),
+            InstructionCategory::Control => Some(MeasureKind::ControlOps),
+            _ => None,
+        };
+        Self {
+            category,
+            contributions: kind
+                .into_iter()
+                .map(|kind| Contribution::new(kind, 1))
+                .collect(),
+        }
+    }
+
+    fn flop(pipe: Pipe, precision: Precision, flops: u32) -> Self {
+        Self {
+            category: InstructionCategory::Flop,
+            contributions: vec![Contribution::new(
+                MeasureKind::Flops { pipe, precision },
+                flops.into(),
+            )],
+        }
+    }
+
+    fn non_flop(kind: ArithKind) -> Self {
+        let measurement = if kind == ArithKind::Conversion {
+            MeasureKind::Conversions
+        } else {
+            MeasureKind::NonFlopOps { kind }
+        };
+        Self {
+            category: InstructionCategory::NonFlopArith { kind },
+            contributions: vec![Contribution::new(measurement, 1)],
+        }
+    }
+
+    fn memory(space: Space, direction: Direction, bytes: Option<u32>) -> Self {
+        Self {
+            category: InstructionCategory::Memory,
+            contributions: vec![Contribution::memory(space, direction, bytes, 0)],
+        }
+    }
+
+    fn copy(from: Space, to: Space, read_bytes: Option<u32>, written_bytes: Option<u32>) -> Self {
+        Self {
+            category: InstructionCategory::Memory,
+            contributions: vec![
+                Contribution::memory(from, Direction::Load, read_bytes, 1),
+                Contribution::memory(to, Direction::Store, written_bytes, 0),
+            ],
+        }
+    }
+}
+
+pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
     let interner = &module.interner;
     let mnemonic = interner.resolve(instr.mnemonic);
     let mods: Vec<&str> = module
@@ -188,77 +228,45 @@ pub fn classify(module: &Module, instr: &Instr) -> OpClass {
 
     let fp = fp_precision_and_lanes(&mods);
 
-    match mnemonic {
+    let mut result = match mnemonic {
         // -- cuda-core flops (FP type modifier required) -----------------
         "fma" | "mad" => match fp {
-            Some((p, lanes)) => OpClass::Flop {
-                pipe: Pipe::CudaCore,
-                precision: p,
-                flops: 2 * lanes,
-            },
+            Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::CudaCore, p, 2 * lanes),
             // mad.lo.s32 and friends are address arithmetic, not flops
             // (divergence from v1, which counted 2 "Other" flops here).
-            None => OpClass::NonFlopArith {
-                kind: ArithKind::Integer,
-            },
+            None => ClassifiedInstruction::non_flop(ArithKind::Integer),
         },
         "add" | "sub" | "mul" | "min" | "max" | "abs" | "neg" | "copysign" => match fp {
-            Some((p, lanes)) => OpClass::Flop {
-                pipe: Pipe::CudaCore,
-                precision: p,
-                flops: lanes,
-            },
-            None => OpClass::NonFlopArith {
-                kind: ArithKind::Integer,
-            },
+            Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::CudaCore, p, lanes),
+            None => ClassifiedInstruction::non_flop(ArithKind::Integer),
         },
 
         // -- special function unit (PTX ISA §9.7.3.8, .13–.22; §9.7.4.9–10) --
         "rcp" | "sqrt" | "rsqrt" | "sin" | "cos" | "lg2" | "ex2" | "tanh" => match fp {
-            Some((p, lanes)) => OpClass::Flop {
-                pipe: Pipe::Sfu,
-                precision: p,
-                flops: lanes,
-            },
-            None => OpClass::Unknown,
+            Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::Sfu, p, lanes),
+            None => ClassifiedInstruction::simple(InstructionCategory::Unknown),
         },
         "div" => match fp {
-            Some((p, lanes)) => OpClass::Flop {
-                pipe: Pipe::Sfu,
-                precision: p,
-                flops: lanes,
-            },
-            None => OpClass::NonFlopArith {
-                kind: ArithKind::Integer,
-            },
+            Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::Sfu, p, lanes),
+            None => ClassifiedInstruction::non_flop(ArithKind::Integer),
         },
 
         // -- non-flop arithmetic ------------------------------------------
-        "cvt" => OpClass::NonFlopArith {
-            kind: ArithKind::Conversion,
-        },
+        "cvt" => ClassifiedInstruction::non_flop(ArithKind::Conversion),
         "mov" | "cvta" | "mapa" | "stacksave" | "stackrestore" | "alloca" => {
-            OpClass::NonFlopArith {
-                kind: ArithKind::Move,
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Move)
         }
         "setp" | "selp" | "set" | "slct" | "testp" | "isspacep" | "istypep" => {
-            OpClass::NonFlopArith {
-                kind: ArithKind::Predicate,
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Predicate)
         }
         "and" | "or" | "xor" | "not" | "shl" | "shr" | "shf" | "lop3" | "bfe" | "bfi" | "brev"
         | "popc" | "clz" | "bfind" | "bmsk" | "szext" | "prmt" | "rem" | "sad" | "dp4a"
         | "dp2a" | "mul24" | "mad24" | "addc" | "subc" | "madc" | "cnot" | "fns" | "clmad"
         | "getctarank" => {
             if mods.contains(&"pred") {
-                OpClass::NonFlopArith {
-                    kind: ArithKind::Predicate,
-                }
+                ClassifiedInstruction::non_flop(ArithKind::Predicate)
             } else {
-                OpClass::NonFlopArith {
-                    kind: ArithKind::Integer,
-                }
+                ClassifiedInstruction::non_flop(ArithKind::Integer)
             }
         }
 
@@ -269,18 +277,10 @@ pub fn classify(module: &Module, instr: &Instr) -> OpClass {
             } else {
                 Direction::Store
             };
-            OpClass::Memory {
-                space: space_of(&mods),
-                direction,
-                bytes: bytes_of(&mods),
-            }
+            ClassifiedInstruction::memory(space_of(&mods), direction, bytes_of(&mods))
         }
         // Uniform global loads (PTX ISA §9.7.9.9).
-        "ldu" => OpClass::Memory {
-            space: Space::Global,
-            direction: Direction::Load,
-            bytes: bytes_of(&mods),
-        },
+        "ldu" => ClassifiedInstruction::memory(Space::Global, Direction::Load, bytes_of(&mods)),
 
         // -- tensor cores (warp-collective; counts are per lane) ----------
         "wmma" => wmma(&mods),
@@ -291,37 +291,76 @@ pub fn classify(module: &Module, instr: &Instr) -> OpClass {
         // -- asynchronous copies -----------------------------------------------
         "cp" => cp(module, instr, &mods),
 
-        // -- atomics (PTX ISA §9.7.14.5–6): a read-modify-write of one
-        // location; the arithmetic is not counted as flops -------------
-        "atom" => OpClass::Copy {
-            from: space_of(&mods),
-            to: space_of(&mods),
-            read_bytes: bytes_of(&mods),
-            written_bytes: bytes_of(&mods),
-        },
-        "red" => OpClass::Memory {
-            space: space_of(&mods),
-            direction: Direction::Store,
-            bytes: bytes_of(&mods),
-        },
+        // Atom returns the old value (read + write); red retains the
+        // requested-byte convention of write only. Both contribute FP work.
+        "atom" | "red" => atomic(&mods, mnemonic == "atom"),
 
         // -- sync / warp collectives ---------------------------------------
-        "bar" | "barrier" | "mbarrier" | "membar" | "fence" => OpClass::Sync,
-        "shfl" | "vote" | "match" | "activemask" | "redux" | "elect" => OpClass::Communication,
+        "bar" | "barrier" | "mbarrier" | "membar" | "fence" => {
+            ClassifiedInstruction::simple(InstructionCategory::Sync)
+        }
+        "shfl" | "vote" | "match" | "activemask" | "redux" | "elect" => {
+            ClassifiedInstruction::simple(InstructionCategory::Communication)
+        }
 
         // -- control -----------------------------------------------------------
-        "bra" | "brx" | "ret" | "exit" | "call" | "trap" | "brkpt" => OpClass::Control,
+        "bra" | "brx" | "ret" | "exit" | "call" | "trap" | "brkpt" => {
+            ClassifiedInstruction::simple(InstructionCategory::Control)
+        }
 
         // -- correctly ignored -------------------------------------------------
         "nop" | "prefetch" | "prefetchu" | "discard" | "applypriority" | "griddepcontrol"
-        | "createpolicy" | "nanosleep" | "pmevent" | "setmaxnreg" => OpClass::Ignore,
+        | "createpolicy" | "nanosleep" | "pmevent" | "setmaxnreg" => {
+            ClassifiedInstruction::simple(InstructionCategory::Ignore)
+        }
 
         // -- everything else: unsupported instruction families ----------
-        // (tensor/wmma/mma/ldmatrix, cp.async, atom/red, SFU
-        // transcendentals incl. div/sqrt/rcp/sin/cos/ex2/lg2/tanh/rsqrt,
-        // tex/surf). Counted and named by the coverage check.
-        _ => OpClass::Unknown,
+        // Counted and named by the coverage check.
+        _ => ClassifiedInstruction::simple(InstructionCategory::Unknown),
+    };
+    if result.category == InstructionCategory::Unknown {
+        result.contributions.push(Contribution::new(
+            MeasureKind::UnknownOps {
+                mnemonic: instr.mnemonic,
+            },
+            1,
+        ));
     }
+    result
+}
+
+/// Atomic FP operations count one operation per scalar element. Integer,
+/// bitwise, exchange and CAS operations never become FP work.
+fn atomic(mods: &[&str], returns_old: bool) -> ClassifiedInstruction {
+    let space = space_of(mods);
+    let bytes = bytes_of(mods);
+    let mut result = ClassifiedInstruction::memory(space, Direction::Store, bytes);
+    if returns_old {
+        result
+            .contributions
+            .insert(0, Contribution::memory(space, Direction::Load, bytes, 0));
+    }
+    if mods.iter().any(|m| matches!(*m, "add" | "min" | "max"))
+        && let Some((precision, lanes)) = fp_precision_and_lanes(mods)
+    {
+        let vector = mods
+            .iter()
+            .find_map(|m| match *m {
+                "v2" => Some(2),
+                "v4" => Some(4),
+                "v8" => Some(8),
+                _ => None,
+            })
+            .unwrap_or(1);
+        result.contributions.push(Contribution::new(
+            MeasureKind::Flops {
+                pipe: Pipe::Atomic,
+                precision,
+            },
+            u64::from(lanes * vector),
+        ));
+    }
+    result
 }
 
 // PTX ISA §4.5.1: "The predefined integer constant WARP_SZ specifies
@@ -377,9 +416,9 @@ fn per_lane_bytes(bits: u32) -> Option<u32> {
 /// `wmma.{load,store,mma}` (PTX ISA §9.7.15.4.3–5): the role is the
 /// first modifier; the shape modifier fixes every fragment's size and
 /// the flop count; the element types follow the shape.
-fn wmma(mods: &[&str]) -> OpClass {
+fn wmma(mods: &[&str]) -> ClassifiedInstruction {
     let Some(shape_at) = mods.iter().position(|m| matrix_shape(m).is_some()) else {
-        return OpClass::Unknown;
+        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     };
     let (m, n, k) = matrix_shape(mods[shape_at]).expect("position found a shape");
     let types: Vec<&str> = mods[shape_at + 1..]
@@ -393,20 +432,20 @@ fn wmma(mods: &[&str]) -> OpClass {
                 "a" => m * k,
                 "b" => k * n,
                 "c" | "d" => m * n,
-                _ => return OpClass::Unknown,
+                _ => return ClassifiedInstruction::simple(InstructionCategory::Unknown),
             };
             let Some(bits) = types.last().and_then(|t| element_bits(t)) else {
-                return OpClass::Unknown;
+                return ClassifiedInstruction::simple(InstructionCategory::Unknown);
             };
-            OpClass::Memory {
-                space: space_of(mods),
-                direction: if role == "load" {
+            ClassifiedInstruction::memory(
+                space_of(mods),
+                if role == "load" {
                     Direction::Load
                 } else {
                     Direction::Store
                 },
-                bytes: per_lane_bytes(elements * bits),
-            }
+                per_lane_bytes(elements * bits),
+            )
         }
         (Some(&"mma"), _) => {
             // §9.7.15.4.5: "For wmma.mma without explicit .atype and
@@ -417,15 +456,13 @@ fn wmma(mods: &[&str]) -> OpClass {
                 types.get(1).copied().unwrap_or("")
             };
             match tensor_precision(atype) {
-                Some(precision) => OpClass::Flop {
-                    pipe: Pipe::Tensor,
-                    precision,
-                    flops: 2 * m * n * k / WARP_LANES,
-                },
-                None => OpClass::Unknown,
+                Some(precision) => {
+                    ClassifiedInstruction::flop(Pipe::Tensor, precision, 2 * m * n * k / WARP_LANES)
+                }
+                None => ClassifiedInstruction::simple(InstructionCategory::Unknown),
             }
         }
-        _ => OpClass::Unknown,
+        _ => ClassifiedInstruction::simple(InstructionCategory::Unknown),
     }
 }
 
@@ -433,15 +470,15 @@ fn wmma(mods: &[&str]) -> OpClass {
 /// the shape modifier; the types follow the shape as `.dtype.atype
 /// .btype.ctype`. Sparse (`.sp`) and block-scaled forms are left
 /// Unknown: their flop count is a convention still to be chosen.
-fn mma(mods: &[&str]) -> OpClass {
+fn mma(mods: &[&str]) -> ClassifiedInstruction {
     if mods
         .iter()
         .any(|m| m.starts_with("sp") || *m == "block_scale")
     {
-        return OpClass::Unknown;
+        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     }
     let Some(shape_at) = mods.iter().position(|m| matrix_shape(m).is_some()) else {
-        return OpClass::Unknown;
+        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     };
     let (m, n, k) = matrix_shape(mods[shape_at]).expect("position found a shape");
     let types: Vec<&str> = mods[shape_at + 1..]
@@ -450,7 +487,7 @@ fn mma(mods: &[&str]) -> OpClass {
         .filter(|t| element_bits(t).is_some())
         .collect();
     let Some(precision) = types.get(1).and_then(|t| tensor_precision(t)) else {
-        return OpClass::Unknown;
+        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     };
     // §9.7.15.5.1: "A warp executing mma.m8n8k4 with .f16 floating point
     // type will compute 4 MMA operations of shape .m8n8k4"; §9.7.15.5.2:
@@ -460,11 +497,11 @@ fn mma(mods: &[&str]) -> OpClass {
     } else {
         1
     };
-    OpClass::Flop {
-        pipe: Pipe::Tensor,
+    ClassifiedInstruction::flop(
+        Pipe::Tensor,
         precision,
-        flops: operations * 2 * m * n * k / WARP_LANES,
-    }
+        operations * 2 * m * n * k / WARP_LANES,
+    )
 }
 
 /// `ldmatrix` / `stmatrix` (PTX ISA §9.7.15.5.15–16): `.num` matrices
@@ -472,7 +509,7 @@ fn mma(mods: &[&str]) -> OpClass {
 /// is provided, generic addressing is used, such that the address in p
 /// points into .shared space"). The padded 6-/4-bit source formats
 /// have no element width here and stay unquantified.
-fn matrix_fragments(mods: &[&str], direction: Direction) -> OpClass {
+fn matrix_fragments(mods: &[&str], direction: Direction) -> ClassifiedInstruction {
     let shape = mods.iter().find_map(|m| matrix_rows_cols(m));
     let count = mods.iter().find_map(|m| match *m {
         "x1" => Some(1),
@@ -481,14 +518,14 @@ fn matrix_fragments(mods: &[&str], direction: Direction) -> OpClass {
         _ => None,
     });
     let (Some((rows, cols)), Some(count)) = (shape, count) else {
-        return OpClass::Unknown;
+        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     };
     let bits = mods.iter().rev().find_map(|m| element_bits(m));
-    OpClass::Memory {
-        space: Space::Shared,
+    ClassifiedInstruction::memory(
+        Space::Shared,
         direction,
-        bytes: bits.and_then(|b| per_lane_bytes(count * rows * cols * b)),
-    }
+        bits.and_then(|b| per_lane_bytes(count * rows * cols * b)),
+    )
 }
 
 /// `cp.async` (PTX ISA §9.7.9.26.3.1): "Operand src specifies a
@@ -499,16 +536,16 @@ fn matrix_fragments(mods: &[&str], direction: Direction) -> OpClass {
 /// zeros"). The group bookkeeping instructions (§9.7.9.26.3.2–3) and
 /// the mbarrier arrive are synchronization; the bulk and tensor
 /// forms (§9.7.9.26.4–5) are not modeled.
-fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> OpClass {
+fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     let has = |name: &str| mods.contains(&name);
     if !has("async") || has("bulk") || has("reduce") {
-        return OpClass::Unknown;
+        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     }
     if has("commit_group") || has("wait_group") || has("wait_all") || has("mbarrier") {
-        return OpClass::Sync;
+        return ClassifiedInstruction::simple(InstructionCategory::Sync);
     }
     if !(has("shared") || has("shared::cta")) || !has("global") {
-        return OpClass::Unknown;
+        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     }
     let immediates: Vec<u32> = module
         .operand_ids(instr.operands)
@@ -521,12 +558,12 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> OpClass {
             _ => None,
         })
         .collect();
-    OpClass::Copy {
-        from: Space::Global,
-        to: Space::Shared,
-        read_bytes: immediates.get(1).or(immediates.first()).copied(),
-        written_bytes: immediates.first().copied(),
-    }
+    ClassifiedInstruction::copy(
+        Space::Global,
+        Space::Shared,
+        immediates.get(1).or(immediates.first()).copied(),
+        immediates.first().copied(),
+    )
 }
 
 /// FP precision + packed-lane multiplier from type modifiers.
@@ -601,7 +638,7 @@ mod tests {
     use crate::ptx::parse::parser::parse;
 
     /// Classify the single instruction in `text`.
-    fn class_of(text: &str) -> OpClass {
+    fn class_of(text: &str) -> ClassifiedInstruction {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
              .visible .entry k()\n{{\n{text}\n}}\n"
@@ -622,43 +659,23 @@ mod tests {
     fn flops_follow_the_fma_2_convention_and_packed_lanes() {
         assert_eq!(
             class_of("fma.rn.f32 %f1, %f2, %f3, %f4;"),
-            OpClass::Flop {
-                pipe: Pipe::CudaCore,
-                precision: Precision::F32,
-                flops: 2
-            }
+            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::F32, 2)
         );
         assert_eq!(
             class_of("fma.rn.f16x2 %r1, %r2, %r3, %r4;"),
-            OpClass::Flop {
-                pipe: Pipe::CudaCore,
-                precision: Precision::F16,
-                flops: 4
-            }
+            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::F16, 4)
         );
         assert_eq!(
             class_of("add.f32 %f1, %f2, %f3;"),
-            OpClass::Flop {
-                pipe: Pipe::CudaCore,
-                precision: Precision::F32,
-                flops: 1
-            }
+            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::F32, 1)
         );
         assert_eq!(
             class_of("mul.bf16x2 %r1, %r2, %r3;"),
-            OpClass::Flop {
-                pipe: Pipe::CudaCore,
-                precision: Precision::BF16,
-                flops: 2
-            }
+            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::BF16, 2)
         );
         assert_eq!(
             class_of("max.f64 %fd1, %fd2, %fd3;"),
-            OpClass::Flop {
-                pipe: Pipe::CudaCore,
-                precision: Precision::F64,
-                flops: 1
-            }
+            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::F64, 1)
         );
     }
 
@@ -667,21 +684,15 @@ mod tests {
         // The divergence-from-v1 case: integer mad is address math.
         assert_eq!(
             class_of("mad.lo.s32 %r1, %r2, %r3, %r4;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Integer
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Integer)
         );
         assert_eq!(
             class_of("add.s64 %rd1, %rd2, 8;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Integer
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Integer)
         );
         assert_eq!(
             class_of("mul.wide.s32 %rd1, %r1, 2;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Integer
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Integer)
         );
     }
 
@@ -689,22 +700,16 @@ mod tests {
     fn conversions_are_their_own_kind() {
         assert_eq!(
             class_of("cvt.f32.f16 %f1, %rs1;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Conversion
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Conversion)
         );
         assert_eq!(
             class_of("cvt.rn.f16.f32 %rs1, %f1;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Conversion
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Conversion)
         );
         // cvta is an address-space cast, not a value conversion.
         assert_eq!(
             class_of("cvta.to.global.u64 %rd1, %rd2;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Move
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Move)
         );
     }
 
@@ -712,21 +717,15 @@ mod tests {
     fn predicate_ops_including_or_pred() {
         assert_eq!(
             class_of("setp.lt.s32 %p1, %r1, %r2;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Predicate
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Predicate)
         );
         assert_eq!(
             class_of("or.pred %p3, %p1, %p2;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Predicate
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Predicate)
         );
         assert_eq!(
             class_of("and.b32 %r1, %r2, 3;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Integer
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Integer)
         );
     }
 
@@ -734,51 +733,29 @@ mod tests {
     fn memory_width_space_and_direction() {
         assert_eq!(
             class_of("ld.global.u16 %rs1, [%rd1];"),
-            OpClass::Memory {
-                space: Space::Global,
-                direction: Direction::Load,
-                bytes: Some(2)
-            }
+            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(2))
         );
         assert_eq!(
             class_of("st.shared.u16 [%r1], %rs1;"),
-            OpClass::Memory {
-                space: Space::Shared,
-                direction: Direction::Store,
-                bytes: Some(2)
-            }
+            ClassifiedInstruction::memory(Space::Shared, Direction::Store, Some(2))
         );
         assert_eq!(
             class_of("ld.param.u64 %rd1, [k_param_4];"),
-            OpClass::Memory {
-                space: Space::Param,
-                direction: Direction::Load,
-                bytes: Some(8)
-            }
+            ClassifiedInstruction::memory(Space::Param, Direction::Load, Some(8))
         );
         assert_eq!(
             class_of("ld.global.v2.f32 {%f1, %f2}, [%rd1];"),
-            OpClass::Memory {
-                space: Space::Global,
-                direction: Direction::Load,
-                bytes: Some(8)
-            }
+            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(8))
         );
         assert_eq!(
             class_of("ld.global.nc.L2::128B.b128 {%rd1, %rd2}, [%rd3];"),
-            OpClass::Memory {
-                space: Space::Global,
-                direction: Direction::Load,
-                bytes: Some(16)
-            }
+            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(16))
         );
     }
 
     #[test]
     fn hopper_and_extended_precision_bookkeeping_have_arms() {
-        let integer = OpClass::NonFlopArith {
-            kind: ArithKind::Integer,
-        };
+        let integer = ClassifiedInstruction::non_flop(ArithKind::Integer);
         for text in [
             "addc.cc.u32 %r1, %r2, %r3;",
             "subc.u32 %r1, %r2, %r3;",
@@ -793,9 +770,7 @@ mod tests {
         }
         assert_eq!(
             class_of("istypep.texref %p1, %rd1;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Predicate
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Predicate)
         );
         for text in [
             "mapa.shared::cluster.u32 %r1, %r2, %r3;",
@@ -804,20 +779,25 @@ mod tests {
         ] {
             assert_eq!(
                 class_of(text),
-                OpClass::NonFlopArith {
-                    kind: ArithKind::Move
-                },
+                ClassifiedInstruction::non_flop(ArithKind::Move),
                 "{text}"
             );
         }
-        assert_eq!(class_of("elect.sync %r1|%p1, %r2;"), OpClass::Communication);
+        assert_eq!(
+            class_of("elect.sync %r1|%p1, %r2;"),
+            ClassifiedInstruction::simple(InstructionCategory::Communication)
+        );
         for text in [
             "createpolicy.fractional.L2::evict_last.b64 %rd1, 0.25;",
             "nanosleep.u32 100;",
             "pmevent 3;",
             "setmaxnreg.inc.sync.aligned.u32 232;",
         ] {
-            assert_eq!(class_of(text), OpClass::Ignore, "{text}");
+            assert_eq!(
+                class_of(text),
+                ClassifiedInstruction::simple(InstructionCategory::Ignore),
+                "{text}"
+            );
         }
     }
 
@@ -825,49 +805,52 @@ mod tests {
     fn generic_and_cluster_spaces_are_distinct_buckets() {
         assert_eq!(
             class_of("ld.f32 %f1, [%rd1];"),
-            OpClass::Memory {
-                space: Space::Generic,
-                direction: Direction::Load,
-                bytes: Some(4)
-            }
+            ClassifiedInstruction::memory(Space::Generic, Direction::Load, Some(4))
         );
         assert_eq!(
             class_of("st.shared::cluster.b32 [%r1], %r2;"),
-            OpClass::Memory {
-                space: Space::SharedCluster,
-                direction: Direction::Store,
-                bytes: Some(4)
-            }
+            ClassifiedInstruction::memory(Space::SharedCluster, Direction::Store, Some(4))
         );
         assert_eq!(
             class_of("ld.shared::cta.b32 %r1, [%r2];"),
-            OpClass::Memory {
-                space: Space::Shared,
-                direction: Direction::Load,
-                bytes: Some(4)
-            }
+            ClassifiedInstruction::memory(Space::Shared, Direction::Load, Some(4))
         );
     }
 
     #[test]
     fn sync_control_ignore() {
-        assert_eq!(class_of("bar.sync 0;"), OpClass::Sync);
-        assert_eq!(class_of("membar.gl;"), OpClass::Sync);
+        assert_eq!(
+            class_of("bar.sync 0;"),
+            ClassifiedInstruction::simple(InstructionCategory::Sync)
+        );
+        assert_eq!(
+            class_of("membar.gl;"),
+            ClassifiedInstruction::simple(InstructionCategory::Sync)
+        );
         assert_eq!(
             class_of("shfl.sync.bfly.b32 %r1, %r2, %r3, %r4, %r5;"),
-            OpClass::Communication
+            ClassifiedInstruction::simple(InstructionCategory::Communication)
         );
         assert_eq!(
             class_of("vote.sync.any.pred %p1, %p2, %r1;"),
-            OpClass::Communication
+            ClassifiedInstruction::simple(InstructionCategory::Communication)
         );
         assert_eq!(
             class_of("redux.sync.add.s32 %r1, %r2, %r3;"),
-            OpClass::Communication
+            ClassifiedInstruction::simple(InstructionCategory::Communication)
         );
-        assert_eq!(class_of("@%p1 bra $L__X;"), OpClass::Control);
-        assert_eq!(class_of("ret;"), OpClass::Control);
-        assert_eq!(class_of("nop;"), OpClass::Ignore);
+        assert_eq!(
+            class_of("@%p1 bra $L__X;"),
+            ClassifiedInstruction::simple(InstructionCategory::Control)
+        );
+        assert_eq!(
+            class_of("ret;"),
+            ClassifiedInstruction::simple(InstructionCategory::Control)
+        );
+        assert_eq!(
+            class_of("nop;"),
+            ClassifiedInstruction::simple(InstructionCategory::Ignore)
+        );
     }
 
     #[test]
@@ -877,40 +860,24 @@ mod tests {
         let load = "wmma.load.a.sync.aligned.row.m16n16k16.shared.f16 {%r1, %r2, %r3, %r4, %r5, %r6, %r7, %r8}, [%r9], %r10;";
         assert_eq!(
             class_of(load),
-            OpClass::Memory {
-                space: Space::Shared,
-                direction: Direction::Load,
-                bytes: Some(16)
-            }
+            ClassifiedInstruction::memory(Space::Shared, Direction::Load, Some(16))
         );
         assert_eq!(
             class_of(
                 "wmma.load.c.sync.aligned.row.m16n16k16.global.f32 {%f1, %f2, %f3, %f4, %f5, %f6, %f7, %f8}, [%rd1], %r1;"
             ),
-            OpClass::Memory {
-                space: Space::Global,
-                direction: Direction::Load,
-                bytes: Some(32)
-            }
+            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(32))
         );
         assert_eq!(
             class_of(
                 "wmma.store.d.sync.aligned.row.m16n16k16.global.f16 [%rd1], {%r1, %r2, %r3, %r4}, %r5;"
             ),
-            OpClass::Memory {
-                space: Space::Global,
-                direction: Direction::Store,
-                bytes: Some(16)
-            }
+            ClassifiedInstruction::memory(Space::Global, Direction::Store, Some(16))
         );
         // m8n32k16: B is 16x32 bf16 = 1024 B per warp = 32 B per lane.
         assert_eq!(
             class_of("wmma.load.b.sync.aligned.col.m8n32k16.global.bf16 {%r1}, [%rd1];"),
-            OpClass::Memory {
-                space: Space::Global,
-                direction: Direction::Load,
-                bytes: Some(32)
-            }
+            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(32))
         );
     }
 
@@ -922,48 +889,33 @@ mod tests {
             class_of(
                 "wmma.mma.sync.aligned.row.row.m16n16k16.f32.f32 {%f1, %f2, %f3, %f4, %f5, %f6, %f7, %f8}, {%r1, %r2, %r3, %r4, %r5, %r6, %r7, %r8}, {%r9, %r10, %r11, %r12, %r13, %r14, %r15, %r16}, {%f1, %f2, %f3, %f4, %f5, %f6, %f7, %f8};"
             ),
-            OpClass::Flop {
-                pipe: Pipe::Tensor,
-                precision: Precision::F16,
-                flops: 256
-            }
+            ClassifiedInstruction::flop(Pipe::Tensor, Precision::F16, 256)
         );
         assert_eq!(
             class_of(
                 "wmma.mma.sync.aligned.row.col.m8n32k16.f32.bf16.bf16.f32 {%f1}, {%r1}, {%r2}, {%f2};"
             ),
-            OpClass::Flop {
-                pipe: Pipe::Tensor,
-                precision: Precision::BF16,
-                flops: 256
-            }
+            ClassifiedInstruction::flop(Pipe::Tensor, Precision::BF16, 256)
         );
         assert_eq!(
             class_of(
                 "wmma.mma.sync.aligned.row.col.m8n8k4.rn.f64.f64.f64.f64 {%fd1}, {%fd2}, {%fd3}, {%fd4};"
             ),
-            OpClass::Flop {
-                pipe: Pipe::Tensor,
-                precision: Precision::F64,
-                flops: 16
-            }
+            ClassifiedInstruction::flop(Pipe::Tensor, Precision::F64, 16)
         );
         // Integer MMA is not floating-point work: loud, not zero.
         assert_eq!(
             class_of(
                 "wmma.mma.sync.aligned.row.col.m16n16k16.s32.s8.s8.s32 {%r1}, {%r2}, {%r3}, {%r4};"
-            ),
-            OpClass::Unknown
+            )
+            .category,
+            InstructionCategory::Unknown
         );
     }
 
     #[test]
     fn mma_sync_flops_by_shape_and_multiplicand_type() {
-        let tensor = |precision, flops| OpClass::Flop {
-            pipe: Pipe::Tensor,
-            precision,
-            flops,
-        };
+        let tensor = |precision, flops| ClassifiedInstruction::flop(Pipe::Tensor, precision, flops);
         // k14's form: 2*16*8*16 / 32 = 128 flops per lane.
         assert_eq!(
             class_of(
@@ -1012,17 +964,18 @@ mod tests {
             "mma.sp.sync.aligned.m16n8k32.row.col.f32.f16.f16.f32 {%f1}, {%r1}, {%r2}, {%f2}, %r3, 0;",
             "mma.sync.aligned.m16n8k64.row.col.kind::mxf4.block_scale.f32.e2m1.e2m1.f32.ue8m0 {%f1}, {%r1}, {%r2}, {%f2}, %r3, {0, 0}, %r4, {0, 0};",
         ] {
-            assert_eq!(class_of(text), OpClass::Unknown, "{text}");
+            assert_eq!(
+                class_of(text).category,
+                InstructionCategory::Unknown,
+                "{text}"
+            );
         }
     }
 
     #[test]
     fn ldmatrix_and_stmatrix_move_num_fragments_of_shared_memory() {
-        let shared = |direction, bytes| OpClass::Memory {
-            space: Space::Shared,
-            direction,
-            bytes,
-        };
+        let shared =
+            |direction, bytes| ClassifiedInstruction::memory(Space::Shared, direction, bytes);
         // k14's forms: an 8x8 b16 matrix is 128 B per warp, 4 B per lane.
         assert_eq!(
             class_of("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%r5];"),
@@ -1054,11 +1007,13 @@ mod tests {
             class_of("cp.async.cg.shared.global [ %r24 + 0 ], [ %rd5 + 0 ], 0x10, 0x10;"),
             class_of("cp.async.cg.shared.global [%r20], [%rd11], 16, 16;")
         );
-        let copy = |read_bytes, written_bytes| OpClass::Copy {
-            from: Space::Global,
-            to: Space::Shared,
-            read_bytes: Some(read_bytes),
-            written_bytes: Some(written_bytes),
+        let copy = |read_bytes, written_bytes| {
+            ClassifiedInstruction::copy(
+                Space::Global,
+                Space::Shared,
+                Some(read_bytes),
+                Some(written_bytes),
+            )
         };
         // k12's form: nvcc writes the source size explicitly.
         assert_eq!(
@@ -1085,24 +1040,28 @@ mod tests {
             "cp.async.wait_all;",
             "cp.async.mbarrier.arrive.shared.b64 [%r1];",
         ] {
-            assert_eq!(class_of(text), OpClass::Sync, "{text}");
+            assert_eq!(
+                class_of(text),
+                ClassifiedInstruction::simple(InstructionCategory::Sync),
+                "{text}"
+            );
         }
         for text in [
             "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%r1], [%rd1], 1024, [%r2];",
             "cp.reduce.async.bulk.global.shared::cta.bulk_group.add.f32 [%rd1], [%r1], 256;",
             "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%r1], [%rd1, {%r2, %r3}], [%r4];",
         ] {
-            assert_eq!(class_of(text), OpClass::Unknown, "{text}");
+            assert_eq!(
+                class_of(text).category,
+                InstructionCategory::Unknown,
+                "{text}"
+            );
         }
     }
 
     #[test]
     fn sfu_family_is_one_flop_per_result_on_its_own_pipe() {
-        let sfu = |precision, flops| OpClass::Flop {
-            pipe: Pipe::Sfu,
-            precision,
-            flops,
-        };
+        let sfu = |precision, flops| ClassifiedInstruction::flop(Pipe::Sfu, precision, flops);
         assert_eq!(
             class_of("ex2.approx.ftz.f32 %f1, %f2;"),
             sfu(Precision::F32, 1)
@@ -1131,53 +1090,147 @@ mod tests {
         // Integer division (§9.7.1.9) is address arithmetic, like rem.
         assert_eq!(
             class_of("div.u32 %r1, %r2, %r3;"),
-            OpClass::NonFlopArith {
-                kind: ArithKind::Integer
-            }
+            ClassifiedInstruction::non_flop(ArithKind::Integer)
         );
     }
 
     #[test]
-    fn atomics_are_bytes_both_ways_reductions_store_only() {
-        assert_eq!(
-            class_of("atom.global.add.u32 %r1, [%rd1], %r2;"),
-            OpClass::Copy {
-                from: Space::Global,
-                to: Space::Global,
-                read_bytes: Some(4),
-                written_bytes: Some(4)
+    fn atomics_keep_byte_policy_and_count_fp_elements() {
+        for (text, space, width, precision, flops, reads) in [
+            (
+                "atom.global.add.f32 %f1, [%rd1], %f2;",
+                Space::Global,
+                4,
+                Some(Precision::F32),
+                1,
+                true,
+            ),
+            (
+                "atom.shared.add.f64 %fd1, [%r1], %fd2;",
+                Space::Shared,
+                8,
+                Some(Precision::F64),
+                1,
+                true,
+            ),
+            (
+                "red.relaxed.gpu.global.add.v2.f32 [%rd1], {%f1, %f2};",
+                Space::Global,
+                8,
+                Some(Precision::F32),
+                2,
+                false,
+            ),
+            (
+                "red.add.noftz.f16x2 [%rd1], %r1;",
+                Space::Generic,
+                4,
+                Some(Precision::F16),
+                2,
+                false,
+            ),
+            (
+                "red.global.add.noftz.v2.bf16x2 [%rd1], {%r1, %r2};",
+                Space::Global,
+                8,
+                Some(Precision::BF16),
+                4,
+                false,
+            ),
+            (
+                "atom.global.min.noftz.f16 %h1, [%rd1], %h2;",
+                Space::Global,
+                2,
+                Some(Precision::F16),
+                1,
+                true,
+            ),
+            (
+                "red.global.max.noftz.bf16 [%rd1], %h1;",
+                Space::Global,
+                2,
+                Some(Precision::BF16),
+                1,
+                false,
+            ),
+            (
+                "atom.global.add.u32 %r1, [%rd1], %r2;",
+                Space::Global,
+                4,
+                None,
+                0,
+                true,
+            ),
+            (
+                "atom.shared.cas.b64 %rd1, [%r1], %rd2, %rd3;",
+                Space::Shared,
+                8,
+                None,
+                0,
+                true,
+            ),
+            (
+                "atom.global.exch.b32 %r1, [%rd1], %r2;",
+                Space::Global,
+                4,
+                None,
+                0,
+                true,
+            ),
+        ] {
+            let actual = class_of(text);
+            assert_eq!(actual.category, InstructionCategory::Memory, "{text}");
+            let mut expected = vec![];
+            if reads {
+                expected.push(Contribution {
+                    kind: MeasureKind::Bytes {
+                        space,
+                        direction: Direction::Load,
+                    },
+                    count: width,
+                    memory_operand: Some(0),
+                });
             }
-        );
-        assert_eq!(
-            class_of("atom.shared.cas.b64 %rd1, [%r1], %rd2, %rd3;"),
-            OpClass::Copy {
-                from: Space::Shared,
-                to: Space::Shared,
-                read_bytes: Some(8),
-                written_bytes: Some(8)
+            expected.push(Contribution {
+                kind: MeasureKind::Bytes {
+                    space,
+                    direction: Direction::Store,
+                },
+                count: width,
+                memory_operand: Some(0),
+            });
+            if let Some(precision) = precision {
+                expected.push(Contribution {
+                    kind: MeasureKind::Flops {
+                        pipe: Pipe::Atomic,
+                        precision,
+                    },
+                    count: flops,
+                    memory_operand: None,
+                });
             }
-        );
-        assert_eq!(
-            class_of("red.relaxed.gpu.global.add.v2.f32 [%rd1], {%f1, %f2};"),
-            OpClass::Memory {
-                space: Space::Global,
-                direction: Direction::Store,
-                bytes: Some(8)
-            }
-        );
-        assert_eq!(
-            class_of("red.add.f16x2 [%rd1], %r1;"),
-            OpClass::Memory {
-                space: Space::Generic,
-                direction: Direction::Store,
-                bytes: Some(4)
-            }
-        );
+            assert_eq!(actual.contributions, expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn unknown_is_explicit_but_ignored_has_no_contributions() {
+        let unknown = class_of("future.op %r1;");
+        assert_eq!(unknown.category, InstructionCategory::Unknown);
+        assert!(matches!(
+            unknown.contributions.as_slice(),
+            [Contribution {
+                kind: MeasureKind::UnknownOps { .. },
+                count: 1,
+                ..
+            }]
+        ));
+        assert!(class_of("nop;").contributions.is_empty());
     }
 
     #[test]
     fn out_of_audience_families_are_unknown_not_zero() {
         let tex = "tex.2d.v4.f32.f32 {%f1, %f2, %f3, %f4}, [t, {%f5, %f6}];";
-        assert_eq!(class_of(tex), OpClass::Unknown);
+        assert_eq!(class_of(tex).category, InstructionCategory::Unknown);
     }
 }

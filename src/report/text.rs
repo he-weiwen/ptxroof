@@ -379,7 +379,7 @@ fn describe(at_most: bool, at_least: bool) -> &'static str {
 /// Why AI(global) is missing although flops and global bytes are both
 /// constants: the directions the two sides are known in.
 fn unbounded_note(a: &Aggregates) -> Option<String> {
-    let flops: Vec<&Count> = [&a.flops, &a.tensor_flops, &a.sfu_flops]
+    let flops: Vec<&Count> = [&a.flops, &a.tensor_flops, &a.sfu_flops, &a.atomic_flops]
         .iter()
         .map(|t| &t["total"])
         .collect();
@@ -439,16 +439,66 @@ fn render_instructions(w: &mut String, pad: &str, i: &InstructionCounts) {
         rows.push((kind.clone(), count(&k.total, "")));
         let mut opcodes: Vec<_> = k.opcodes.iter().collect();
         opcodes.sort_by(|a, b| by_count(a.1, b.1));
-        rows.extend(
-            opcodes
-                .into_iter()
-                .map(|(o, n)| (format!("  {o}"), count(n, ""))),
-        );
+        for (opcode, issued) in opcodes {
+            rows.push((format!("  {opcode}"), count(issued, "")));
+            if let Some(variants) = k.contribution_variants.get(opcode) {
+                for variant in variants {
+                    if variants.len() > 1 {
+                        rows.push(("    variant issued".to_owned(), count(&variant.issued, "")));
+                    }
+                    if variant.contributions_per_execution.len() > 1 || variants.len() > 1 {
+                        let detail = variant
+                            .contributions_per_execution
+                            .iter()
+                            .map(contribution_text)
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        rows.push((
+                            format!("    per thread per execution: {detail}"),
+                            String::new(),
+                        ));
+                    }
+                }
+            }
+        }
     }
-    let name_width = rows.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
+    let name_width = rows
+        .iter()
+        .filter(|(_, c)| !c.is_empty())
+        .map(|(n, _)| n.len())
+        .max()
+        .unwrap_or(0);
     let count_width = rows.iter().map(|(_, c)| c.len()).max().unwrap_or(0);
     for (name, c) in rows {
-        let _ = writeln!(w, "{pad}  {name:<name_width$}  {c:>count_width$}");
+        if c.is_empty() {
+            let _ = writeln!(w, "{pad}  {name}");
+        } else {
+            let _ = writeln!(w, "{pad}  {name:<name_width$}  {c:>count_width$}");
+        }
+    }
+}
+
+fn contribution_text(c: &ContributionDetails) -> String {
+    match c {
+        ContributionDetails::Flops {
+            pipe,
+            precision,
+            count,
+        } => format!("{pipe} {precision} FLOPs {count}"),
+        ContributionDetails::Bytes {
+            space,
+            direction,
+            count,
+        } => format!("{space} {direction} {count} B"),
+        ContributionDetails::UnquantifiedBytes { space, direction } => {
+            format!("{space} {direction} ? B")
+        }
+        ContributionDetails::Conversions { count } => format!("conversions {count}"),
+        ContributionDetails::NonFlopOps { operation, count } => format!("{operation} {count}"),
+        ContributionDetails::SyncOps { count } => format!("synchronization {count}"),
+        ContributionDetails::CommunicationOps { count } => format!("communication {count}"),
+        ContributionDetails::ControlOps { count } => format!("control {count}"),
+        ContributionDetails::UnknownOps { mnemonic } => format!("unknown work ({mnemonic})"),
     }
 }
 
@@ -467,6 +517,7 @@ fn render_aggregates(w: &mut String, a: &Aggregates, pad: &str) {
     render_flops(w, pad, "flops", &a.flops);
     render_flops(w, pad, "tensor flops", &a.tensor_flops);
     render_flops(w, pad, "sfu flops", &a.sfu_flops);
+    render_flops(w, pad, "atomic flops", &a.atomic_flops);
     for (space, d) in &a.bytes {
         let zero = |c: &Count| c.expr == "0" && !c.at_least;
         if zero(&d.load) && zero(&d.store) {

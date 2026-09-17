@@ -17,7 +17,7 @@
 use crate::analysis::instruction_counts::classify::{ArithKind, Direction, Pipe, Precision, Space};
 use crate::support::intern::Symbol;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MeasureKind {
     Flops {
         pipe: Pipe,
@@ -49,7 +49,39 @@ pub enum MeasureKind {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A contribution before execution context is attached by the collector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Contribution {
+    pub kind: MeasureKind,
+    pub count: u64,
+    /// Index among the instruction's memory operands (not all operands).
+    /// Read and write contributions of an atomic reference the same operand.
+    pub memory_operand: Option<usize>,
+}
+
+impl Contribution {
+    pub fn new(kind: MeasureKind, count: u64) -> Self {
+        Self {
+            kind,
+            count,
+            memory_operand: None,
+        }
+    }
+
+    pub fn memory(space: Space, direction: Direction, bytes: Option<u32>, operand: usize) -> Self {
+        let (kind, count) = match bytes {
+            Some(bytes) => (MeasureKind::Bytes { space, direction }, u64::from(bytes)),
+            None => (MeasureKind::UnquantifiedBytes { space, direction }, 1),
+        };
+        Self {
+            kind,
+            count,
+            memory_operand: Some(operand),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Measurement {
     pub kind: MeasureKind,
     pub count: u64,

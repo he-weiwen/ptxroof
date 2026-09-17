@@ -185,7 +185,8 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
             };
         let reported = table_total(&totals.flops)
             + table_total(&totals.tensor_flops)
-            + table_total(&totals.sfu_flops);
+            + table_total(&totals.sfu_flops)
+            + table_total(&totals.atomic_flops);
 
         // Path 2: flat per-block tallies × numerically evaluated chains.
         let m = parse(&src).expect("parses");

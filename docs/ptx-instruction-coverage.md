@@ -41,37 +41,52 @@ unclassified instruction gets. (The ISA's `|`-separated destination
 operands — `setp ... p|q`, `match.all.sync d|p`, `elect.sync d|p` —
 were the verified unparsed instance until the parser learned them.)
 
-Past the parser, the model is deliberately simple. Each instruction
-maps to exactly **one** class:
+Past the parser, each instruction has exactly **one** `InstructionCategory`
+and zero or more `Contribution { kind, count, memory_operand }` records.
+The category counts instructions; contributions count work independently.
 
-| Class | Meaning | Roofline contribution |
+| Category | Meaning | Contributions |
 |---|---|---|
-| `Flop { pipe, precision, flops }` | CUDA-core, tensor-core, or SFU work under the documented counting convention | flops, bucketed by pipe and precision |
-| `NonFlopArith { Conversion / Integer / Predicate / Move }` | `cvt`; integer/bit ops; compares & selects; `mov`/`cvta` | none (instruction-mix reporting only) |
-| `Memory { space, direction, bytes }` | `bytes = None` feeds the unquantified counter, never zero | bytes, bucketed by state space |
-| `Copy { from, to, read_bytes, written_bytes }` | one instruction that reads one space and writes another (`cp.async`) — one memory instruction, two byte measurements | bytes on both sides |
-| `Sync` | barriers, fences, waits | none |
-| `Communication` | shuffles, votes, `match`, `redux`, `elect` — lane-to-lane register exchange | none (counted per iteration: for a warp reduction it *is* the work) |
-| `Control` | branches, returns, calls, traps | none |
-| `Ignore` | provably zero flop/byte (hints, `nop`) | none, by policy |
-| `Unknown` | no arm matched | **counted and named in the report, never dropped** |
+| `Flop` | CUDA-core, tensor-core, or SFU arithmetic | FLOPs by pipe and precision |
+| `NonFlopArith { kind }` | Conversion, integer, predicate, or move | Non-FP operation counts |
+| `Memory` | Loads, stores, copies, atomics and reductions | Bytes by space and direction; FP atomics also contribute atomic FLOPs |
+| `Sync` | Barriers, fences, waits | Synchronization operations |
+| `Communication` | Shuffles, votes, `match`, `redux`, `elect` | Communication operations |
+| `Control` | Branches, returns, calls, traps | Control operations |
+| `Ignore` | Provably zero counted work (`nop`, hints) | Empty contribution list |
+| `Unknown` | Unsupported instruction | Explicit named unknown contribution |
 
-Collection emits zero, one, or two
-`Measurement { kind, count, predicated, provenance }` records per instruction:
-`Ignore` emits none, `Copy` emits separate read and write measurements, and
-other classes emit one. See `src/analysis/instruction_counts/collect.rs`
-and `measurement.rs`. Every measurement count is per thread per execution: a
-warp-collective instruction contributes its warp total divided by the
-32 lanes that issue it (PTX ISA §4.5.1: `WARP_SZ` is 32 on every
-target to date). Loop-trip and launch multiplication happen at report
-time.
+Collection attaches `predicated` and statement `provenance` to each
+contribution to produce `Measurement` records. `cp.async` emits separate
+read and write measurements; FP `atom.add` emits read bytes, write bytes,
+and atomic FLOPs. Every instruction is counted once, including ignored
+instructions, and `stats::Tally.ops` counts distinct contributing
+instructions rather than measurement records. Memory contributions identify
+which memory operand they reference, so an atomic's two sides share one
+address while a copy retains its source and destination.
 
-So an instruction *fits* the model when it is one thing (arithmetic
-**or** memory **or** sync), its work belongs to one thread (or one
-warp), and its byte count is either in the instruction text or
-honestly unquantifiable. Instructions that break one of those
-assumptions are flagged **⚠ model misfit** in the tables and
-collected in [Instructions that do not fit the model](#instructions-that-do-not-fit-the-model).
+Every count is per thread per execution: a warp-collective instruction
+contributes its warp total divided by the 32 lanes that issue it (PTX ISA
+§4.5.1). Loop-trip and launch multiplication happen at report time.
+The text report expands instructions with multiple contributions; JSON
+`instructions.by_kind.*.contribution_variants` exposes each opcode's
+contribution lists and issued counts. Different immediate sizes remain
+separate variants. Contribution annotations are per execution with a true
+predicate, even when the report's issued counts include inactive threads.
+
+Atomic/reduction FP add/min/max contribute one FLOP per scalar element,
+including packed and vector multiplicity, on the `atomic` accounting pipe.
+Integer, bitwise, exchange and CAS operations contribute no FP FLOPs.
+`atomic_flops` is separate from CUDA-core FLOPs and included in `AI(global)`.
+The byte convention is retained: `atom` read+write, `red` write-only.
+These are requested bytes, not estimates of DRAM traffic. Tests in
+`tests/instruction_contributions.rs` cover scaling, predication, variants,
+address attribution, unknown work, and the distinct-instruction identity.
+
+An instruction can now combine arithmetic, memory and other contributions.
+Work owned by larger groups and quantities unavailable from PTX still
+require the decisions below. The tables use compact descriptions such as
+`Memory { space, Load, bytes }` for a category and its contributions.
 
 Coverage checks account for classified and unknown instructions and require
 every unknown corpus mnemonic to appear in `tests/classify-allowlist.txt`.
@@ -248,14 +263,13 @@ requested.
 
 ### §9.7.9.26 Asynchronous copy
 
-All rows below route through the bare `cp` (or `multimem`) mnemonic
-and classify `Unknown` today — deliberately: the async-copy family is
-a missing feature in PLAN.md, and `Unknown` is visible and counted. The rows
-give the target class each should land as.
+Rows below route through the bare `cp` (or `multimem`) mnemonic.
+Ordinary `cp.async` and its synchronization forms are handled; bulk,
+tensor and multimem variants remain visible, counted `Unknown` work.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.9.26.3.1 | `cp.async` | `Copy { Global → Shared, read = src-size or cp-size, written = cp-size }` — the immediates after the two addresses; a non-immediate `src-size` (a register) falls back to `cp-size`, an upper bound on the read | OK — the `cp` arm, pinned by k12/k14 (nvcc writes `..., 16, 16`) and the Gluon GEMMs (Triton writes `..., 0x10, 0x10`). `collect` records one memory instruction with two byte measurements: a global load and a shared store. |
+| 9.7.9.26.3.1 | `cp.async` | `Memory` with Global read = src-size or cp-size and Shared write = cp-size — the immediates after the two addresses; a non-immediate `src-size` (a register) falls back to `cp-size`, an upper bound on the read | OK — the `cp` arm, pinned by k12/k14 (nvcc writes `..., 16, 16`) and the Gluon GEMMs (Triton writes `..., 0x10, 0x10`). `collect` records one memory instruction with two byte measurements: a global load and a shared store. |
 | 9.7.9.26.3.2 | `cp.async.commit_group` | `Sync` | OK — moves no bytes. |
 | 9.7.9.26.3.3 | `cp.async.wait_group` | `Sync` | OK. |
 | 9.7.9.26.3.3 | `cp.async.wait_all` | `Sync` | OK. |
@@ -326,9 +340,9 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | 9.7.14.3 | `barrier.cluster` | `Sync` (via `barrier`) | OK. |
 | 9.7.14.4 | `membar` | `Sync` | OK. |
 | 9.7.14.4 | `fence` | `Sync` | OK — all variants (`fence.proxy.*`, `fence.mbarrier_init`, …) via modifier transparency. |
-| 9.7.14.5 | `atom` | `Copy { space → space, width, width }` — one read and one write of the operand width in the instruction's state space, `Generic` without one | OK — misfit §A resolved by policy (2): bytes both ways, no flops; the `Copy` class the async-copy work introduced makes the two sides explicit. Contention/serialization stays NCU's side (anti-scope). |
-| 9.7.14.6 | `red` | `Memory { space, Store, width }` | OK — write side only; the read is implicit (v1's policy, kept). |
-| 9.7.14.7 | `red.async` | `Unknown` (via `red`) | OK (deferred, Tier 2) — misfit §A + async completion; cluster reductions. |
+| 9.7.14.5 | `atom` | `Memory` with read and write bytes; FP add/min/max also emit `Flops { Atomic, precision, elements }` | OK — §A supported by independent contributions. One memory instruction, shared address provenance, two or three measurements. Contention/serialization remains outside the model. |
+| 9.7.14.6 | `red` | `Memory` with store bytes; FP add/min/max also emit atomic FLOPs | OK — write-only requested-byte policy retained; one FP operation per scalar element, including packed/vector forms. |
+| 9.7.14.7 | `red.async` | `Memory` through the `red` arm, with store bytes and FP arithmetic when applicable | Byte and arithmetic contributions follow `red`; async completion/mbarrier effects are not modeled. |
 | 9.7.14.8 | `multimem.red.async` | `Unknown` | OK (deferred, Tier 4) — misfit §A+§F. |
 | 9.7.14.9 | `vote` (deprecated) | `Communication` | OK. |
 | 9.7.14.10 | `vote.sync` | `Communication` | OK. |
@@ -478,21 +492,22 @@ they produce 0/1 results).
 
 ## Instructions that do not fit the model
 
-The classes above assume an instruction is one thing, owned by one
-thread (or warp), with statically visible bytes. Six recurring ways
-the ISA breaks those assumptions — each is a *decision to make*, not
-just an arm to add. Rows above cite these by letter.
+The audit identified six recurring model questions. §A is now supported
+structurally and implemented for atomics; the remaining sections retain
+their separate scope and counting decisions. Rows above cite these by letter.
 
-**§A — one instruction, two natures (arithmetic ⊗ memory).**
-`atom`, `red`, `red.async`, `cp.reduce.async.bulk(.tensor)`, `sured`,
-`multimem.ld_reduce`/`.red`/`.red.async`, `fabric.try_red`/
-`.try_pullred`; mildly `redux.sync` and `bar.red`. A read-modify-write
-with arithmetic combines memory traffic and computation. The current
-`Copy` class already emits read and write measurements sharing provenance:
-`atom` counts both byte directions, while `red` counts store bytes. Neither
-counts arithmetic FLOPs. Counting both arithmetic and memory work would need
-an expanded class or collection policy; multiple measurements per instruction
-are already supported.
+**§A — one instruction, multiple contributions (arithmetic ⊗ memory): supported.**
+`ClassifiedInstruction` separates one exclusive category from its work.
+`atom` and `red` retain the memory category and byte convention while
+FP add/min/max also contribute atomic FLOPs. The report exposes each
+instruction's contributions without duplicating its instruction count.
+`tests/instruction_contributions.rs` pins this through collection and reporting.
+
+Bulk reduction copies, surface and multimem/fabric reductions can use this
+representation but still require their §B/§C/§F decisions. Integer reduction
+throughput and collective reduction FLOP conventions (`redux.sync`,
+`bar.red`) remain §D questions; multiple contributions alone do not quantify
+them. Async completion effects remain outside this work-counting model.
 
 **§B — work not owned by the issuing thread.** Counts are per
 thread, and a warp-collective's per-thread share (warp total / 32)
@@ -603,7 +618,7 @@ verified grammars already live in the backlog item.
 - `wmma.load` / `wmma.store` / `wmma.mma` — with the role split and the v1 phantom-FLOP regression test
 - `ldmatrix`, `stmatrix` — per-warp shared-memory fragment traffic
 - `cp.async` — bytes from the explicit size operand; plus `cp.async.commit_group` / `wait_group` / `wait_all` and `cp.async.mbarrier.arrive` as `Sync`
-- `atom`, `red` — v1 byte policy (read+write / write-only), documented (misfit §A)
+- `atom`, `red` — read+write / write-only requested bytes plus FP atomic FLOPs, with one memory category and multiple contributions (§A)
 - SFU family with a documented flop policy (misfit §D): `div`, `rcp`, `sqrt`, `rsqrt`, `sin`, `cos`, `lg2`, `ex2`, `tanh` — softmax/normalization paths in attention kernels
 
 ### Tier 2 — the Hopper/Blackwell data path (trigger: first sm_90+ kernel in the corpus)

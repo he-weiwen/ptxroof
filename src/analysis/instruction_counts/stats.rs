@@ -26,7 +26,8 @@ use crate::support::intern::Symbol;
 pub struct Tally {
     /// Sum of measurement counts (flops, bytes, or ops by kind).
     pub value: u64,
-    /// Number of contributing instructions.
+    /// Number of distinct contributing instructions, even if a query
+    /// selects multiple contributions from one instruction.
     pub ops: u64,
     pub qualifier: CountQualifier,
 }
@@ -51,10 +52,11 @@ fn tally(
     let mut t = Tally::ZERO;
     for &bid in blocks {
         let b = &measurements[bid.0 as usize];
+        let mut contributors = std::collections::BTreeSet::new();
         for m in &b.measurements {
             if select(&m.kind) {
                 t.value += m.count;
-                t.ops += 1;
+                t.ops += u64::from(contributors.insert(m.provenance));
                 let q = if m.predicated {
                     CountQualifier::AtMost
                 } else {
@@ -155,11 +157,12 @@ mod tests {
             qualifier,
             measurements: ms
                 .into_iter()
-                .map(|(kind, count, predicated)| Measurement {
+                .enumerate()
+                .map(|(provenance, (kind, count, predicated))| Measurement {
                     kind,
                     count,
                     predicated,
-                    provenance: 0,
+                    provenance,
                 })
                 .collect(),
             class_counts: Default::default(),

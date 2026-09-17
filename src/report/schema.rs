@@ -283,10 +283,12 @@ pub struct Aggregates {
     pub tensor_flops: BTreeMap<String, Count>,
     /// Special-function-unit flops (`ex2`, `rsqrt`, ...), same keys.
     pub sfu_flops: BTreeMap<String, Count>,
+    /// Atomic/reduction FP work, separate from CUDA-core throughput.
+    pub atomic_flops: BTreeMap<String, Count>,
     /// Keys: space names; global/shared/local always present.
     pub bytes: BTreeMap<String, DirectionCounts>,
     pub conversions: Count,
-    /// Flops of all three pipes per global byte, when both are
+    /// Flops of all accounting pipes per global byte, when both are
     /// constants, bytes > 0, and at most one side is an upper bound
     /// (a bound over a bound bounds nothing).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -318,6 +320,54 @@ pub struct KindCounts {
     pub total: Count,
     /// By opcode as PTX spells it (`fma.rn.f32`); sums to `total`.
     pub opcodes: BTreeMap<String, Count>,
+    /// Different per-thread, per-execution contributions under each opcode.
+    /// Variant issued counts sum to the opcode count. Contributions describe
+    /// work when the predicate is true, not work per issued instruction.
+    pub contribution_variants: BTreeMap<String, Vec<InstructionVariant>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InstructionVariant {
+    pub issued: Count,
+    pub contributions_per_execution: Vec<ContributionDetails>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ContributionDetails {
+    Flops {
+        pipe: String,
+        precision: String,
+        count: u64,
+    },
+    Bytes {
+        space: String,
+        direction: String,
+        count: u64,
+    },
+    UnquantifiedBytes {
+        space: String,
+        direction: String,
+    },
+    Conversions {
+        count: u64,
+    },
+    NonFlopOps {
+        operation: String,
+        count: u64,
+    },
+    SyncOps {
+        count: u64,
+    },
+    CommunicationOps {
+        count: u64,
+    },
+    ControlOps {
+        count: u64,
+    },
+    UnknownOps {
+        mnemonic: String,
+    },
 }
 
 /// A flop/byte ratio with the direction it is known in: `exact`,

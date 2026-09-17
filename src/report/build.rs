@@ -24,10 +24,10 @@
 use crate::analysis::control_flow::loop_forest;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::instruction_counts::classify::{
-    ArithKind, Direction, OpClass, Pipe, Precision, Space,
+    ArithKind, ClassifiedInstruction, Direction, InstructionCategory, Pipe, Precision, Space,
 };
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
-use crate::analysis::instruction_counts::measurement::MeasureKind;
+use crate::analysis::instruction_counts::measurement::{Contribution, MeasureKind};
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::warp_footprint;
 use crate::analysis::scalar::affine::{Affine, Var};
@@ -250,37 +250,37 @@ fn accesses_by_scope(
                 .copied()
                 .filter(|&id| matches!(module.operand(id), Operand::Memory { .. }))
                 .collect();
-            let rows: Vec<(usize, Space, &str, Option<u32>)> =
-                match crate::analysis::instruction_counts::classify::classify(module, instr) {
-                    OpClass::Memory {
-                        space,
-                        direction,
-                        bytes,
-                    } => {
-                        let d = match direction {
-                            Direction::Load => "load",
-                            Direction::Store => "store",
-                        };
-                        (0..mem_ops.len()).map(|i| (i, space, d, bytes)).collect()
-                    }
-                    OpClass::Copy {
-                        from,
-                        to,
-                        read_bytes,
-                        written_bytes,
-                    } if mem_ops.len() >= 2 => {
-                        vec![
-                            (0, to, "store", written_bytes),
-                            (1, from, "load", read_bytes),
-                        ]
-                    }
-                    OpClass::Copy {
-                        from, read_bytes, ..
-                    } => (0..mem_ops.len())
-                        .map(|i| (i, from, "load+store", read_bytes))
-                        .collect(),
-                    _ => Vec::new(),
+            let classified = crate::analysis::instruction_counts::classify::classify(module, instr);
+            // Pair memory contributions by their explicit operand association.
+            // An atomic has one address with read+write; a copy has two addresses.
+            let mut accesses: BTreeMap<(usize, Space, Option<u32>), (bool, bool)> = BTreeMap::new();
+            for c in &classified.contributions {
+                let Some(operand) = c.memory_operand.filter(|&i| i < mem_ops.len()) else {
+                    continue;
                 };
+                let (space, direction, bytes) = match c.kind {
+                    MeasureKind::Bytes { space, direction } => {
+                        (space, direction, Some(c.count as u32))
+                    }
+                    MeasureKind::UnquantifiedBytes { space, direction } => (space, direction, None),
+                    _ => continue,
+                };
+                let sides = accesses.entry((operand, space, bytes)).or_default();
+                match direction {
+                    Direction::Load => sides.0 = true,
+                    Direction::Store => sides.1 = true,
+                }
+            }
+            let rows = accesses
+                .into_iter()
+                .map(|((i, space, bytes), (load, store))| {
+                    let direction = match (load, store) {
+                        (true, true) => "load+store",
+                        (true, false) => "load",
+                        _ => "store",
+                    };
+                    (i, space, direction, bytes)
+                });
             for (i, space, direction, bytes) in rows {
                 if space == Space::Param {
                     continue;
@@ -503,51 +503,112 @@ impl CountAccumulator {
 
 /// The report's name for an instruction class (see
 /// [`InstructionCounts::by_kind`]).
-fn instruction_kind(class: OpClass) -> String {
-    let dir = |d: Direction| match d {
+fn instruction_kind(instruction: &ClassifiedInstruction) -> String {
+    match instruction.category {
+        InstructionCategory::Flop => {
+            let Some(Contribution {
+                kind: MeasureKind::Flops { pipe, precision },
+                ..
+            }) = instruction.contributions.first()
+            else {
+                return "floating-point arithmetic".to_owned();
+            };
+            format!("{} {}", pipe.key(), precision.key())
+        }
+        InstructionCategory::Memory => {
+            let memory: Vec<_> = instruction
+                .contributions
+                .iter()
+                .filter_map(|c| match c.kind {
+                    MeasureKind::Bytes { space, direction } => {
+                        Some((c, space, direction, format!("{} B", c.count)))
+                    }
+                    MeasureKind::UnquantifiedBytes { space, direction } => {
+                        Some((c, space, direction, "? B".to_owned()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            match memory.as_slice() {
+                [
+                    (read, from, Direction::Load, _),
+                    (write, to, Direction::Store, width),
+                ] => {
+                    if read.memory_operand == write.memory_operand {
+                        format!("{} atomic {width}", from.key())
+                    } else {
+                        format!("{} -> {} copy {width}", from.key(), to.key())
+                    }
+                }
+                [(_, space, direction, width)] => {
+                    format!("{} {} {width}", space.key(), direction_key(*direction))
+                }
+                _ => "memory".to_owned(),
+            }
+        }
+        InstructionCategory::NonFlopArith { kind } => arith_key(kind).to_owned(),
+        InstructionCategory::Sync => "synchronization".to_owned(),
+        InstructionCategory::Communication => "warp communication".to_owned(),
+        InstructionCategory::Control => "control".to_owned(),
+        InstructionCategory::Ignore => "hint / no-op".to_owned(),
+        InstructionCategory::Unknown => "unknown".to_owned(),
+    }
+}
+
+fn direction_key(direction: Direction) -> &'static str {
+    match direction {
         Direction::Load => "load",
         Direction::Store => "store",
-    };
-    let width = |b: Option<u32>| b.map_or("? B".to_owned(), |b| format!("{b} B"));
-    match class {
-        OpClass::Flop {
-            pipe, precision, ..
-        } => format!("{} {}", pipe.key(), precision.key()),
-        OpClass::Memory {
-            space,
-            direction,
-            bytes,
-        } => format!("{} {} {}", space.key(), dir(direction), width(bytes)),
-        OpClass::Copy {
-            from,
-            to,
-            written_bytes,
-            ..
-        } if from == to => format!("{} atomic {}", from.key(), width(written_bytes)),
-        OpClass::Copy {
-            from,
-            to,
-            written_bytes,
-            ..
-        } => format!(
-            "{} -> {} copy {}",
-            from.key(),
-            to.key(),
-            width(written_bytes)
-        ),
-        OpClass::NonFlopArith { kind } => match kind {
-            ArithKind::Integer => "integer arithmetic",
-            ArithKind::Predicate => "compare / select",
-            ArithKind::Conversion => "conversion",
-            ArithKind::Move => "register move",
-        }
-        .to_owned(),
-        OpClass::Sync => "synchronization".to_owned(),
-        OpClass::Communication => "warp communication".to_owned(),
-        OpClass::Control => "control".to_owned(),
-        OpClass::Ignore => "hint / no-op".to_owned(),
-        OpClass::Unknown => "unknown".to_owned(),
     }
+}
+
+fn arith_key(kind: ArithKind) -> &'static str {
+    match kind {
+        ArithKind::Conversion => "conversion",
+        ArithKind::Integer => "integer arithmetic",
+        ArithKind::Predicate => "compare / select",
+        ArithKind::Move => "register move",
+    }
+}
+
+fn contribution_details(c: &Contribution, module: &Module) -> ContributionDetails {
+    let count = c.count;
+    match c.kind {
+        MeasureKind::Flops { pipe, precision } => ContributionDetails::Flops {
+            pipe: pipe.key().to_owned(),
+            precision: precision.key().to_owned(),
+            count,
+        },
+        MeasureKind::Bytes { space, direction } => ContributionDetails::Bytes {
+            space: space.key().to_owned(),
+            direction: direction_key(direction).to_owned(),
+            count,
+        },
+        MeasureKind::UnquantifiedBytes { space, direction } => {
+            ContributionDetails::UnquantifiedBytes {
+                space: space.key().to_owned(),
+                direction: direction_key(direction).to_owned(),
+            }
+        }
+        MeasureKind::Conversions => ContributionDetails::Conversions { count },
+        MeasureKind::NonFlopOps { kind } => ContributionDetails::NonFlopOps {
+            operation: arith_key(kind).to_owned(),
+            count,
+        },
+        MeasureKind::SyncOps => ContributionDetails::SyncOps { count },
+        MeasureKind::CommunicationOps => ContributionDetails::CommunicationOps { count },
+        MeasureKind::ControlOps => ContributionDetails::ControlOps { count },
+        MeasureKind::UnknownOps { mnemonic } => ContributionDetails::UnknownOps {
+            mnemonic: module.interner.resolve(mnemonic).to_owned(),
+        },
+    }
+}
+
+#[derive(Default)]
+struct InstructionAccumulator {
+    total: CountAccumulator,
+    opcodes: BTreeMap<String, CountAccumulator>,
+    variants: BTreeMap<(String, Vec<Contribution>), CountAccumulator>,
 }
 
 struct FlopAccumulator {
@@ -853,10 +914,7 @@ impl<'a> KernelReportBuilder<'a> {
         let mut bytes: BTreeMap<&'static str, (CountAccumulator, CountAccumulator)> =
             BTreeMap::new();
         let mut conversions = CountAccumulator::default();
-        let mut instructions: BTreeMap<
-            String,
-            (CountAccumulator, BTreeMap<String, CountAccumulator>),
-        > = BTreeMap::new();
+        let mut instructions: BTreeMap<String, InstructionAccumulator> = BTreeMap::new();
         let mut instruction_total = CountAccumulator::default();
         for s in ["global", "shared", "local"] {
             bytes.insert(s, Default::default());
@@ -893,15 +951,23 @@ impl<'a> KernelReportBuilder<'a> {
                 (Some(c), None) => c.threads as i64,
                 (None, _) => 1,
             };
-            for ((class, opcode), &n) in &bm.instructions {
-                let n = n as i64 * threads;
-                let kind = instructions.entry(instruction_kind(*class)).or_default();
-                kind.0.add(n, &mult, block_at_most);
-                kind.1
-                    .entry(opcode.clone())
+            for instruction in &bm.instructions {
+                let kind = instructions
+                    .entry(instruction_kind(&instruction.classified))
+                    .or_default();
+                kind.total.add(threads, &mult, block_at_most);
+                kind.opcodes
+                    .entry(instruction.opcode.clone())
                     .or_default()
-                    .add(n, &mult, block_at_most);
-                instruction_total.add(n, &mult, block_at_most);
+                    .add(threads, &mult, block_at_most);
+                kind.variants
+                    .entry((
+                        instruction.opcode.clone(),
+                        instruction.classified.contributions.clone(),
+                    ))
+                    .or_default()
+                    .add(threads, &mult, block_at_most);
+                instruction_total.add(threads, &mult, block_at_most);
             }
             for m in &bm.measurements {
                 let at_most =
@@ -986,6 +1052,7 @@ impl<'a> KernelReportBuilder<'a> {
             flops: flops[&Pipe::CudaCore].counts(),
             tensor_flops: flops[&Pipe::Tensor].counts(),
             sfu_flops: flops[&Pipe::Sfu].counts(),
+            atomic_flops: flops[&Pipe::Atomic].counts(),
             bytes: bytes_out,
             conversions: conversions.count(),
             ai_global,
@@ -994,15 +1061,33 @@ impl<'a> KernelReportBuilder<'a> {
                 total: instruction_total.count(),
                 by_kind: instructions
                     .iter()
-                    .map(|(k, (total, opcodes))| {
-                        let counts = KindCounts {
-                            total: total.count(),
-                            opcodes: opcodes
-                                .iter()
-                                .map(|(o, v)| (o.clone(), v.count()))
-                                .collect(),
-                        };
-                        (k.clone(), counts)
+                    .map(|(k, acc)| {
+                        let mut contribution_variants: BTreeMap<String, Vec<InstructionVariant>> =
+                            BTreeMap::new();
+                        for ((opcode, contributions), issued) in &acc.variants {
+                            contribution_variants
+                                .entry(opcode.clone())
+                                .or_default()
+                                .push(InstructionVariant {
+                                    issued: issued.count(),
+                                    contributions_per_execution: contributions
+                                        .iter()
+                                        .map(|c| contribution_details(c, self.module))
+                                        .collect(),
+                                });
+                        }
+                        (
+                            k.clone(),
+                            KindCounts {
+                                total: acc.total.count(),
+                                opcodes: acc
+                                    .opcodes
+                                    .iter()
+                                    .map(|(o, v)| (o.clone(), v.count()))
+                                    .collect(),
+                                contribution_variants,
+                            },
+                        )
                     })
                     .collect(),
             },
@@ -1024,12 +1109,18 @@ impl<'a> KernelReportBuilder<'a> {
                 let Some(loc) = instr.loc.filter(|l| l.line != 0) else {
                     continue;
                 };
-                let is_workload = matches!(
-                    crate::analysis::instruction_counts::classify::classify(self.module, instr),
-                    crate::analysis::instruction_counts::classify::OpClass::Flop { .. }
-                        | crate::analysis::instruction_counts::classify::OpClass::Memory { .. }
-                        | crate::analysis::instruction_counts::classify::OpClass::Copy { .. }
-                );
+                let is_workload =
+                    crate::analysis::instruction_counts::classify::classify(self.module, instr)
+                        .contributions
+                        .iter()
+                        .any(|c| {
+                            matches!(
+                                c.kind,
+                                MeasureKind::Flops { .. }
+                                    | MeasureKind::Bytes { .. }
+                                    | MeasureKind::UnquantifiedBytes { .. }
+                            )
+                        });
                 if !is_workload {
                     continue;
                 }
