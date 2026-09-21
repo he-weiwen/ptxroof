@@ -70,7 +70,9 @@ Generate PTX with `nvcc -ptx -lineinfo kernel.cu`; without
 
 Counts are static; per-thread counts describe what the PTX requests, not what
 the hardware moves (a warp-collective instruction contributes its warp
-total over the 32 lanes). With a block shape and a numeric trip count
+total over the 32 lanes). Per-CTA totals also count warp instructions,
+one issue per warp that has a thread in the block, the unit of Nsight
+Compute's `inst_executed` metrics. With a block shape and a numeric trip count
 each loop also reports the global bytes one CTA requests over it and
 the distinct bytes it touches, the difference being the most a cache
 could reuse within the CTA. `<=` marks an upper bound from a conditional

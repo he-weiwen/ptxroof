@@ -9,7 +9,8 @@ before 2026-09-08 is in git: `git show 3ba19b5:PLAN.md`.
 Reads a PTX file. Per kernel: the block table (CFG), the loop forest
 with trip counts as symbolic expressions over the kernel parameters,
 instruction counts by kind and opcode per loop iteration and in total,
-flops by pipe and precision (including atomic FP work), bytes by state space,
+and per CTA also as warp instructions, one issue per warp with a
+thread in the block; flops by pipe and precision (including atomic FP work), bytes by state space,
 AI(global), and per
 memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
@@ -139,7 +140,9 @@ convention (`tests/instruction_contributions.rs`).
   `sm__ops_path_tensor_src_fp8.sum` = 19,327,352,832 = 2·M·N·K, the
   tool's 16384 fp8 flops per thread per K iteration times 12
   iterations, 128 threads and 768 CTAs; `sm__inst_executed_pipe_tensor`
-  = 2,359,296 = 64 `mma` per warp-iteration likewise; l1tex global-load
+  = 2,359,296 = 64 `mma` per warp-iteration likewise, the tool's
+  `<= 3072` warp `mma` per CTA at K=768 times 768 CTAs
+  (`analyze-gluon-fp8-gemm-c-fc-warps`); l1tex global-load
   bytes (151,191,552) = every `cp.async` byte (150,994,944: two
   prologue stages plus ten of the twelve iterations, the predicated
   prefetches off at the end) plus 256 B per CTA for the two scale

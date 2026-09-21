@@ -1,0 +1,11 @@
+kernel fp8_gemm_kernel
+block size: 128 threads, 4 warps (128x1x1 from .reqntid)
+tensor fp8                                                64
+mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     64
+tensor fp8                                             <= 768
+mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32  <= 768
+totals per CTA [static]:
+instructions = <= 347520, warp instructions = <= 10860
+tensor fp8                                              <= 98304  <= 3072
+mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32   <= 98304  <= 3072
+tensor flops = <= 25165824  (fp8 <= 25165824)

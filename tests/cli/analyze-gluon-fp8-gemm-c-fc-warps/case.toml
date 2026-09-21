@@ -1,0 +1,7 @@
+# The c_fc fp8 GEMM at its launch's K = 768: 12 K iterations, 64 mma
+# per warp-iteration, 4 warps, so 3072 warp mma per CTA; times the
+# launch's 768 CTAs that is 2,359,296, Nsight Compute's
+# sm__inst_executed_pipe_tensor for this launch (PLAN.md, hardware
+# cross-check). The bound comes from the loop's conditional entry.
+args = ["analyze", "{fixtures}/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx", "--bind", "10:K=768"]
+exit = 0
