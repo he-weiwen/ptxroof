@@ -31,6 +31,7 @@ pub struct Constraint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pred {
     True,
+    False,
     Unknown,
     Cmp(Constraint),
     /// `elect.sync`: the lowest lane of each warp among the threads
@@ -55,7 +56,9 @@ impl std::ops::Not for Pred {
 
     fn not(self) -> Pred {
         match self {
-            Pred::True | Pred::Unknown => Pred::Unknown,
+            Pred::True => Pred::False,
+            Pred::False => Pred::True,
+            Pred::Unknown => Pred::Unknown,
             Pred::Cmp(c) => Pred::Cmp(Constraint {
                 form: c.form,
                 cmp: negate(&c.cmp).to_owned(),
@@ -69,6 +72,7 @@ impl std::ops::Not for Pred {
 impl Pred {
     pub fn and(self, other: Pred) -> Pred {
         match (self, other) {
+            (Pred::False, _) | (_, Pred::False) => Pred::False,
             (Pred::True, p) | (p, Pred::True) => p,
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
             (a, b) => Pred::And(Box::new(a), Box::new(b)),
@@ -78,6 +82,7 @@ impl Pred {
     pub fn or(self, other: Pred) -> Pred {
         match (self, other) {
             (Pred::True, _) | (_, Pred::True) => Pred::True,
+            (Pred::False, p) | (p, Pred::False) => p,
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
             (a, b) => Pred::Or(Box::new(a), Box::new(b)),
         }
@@ -86,6 +91,7 @@ impl Pred {
     pub fn eval(&self, tid: [i64; 3], shape: [u32; 3]) -> Tri {
         match self {
             Pred::True => Tri::Yes,
+            Pred::False => Tri::No,
             Pred::Unknown => Tri::Maybe,
             Pred::Cmp(c) => {
                 if holds(&c.cmp, eval_lane(&c.form, tid)) {
@@ -115,7 +121,7 @@ impl Pred {
 
     pub fn exact(&self) -> bool {
         match self {
-            Pred::True | Pred::Cmp(_) => true,
+            Pred::True | Pred::False | Pred::Cmp(_) => true,
             Pred::Unknown => false,
             Pred::Elect(p) | Pred::Not(p) => p.exact(),
             Pred::And(a, b) | Pred::Or(a, b) => a.exact() && b.exact(),
@@ -125,7 +131,7 @@ impl Pred {
     fn has_condition(&self) -> bool {
         match self {
             Pred::True | Pred::Unknown => false,
-            Pred::Cmp(_) | Pred::Elect(_) => true,
+            Pred::False | Pred::Cmp(_) | Pred::Elect(_) => true,
             Pred::Not(p) => p.has_condition(),
             Pred::And(a, b) | Pred::Or(a, b) => a.has_condition() || b.has_condition(),
         }
@@ -137,6 +143,7 @@ impl Pred {
     fn render(&self, nested: bool) -> Option<String> {
         match self {
             Pred::True => None,
+            Pred::False => Some("no thread".to_owned()),
             Pred::Unknown => Some("?".to_owned()),
             Pred::Cmp(c) => Some(c.render()),
             Pred::Elect(_) => Some("elected".to_owned()),
@@ -349,24 +356,60 @@ impl PredicateReader<'_> {
     }
 
     fn of(&mut self, reg: Symbol, pos: usize, depth: u32) -> Pred {
-        let ReachingDefinition::Def(def) = self.tracer.reach_def(reg, pos, None) else {
-            return Pred::Unknown;
-        };
-        if let Some(p) = self.memo.get(&def) {
-            return p.clone();
-        }
-        let p = if depth < 8 {
-            self.decode(def, depth + 1)
-        } else {
-            Pred::Unknown
-        };
-        self.memo.insert(def, p.clone());
-        p
+        self.read(reg, pos, depth).0
     }
 
-    fn decode(&mut self, def: usize, depth: u32) -> Pred {
+    /// The predicate `reg` holds at `pos`, and whether the depth budget
+    /// cut the reading short (then it is not memoized).
+    fn read(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
+        let ReachingDefinition::Def(def) = self.tracer.reach_def(reg, pos, None) else {
+            return (Pred::Unknown, false);
+        };
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
-            return Pred::Unknown;
+            return (Pred::Unknown, false);
+        };
+        if instr.predicate.is_some() {
+            return (Pred::Unknown, false);
+        }
+        if depth >= 8 {
+            return (Pred::Unknown, true);
+        }
+        let (p, cut) = match self.memo.get(&def) {
+            Some(p) => (p.clone(), false),
+            None => {
+                let (p, cut) = self.decode(def, depth + 1);
+                if !cut {
+                    self.memo.insert(def, p.clone());
+                }
+                (p, cut)
+            }
+        };
+        // `d|p`: setp's second output is the negated comparison, elect's
+        // second output is the predicate and its first the leader's lane.
+        let ops = self.module.operand_ids(instr.operands);
+        let second = ops
+            .first()
+            .and_then(|&id| match self.module.operand(id) {
+                Operand::MultipleDestinations { children } => {
+                    self.module.operand_ids(*children).get(1)
+                }
+                _ => None,
+            })
+            .is_some_and(
+                |&id| matches!(self.module.operand(id), Operand::Register(r) if *r == reg),
+            );
+        let p = match (self.module.interner.resolve(instr.mnemonic), second) {
+            ("setp", true) => !p,
+            ("elect", false) => Pred::Unknown,
+            (_, true) if !matches!(p, Pred::Elect(_)) => Pred::Unknown,
+            _ => p,
+        };
+        (p, cut)
+    }
+
+    fn decode(&mut self, def: usize, depth: u32) -> (Pred, bool) {
+        let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
+            return (Pred::Unknown, false);
         };
         let mods: Vec<&str> = self
             .module
@@ -384,24 +427,31 @@ impl PredicateReader<'_> {
             mods.as_slice(),
             ops,
         ) {
-            ("setp", _, _) => condition(self.module, self.kernel, self.tracer, def)
-                .map_or(Pred::Unknown, |(form, cmp)| {
-                    Pred::Cmp(Constraint { form, cmp })
-                }),
+            ("setp", _, _) => (
+                condition(self.module, self.kernel, self.tracer, def)
+                    .map_or(Pred::Unknown, |(form, cmp)| {
+                        Pred::Cmp(Constraint { form, cmp })
+                    }),
+                false,
+            ),
             ("and" | "or", ["pred"], [_, a, b]) => {
                 let (Some(a), Some(b)) = (reg(*a), reg(*b)) else {
-                    return Pred::Unknown;
+                    return (Pred::Unknown, false);
                 };
-                let (a, b) = (self.of(a, def, depth), self.of(b, def, depth));
-                if self.module.interner.resolve(instr.mnemonic) == "and" {
+                let ((a, ca), (b, cb)) = (self.read(a, def, depth), self.read(b, def, depth));
+                let p = if self.module.interner.resolve(instr.mnemonic) == "and" {
                     a.and(b)
                 } else {
                     a.or(b)
-                }
+                };
+                (p, ca || cb)
             }
             ("not", ["pred"], [_, a]) => match reg(*a) {
-                Some(a) => !self.of(a, def, depth),
-                None => Pred::Unknown,
+                Some(a) => {
+                    let (p, cut) = self.read(a, def, depth);
+                    (!p, cut)
+                }
+                None => (Pred::Unknown, false),
             },
             ("elect", _, _) => {
                 let here = self
@@ -411,11 +461,11 @@ impl PredicateReader<'_> {
                     .find(|(_, blk)| blk.start <= def && def < blk.end)
                     .map(|(id, _)| id);
                 match here {
-                    Some(b) if depth < 8 => Pred::Elect(Box::new(self.block(b))),
-                    _ => Pred::Unknown,
+                    Some(b) => (Pred::Elect(Box::new(self.block(b))), false),
+                    None => (Pred::Unknown, false),
                 }
             }
-            _ => Pred::Unknown,
+            _ => (Pred::Unknown, false),
         }
     }
 }
@@ -590,7 +640,7 @@ mod tests {
         assert_eq!((!lane0.clone()).eval([0, 0, 0], [64, 1, 1]), Tri::No);
         assert_eq!(!!lane0.clone(), lane0);
         let hedged = ThreadSet {
-            pred: lane0.or(Pred::Unknown),
+            pred: lane0.clone().or(Pred::Unknown),
         };
         assert!(!hedged.exact());
         assert_eq!(hedged.pred.eval([0, 0, 0], [64, 1, 1]), Tri::Yes);
@@ -598,6 +648,13 @@ mod tests {
         assert_eq!(hedged.count([64, 1, 1]), Some(64));
         assert_eq!(hedged.render().as_deref(), Some("%tid.x == 0 or ?"));
         assert_eq!(!Pred::Unknown, Pred::Unknown);
+        assert_eq!(!Pred::True, Pred::False);
+        assert_eq!((!Pred::True).eval([0, 0, 0], [64, 1, 1]), Tri::No);
+        assert_eq!(Pred::False.or(lane0.clone()), lane0);
+        assert_eq!(Pred::Unknown.and(Pred::False), Pred::False);
+        let none = ThreadSet { pred: Pred::False };
+        assert_eq!(none.count([64, 1, 1]), Some(0));
+        assert_eq!(none.render().as_deref(), Some("no thread"));
     }
 
     #[test]

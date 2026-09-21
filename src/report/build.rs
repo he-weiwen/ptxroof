@@ -1541,6 +1541,37 @@ mod tests {
     }
 
     #[test]
+    fn guarded_predicate_definitions_and_deep_chains_stay_bounds() {
+        let opts = AnalyzeOptions::default();
+        let head = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                    .visible .entry k(\n.param .u64 k_param_0\n)\n\
+                    .reqntid 64, 1, 1\n{\n\
+                    ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n\
+                    setp.lt.u32 %p0, %r1, 32;\nsetp.eq.u32 %p9, %r1, 0;\n";
+        // A guarded redefinition of the guard register is not read.
+        let src = format!(
+            "{head}@%p9 setp.lt.u32 %p0, %r1, 64;\n@%p0 st.global.u32 [%rd1], %r1;\nret;\n}}\n"
+        );
+        let r = analyze(&src, "t", &opts).expect("analyzes");
+        let cta = r.kernels[0].totals_per_cta.as_ref().expect("launch");
+        assert_eq!(cta.bytes["global"].store.expr, "256");
+        assert!(cta.bytes["global"].store.at_most);
+        // Nine and.pred steps exceed the reading depth: a bound; the
+        // base predicate read directly afterwards is still exact.
+        let chain: String = (1..=9)
+            .map(|i| format!("and.pred %p{i}, %p{}, %p{};\n", i - 1, i - 1))
+            .collect();
+        let src = format!(
+            "{head}{chain}@%p9 st.global.u32 [%rd1], %r1;\n@%p0 st.global.u16 [%rd1+4], %rs1;\nret;\n}}\n"
+        );
+        let r = analyze(&src, "t", &opts).expect("analyzes");
+        let cta = r.kernels[0].totals_per_cta.as_ref().expect("launch");
+        // 64 × 4 B as a bound, plus 32 × 2 B exact.
+        assert_eq!(cta.bytes["global"].store.expr, "320");
+        assert!(cta.bytes["global"].store.at_most);
+    }
+
+    #[test]
     fn laneid_is_the_lane_in_a_one_dimensional_block() {
         let opts = AnalyzeOptions::default();
         let src = ".version 8.7\n.target sm_80\n.address_size 64\n\

@@ -175,3 +175,4 @@ tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.v2.f32	32 (%tid
 tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.v4.f32	32 (%tid.x >= 32)
 tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.u16	63 (%tid.x != 0)
 tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.b32	2 ((%tid.x mod 32) == 0)
+tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.b16	32 (%tid.x >= 32)
