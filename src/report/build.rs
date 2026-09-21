@@ -793,7 +793,7 @@ impl<'a> KernelReportBuilder<'a> {
             let intervals = per_base.entry(key).or_default();
             for t in 0..threads {
                 let tid = [t % nx, (t / nx) % ny, t / (nx * ny)];
-                if !set.contains(tid) {
+                if !set.contains(tid, self.shape) {
                     continue;
                 }
                 requested += f.bytes as u64 * trips as u64;

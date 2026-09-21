@@ -17,8 +17,9 @@ sectors and 128-byte lines one warp's request touches once the block
 shape and the parameters in the lane coefficients are bound; per
 block and per guarded instruction, which threads of the CTA run it
 when the selecting branches and the guard are thread-index
-comparisons combined with `and`, `or` and `not`, so per-CTA totals
-count each on its own threads (`micro/guards.ptx`); and per loop
+comparisons combined with `and`, `or` and `not`, or `elect.sync`'s
+one lane per warp, so per-CTA totals count each on its own threads
+(`micro/guards.ptx`, `micro/elect.ptx`); and per loop
 with a numeric trip count, the global bytes one CTA
 requests over the loop's own blocks and the distinct bytes it touches.
 Text and JSON views of the same tree. Counts are static: per-thread

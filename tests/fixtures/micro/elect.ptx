@@ -1,0 +1,40 @@
+//
+// HAND-WRITTEN: elect.sync as an instruction guard (sm_90). One store
+// runs on the elected lane of warp 0, one on the elected lane of every
+// warp, one on every other lane; with .reqntid 128 the per-CTA store
+// bytes are 4 + 4 * 8 + 124 * 2 = 284 B.
+//
+.version 8.7
+.target sm_90
+.address_size 64
+
+.visible .entry micro_elect(
+	.param .u64 micro_elect_param_0,
+	.param .u64 micro_elect_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<4>;
+	.reg .b16 	%rs<2>;
+	.reg .b32 	%r<8>;
+	.reg .f32 	%f<4>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_elect_param_0];
+	ld.param.u64 	%rd2, [micro_elect_param_1];
+	cvta.to.global.u64 	%rd3, %rd1;
+	cvta.to.global.u64 	%rd4, %rd2;
+	mov.u32 	%r1, %tid.x;
+	mul.wide.u32 	%rd5, %r1, 4;
+	add.s64 	%rd6, %rd3, %rd5;
+	ld.global.f32 	%f1, [%rd6];
+	mov.u16 	%rs1, 7;
+	shr.u32 	%r2, %r1, 5;
+	setp.eq.u32 	%p1, %r2, 0;
+	elect.sync 	%r3|%p2, -1;
+	and.pred 	%p3, %p1, %p2;
+	@%p3 st.global.f32 	[%rd4], %f1;
+	@%p2 st.global.v2.f32 	[%rd4+8], {%f1, %f1};
+	@!%p2 st.global.u16 	[%rd4+16], %rs1;
+	ret;
+}

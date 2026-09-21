@@ -33,6 +33,9 @@ pub enum Pred {
     True,
     Unknown,
     Cmp(Constraint),
+    /// `elect.sync`: the lowest lane of each warp among the threads
+    /// executing it, which the inner predicate selects.
+    Elect(Box<Pred>),
     Not(Box<Pred>),
     And(Box<Pred>, Box<Pred>),
     Or(Box<Pred>, Box<Pred>),
@@ -80,7 +83,7 @@ impl Pred {
         }
     }
 
-    pub fn eval(&self, tid: [i64; 3]) -> Tri {
+    pub fn eval(&self, tid: [i64; 3], shape: [u32; 3]) -> Tri {
         match self {
             Pred::True => Tri::Yes,
             Pred::Unknown => Tri::Maybe,
@@ -91,17 +94,18 @@ impl Pred {
                     Tri::No
                 }
             }
-            Pred::Not(p) => match p.eval(tid) {
+            Pred::Elect(active) => elected(active, tid, shape),
+            Pred::Not(p) => match p.eval(tid, shape) {
                 Tri::Yes => Tri::No,
                 Tri::No => Tri::Yes,
                 Tri::Maybe => Tri::Maybe,
             },
-            Pred::And(a, b) => match (a.eval(tid), b.eval(tid)) {
+            Pred::And(a, b) => match (a.eval(tid, shape), b.eval(tid, shape)) {
                 (Tri::No, _) | (_, Tri::No) => Tri::No,
                 (Tri::Yes, Tri::Yes) => Tri::Yes,
                 _ => Tri::Maybe,
             },
-            Pred::Or(a, b) => match (a.eval(tid), b.eval(tid)) {
+            Pred::Or(a, b) => match (a.eval(tid, shape), b.eval(tid, shape)) {
                 (Tri::Yes, _) | (_, Tri::Yes) => Tri::Yes,
                 (Tri::No, Tri::No) => Tri::No,
                 _ => Tri::Maybe,
@@ -113,7 +117,7 @@ impl Pred {
         match self {
             Pred::True | Pred::Cmp(_) => true,
             Pred::Unknown => false,
-            Pred::Not(p) => p.exact(),
+            Pred::Elect(p) | Pred::Not(p) => p.exact(),
             Pred::And(a, b) | Pred::Or(a, b) => a.exact() && b.exact(),
         }
     }
@@ -121,7 +125,7 @@ impl Pred {
     fn has_condition(&self) -> bool {
         match self {
             Pred::True | Pred::Unknown => false,
-            Pred::Cmp(_) => true,
+            Pred::Cmp(_) | Pred::Elect(_) => true,
             Pred::Not(p) => p.has_condition(),
             Pred::And(a, b) | Pred::Or(a, b) => a.has_condition() || b.has_condition(),
         }
@@ -135,6 +139,7 @@ impl Pred {
             Pred::True => None,
             Pred::Unknown => Some("?".to_owned()),
             Pred::Cmp(c) => Some(c.render()),
+            Pred::Elect(_) => Some("elected".to_owned()),
             Pred::Not(p) => Some(format!("not ({})", p.render()?)),
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
@@ -146,6 +151,38 @@ impl Pred {
             }
             Pred::Or(a, b) => Some(format!("({} or {})", a.render()?, b.render()?)),
         }
+    }
+}
+
+/// Whether `tid` is the lowest lane of its warp that `active` admits:
+/// yes when no lower lane may be active, maybe when the leader is one
+/// of several lanes that may be.
+fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3]) -> Tri {
+    let [nx, ny, nz] = shape.map(i64::from);
+    let threads = nx * ny * nz;
+    if threads == 0 {
+        return Tri::Maybe;
+    }
+    let linear = tid[0] + nx * (tid[1] + ny * tid[2]);
+    let base = linear - linear % 32;
+    let mut candidates = Vec::new();
+    for l in base..(base + 32).min(threads) {
+        match active.eval([l % nx, (l / nx) % ny, l / (nx * ny)], shape) {
+            Tri::Yes if candidates.is_empty() => {
+                return if l == linear { Tri::Yes } else { Tri::No };
+            }
+            Tri::Yes => {
+                candidates.push(l);
+                break;
+            }
+            Tri::Maybe => candidates.push(l),
+            Tri::No => {}
+        }
+    }
+    if candidates.contains(&linear) {
+        Tri::Maybe
+    } else {
+        Tri::No
     }
 }
 
@@ -212,8 +249,8 @@ impl Constraint {
 impl ThreadSet {
     /// Whether the thread at `tid` may be in the set; an unknown
     /// selector includes every thread, as a bound.
-    pub fn contains(&self, tid: [i64; 3]) -> bool {
-        self.pred.eval(tid) != Tri::No
+    pub fn contains(&self, tid: [i64; 3], shape: [u32; 3]) -> bool {
+        self.pred.eval(tid, shape) != Tri::No
     }
 
     /// Every selector is a thread-index condition.
@@ -243,7 +280,7 @@ impl ThreadSet {
         let mut n = 0;
         for t in 0..nx * ny * nz {
             let tid = [t % nx, (t / nx) % ny, t / (nx * ny)];
-            if self.contains(tid) {
+            if self.contains(tid, shape) {
                 n += 1;
             }
         }
@@ -363,6 +400,18 @@ impl PredicateReader<'_> {
                 Some(a) => !self.of(a, def, depth),
                 None => Pred::Unknown,
             },
+            ("elect", _, _) => {
+                let here = self
+                    .cfg
+                    .blocks
+                    .iter_enumerated()
+                    .find(|(_, blk)| blk.start <= def && def < blk.end)
+                    .map(|(id, _)| id);
+                match here {
+                    Some(b) if depth < 8 => Pred::Elect(Box::new(self.block(b))),
+                    _ => Pred::Unknown,
+                }
+            }
             _ => Pred::Unknown,
         }
     }
@@ -495,13 +544,13 @@ mod tests {
         assert!(!set.exact());
         assert_eq!(set.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));
         assert_eq!(set.count([256, 1, 1]), Some(128));
-        assert!(set.contains([0, 0, 0]));
-        assert!(!set.contains([200, 0, 0]));
+        assert!(set.contains([0, 0, 0], [256, 1, 1]));
+        assert!(!set.contains([200, 0, 0], [256, 1, 1]));
         let unknown = ThreadSet {
             pred: Pred::True.and(Pred::Unknown),
         };
         assert_eq!(unknown.pred, Pred::Unknown);
-        assert!(unknown.contains([5, 0, 0]));
+        assert!(unknown.contains([5, 0, 0], [256, 1, 1]));
         assert_eq!(unknown.render(), None);
         assert_eq!(unknown.count([256, 1, 1]), None);
     }
@@ -529,16 +578,61 @@ mod tests {
             neither.render().as_deref(),
             Some("not ((%tid.x == 0 or ⌊%tid.x/32⌋ < 4))")
         );
-        assert_eq!((!lane0.clone()).eval([0, 0, 0]), Tri::No);
+        assert_eq!((!lane0.clone()).eval([0, 0, 0], [64, 1, 1]), Tri::No);
         assert_eq!(!!lane0.clone(), lane0);
         let hedged = ThreadSet {
             pred: lane0.or(Pred::Unknown),
         };
         assert!(!hedged.exact());
-        assert_eq!(hedged.pred.eval([0, 0, 0]), Tri::Yes);
-        assert_eq!(hedged.pred.eval([1, 0, 0]), Tri::Maybe);
+        assert_eq!(hedged.pred.eval([0, 0, 0], [64, 1, 1]), Tri::Yes);
+        assert_eq!(hedged.pred.eval([1, 0, 0], [64, 1, 1]), Tri::Maybe);
         assert_eq!(hedged.count([64, 1, 1]), Some(64));
         assert_eq!(hedged.render().as_deref(), Some("(%tid.x == 0 or ?)"));
         assert_eq!(!Pred::Unknown, Pred::Unknown);
+    }
+
+    #[test]
+    fn elect_is_one_lane_per_warp_of_the_active_threads() {
+        let all = ThreadSet {
+            pred: Pred::Elect(Box::new(Pred::True)),
+        };
+        assert_eq!(all.count([128, 1, 1]), Some(4));
+        assert_eq!(all.pred.eval([32, 0, 0], [128, 1, 1]), Tri::Yes);
+        assert_eq!(all.pred.eval([33, 0, 0], [128, 1, 1]), Tri::No);
+        assert_eq!(all.render().as_deref(), Some("elected"));
+        assert_eq!(all.pred.eval([0, 0, 0], [0, 0, 0]), Tri::Maybe);
+        let upper = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-40)),
+            cmp: "ge".to_owned(),
+        });
+        let of_upper = ThreadSet {
+            pred: Pred::Elect(Box::new(upper.clone())),
+        };
+        assert_eq!(of_upper.count([128, 1, 1]), Some(3));
+        assert_eq!(of_upper.pred.eval([40, 0, 0], [128, 1, 1]), Tri::Yes);
+        assert_eq!(of_upper.pred.eval([32, 0, 0], [128, 1, 1]), Tri::No);
+        let warp0 = ThreadSet {
+            pred: Pred::Cmp(Constraint {
+                form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
+                cmp: "eq".to_owned(),
+            })
+            .and(Pred::Elect(Box::new(Pred::True))),
+        };
+        assert_eq!(warp0.count([128, 1, 1]), Some(1));
+        assert_eq!(
+            warp0.render().as_deref(),
+            Some("⌊%tid.x/32⌋ == 0 and elected")
+        );
+        let others = ThreadSet {
+            pred: !Pred::Elect(Box::new(Pred::True)),
+        };
+        assert_eq!(others.count([128, 1, 1]), Some(124));
+        let hedged = ThreadSet {
+            pred: Pred::Elect(Box::new(upper.or(Pred::Unknown))),
+        };
+        assert!(!hedged.exact());
+        assert_eq!(hedged.pred.eval([32, 0, 0], [128, 1, 1]), Tri::Maybe);
+        assert_eq!(hedged.pred.eval([40, 0, 0], [128, 1, 1]), Tri::Maybe);
+        assert_eq!(hedged.pred.eval([41, 0, 0], [128, 1, 1]), Tri::No);
     }
 }
