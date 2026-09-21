@@ -444,26 +444,48 @@ fn render_flops(w: &mut String, pad: &str, label: &str, table: &BTreeMap<String,
 
 /// Kinds in descending count, opcodes beneath each kind likewise:
 /// counts that grow with a parameter first, by leading coefficient,
-/// then constants by value.
+/// then constants by value. Per-CTA totals add a warp-instruction
+/// column.
 fn render_instructions(w: &mut String, pad: &str, i: &InstructionCounts) {
     if i.total.expr == "0" {
         return;
     }
-    let _ = writeln!(w, "{pad}instructions = {}", count(&i.total, ""));
+    match &i.warps {
+        Some(warps) => {
+            let _ = writeln!(
+                w,
+                "{pad}instructions = {}, warp instructions = {}",
+                count(&i.total, ""),
+                count(warps, "")
+            );
+        }
+        None => {
+            let _ = writeln!(w, "{pad}instructions = {}", count(&i.total, ""));
+        }
+    }
     let by_count = |a: &Count, b: &Count| rank(&b.expr).cmp(&rank(&a.expr));
-    let mut rows: Vec<(String, String)> = Vec::new();
+    let warp = |c: Option<&Count>| c.map(|c| count(c, "")).unwrap_or_default();
+    let mut rows: Vec<(String, String, String)> = Vec::new();
     let mut kinds: Vec<_> = i.by_kind.iter().collect();
     kinds.sort_by(|a, b| by_count(&a.1.total, &b.1.total));
     for (kind, k) in kinds {
-        rows.push((kind.clone(), count(&k.total, "")));
+        rows.push((kind.clone(), count(&k.total, ""), warp(k.warps.as_ref())));
         let mut opcodes: Vec<_> = k.opcodes.iter().collect();
         opcodes.sort_by(|a, b| by_count(a.1, b.1));
         for (opcode, issued) in opcodes {
-            rows.push((format!("  {opcode}"), count(issued, "")));
+            rows.push((
+                format!("  {opcode}"),
+                count(issued, ""),
+                warp(k.opcode_warps.get(opcode)),
+            ));
             if let Some(variants) = k.contribution_variants.get(opcode) {
                 for variant in variants {
                     if variants.len() > 1 {
-                        rows.push(("    variant issued".to_owned(), count(&variant.issued, "")));
+                        rows.push((
+                            "    variant issued".to_owned(),
+                            count(&variant.issued, ""),
+                            warp(variant.warps.as_ref()),
+                        ));
                     }
                     if variant.contributions_per_execution.len() > 1 || variants.len() > 1 {
                         let detail = variant
@@ -475,6 +497,7 @@ fn render_instructions(w: &mut String, pad: &str, i: &InstructionCounts) {
                         rows.push((
                             format!("    per thread per execution: {detail}"),
                             String::new(),
+                            String::new(),
                         ));
                     }
                 }
@@ -483,16 +506,22 @@ fn render_instructions(w: &mut String, pad: &str, i: &InstructionCounts) {
     }
     let name_width = rows
         .iter()
-        .filter(|(_, c)| !c.is_empty())
-        .map(|(n, _)| n.len())
+        .filter(|(_, c, _)| !c.is_empty())
+        .map(|(n, _, _)| n.len())
         .max()
         .unwrap_or(0);
-    let count_width = rows.iter().map(|(_, c)| c.len()).max().unwrap_or(0);
-    for (name, c) in rows {
+    let count_width = rows.iter().map(|(_, c, _)| c.len()).max().unwrap_or(0);
+    let warp_width = rows.iter().map(|(_, _, c)| c.len()).max().unwrap_or(0);
+    for (name, c, wc) in rows {
         if c.is_empty() {
             let _ = writeln!(w, "{pad}  {name}");
-        } else {
+        } else if warp_width == 0 {
             let _ = writeln!(w, "{pad}  {name:<name_width$}  {c:>count_width$}");
+        } else {
+            let _ = writeln!(
+                w,
+                "{pad}  {name:<name_width$}  {c:>count_width$}  {wc:>warp_width$}"
+            );
         }
     }
 }

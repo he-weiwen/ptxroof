@@ -348,6 +348,10 @@ pub struct Aggregates {
 #[derive(Debug, Serialize)]
 pub struct InstructionCounts {
     pub total: Count,
+    /// Warp-level issues: one per warp with a thread in the block, per
+    /// execution. Per-CTA totals only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warps: Option<Count>,
     /// Keys are the report's kind labels: "tensor f16", "cuda-core
     /// f32", "sfu f32", "global load 16 B", "global -> shared copy
     /// 16 B", "global atomic 4 B", "integer arithmetic", "compare /
@@ -360,8 +364,13 @@ pub struct InstructionCounts {
 #[derive(Debug, Serialize)]
 pub struct KindCounts {
     pub total: Count,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warps: Option<Count>,
     /// By opcode as PTX spells it (`fma.rn.f32`); sums to `total`.
     pub opcodes: BTreeMap<String, Count>,
+    /// Warp-level issues per opcode; per-CTA totals only.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub opcode_warps: BTreeMap<String, Count>,
     /// Different per-thread, per-execution contributions under each opcode.
     /// Variant issued counts sum to the opcode count. Contributions describe
     /// work when the predicate is true, not work per issued instruction.
@@ -371,6 +380,8 @@ pub struct KindCounts {
 #[derive(Debug, Serialize)]
 pub struct InstructionVariant {
     pub issued: Count,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warps: Option<Count>,
     pub contributions_per_execution: Vec<ContributionDetails>,
 }
 

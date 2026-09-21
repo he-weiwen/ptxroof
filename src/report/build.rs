@@ -599,11 +599,32 @@ fn contribution_details(c: &Contribution, module: &Module) -> ContributionDetail
     }
 }
 
+/// Thread-level issues, and warp-level issues when the totals are per
+/// CTA: a warp issues an instruction once for every thread it holds.
+#[derive(Default)]
+struct IssueAccumulator {
+    threads: CountAccumulator,
+    warps: CountAccumulator,
+}
+
+impl IssueAccumulator {
+    fn add(&mut self, threads: i64, warps: Option<(i64, bool)>, mult: &SymExpr, at_most: bool) {
+        self.threads.add(threads, mult, at_most);
+        if let Some((warps, warps_at_most)) = warps {
+            self.warps.add(warps, mult, warps_at_most);
+        }
+    }
+
+    fn warps(&self) -> Option<Count> {
+        self.warps.touched.then(|| self.warps.count())
+    }
+}
+
 #[derive(Default)]
 struct InstructionAccumulator {
-    total: CountAccumulator,
-    opcodes: BTreeMap<String, CountAccumulator>,
-    variants: BTreeMap<(String, Vec<Contribution>), CountAccumulator>,
+    total: IssueAccumulator,
+    opcodes: BTreeMap<String, IssueAccumulator>,
+    variants: BTreeMap<(String, Vec<Contribution>), IssueAccumulator>,
 }
 
 struct FlopAccumulator {
@@ -918,7 +939,7 @@ impl<'a> KernelReportBuilder<'a> {
             BTreeMap::new();
         let mut conversions = CountAccumulator::default();
         let mut instructions: BTreeMap<String, InstructionAccumulator> = BTreeMap::new();
-        let mut instruction_total = CountAccumulator::default();
+        let mut instruction_total = IssueAccumulator::default();
         for s in ["global", "shared", "local"] {
             bytes.insert(s, Default::default());
         }
@@ -955,30 +976,35 @@ impl<'a> KernelReportBuilder<'a> {
                     (Some(c), None) => c.threads as i64,
                     (None, _) => 1,
                 };
-                (threads, at_most, explained)
+                let warps = cta.map(|c| match set.warps(self.shape) {
+                    Some(w) => (i64::from(w.possible), at_most || w.certain != w.possible),
+                    None => (c.warps as i64, at_most),
+                });
+                (threads, warps, at_most, explained)
             };
-            let (threads, block_at_most, _) = resolve(&self.sets.blocks[bm.block.0 as usize]);
+            let (threads, warps, block_at_most, _) =
+                resolve(&self.sets.blocks[bm.block.0 as usize]);
             for instruction in &bm.instructions {
                 let kind = instructions
                     .entry(instruction_kind(&instruction.classified))
                     .or_default();
-                kind.total.add(threads, &mult, block_at_most);
+                kind.total.add(threads, warps, &mult, block_at_most);
                 kind.opcodes
                     .entry(instruction.opcode.clone())
                     .or_default()
-                    .add(threads, &mult, block_at_most);
+                    .add(threads, warps, &mult, block_at_most);
                 kind.variants
                     .entry((
                         instruction.opcode.clone(),
                         instruction.classified.contributions.clone(),
                     ))
                     .or_default()
-                    .add(threads, &mult, block_at_most);
-                instruction_total.add(threads, &mult, block_at_most);
+                    .add(threads, warps, &mult, block_at_most);
+                instruction_total.add(threads, warps, &mult, block_at_most);
             }
             for m in &bm.measurements {
                 let (threads, at_most) = if self.sets.guards.contains_key(&m.provenance) {
-                    let (threads, at_most, explained) =
+                    let (threads, _, at_most, explained) =
                         resolve(&self.sets.of(bm.block, m.provenance));
                     (threads, at_most || !explained)
                 } else {
@@ -1070,7 +1096,8 @@ impl<'a> KernelReportBuilder<'a> {
             ai_global,
             unrolled_source_lines: self.unrolled_lines(below),
             instructions: InstructionCounts {
-                total: instruction_total.count(),
+                total: instruction_total.threads.count(),
+                warps: instruction_total.warps(),
                 by_kind: instructions
                     .iter()
                     .map(|(k, acc)| {
@@ -1081,7 +1108,8 @@ impl<'a> KernelReportBuilder<'a> {
                                 .entry(opcode.clone())
                                 .or_default()
                                 .push(InstructionVariant {
-                                    issued: issued.count(),
+                                    issued: issued.threads.count(),
+                                    warps: issued.warps(),
                                     contributions_per_execution: contributions
                                         .iter()
                                         .map(|c| contribution_details(c, self.module))
@@ -1091,11 +1119,17 @@ impl<'a> KernelReportBuilder<'a> {
                         (
                             k.clone(),
                             KindCounts {
-                                total: acc.total.count(),
+                                total: acc.total.threads.count(),
+                                warps: acc.total.warps(),
                                 opcodes: acc
                                     .opcodes
                                     .iter()
-                                    .map(|(o, v)| (o.clone(), v.count()))
+                                    .map(|(o, v)| (o.clone(), v.threads.count()))
+                                    .collect(),
+                                opcode_warps: acc
+                                    .opcodes
+                                    .iter()
+                                    .filter_map(|(o, v)| v.warps().map(|w| (o.clone(), w)))
                                     .collect(),
                                 contribution_variants,
                             },
