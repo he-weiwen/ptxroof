@@ -34,7 +34,7 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
-use crate::analysis::thread_participation::{Constraint, ThreadSet, block_thread_sets};
+use crate::analysis::thread_participation::{ThreadSet, block_thread_sets};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
@@ -832,15 +832,8 @@ impl<'a> KernelReportBuilder<'a> {
     /// The block's selected threads as text, when a branch selects them.
     fn thread_set_text(&self, b: BlockId) -> Option<String> {
         let set = &self.thread_sets[b.0 as usize];
-        let ThreadSet::Some { constraints, exact } = set else {
-            return None;
-        };
-        let cond = constraints
-            .iter()
-            .map(Constraint::render)
-            .collect::<Vec<_>>()
-            .join(" and ");
-        let bound = if *exact { "" } else { "<= " };
+        let cond = set.render()?;
+        let bound = if set.exact() { "" } else { "<= " };
         Some(match set.count(self.shape) {
             Some(n) => format!("{bound}{n} ({cond})"),
             None => format!("{bound}({cond})"),
@@ -942,7 +935,7 @@ impl<'a> KernelReportBuilder<'a> {
             // its threads: per CTA that count, and not a bound.
             let set = &self.thread_sets[bm.block.0 as usize];
             let selected = cta.and(set.count(self.shape));
-            let tid_exact = matches!(set, ThreadSet::Some { exact: true, .. });
+            let tid_exact = set.exact();
             let conditional =
                 bm.qualifier == CountQualifier::AtMost && !(selected.is_some() && tid_exact);
             let block_at_most = conditional || chain_at_most || cta.is_some_and(|c| !c.exact);

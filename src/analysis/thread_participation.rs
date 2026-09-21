@@ -6,7 +6,7 @@
 //! alone, the block runs exactly on the threads satisfying all of them,
 //! counted by enumeration over the block shape. A predicate that
 //! involves anything else (a CTA index, a parameter, a loaded value)
-//! leaves the set unknown, and the block's counts stay bounds.
+//! is an unknown selector, and the block's counts stay bounds.
 
 use crate::analysis::control_flow::loops::LoopForest;
 use crate::analysis::scalar::affine::{Affine, Var};
@@ -22,20 +22,58 @@ pub struct Constraint {
     pub cmp: String,
 }
 
+/// The condition under which a thread executes a block: the selecting
+/// branches on its dominator chain, each a thread-index comparison
+/// when the tracer reads it and `Unknown` when it does not.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ThreadSet {
-    /// No branch on the dominator chain selects threads.
-    All,
-    /// The threads satisfying every constraint: exactly those when every
-    /// selecting branch was a thread-index condition, at most those
-    /// when some other branch (a bounds check, a loaded flag) also
-    /// selects.
-    Some {
-        constraints: Vec<Constraint>,
-        exact: bool,
-    },
-    /// Only branches that are not thread-index conditions select.
+pub enum Pred {
+    True,
     Unknown,
+    Cmp(Constraint),
+    And(Box<Pred>, Box<Pred>),
+}
+
+impl Pred {
+    pub fn and(self, other: Pred) -> Pred {
+        match (self, other) {
+            (Pred::True, p) | (p, Pred::True) => p,
+            (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
+            (a, b) => Pred::And(Box::new(a), Box::new(b)),
+        }
+    }
+
+    fn may_hold(&self, tid: [i64; 3]) -> bool {
+        match self {
+            Pred::True | Pred::Unknown => true,
+            Pred::Cmp(c) => holds(&c.cmp, eval_lane(&c.form, tid)),
+            Pred::And(a, b) => a.may_hold(tid) && b.may_hold(tid),
+        }
+    }
+
+    fn exact(&self) -> bool {
+        match self {
+            Pred::True | Pred::Cmp(_) => true,
+            Pred::Unknown => false,
+            Pred::And(a, b) => a.exact() && b.exact(),
+        }
+    }
+
+    fn constraints<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
+        match self {
+            Pred::True | Pred::Unknown => {}
+            Pred::Cmp(c) => out.push(c),
+            Pred::And(a, b) => {
+                a.constraints(out);
+                b.constraints(out);
+            }
+        }
+    }
+}
+
+/// The threads of a CTA that execute a block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadSet {
+    pub pred: Pred,
 }
 
 fn negate(cmp: &str) -> &str {
@@ -93,22 +131,37 @@ impl Constraint {
 }
 
 impl ThreadSet {
-    /// Whether the thread at `tid` is in the set; an unknown set
-    /// includes every thread, as a bound.
+    /// Whether the thread at `tid` may be in the set; an unknown
+    /// selector includes every thread, as a bound.
     pub fn contains(&self, tid: [i64; 3]) -> bool {
-        match self {
-            ThreadSet::All | ThreadSet::Unknown => true,
-            ThreadSet::Some { constraints, .. } => constraints
-                .iter()
-                .all(|c| holds(&c.cmp, eval_lane(&c.form, tid))),
-        }
+        self.pred.may_hold(tid)
     }
 
-    /// How many threads of a block of this shape satisfy the set.
-    pub fn count(&self, shape: [u32; 3]) -> Option<u32> {
-        let ThreadSet::Some { constraints, .. } = self else {
+    /// Every selecting branch is a thread-index condition.
+    pub fn exact(&self) -> bool {
+        self.pred.exact()
+    }
+
+    /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
+    /// %tid.x == 0`; `None` when no such branch selects.
+    pub fn render(&self) -> Option<String> {
+        let mut cs = Vec::new();
+        self.pred.constraints(&mut cs);
+        if cs.is_empty() {
             return None;
-        };
+        }
+        Some(
+            cs.iter()
+                .map(|c| c.render())
+                .collect::<Vec<_>>()
+                .join(" and "),
+        )
+    }
+
+    /// How many threads of a block of this shape may be in the set,
+    /// when a thread-index branch selects them.
+    pub fn count(&self, shape: [u32; 3]) -> Option<u32> {
+        self.render()?;
         let [nx, ny, nz] = shape.map(i64::from);
         if nx * ny * nz == 0 {
             return None;
@@ -116,10 +169,7 @@ impl ThreadSet {
         let mut n = 0;
         for t in 0..nx * ny * nz {
             let tid = [t % nx, (t / nx) % ny, t / (nx * ny)];
-            if constraints
-                .iter()
-                .all(|c| holds(&c.cmp, eval_lane(&c.form, tid)))
-            {
+            if self.contains(tid) {
                 n += 1;
             }
         }
@@ -141,8 +191,7 @@ pub(crate) fn block_thread_sets(
     (0..cfg.blocks.len() as u32)
         .map(BlockId)
         .map(|b| {
-            let mut constraints = Vec::new();
-            let mut exact = true;
+            let mut pred = Pred::True;
             let mut cur = forest.doms.idom[b.0 as usize];
             while let Some(d) = cur {
                 let blk = cfg.block(d);
@@ -157,7 +206,7 @@ pub(crate) fn block_thread_sets(
                     });
                 if let Some((pos, instr)) = last
                     && Some(instr.mnemonic) == sym_bra
-                    && let Some(pred) = instr.predicate
+                    && let Some(guard) = instr.predicate
                     && let [taken, fallthrough] = blk.succs[..]
                 {
                     let via = |s: BlockId| s == b || tracer.path_avoiding(s, b, d);
@@ -167,14 +216,16 @@ pub(crate) fn block_thread_sets(
                         _ => None,
                     };
                     if let Some(taken_edge) = selected {
-                        let value = taken_edge != pred.negated;
-                        match condition(module, kernel, tracer, pos, pred.reg, sym_setp) {
-                            Some((form, cmp)) => constraints.push(Constraint {
-                                form,
-                                cmp: if value { cmp } else { negate(&cmp).to_owned() },
-                            }),
-                            None => exact = false,
-                        }
+                        let value = taken_edge != guard.negated;
+                        pred = pred.and(
+                            match condition(module, kernel, tracer, pos, guard.reg, sym_setp) {
+                                Some((form, cmp)) => Pred::Cmp(Constraint {
+                                    form,
+                                    cmp: if value { cmp } else { negate(&cmp).to_owned() },
+                                }),
+                                None => Pred::Unknown,
+                            },
+                        );
                     }
                 }
                 if d == ControlFlowGraph::ENTRY {
@@ -182,11 +233,7 @@ pub(crate) fn block_thread_sets(
                 }
                 cur = forest.doms.idom[d.0 as usize];
             }
-            match (constraints.is_empty(), exact) {
-                (true, true) => ThreadSet::All,
-                (true, false) => ThreadSet::Unknown,
-                (false, exact) => ThreadSet::Some { constraints, exact },
-            }
+            ThreadSet { pred }
         })
         .collect()
 }
@@ -239,28 +286,48 @@ mod tests {
     use crate::analysis::scalar::affine::Axis;
     use crate::analysis::scalar::symexpr::SymExpr;
 
-    #[test]
-    fn a_constraint_counts_and_renders() {
+    fn warps_below_4() -> Constraint {
         let warp = Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32));
-        let c = Constraint {
+        Constraint {
             form: warp + Affine::invariant(SymExpr::Const(-4)),
             cmp: "lt".to_owned(),
-        };
+        }
+    }
+
+    #[test]
+    fn a_constraint_counts_and_renders() {
+        let c = warps_below_4();
         assert_eq!(c.render(), "⌊%tid.x/32⌋ < 4");
-        let set = ThreadSet::Some {
-            constraints: vec![c],
-            exact: true,
-        };
+        let set = ThreadSet { pred: Pred::Cmp(c) };
+        assert!(set.exact());
         assert_eq!(set.count([256, 1, 1]), Some(128));
         assert_eq!(set.count([64, 1, 1]), Some(64));
-        assert_eq!(ThreadSet::All.count([256, 1, 1]), None);
-        let lane0 = ThreadSet::Some {
-            constraints: vec![Constraint {
+        assert_eq!(ThreadSet { pred: Pred::True }.count([256, 1, 1]), None);
+        let lane0 = ThreadSet {
+            pred: Pred::Cmp(Constraint {
                 form: Affine::var(Var::Tid(Axis::X)),
                 cmp: "eq".to_owned(),
-            }],
-            exact: true,
+            }),
         };
         assert_eq!(lane0.count([128, 2, 1]), Some(2));
+    }
+
+    #[test]
+    fn an_unknown_selector_keeps_the_index_conditions_as_a_bound() {
+        let set = ThreadSet {
+            pred: Pred::Cmp(warps_below_4()).and(Pred::Unknown),
+        };
+        assert!(!set.exact());
+        assert_eq!(set.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));
+        assert_eq!(set.count([256, 1, 1]), Some(128));
+        assert!(set.contains([0, 0, 0]));
+        assert!(!set.contains([200, 0, 0]));
+        let unknown = ThreadSet {
+            pred: Pred::True.and(Pred::Unknown),
+        };
+        assert_eq!(unknown.pred, Pred::Unknown);
+        assert!(unknown.contains([5, 0, 0]));
+        assert_eq!(unknown.render(), None);
+        assert_eq!(unknown.count([256, 1, 1]), None);
     }
 }
