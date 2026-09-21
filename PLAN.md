@@ -193,20 +193,6 @@ One line each, with the trigger that would start it.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a fixture
   and a per-instruction issue scope, which the model lacks.
 
-## Will not do
-
-- Cache hit rates and any reuse distance across warps or CTAs: they
-  depend on the schedule, so a model would have to guess. Divergence,
-  bank conflicts, occupancy, latency: Nsight Compute's.
-- Branch probabilities: conditional code is a `<=` bound.
-- General scalar-evolution: trip shapes are a catalogue grown by
-  fixtures.
-- Closed-form series for triangular nests.
-- Guard implication between loop variants.
-- Data-dependent bounds.
-- SASS semantics beyond the line join and spill counting.
-- Machine peak ratios beside AI: the part is not in the PTX.
-
 ## Acceptance scenarios
 
 Ids used by `tests/acceptance/status.toml`:
