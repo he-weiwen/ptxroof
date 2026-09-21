@@ -250,6 +250,8 @@ impl KernelReportBuilder<'_> {
                 let pos = block.start + si;
                 let set = self.sets.of(bid, pos);
                 let guard_exact = self.sets.guards.get(&pos).is_none_or(Pred::exact);
+                let conditional = self.blocks[bid.0 as usize].qualifier == CountQualifier::AtMost
+                    && !(set.exact() && set.count(shape).is_some());
                 let threads = self
                     .sets
                     .guards
@@ -356,6 +358,7 @@ impl KernelReportBuilder<'_> {
                             space,
                             set: set.clone(),
                             guard_exact,
+                            conditional,
                         });
                     }
                     let mut reuse = Vec::new();
@@ -422,6 +425,9 @@ struct AccessForm {
     set: ThreadSet,
     /// The instruction's guard, if any, is a thread-index condition.
     guard_exact: bool,
+    /// The block may not run on every iteration of its loop, and no
+    /// thread-index selection explains that.
+    conditional: bool,
 }
 
 /// The cache level an access can hit at. PTX ISA §9.7.9.1, Tables 30
@@ -806,7 +812,7 @@ impl<'a> KernelReportBuilder<'a> {
             }
             let set = &f.set;
             let bytes = i64::from(f.bytes);
-            at_most |= !f.guard_exact;
+            at_most |= !f.guard_exact || f.conditional;
             let mut key = f.form.clone();
             key.terms.retain(|v, _| {
                 !crate::analysis::scalar::lane_eval::depends_on_lane(v) && *v != Var::Iter(id)
@@ -1626,17 +1632,31 @@ mod tests {
             })
         );
         // Guarded on a loaded value: every lane, as a bound.
-        let src = guarded.replace(
+        let loaded = guarded.replace(
             "setp.ne.s32 %p2, %r1, 0;",
             "ld.global.u32 %r9, [%rd5];\nsetp.ne.s32 %p2, %r9, 0;",
         );
-        let r = analyze(&src, "t", &opts).expect("analyzes");
+        let r = analyze(&loaded, "t", &opts).expect("analyzes");
         let b = r.kernels[0].loops[0]
             .global_bytes_per_cta
             .clone()
             .expect("still enumerable");
         assert!(b.at_most);
         assert_eq!((b.requested, b.unique), (2048, 1028));
+        // The second load in a block a loaded value skips: a bound even
+        // though it is not guarded.
+        let branched = src.replace(
+            "ld.global.f32 %f2, [%rd5];",
+            "ld.global.u32 %r9, [%rd5];\nsetp.ne.s32 %p3, %r9, 0;\n@%p3 bra $L__SKIP;\n\
+             ld.global.f32 %f2, [%rd5];\n$L__SKIP:",
+        );
+        let r = analyze(&branched, "t", &opts).expect("analyzes");
+        let b = r.kernels[0].loops[0]
+            .global_bytes_per_cta
+            .clone()
+            .expect("still enumerable");
+        assert!(b.at_most);
+        assert_eq!((b.requested, b.unique), (3072, 1028));
         let src = src.replace(".reqntid 32, 1, 1\n", "");
         let r = analyze(&src, "t", &opts).expect("analyzes");
         assert_eq!(r.kernels[0].loops[0].global_bytes_per_cta, None);
