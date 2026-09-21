@@ -8,4 +8,4 @@ global bytes: load 8 B, store <= 42 B
 totals per CTA [static]:
 global store 8 B      127
 st.global.b64        63
-global bytes: load 512 B, store <= 2680 B
+global bytes: load 512 B, store <= 1658 B

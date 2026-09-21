@@ -15,9 +15,11 @@ memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
 sectors and 128-byte lines one warp's request touches once the block
 shape and the parameters in the lane coefficients are bound; per
-block, which threads of the CTA run it when thread-index branches
-select them, so per-CTA totals count each block on its own threads;
-and per loop with a numeric trip count, the global bytes one CTA
+block and per guarded instruction, which threads of the CTA run it
+when the selecting branches and the guard are thread-index
+comparisons combined with `and`, `or` and `not`, so per-CTA totals
+count each on its own threads (`micro/guards.ptx`); and per loop
+with a numeric trip count, the global bytes one CTA
 requests over the loop's own blocks and the distinct bytes it touches.
 Text and JSON views of the same tree. Counts are static: per-thread
 unless labeled per-CTA or per-warp, as requested by the PTX; nothing

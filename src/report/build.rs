@@ -34,7 +34,7 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
-use crate::analysis::thread_participation::{ThreadSet, block_thread_sets};
+use crate::analysis::thread_participation::{ThreadSet, thread_sets};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
@@ -674,6 +674,8 @@ struct KernelReportBuilder<'a> {
     access_forms: ByScope<AccessForm>,
     /// Which threads run each block.
     thread_sets: Vec<ThreadSet>,
+    /// Which threads run each guarded instruction, by statement index.
+    instr_sets: HashMap<usize, ThreadSet>,
     /// The block shape when known (`--launch` or `.reqntid`), else zeros.
     shape: [u32; 3],
 }
@@ -720,7 +722,7 @@ impl<'a> KernelReportBuilder<'a> {
         let tracer = AffineValueTracer::new(module, kernel, &cfg, &forest).with_bindings(bind_map);
         let (accesses, access_forms) =
             accesses_by_scope(module, kernel, &cfg, &forest, &display, bind_map, &tracer);
-        let thread_sets = block_thread_sets(module, kernel, &cfg, &forest, &tracer);
+        let (thread_sets, instr_sets) = thread_sets(module, kernel, &cfg, &forest, &tracer);
         let shape = ["%ntid.x", "%ntid.y", "%ntid.z"]
             .map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
         KernelReportBuilder {
@@ -738,6 +740,7 @@ impl<'a> KernelReportBuilder<'a> {
             accesses,
             access_forms,
             thread_sets,
+            instr_sets,
             shape,
         }
     }
@@ -933,17 +936,19 @@ impl<'a> KernelReportBuilder<'a> {
             }
             // A block selected by thread-index branches runs on exactly
             // its threads: per CTA that count, and not a bound.
-            let set = &self.thread_sets[bm.block.0 as usize];
-            let selected = cta.and(set.count(self.shape));
-            let tid_exact = set.exact();
-            let conditional =
-                bm.qualifier == CountQualifier::AtMost && !(selected.is_some() && tid_exact);
-            let block_at_most = conditional || chain_at_most || cta.is_some_and(|c| !c.exact);
-            let threads = match (cta, selected) {
-                (Some(_), Some(n)) => i64::from(n),
-                (Some(c), None) => c.threads as i64,
-                (None, _) => 1,
+            let resolve = |set: &ThreadSet| {
+                let selected = cta.and(set.count(self.shape));
+                let explained = selected.is_some() && set.exact();
+                let conditional = bm.qualifier == CountQualifier::AtMost && !explained;
+                let at_most = conditional || chain_at_most || cta.is_some_and(|c| !c.exact);
+                let threads = match (cta, selected) {
+                    (Some(_), Some(n)) => i64::from(n),
+                    (Some(c), None) => c.threads as i64,
+                    (None, _) => 1,
+                };
+                (threads, at_most, explained)
             };
+            let (threads, block_at_most, _) = resolve(&self.thread_sets[bm.block.0 as usize]);
             for instruction in &bm.instructions {
                 let kind = instructions
                     .entry(instruction_kind(&instruction.classified))
@@ -963,8 +968,13 @@ impl<'a> KernelReportBuilder<'a> {
                 instruction_total.add(threads, &mult, block_at_most);
             }
             for m in &bm.measurements {
-                let at_most =
-                    conditional || m.predicated || chain_at_most || cta.is_some_and(|c| !c.exact);
+                let (threads, at_most) = match self.instr_sets.get(&m.provenance) {
+                    Some(set) => {
+                        let (threads, at_most, explained) = resolve(set);
+                        (threads, at_most || !explained)
+                    }
+                    None => (threads, block_at_most || m.predicated),
+                };
                 let n = m.count as i64 * threads;
                 match m.kind {
                     MeasureKind::Flops { pipe, precision } => {

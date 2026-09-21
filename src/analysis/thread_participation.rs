@@ -24,9 +24,10 @@ pub struct Constraint {
     pub cmp: String,
 }
 
-/// The condition under which a thread executes a block: the selecting
-/// branches on its dominator chain, each a thread-index comparison, a
-/// combination of them, or `Unknown` when the tracer does not read it.
+/// The condition under which a thread executes an instruction: the
+/// selecting branches on its block's dominator chain and its own guard,
+/// each a thread-index comparison, a combination of them, or `Unknown`
+/// when the tracer does not read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pred {
     True,
@@ -320,14 +321,15 @@ impl PredicateReader<'_> {
     }
 }
 
-/// The thread set of every block.
-pub(crate) fn block_thread_sets(
+/// The thread set of every block, and of every guarded instruction
+/// other than a branch: its block's set under its guard.
+pub(crate) fn thread_sets(
     module: &Module,
     kernel: &Kernel,
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
     tracer: &AffineValueTracer,
-) -> Vec<ThreadSet> {
+) -> (Vec<ThreadSet>, HashMap<usize, ThreadSet>) {
     let sym_bra = module.interner.get("bra");
     let mut reader = PredicateReader {
         module,
@@ -335,7 +337,7 @@ pub(crate) fn block_thread_sets(
         tracer,
         memo: HashMap::new(),
     };
-    (0..cfg.blocks.len() as u32)
+    let blocks: Vec<ThreadSet> = (0..cfg.blocks.len() as u32)
         .map(BlockId)
         .map(|b| {
             let mut pred = Pred::True;
@@ -374,7 +376,34 @@ pub(crate) fn block_thread_sets(
             }
             ThreadSet { pred }
         })
-        .collect()
+        .collect();
+    let mut instructions = HashMap::new();
+    for (bid, blk) in cfg.blocks.iter_enumerated() {
+        for (pos, stmt) in kernel
+            .stmts
+            .iter()
+            .enumerate()
+            .take(blk.end)
+            .skip(blk.start)
+        {
+            let Stmt::Instr(instr) = stmt else { continue };
+            let Some(guard) = instr.predicate else {
+                continue;
+            };
+            if Some(instr.mnemonic) == sym_bra {
+                continue;
+            }
+            let p = reader.of(guard.reg, pos, 0);
+            let p = if guard.negated { !p } else { p };
+            instructions.insert(
+                pos,
+                ThreadSet {
+                    pred: blocks[bid.0 as usize].pred.clone().and(p),
+                },
+            );
+        }
+    }
+    (blocks, instructions)
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, when it

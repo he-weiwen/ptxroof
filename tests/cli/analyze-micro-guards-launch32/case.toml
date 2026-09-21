@@ -1,3 +1,4 @@
-# The same block at a 32-thread launch runs on 31 threads.
+# The same guards at a 32-thread launch: the not.pred guard selects no
+# thread, so its 16-byte store issues 32 times and contributes 0 B.
 args = ["analyze", "{fixtures}/micro/guards.ptx", "--launch", "32,1,1"]
 exit = 0

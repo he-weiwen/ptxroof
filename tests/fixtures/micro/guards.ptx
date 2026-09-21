@@ -2,8 +2,9 @@
 // HAND-WRITTEN: instruction guards built from thread-index predicates.
 // Stores guarded by and.pred, or.pred and not.pred of %tid.x
 // comparisons, a negated guard, a guard on a loaded value, and a block
-// selected by a branch on the and.pred, which with .reqntid 64 runs
-// on 63 threads.
+// selected by a branch on the and.pred. With .reqntid 64 the per-CTA
+// store bytes count the guarded threads (1, 32, 32, 63, 63) and only
+// the loaded guard keeps the total a bound.
 //
 .version 8.7
 .target sm_80

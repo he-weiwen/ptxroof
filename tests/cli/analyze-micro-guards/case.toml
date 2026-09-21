@@ -1,4 +1,7 @@
-# A branch on an and.pred of two %tid.x comparisons selects the
-# fallthrough block for the 63 threads that fail it.
+# Instruction guards from thread-index predicates: stores under and,
+# or and not of %tid.x comparisons count their guarded threads per
+# CTA (1, 32, 32, 63), the branch on the and.pred selects the
+# fallthrough block for the other 63, and the guard on a loaded value
+# keeps the store total a bound.
 args = ["analyze", "{fixtures}/micro/guards.ptx"]
 exit = 0
