@@ -1,11 +1,9 @@
 kernel micro_guards
-/--  <block 0>  (no line info)      22                                          $L__BB0_2, <block 1>
 |    <block 1>  (no line info)       1  63 (not (%tid.x == 0 and %tid.x < 32))  $L__BB0_2
 block size: 64 threads (64x1x1 from .reqntid)
-global store 8 B      <= 2
-st.global.b64       <= 1
-global bytes: load 8 B, store <= 42 B
+<block 0>  ld.global.f32     global load 4 B via L1 and L2                        warp: 4–5 sectors, 1–2 lines      [4 * %tid.x + param_0]
+<block 0>  ld.global.f32     global load 4 B via L1 and L2 (predicated)           warp: 1 sector, 1 line            [4 * %tid.x + param_0 + 512]
 totals per CTA [static]:
 global store 8 B      127
 st.global.b64        63
-global bytes: load 512 B, store <= 1658 B
+global bytes: load 516 B, store <= 1658 B

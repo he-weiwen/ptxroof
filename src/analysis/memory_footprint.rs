@@ -1,6 +1,7 @@
 //! What one warp's execution of a memory instruction touches: the
-//! 32-byte sectors and 128-byte lines its 32 lanes' addresses fall in,
-//! from the affine address, the element width and the block shape.
+//! 32-byte sectors and 128-byte lines the addresses of its executing
+//! lanes fall in, from the affine address, the element width, the
+//! block shape and the threads that execute the instruction.
 //! The lane-dependent part is evaluated for every lane; the uniform
 //! part (CTA index, loop counters, parameters) only shifts the whole
 //! set, so every alignment of it that respects the element size is
@@ -31,7 +32,12 @@ pub struct Footprint {
 /// Sectors and lines per warp request, or why they cannot be counted:
 /// a lane coefficient that is not a constant (bind the parameter), or
 /// a block shape that is not known (`.reqntid` or `--launch`).
-pub fn warp_footprint(a: &Affine, bytes: u32, shape: [u32; 3]) -> Result<Footprint, String> {
+pub fn warp_footprint(
+    a: &Affine,
+    bytes: u32,
+    shape: [u32; 3],
+    executes: impl Fn([i64; 3]) -> bool,
+) -> Result<Footprint, String> {
     let mut lane_terms: Vec<(&Var, i64)> = Vec::new();
     for (v, c) in &a.terms {
         if !depends_on_lane(v) {
@@ -52,11 +58,13 @@ pub fn warp_footprint(a: &Affine, bytes: u32, shape: [u32; 3]) -> Result<Footpri
         let (mut min, mut max) = (u32::MAX, 0u32);
         for warp in 0..(threads + 31) / 32 {
             let offsets: Vec<i64> = (warp * 32..((warp + 1) * 32).min(threads))
-                .map(|t| {
-                    let tid = [t % nx, (t / nx) % ny, t / (nx * ny)];
-                    lane_terms.iter().map(|(v, k)| k * eval(v, tid)).sum()
-                })
+                .map(|t| [t % nx, (t / nx) % ny, t / (nx * ny)])
+                .filter(|&tid| executes(tid))
+                .map(|tid| lane_terms.iter().map(|(v, k)| k * eval(v, tid)).sum())
                 .collect();
+            if offsets.is_empty() {
+                continue;
+            }
             let mut shift = 0;
             while shift < unit {
                 let touched: BTreeSet<i64> = offsets
@@ -72,6 +80,9 @@ pub fn warp_footprint(a: &Affine, bytes: u32, shape: [u32; 3]) -> Result<Footpri
                 max = max.max(n);
                 shift += bytes;
             }
+        }
+        if min == u32::MAX {
+            return CountRange { min: 0, max: 0 };
         }
         CountRange { min, max }
     };
@@ -91,7 +102,16 @@ mod tests {
     }
 
     fn fp(a: &Affine, bytes: u32, shape: [u32; 3]) -> (u32, u32, u32, u32) {
-        let f = warp_footprint(a, bytes, shape).unwrap();
+        fp_of(a, bytes, shape, |_| true)
+    }
+
+    fn fp_of(
+        a: &Affine,
+        bytes: u32,
+        shape: [u32; 3],
+        executes: impl Fn([i64; 3]) -> bool,
+    ) -> (u32, u32, u32, u32) {
+        let f = warp_footprint(a, bytes, shape, executes).unwrap();
         (f.sectors.min, f.sectors.max, f.lines.min, f.lines.max)
     }
 
@@ -120,15 +140,38 @@ mod tests {
     }
 
     #[test]
+    fn only_the_executing_lanes_touch_sectors() {
+        let c = |n: i64| SymExpr::Const(n);
+        let coalesced = tid().scale(c(4));
+        // One lane per warp: one sector, one line, whatever the alignment.
+        assert_eq!(
+            fp_of(&coalesced, 4, [128, 1, 1], |t| t[0] % 32 == 0),
+            (1, 1, 1, 1)
+        );
+        // Every other lane still spans the same four sectors.
+        assert_eq!(
+            fp_of(&coalesced, 4, [128, 1, 1], |t| t[0] % 2 == 0),
+            (4, 5, 1, 2)
+        );
+        // The upper half of a 64-thread block: only its warp counts.
+        assert_eq!(
+            fp_of(&coalesced, 4, [64, 1, 1], |t| t[0] >= 32),
+            (4, 5, 1, 2)
+        );
+        // No executing lane at this shape.
+        assert_eq!(fp_of(&coalesced, 4, [32, 1, 1], |_| false), (0, 0, 0, 0));
+    }
+
+    #[test]
     fn unknown_shape_or_symbolic_lane_coefficient_is_refused() {
         let k = Affine::var(Var::Tid(Axis::Y)).scale(SymExpr::sym("param_2"));
         assert!(
-            warp_footprint(&k, 2, [32, 32, 1])
+            warp_footprint(&k, 2, [32, 32, 1], |_| true)
                 .unwrap_err()
                 .contains("bind")
         );
         assert!(
-            warp_footprint(&tid(), 4, [0, 0, 0])
+            warp_footprint(&tid(), 4, [0, 0, 0], |_| true)
                 .unwrap_err()
                 .contains("--launch")
         );

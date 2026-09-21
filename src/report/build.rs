@@ -34,7 +34,7 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
-use crate::analysis::thread_participation::{ThreadSet, thread_sets};
+use crate::analysis::thread_participation::{Pred, ThreadSet, ThreadSets, thread_sets};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
@@ -201,193 +201,206 @@ fn resolve_bindings(
 /// of its block. `cp.async` gives a store row for its shared
 /// destination and a load row for its global source; an atomic gives
 /// one `load+store` row. Parameter loads are not accesses.
-fn accesses_by_scope(
-    module: &Module,
-    kernel: &Kernel,
-    cfg: &ControlFlowGraph,
-    forest: &LoopForest,
-    display: &[String],
-    bind_map: &HashMap<String, i64>,
-    tracer: &AffineValueTracer,
-) -> (ByScope<Access>, ByScope<AccessForm>) {
-    let mut forms: ByScope<AccessForm> = HashMap::new();
-    let name = |v: &Var| match v {
-        Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
-        other => other.to_string(),
-    };
-    // A shared array's mangled name reads as its source name.
-    let arrays: Vec<(String, String)> = kernel
-        .shared_decls
-        .iter()
-        .chain(&module.shared_decls)
-        .map(|d| {
-            let raw = module.interner.resolve(d.name).to_owned();
-            let short = demangle(&raw)
-                .rsplit("::")
-                .next()
-                .unwrap_or(&raw)
-                .to_owned();
-            (raw, short)
-        })
-        .collect();
-    let shorten = |mut text: String| {
-        for (raw, short) in &arrays {
-            text = text.replace(raw, short);
-        }
-        text
-    };
-    let shape =
-        ["%ntid.x", "%ntid.y", "%ntid.z"].map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
-    let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
-    for (bid, block) in cfg.blocks.iter_enumerated() {
-        let scope = forest.block_loop[bid.0 as usize];
-        for (si, stmt) in kernel.stmts[block.start..block.end].iter().enumerate() {
-            let Stmt::Instr(instr) = stmt else { continue };
-            let pos = block.start + si;
-            let mem_ops: Vec<_> = module
-                .operand_ids(instr.operands)
-                .iter()
-                .copied()
-                .filter(|&id| matches!(module.operand(id), Operand::Memory { .. }))
-                .collect();
-            let classified = crate::analysis::instruction_counts::classify::classify(module, instr);
-            // Pair memory contributions by their explicit operand association.
-            // An atomic has one address with read+write; a copy has two addresses.
-            let mut accesses: BTreeMap<(usize, Space, Option<u32>), (bool, bool)> = BTreeMap::new();
-            for c in &classified.contributions {
-                let Some(operand) = c.memory_operand.filter(|&i| i < mem_ops.len()) else {
-                    continue;
-                };
-                let (space, direction, bytes) = match c.kind {
-                    MeasureKind::Bytes { space, direction } => {
-                        (space, direction, Some(c.count as u32))
-                    }
-                    MeasureKind::UnquantifiedBytes { space, direction } => (space, direction, None),
-                    _ => continue,
-                };
-                let sides = accesses.entry((operand, space, bytes)).or_default();
-                match direction {
-                    Direction::Load => sides.0 = true,
-                    Direction::Store => sides.1 = true,
-                }
+impl KernelReportBuilder<'_> {
+    fn accesses_by_scope(
+        &self,
+        tracer: &AffineValueTracer,
+    ) -> (ByScope<Access>, ByScope<AccessForm>) {
+        let (module, kernel, cfg, forest, bind_map) = (
+            self.module,
+            self.kernel,
+            &self.cfg,
+            &self.forest,
+            self.bind_map,
+        );
+        let display = &self.display;
+        let mut forms: ByScope<AccessForm> = HashMap::new();
+        let name = |v: &Var| match v {
+            Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
+            other => other.to_string(),
+        };
+        // A shared array's mangled name reads as its source name.
+        let arrays: Vec<(String, String)> = kernel
+            .shared_decls
+            .iter()
+            .chain(&module.shared_decls)
+            .map(|d| {
+                let raw = module.interner.resolve(d.name).to_owned();
+                let short = demangle(&raw)
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&raw)
+                    .to_owned();
+                (raw, short)
+            })
+            .collect();
+        let shorten = |mut text: String| {
+            for (raw, short) in &arrays {
+                text = text.replace(raw, short);
             }
-            let rows = accesses
-                .into_iter()
-                .map(|((i, space, bytes), (load, store))| {
-                    let direction = match (load, store) {
-                        (true, true) => "load+store",
-                        (true, false) => "load",
-                        _ => "store",
+            text
+        };
+        let shape = ["%ntid.x", "%ntid.y", "%ntid.z"]
+            .map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
+        let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
+        for (bid, block) in cfg.blocks.iter_enumerated() {
+            let scope = forest.block_loop[bid.0 as usize];
+            for (si, stmt) in kernel.stmts[block.start..block.end].iter().enumerate() {
+                let Stmt::Instr(instr) = stmt else { continue };
+                let pos = block.start + si;
+                let set = self.sets.of(bid, pos);
+                let guard_exact = self.sets.guards.get(&pos).is_none_or(Pred::exact);
+                let mem_ops: Vec<_> = module
+                    .operand_ids(instr.operands)
+                    .iter()
+                    .copied()
+                    .filter(|&id| matches!(module.operand(id), Operand::Memory { .. }))
+                    .collect();
+                let classified =
+                    crate::analysis::instruction_counts::classify::classify(module, instr);
+                // Pair memory contributions by their explicit operand association.
+                // An atomic has one address with read+write; a copy has two addresses.
+                let mut accesses: BTreeMap<(usize, Space, Option<u32>), (bool, bool)> =
+                    BTreeMap::new();
+                for c in &classified.contributions {
+                    let Some(operand) = c.memory_operand.filter(|&i| i < mem_ops.len()) else {
+                        continue;
                     };
-                    (i, space, direction, bytes)
-                });
-            for (i, space, direction, bytes) in rows {
-                if space == Space::Param {
-                    continue;
-                }
-                let Operand::Memory { base, offset } = module.operand(mem_ops[i]) else {
-                    continue;
-                };
-                let (address, unknown, form) = match module.operand(*base) {
-                    Operand::SymbolRef(s) => {
-                        let sym = shorten(module.interner.resolve(*s).to_owned());
-                        let addr = if *offset == 0 {
-                            sym
-                        } else {
-                            format!("{sym} + {offset}")
-                        };
-                        (Some(addr), None, None)
-                    }
-                    Operand::Register(_) => match tracer.trace_operand(*base, pos, scope, 0) {
-                        Ok(a) => {
-                            let a = (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map);
-                            (Some(shorten(a.render(name))), None, Some(a))
+                    let (space, direction, bytes) = match c.kind {
+                        MeasureKind::Bytes { space, direction } => {
+                            (space, direction, Some(c.count as u32))
                         }
-                        Err(reason) => (
-                            None,
-                            Some(
-                                reason
-                                    .strip_prefix("latch condition ")
-                                    .unwrap_or(&reason)
-                                    .to_owned(),
+                        MeasureKind::UnquantifiedBytes { space, direction } => {
+                            (space, direction, None)
+                        }
+                        _ => continue,
+                    };
+                    let sides = accesses.entry((operand, space, bytes)).or_default();
+                    match direction {
+                        Direction::Load => sides.0 = true,
+                        Direction::Store => sides.1 = true,
+                    }
+                }
+                let rows = accesses
+                    .into_iter()
+                    .map(|((i, space, bytes), (load, store))| {
+                        let direction = match (load, store) {
+                            (true, true) => "load+store",
+                            (true, false) => "load",
+                            _ => "store",
+                        };
+                        (i, space, direction, bytes)
+                    });
+                for (i, space, direction, bytes) in rows {
+                    if space == Space::Param {
+                        continue;
+                    }
+                    let Operand::Memory { base, offset } = module.operand(mem_ops[i]) else {
+                        continue;
+                    };
+                    let (address, unknown, form) = match module.operand(*base) {
+                        Operand::SymbolRef(s) => {
+                            let sym = shorten(module.interner.resolve(*s).to_owned());
+                            let addr = if *offset == 0 {
+                                sym
+                            } else {
+                                format!("{sym} + {offset}")
+                            };
+                            (Some(addr), None, None)
+                        }
+                        Operand::Register(_) => match tracer.trace_operand(*base, pos, scope, 0) {
+                            Ok(a) => {
+                                let a =
+                                    (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map);
+                                (Some(shorten(a.render(name))), None, Some(a))
+                            }
+                            Err(reason) => (
+                                None,
+                                Some(
+                                    reason
+                                        .strip_prefix("latch condition ")
+                                        .unwrap_or(&reason)
+                                        .to_owned(),
+                                ),
+                                None,
                             ),
+                        },
+                        _ => (
+                            None,
+                            Some("address operand form not traced".to_owned()),
                             None,
                         ),
-                    },
-                    _ => (
-                        None,
-                        Some("address operand form not traced".to_owned()),
-                        None,
-                    ),
-                };
-                let footprint = match (&form, bytes) {
-                    (Some(a), Some(b)) if matches!(space, Space::Global | Space::Generic) => {
-                        Some(warp_footprint(a, b, shape))
+                    };
+                    let footprint = match (&form, bytes) {
+                        (Some(a), Some(b)) if matches!(space, Space::Global | Space::Generic) => {
+                            Some(warp_footprint(a, b, shape, |tid| set.contains(tid, shape)))
+                        }
+                        _ => None,
+                    };
+                    let (sectors_per_request, lines_per_request, footprint_unknown) =
+                        match footprint {
+                            Some(Ok(f)) => (Some(f.sectors), Some(f.lines), None),
+                            Some(Err(why)) => (None, None, Some(why)),
+                            None => (None, None, None),
+                        };
+                    if let (Some(a), Some(b)) = (&form, bytes) {
+                        forms.entry(scope).or_default().push(AccessForm {
+                            form: a.clone(),
+                            bytes: b,
+                            space,
+                            set: set.clone(),
+                            guard_exact,
+                        });
                     }
-                    _ => None,
-                };
-                let (sectors_per_request, lines_per_request, footprint_unknown) = match footprint {
-                    Some(Ok(f)) => (Some(f.sectors), Some(f.lines), None),
-                    Some(Err(why)) => (None, None, Some(why)),
-                    None => (None, None, None),
-                };
-                if let (Some(a), Some(b)) = (&form, bytes) {
-                    forms.entry(scope).or_default().push(AccessForm {
-                        form: a.clone(),
-                        bytes: b,
-                        space,
-                        block: bid,
+                    let mut reuse = Vec::new();
+                    if let Some(a) = &form {
+                        let mut cur = scope;
+                        while let Some(l) = cur {
+                            reuse.push(Reuse {
+                                r#loop: display[l.0 as usize].clone(),
+                                stride: a.terms.get(&Var::Iter(l)).map(ToString::to_string),
+                            });
+                            cur = forest.get(l).parent;
+                        }
+                    }
+                    let site = match instr.loc.filter(|l| l.line != 0) {
+                        Some(loc) => format!(
+                            "{}:{}",
+                            basename(module.file_path(loc.file).unwrap_or("<unknown file>")),
+                            loc.line
+                        ),
+                        None => cfg.block_name(module, bid),
+                    };
+                    let mods: Vec<&str> = module
+                        .modifiers(instr)
+                        .iter()
+                        .map(|&m| module.interner.resolve(m))
+                        .collect();
+                    out.entry(scope).or_default().push(Access {
+                        site,
+                        opcode: module.opcode(instr),
+                        space: space.key().to_owned(),
+                        direction: direction.to_owned(),
+                        bytes,
                         predicated: instr.predicate.is_some(),
+                        path: cache_path(
+                            module.interner.resolve(instr.mnemonic),
+                            &mods,
+                            space,
+                            direction,
+                        ),
+                        address,
+                        unknown,
+                        sectors_per_request,
+                        lines_per_request,
+                        footprint_unknown,
+                        reuse,
                     });
                 }
-                let mut reuse = Vec::new();
-                if let Some(a) = &form {
-                    let mut cur = scope;
-                    while let Some(l) = cur {
-                        reuse.push(Reuse {
-                            r#loop: display[l.0 as usize].clone(),
-                            stride: a.terms.get(&Var::Iter(l)).map(ToString::to_string),
-                        });
-                        cur = forest.get(l).parent;
-                    }
-                }
-                let site = match instr.loc.filter(|l| l.line != 0) {
-                    Some(loc) => format!(
-                        "{}:{}",
-                        basename(module.file_path(loc.file).unwrap_or("<unknown file>")),
-                        loc.line
-                    ),
-                    None => cfg.block_name(module, bid),
-                };
-                let mods: Vec<&str> = module
-                    .modifiers(instr)
-                    .iter()
-                    .map(|&m| module.interner.resolve(m))
-                    .collect();
-                out.entry(scope).or_default().push(Access {
-                    site,
-                    opcode: module.opcode(instr),
-                    space: space.key().to_owned(),
-                    direction: direction.to_owned(),
-                    bytes,
-                    predicated: instr.predicate.is_some(),
-                    path: cache_path(
-                        module.interner.resolve(instr.mnemonic),
-                        &mods,
-                        space,
-                        direction,
-                    ),
-                    address,
-                    unknown,
-                    sectors_per_request,
-                    lines_per_request,
-                    footprint_unknown,
-                    reuse,
-                });
             }
         }
+        (out, forms)
     }
-    (out, forms)
 }
 
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
@@ -398,8 +411,10 @@ struct AccessForm {
     form: Affine,
     bytes: u32,
     space: Space,
-    block: BlockId,
-    predicated: bool,
+    /// The threads that execute the instruction.
+    set: ThreadSet,
+    /// The instruction's guard, if any, is a thread-index condition.
+    guard_exact: bool,
 }
 
 /// The cache level an access can hit at. PTX ISA §9.7.9.1, Tables 30
@@ -672,10 +687,8 @@ struct KernelReportBuilder<'a> {
     accesses: ByScope<Access>,
     /// The same rows' bound affine forms, where known.
     access_forms: ByScope<AccessForm>,
-    /// Which threads run each block.
-    thread_sets: Vec<ThreadSet>,
-    /// Which threads run each guarded instruction, by statement index.
-    instr_sets: HashMap<usize, ThreadSet>,
+    /// Which threads run each block and each guarded instruction.
+    sets: ThreadSets,
     /// The block shape when known (`--launch` or `.reqntid`), else zeros.
     shape: [u32; 3],
 }
@@ -719,13 +732,9 @@ impl<'a> KernelReportBuilder<'a> {
             })
             .collect();
 
-        let tracer = AffineValueTracer::new(module, kernel, &cfg, &forest).with_bindings(bind_map);
-        let (accesses, access_forms) =
-            accesses_by_scope(module, kernel, &cfg, &forest, &display, bind_map, &tracer);
-        let (thread_sets, instr_sets) = thread_sets(module, kernel, &cfg, &forest, &tracer);
         let shape = ["%ntid.x", "%ntid.y", "%ntid.z"]
             .map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
-        KernelReportBuilder {
+        let mut b = KernelReportBuilder {
             module,
             kernel,
             cfg,
@@ -737,12 +746,18 @@ impl<'a> KernelReportBuilder<'a> {
             trip_exprs,
             cond_entry,
             display,
-            accesses,
-            access_forms,
-            thread_sets,
-            instr_sets,
+            accesses: HashMap::new(),
+            access_forms: HashMap::new(),
+            sets: ThreadSets::default(),
             shape,
-        }
+        };
+        let tracer =
+            AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
+        b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer);
+        let (accesses, access_forms) = b.accesses_by_scope(&tracer);
+        b.accesses = accesses;
+        b.access_forms = access_forms;
+        b
     }
 
     /// Global bytes one CTA requests over one execution of loop `id`'s
@@ -782,9 +797,9 @@ impl<'a> KernelReportBuilder<'a> {
             }) {
                 return None;
             }
-            let set = &self.thread_sets[f.block.0 as usize];
+            let set = &f.set;
             let bytes = i64::from(f.bytes);
-            at_most |= f.predicated;
+            at_most |= !f.guard_exact;
             let mut key = f.form.clone();
             key.terms.retain(|v, _| {
                 !crate::analysis::scalar::lane_eval::depends_on_lane(v) && *v != Var::Iter(id)
@@ -834,7 +849,7 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// The block's selected threads as text, when a branch selects them.
     fn thread_set_text(&self, b: BlockId) -> Option<String> {
-        let set = &self.thread_sets[b.0 as usize];
+        let set = &self.sets.blocks[b.0 as usize];
         let cond = set.render()?;
         let bound = if set.exact() { "" } else { "<= " };
         Some(match set.count(self.shape) {
@@ -948,7 +963,7 @@ impl<'a> KernelReportBuilder<'a> {
                 };
                 (threads, at_most, explained)
             };
-            let (threads, block_at_most, _) = resolve(&self.thread_sets[bm.block.0 as usize]);
+            let (threads, block_at_most, _) = resolve(&self.sets.blocks[bm.block.0 as usize]);
             for instruction in &bm.instructions {
                 let kind = instructions
                     .entry(instruction_kind(&instruction.classified))
@@ -968,12 +983,12 @@ impl<'a> KernelReportBuilder<'a> {
                 instruction_total.add(threads, &mult, block_at_most);
             }
             for m in &bm.measurements {
-                let (threads, at_most) = match self.instr_sets.get(&m.provenance) {
-                    Some(set) => {
-                        let (threads, at_most, explained) = resolve(set);
-                        (threads, at_most || !explained)
-                    }
-                    None => (threads, block_at_most || m.predicated),
+                let (threads, at_most) = if self.sets.guards.contains_key(&m.provenance) {
+                    let (threads, at_most, explained) =
+                        resolve(&self.sets.of(bm.block, m.provenance));
+                    (threads, at_most || !explained)
+                } else {
+                    (threads, block_at_most || m.predicated)
                 };
                 let n = m.count as i64 * threads;
                 match m.kind {
@@ -1530,7 +1545,22 @@ mod tests {
                 at_most: false,
             })
         );
-        let src = src.replace("ld.global.f32 %f2", "@%p2 ld.global.f32 %f2");
+        // Guarded on %tid.x != 0: the second load runs on 31 lanes.
+        let guarded = src.replace("ld.global.f32 %f2", "@%p2 ld.global.f32 %f2");
+        let r = analyze(&guarded, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].loops[0].global_bytes_per_cta,
+            Some(LoopBytes {
+                requested: 2016,
+                unique: 1028,
+                at_most: false,
+            })
+        );
+        // Guarded on a loaded value: every lane, as a bound.
+        let src = guarded.replace(
+            "setp.ne.s32 %p2, %r1, 0;",
+            "ld.global.u32 %r9, [%rd5];\nsetp.ne.s32 %p2, %r9, 0;",
+        );
         let r = analyze(&src, "t", &opts).expect("analyzes");
         let b = r.kernels[0].loops[0]
             .global_bytes_per_cta
