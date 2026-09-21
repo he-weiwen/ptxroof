@@ -23,14 +23,41 @@ pub struct Constraint {
 }
 
 /// The condition under which a thread executes a block: the selecting
-/// branches on its dominator chain, each a thread-index comparison
-/// when the tracer reads it and `Unknown` when it does not.
+/// branches on its dominator chain, each a thread-index comparison, a
+/// combination of them, or `Unknown` when the tracer does not read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pred {
     True,
     Unknown,
     Cmp(Constraint),
+    Not(Box<Pred>),
     And(Box<Pred>, Box<Pred>),
+    Or(Box<Pred>, Box<Pred>),
+}
+
+/// Whether a thread satisfies a predicate; `Maybe` when an unknown
+/// selector decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tri {
+    Yes,
+    No,
+    Maybe,
+}
+
+impl std::ops::Not for Pred {
+    type Output = Pred;
+
+    fn not(self) -> Pred {
+        match self {
+            Pred::True | Pred::Unknown => Pred::Unknown,
+            Pred::Cmp(c) => Pred::Cmp(Constraint {
+                form: c.form,
+                cmp: negate(&c.cmp).to_owned(),
+            }),
+            Pred::Not(p) => *p,
+            p => Pred::Not(Box::new(p)),
+        }
+    }
 }
 
 impl Pred {
@@ -42,11 +69,40 @@ impl Pred {
         }
     }
 
-    fn may_hold(&self, tid: [i64; 3]) -> bool {
+    pub fn or(self, other: Pred) -> Pred {
+        match (self, other) {
+            (Pred::True, _) | (_, Pred::True) => Pred::True,
+            (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
+            (a, b) => Pred::Or(Box::new(a), Box::new(b)),
+        }
+    }
+
+    pub fn eval(&self, tid: [i64; 3]) -> Tri {
         match self {
-            Pred::True | Pred::Unknown => true,
-            Pred::Cmp(c) => holds(&c.cmp, eval_lane(&c.form, tid)),
-            Pred::And(a, b) => a.may_hold(tid) && b.may_hold(tid),
+            Pred::True => Tri::Yes,
+            Pred::Unknown => Tri::Maybe,
+            Pred::Cmp(c) => {
+                if holds(&c.cmp, eval_lane(&c.form, tid)) {
+                    Tri::Yes
+                } else {
+                    Tri::No
+                }
+            }
+            Pred::Not(p) => match p.eval(tid) {
+                Tri::Yes => Tri::No,
+                Tri::No => Tri::Yes,
+                Tri::Maybe => Tri::Maybe,
+            },
+            Pred::And(a, b) => match (a.eval(tid), b.eval(tid)) {
+                (Tri::No, _) | (_, Tri::No) => Tri::No,
+                (Tri::Yes, Tri::Yes) => Tri::Yes,
+                _ => Tri::Maybe,
+            },
+            Pred::Or(a, b) => match (a.eval(tid), b.eval(tid)) {
+                (Tri::Yes, _) | (_, Tri::Yes) => Tri::Yes,
+                (Tri::No, Tri::No) => Tri::No,
+                _ => Tri::Maybe,
+            },
         }
     }
 
@@ -54,18 +110,38 @@ impl Pred {
         match self {
             Pred::True | Pred::Cmp(_) => true,
             Pred::Unknown => false,
-            Pred::And(a, b) => a.exact() && b.exact(),
+            Pred::Not(p) => p.exact(),
+            Pred::And(a, b) | Pred::Or(a, b) => a.exact() && b.exact(),
         }
     }
 
-    fn constraints<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
+    fn has_condition(&self) -> bool {
         match self {
-            Pred::True | Pred::Unknown => {}
-            Pred::Cmp(c) => out.push(c),
+            Pred::True | Pred::Unknown => false,
+            Pred::Cmp(_) => true,
+            Pred::Not(p) => p.has_condition(),
+            Pred::And(a, b) | Pred::Or(a, b) => a.has_condition() || b.has_condition(),
+        }
+    }
+
+    /// The thread-index conditions as text; an unknown selector under
+    /// a conjunction is left to the `<=` marker, elsewhere it prints
+    /// as `?`.
+    fn render(&self) -> Option<String> {
+        match self {
+            Pred::True => None,
+            Pred::Unknown => Some("?".to_owned()),
+            Pred::Cmp(c) => Some(c.render()),
+            Pred::Not(p) => Some(format!("not ({})", p.render()?)),
             Pred::And(a, b) => {
-                a.constraints(out);
-                b.constraints(out);
+                let parts: Vec<String> = [a, b]
+                    .into_iter()
+                    .filter(|p| !matches!(p.as_ref(), Pred::Unknown))
+                    .filter_map(|p| p.render())
+                    .collect();
+                (!parts.is_empty()).then(|| parts.join(" and "))
             }
+            Pred::Or(a, b) => Some(format!("({} or {})", a.render()?, b.render()?)),
         }
     }
 }
@@ -134,34 +210,29 @@ impl ThreadSet {
     /// Whether the thread at `tid` may be in the set; an unknown
     /// selector includes every thread, as a bound.
     pub fn contains(&self, tid: [i64; 3]) -> bool {
-        self.pred.may_hold(tid)
+        self.pred.eval(tid) != Tri::No
     }
 
-    /// Every selecting branch is a thread-index condition.
+    /// Every selector is a thread-index condition.
     pub fn exact(&self) -> bool {
         self.pred.exact()
     }
 
     /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
-    /// %tid.x == 0`; `None` when no such branch selects.
+    /// %tid.x == 0`; `None` when no such condition selects.
     pub fn render(&self) -> Option<String> {
-        let mut cs = Vec::new();
-        self.pred.constraints(&mut cs);
-        if cs.is_empty() {
-            return None;
-        }
-        Some(
-            cs.iter()
-                .map(|c| c.render())
-                .collect::<Vec<_>>()
-                .join(" and "),
-        )
+        self.pred
+            .has_condition()
+            .then(|| self.pred.render())
+            .flatten()
     }
 
     /// How many threads of a block of this shape may be in the set,
-    /// when a thread-index branch selects them.
+    /// when a thread-index condition selects them.
     pub fn count(&self, shape: [u32; 3]) -> Option<u32> {
-        self.render()?;
+        if !self.pred.has_condition() {
+            return None;
+        }
         let [nx, ny, nz] = shape.map(i64::from);
         if nx * ny * nz == 0 {
             return None;
@@ -329,5 +400,41 @@ mod tests {
         assert!(unknown.contains([5, 0, 0]));
         assert_eq!(unknown.render(), None);
         assert_eq!(unknown.count([256, 1, 1]), None);
+    }
+
+    #[test]
+    fn or_and_not_evaluate_three_valued_and_render() {
+        let lane0 = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Tid(Axis::X)),
+            cmp: "eq".to_owned(),
+        });
+        let either = ThreadSet {
+            pred: lane0.clone().or(Pred::Cmp(warps_below_4())),
+        };
+        assert_eq!(either.count([256, 1, 1]), Some(128));
+        assert_eq!(
+            either.render().as_deref(),
+            Some("(%tid.x == 0 or ⌊%tid.x/32⌋ < 4)")
+        );
+        let neither = ThreadSet {
+            pred: !either.pred.clone(),
+        };
+        assert!(neither.exact());
+        assert_eq!(neither.count([256, 1, 1]), Some(128));
+        assert_eq!(
+            neither.render().as_deref(),
+            Some("not ((%tid.x == 0 or ⌊%tid.x/32⌋ < 4))")
+        );
+        assert_eq!((!lane0.clone()).eval([0, 0, 0]), Tri::No);
+        assert_eq!(!!lane0.clone(), lane0);
+        let hedged = ThreadSet {
+            pred: lane0.or(Pred::Unknown),
+        };
+        assert!(!hedged.exact());
+        assert_eq!(hedged.pred.eval([0, 0, 0]), Tri::Yes);
+        assert_eq!(hedged.pred.eval([1, 0, 0]), Tri::Maybe);
+        assert_eq!(hedged.count([64, 1, 1]), Some(64));
+        assert_eq!(hedged.render().as_deref(), Some("(%tid.x == 0 or ?)"));
+        assert_eq!(!Pred::Unknown, Pred::Unknown);
     }
 }
