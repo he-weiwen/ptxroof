@@ -1,0 +1,11 @@
+kernel micro_guards
+/--  <block 0>  (no line info)      22                                          $L__BB0_2, <block 1>
+|    <block 1>  (no line info)       1  31 (not (%tid.x == 0 and %tid.x < 32))  $L__BB0_2
+block size: 32 threads (32x1x1 from flag)
+global store 8 B      <= 2
+st.global.b64       <= 1
+global bytes: load 8 B, store <= 42 B
+totals per CTA [static]:
+global store 8 B       63
+st.global.b64        31
+global bytes: load 256 B, store <= 1336 B

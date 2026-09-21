@@ -13,7 +13,9 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::lane_eval::eval_lane;
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Stmt};
+use crate::ptx::ir::{Kernel, Module, Operand, Stmt};
+use crate::support::intern::Symbol;
+use std::collections::HashMap;
 
 /// One condition `form cmp 0` over the thread index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -248,6 +250,76 @@ impl ThreadSet {
     }
 }
 
+/// Reads predicate registers back to the thread-index conditions that
+/// define them, once per definition.
+struct PredicateReader<'a> {
+    module: &'a Module,
+    kernel: &'a Kernel,
+    tracer: &'a AffineValueTracer<'a>,
+    memo: HashMap<usize, Pred>,
+}
+
+impl PredicateReader<'_> {
+    fn of(&mut self, reg: Symbol, pos: usize, depth: u32) -> Pred {
+        let ReachingDefinition::Def(def) = self.tracer.reach_def(reg, pos, None) else {
+            return Pred::Unknown;
+        };
+        if let Some(p) = self.memo.get(&def) {
+            return p.clone();
+        }
+        let p = if depth < 8 {
+            self.decode(def, depth + 1)
+        } else {
+            Pred::Unknown
+        };
+        self.memo.insert(def, p.clone());
+        p
+    }
+
+    fn decode(&mut self, def: usize, depth: u32) -> Pred {
+        let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
+            return Pred::Unknown;
+        };
+        let mods: Vec<&str> = self
+            .module
+            .modifiers(instr)
+            .iter()
+            .map(|&m| self.module.interner.resolve(m))
+            .collect();
+        let ops = self.module.operand_ids(instr.operands);
+        let reg = |id| match self.module.operand(id) {
+            Operand::Register(r) => Some(*r),
+            _ => None,
+        };
+        match (
+            self.module.interner.resolve(instr.mnemonic),
+            mods.as_slice(),
+            ops,
+        ) {
+            ("setp", _, _) => condition(self.module, self.kernel, self.tracer, def)
+                .map_or(Pred::Unknown, |(form, cmp)| {
+                    Pred::Cmp(Constraint { form, cmp })
+                }),
+            ("and" | "or", ["pred"], [_, a, b]) => {
+                let (Some(a), Some(b)) = (reg(*a), reg(*b)) else {
+                    return Pred::Unknown;
+                };
+                let (a, b) = (self.of(a, def, depth), self.of(b, def, depth));
+                if self.module.interner.resolve(instr.mnemonic) == "and" {
+                    a.and(b)
+                } else {
+                    a.or(b)
+                }
+            }
+            ("not", ["pred"], [_, a]) => match reg(*a) {
+                Some(a) => !self.of(a, def, depth),
+                None => Pred::Unknown,
+            },
+            _ => Pred::Unknown,
+        }
+    }
+}
+
 /// The thread set of every block.
 pub(crate) fn block_thread_sets(
     module: &Module,
@@ -256,9 +328,13 @@ pub(crate) fn block_thread_sets(
     forest: &LoopForest,
     tracer: &AffineValueTracer,
 ) -> Vec<ThreadSet> {
-    let sym = |text: &str| module.interner.get(text);
-    let sym_bra = sym("bra");
-    let sym_setp = sym("setp");
+    let sym_bra = module.interner.get("bra");
+    let mut reader = PredicateReader {
+        module,
+        kernel,
+        tracer,
+        memo: HashMap::new(),
+    };
     (0..cfg.blocks.len() as u32)
         .map(BlockId)
         .map(|b| {
@@ -287,16 +363,8 @@ pub(crate) fn block_thread_sets(
                         _ => None,
                     };
                     if let Some(taken_edge) = selected {
-                        let value = taken_edge != guard.negated;
-                        pred = pred.and(
-                            match condition(module, kernel, tracer, pos, guard.reg, sym_setp) {
-                                Some((form, cmp)) => Pred::Cmp(Constraint {
-                                    form,
-                                    cmp: if value { cmp } else { negate(&cmp).to_owned() },
-                                }),
-                                None => Pred::Unknown,
-                            },
-                        );
+                        let p = reader.of(guard.reg, pos, 0);
+                        pred = pred.and(if taken_edge != guard.negated { p } else { !p });
                     }
                 }
                 if d == ControlFlowGraph::ENTRY {
@@ -309,25 +377,17 @@ pub(crate) fn block_thread_sets(
         .collect()
 }
 
-/// The predicate at `pos` as `a − b cmp 0` over the thread index, when
-/// its setp compares two such forms.
+/// The `setp` at `def` as `a − b cmp 0` over the thread index, when it
+/// compares two such forms.
 fn condition(
     module: &Module,
     kernel: &Kernel,
     tracer: &AffineValueTracer,
-    pos: usize,
-    pred: crate::support::intern::Symbol,
-    sym_setp: Option<crate::support::intern::Symbol>,
+    def: usize,
 ) -> Option<(Affine, String)> {
-    let ReachingDefinition::Def(def) = tracer.reach_def(pred, pos, None) else {
-        return None;
-    };
     let Stmt::Instr(setp) = &kernel.stmts[def] else {
         return None;
     };
-    if Some(setp.mnemonic) != sym_setp {
-        return None;
-    }
     let mods: Vec<&str> = module
         .modifiers(setp)
         .iter()

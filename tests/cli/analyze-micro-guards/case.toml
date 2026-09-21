@@ -1,0 +1,4 @@
+# A branch on an and.pred of two %tid.x comparisons selects the
+# fallthrough block for the 63 threads that fail it.
+args = ["analyze", "{fixtures}/micro/guards.ptx"]
+exit = 0

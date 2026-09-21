@@ -146,3 +146,4 @@ tests/fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx	attn_fwd_ws_kernel	<block
 tests/fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx	attn_fwd_ws_kernel	$L__BB0_31	<= 128 (⌊%tid.x/32⌋ >= 4)
 tests/fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx	attn_fwd_ws_kernel	<block 71>	<= 128 (⌊%tid.x/32⌋ >= 4)
 tests/fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx	attn_fwd_ws_kernel	$L__BB0_62	128 (⌊%tid.x/32⌋ < 4)
+tests/fixtures/micro/guards.ptx	micro_guards	<block 1>	63 (not (%tid.x == 0 and %tid.x < 32))

@@ -1,0 +1,49 @@
+//
+// HAND-WRITTEN: instruction guards built from thread-index predicates.
+// Stores guarded by and.pred, or.pred and not.pred of %tid.x
+// comparisons, a negated guard, a guard on a loaded value, and a block
+// selected by a branch on the and.pred, which with .reqntid 64 runs
+// on 63 threads.
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_guards(
+	.param .u64 micro_guards_param_0,
+	.param .u64 micro_guards_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<8>;
+	.reg .b16 	%rs<2>;
+	.reg .b32 	%r<8>;
+	.reg .f32 	%f<4>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_guards_param_0];
+	ld.param.u64 	%rd2, [micro_guards_param_1];
+	cvta.to.global.u64 	%rd3, %rd1;
+	cvta.to.global.u64 	%rd4, %rd2;
+	mov.u32 	%r1, %tid.x;
+	mul.wide.u32 	%rd5, %r1, 4;
+	add.s64 	%rd6, %rd3, %rd5;
+	ld.global.f32 	%f1, [%rd6];
+	mov.u16 	%rs1, 7;
+	setp.eq.u32 	%p1, %r1, 0;
+	setp.lt.u32 	%p2, %r1, 32;
+	and.pred 	%p3, %p1, %p2;
+	or.pred 	%p4, %p1, %p2;
+	not.pred 	%p5, %p2;
+	@%p3 st.global.f32 	[%rd4], %f1;
+	@%p4 st.global.v2.f32 	[%rd4+8], {%f1, %f1};
+	@%p5 st.global.v4.f32 	[%rd4+16], {%f1, %f1, %f1, %f1};
+	@!%p1 st.global.u16 	[%rd4+32], %rs1;
+	ld.global.u32 	%r2, [%rd4+36];
+	setp.ne.u32 	%p6, %r2, 0;
+	@%p6 st.global.u32 	[%rd4+40], %r2;
+	@%p3 bra 	$L__BB0_2;
+	st.global.b64 	[%rd4+48], %rd5;
+$L__BB0_2:
+	ret;
+}
