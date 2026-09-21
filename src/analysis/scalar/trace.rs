@@ -68,10 +68,18 @@ impl<'a> AffineValueTracer<'a> {
         for (i, stmt) in kernel.stmts.iter().enumerate() {
             if let Stmt::Instr(instr) = stmt
                 && let Some(&first) = module.operand_ids(instr.operands).first()
-                && let Operand::Register(reg) = module.operand(first)
                 && defines_dest(module.interner.resolve(instr.mnemonic))
             {
-                defs.entry(*reg).or_default().push(i);
+                let written = match module.operand(first) {
+                    Operand::Register(_) => std::slice::from_ref(&first),
+                    Operand::MultipleDestinations { children } => module.operand_ids(*children),
+                    _ => &[],
+                };
+                for &id in written {
+                    if let Operand::Register(reg) = module.operand(id) {
+                        defs.entry(*reg).or_default().push(i);
+                    }
+                }
             }
         }
         let params = kernel

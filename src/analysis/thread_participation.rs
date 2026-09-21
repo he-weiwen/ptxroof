@@ -252,15 +252,62 @@ impl ThreadSet {
 }
 
 /// Reads predicate registers back to the thread-index conditions that
-/// define them, once per definition.
+/// define them, once per definition, and block selections once per
+/// block.
 struct PredicateReader<'a> {
     module: &'a Module,
     kernel: &'a Kernel,
+    cfg: &'a ControlFlowGraph,
+    forest: &'a LoopForest,
     tracer: &'a AffineValueTracer<'a>,
     memo: HashMap<usize, Pred>,
+    blocks: Vec<Option<Pred>>,
 }
 
 impl PredicateReader<'_> {
+    fn block(&mut self, b: BlockId) -> Pred {
+        if let Some(p) = &self.blocks[b.0 as usize] {
+            return p.clone();
+        }
+        let sym_bra = self.module.interner.get("bra");
+        let mut pred = Pred::True;
+        let mut cur = self.forest.doms.idom[b.0 as usize];
+        while let Some(d) = cur {
+            let blk = self.cfg.block(d);
+            // The dominator's conditional branch, if it selects for b.
+            let last = self.kernel.stmts[blk.start..blk.end]
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(i, s)| match s {
+                    Stmt::Instr(instr) => Some((blk.start + i, instr)),
+                    _ => None,
+                });
+            if let Some((pos, instr)) = last
+                && Some(instr.mnemonic) == sym_bra
+                && let Some(guard) = instr.predicate
+                && let [taken, fallthrough] = blk.succs[..]
+            {
+                let via = |s: BlockId| s == b || self.tracer.path_avoiding(s, b, d);
+                let selected = match (via(taken), via(fallthrough)) {
+                    (true, false) => Some(true),
+                    (false, true) => Some(false),
+                    _ => None,
+                };
+                if let Some(taken_edge) = selected {
+                    let p = self.of(guard.reg, pos, 0);
+                    pred = pred.and(if taken_edge != guard.negated { p } else { !p });
+                }
+            }
+            if d == ControlFlowGraph::ENTRY {
+                break;
+            }
+            cur = self.forest.doms.idom[d.0 as usize];
+        }
+        self.blocks[b.0 as usize] = Some(pred.clone());
+        pred
+    }
+
     fn of(&mut self, reg: Symbol, pos: usize, depth: u32) -> Pred {
         let ReachingDefinition::Def(def) = self.tracer.reach_def(reg, pos, None) else {
             return Pred::Unknown;
@@ -334,47 +381,15 @@ pub(crate) fn thread_sets(
     let mut reader = PredicateReader {
         module,
         kernel,
+        cfg,
+        forest,
         tracer,
         memo: HashMap::new(),
+        blocks: vec![None; cfg.blocks.len()],
     };
     let blocks: Vec<ThreadSet> = (0..cfg.blocks.len() as u32)
-        .map(BlockId)
-        .map(|b| {
-            let mut pred = Pred::True;
-            let mut cur = forest.doms.idom[b.0 as usize];
-            while let Some(d) = cur {
-                let blk = cfg.block(d);
-                // The dominator's conditional branch, if it selects for b.
-                let last = kernel.stmts[blk.start..blk.end]
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find_map(|(i, s)| match s {
-                        Stmt::Instr(instr) => Some((blk.start + i, instr)),
-                        _ => None,
-                    });
-                if let Some((pos, instr)) = last
-                    && Some(instr.mnemonic) == sym_bra
-                    && let Some(guard) = instr.predicate
-                    && let [taken, fallthrough] = blk.succs[..]
-                {
-                    let via = |s: BlockId| s == b || tracer.path_avoiding(s, b, d);
-                    let selected = match (via(taken), via(fallthrough)) {
-                        (true, false) => Some(true),
-                        (false, true) => Some(false),
-                        _ => None,
-                    };
-                    if let Some(taken_edge) = selected {
-                        let p = reader.of(guard.reg, pos, 0);
-                        pred = pred.and(if taken_edge != guard.negated { p } else { !p });
-                    }
-                }
-                if d == ControlFlowGraph::ENTRY {
-                    break;
-                }
-                cur = forest.doms.idom[d.0 as usize];
-            }
-            ThreadSet { pred }
+        .map(|b| ThreadSet {
+            pred: reader.block(BlockId(b)),
         })
         .collect();
     let mut instructions = HashMap::new();
