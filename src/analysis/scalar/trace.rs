@@ -172,6 +172,12 @@ impl<'a> AffineValueTracer<'a> {
     /// `mov i, t` in the latch, LLVM's two-register counter); the step
     /// is the sum of the constants along that chain, and phi is the
     /// chain's register defined before the loop.
+    /// The bound block shape has one row and one plane.
+    fn one_dimensional(&self) -> bool {
+        self.bindings
+            .is_some_and(|b| b.get("%ntid.y") == Some(&1) && b.get("%ntid.z") == Some(&1))
+    }
+
     pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<String, i64>) -> Self {
         self.bindings = Some(bindings);
         self
@@ -511,6 +517,13 @@ impl<'a> AffineValueTracer<'a> {
             ReachingDefinition::None => {
                 return match Var::special(name) {
                     Some(v) => Ok(Affine::var(v)),
+                    // PTX ISA §10.3: %laneid is "the thread's lane within the
+                    // warp", and §3.1: a warp "contains threads of consecutive,
+                    // increasing thread IDs with the first warp containing
+                    // thread 0"; in a one-dimensional block that is %tid.x mod 32.
+                    None if name == "%laneid" && self.one_dimensional() => {
+                        Ok(Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
+                    }
                     // The launch shape is uniform: a symbol, bound when known.
                     None if name.starts_with("%ntid") || name.starts_with("%nctaid") => {
                         Ok(Affine::invariant(SymExpr::sym(name)))

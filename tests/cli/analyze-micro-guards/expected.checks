@@ -6,4 +6,4 @@ block size: 64 threads (64x1x1 from .reqntid)
 totals per CTA [static]:
 global store 8 B      127
 st.global.b64        63
-global bytes: load 516 B, store <= 1658 B
+global bytes: load 516 B, store <= 1666 B

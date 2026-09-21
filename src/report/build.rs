@@ -1523,6 +1523,26 @@ mod tests {
     }
 
     #[test]
+    fn laneid_is_the_lane_in_a_one_dimensional_block() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n\
+                   .reqntid 64, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %laneid;\n\
+                   setp.eq.u32 %p1, %r1, 0;\n@%p1 st.global.u32 [%rd1], %r1;\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let cta = r.kernels[0].totals_per_cta.as_ref().expect("launch");
+        assert_eq!(cta.bytes["global"].store.expr, "8");
+        assert!(!cta.bytes["global"].store.at_most);
+        // Two rows of 32: the lane is not a function of %tid.x alone.
+        let src = src.replace(".reqntid 64, 1, 1", ".reqntid 32, 2, 1");
+        let r = analyze(&src, "t", &opts).expect("analyzes");
+        let cta = r.kernels[0].totals_per_cta.as_ref().expect("launch");
+        assert_eq!(cta.bytes["global"].store.expr, "256");
+        assert!(cta.bytes["global"].store.at_most);
+    }
+
+    #[test]
     fn loop_bytes_count_every_thread_and_iteration_once() {
         let opts = AnalyzeOptions::default();
         let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
