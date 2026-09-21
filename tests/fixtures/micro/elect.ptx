@@ -1,8 +1,10 @@
 //
 // HAND-WRITTEN: elect.sync as an instruction guard (sm_90). One store
 // runs on the elected lane of warp 0, one on the elected lane of every
-// warp, one on every other lane; with .reqntid 128 the per-CTA store
-// bytes are 4 + 4 * 8 + 124 * 2 = 284 B.
+// warp, one on every other lane, and one on lane 0 if it is the
+// elected lane of its warp, which the ISA leaves unspecified; with
+// .reqntid 128 the per-CTA store bytes are 4 + 4 * 8 + 124 * 2 = 284 B
+// plus at most 4.
 //
 .version 8.7
 .target sm_90
@@ -14,7 +16,7 @@
 )
 .reqntid 128, 1, 1
 {
-	.reg .pred 	%p<4>;
+	.reg .pred 	%p<6>;
 	.reg .b16 	%rs<2>;
 	.reg .b32 	%r<8>;
 	.reg .f32 	%f<4>;
@@ -36,5 +38,8 @@
 	@%p3 st.global.f32 	[%rd4], %f1;
 	@%p2 st.global.v2.f32 	[%rd4+8], {%f1, %f1};
 	@!%p2 st.global.u16 	[%rd4+16], %rs1;
+	setp.eq.u32 	%p4, %r1, 0;
+	and.pred 	%p5, %p4, %p2;
+	@%p5 st.global.b32 	[%rd4+24], %r1;
 	ret;
 }

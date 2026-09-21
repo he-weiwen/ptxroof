@@ -168,6 +168,7 @@ tests/fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx	rmsnorm_stats_kernel	gluon_n
 tests/fixtures/micro/elect.ptx	micro_elect	<block 0>	st.global.f32	1 (⌊%tid.x/32⌋ == 0 and elected)
 tests/fixtures/micro/elect.ptx	micro_elect	<block 0>	st.global.v2.f32	4 (elected)
 tests/fixtures/micro/elect.ptx	micro_elect	<block 0>	st.global.u16	124 (not (elected))
+tests/fixtures/micro/elect.ptx	micro_elect	<block 0>	st.global.b32	<= 1 (%tid.x == 0 and elected)
 tests/fixtures/micro/guards.ptx	micro_guards	<block 1>	63 (not (%tid.x == 0 and %tid.x < 32))
 tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.f32	1 (%tid.x == 0 and %tid.x < 32)
 tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	ld.global.f32	1 (%tid.x == 0 and %tid.x < 32)

@@ -1,5 +1,6 @@
 # elect.sync as an instruction guard: the elected lane of warp 0
-# stores 4 B, the elected lane of each of the 4 warps 8 B, and every
-# other lane 2 B, so the per-CTA store total is exact at 284 B.
+# stores 4 B, the elected lane of each of the 4 warps 8 B, every other
+# lane 2 B, and lane 0 stores 4 B only if it is its warp's elected
+# lane, which is unspecified: 284 B plus a bound of 4.
 args = ["analyze", "{fixtures}/micro/elect.ptx"]
 exit = 0

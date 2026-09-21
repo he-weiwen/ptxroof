@@ -34,7 +34,7 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
-use crate::analysis::thread_participation::{Pred, ThreadSet, ThreadSets, thread_sets};
+use crate::analysis::thread_participation::{ThreadSet, ThreadSets, thread_sets};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
@@ -249,9 +249,14 @@ impl KernelReportBuilder<'_> {
                 let Stmt::Instr(instr) = stmt else { continue };
                 let pos = block.start + si;
                 let set = self.sets.of(bid, pos);
-                let guard_exact = self.sets.guards.get(&pos).is_none_or(Pred::exact);
+                let guard_exact = self.sets.guards.get(&pos).is_none_or(|g| {
+                    let alone = ThreadSet { pred: g.clone() };
+                    alone
+                        .count(shape)
+                        .map_or(g.exact(), |c| c.certain == c.possible)
+                });
                 let conditional = self.blocks[bid.0 as usize].qualifier == CountQualifier::AtMost
-                    && !(set.exact() && set.count(shape).is_some());
+                    && set.count(shape).is_none_or(|c| c.certain != c.possible);
                 let threads = self
                     .sets
                     .guards
@@ -813,6 +818,16 @@ impl<'a> KernelReportBuilder<'a> {
             let set = &f.set;
             let bytes = i64::from(f.bytes);
             at_most |= !f.guard_exact || f.conditional;
+            // Which lane an election picks is unspecified: a lane-dependent
+            // address touched by the elected lane is a bound.
+            if f.set.pred.elect_active().is_some()
+                && f.form
+                    .terms
+                    .keys()
+                    .any(crate::analysis::scalar::lane_eval::depends_on_lane)
+            {
+                at_most = true;
+            }
             let mut key = f.form.clone();
             key.terms.retain(|v, _| {
                 !crate::analysis::scalar::lane_eval::depends_on_lane(v) && *v != Var::Iter(id)
@@ -862,10 +877,11 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// The threads a set selects, when a thread-index condition does.
     fn threads_info(&self, set: &ThreadSet) -> Option<ThreadsInfo> {
+        let counted = set.count(self.shape);
         Some(ThreadsInfo {
             condition: set.render()?,
-            count: set.count(self.shape).map(u64::from),
-            at_most: !set.exact(),
+            count: counted.map(|c| u64::from(c.possible)),
+            at_most: counted.map_or(!set.exact(), |c| c.certain != c.possible),
         })
     }
 
@@ -963,8 +979,10 @@ impl<'a> KernelReportBuilder<'a> {
             // A block selected by thread-index branches runs on exactly
             // its threads: per CTA that count, and not a bound.
             let resolve = |set: &ThreadSet| {
-                let selected = cta.and(set.count(self.shape));
-                let explained = selected.is_some() && set.exact();
+                let counted = set.count(self.shape);
+                let selected = cta.and(counted.map(|c| c.possible));
+                let explained =
+                    selected.is_some() && counted.is_some_and(|c| c.certain == c.possible);
                 let conditional = bm.qualifier == CountQualifier::AtMost && !explained;
                 let at_most = conditional || chain_at_most || cta.is_some_and(|c| !c.exact);
                 let threads = match (cta, selected) {
