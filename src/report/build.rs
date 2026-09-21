@@ -250,6 +250,12 @@ impl KernelReportBuilder<'_> {
                 let pos = block.start + si;
                 let set = self.sets.of(bid, pos);
                 let guard_exact = self.sets.guards.get(&pos).is_none_or(Pred::exact);
+                let threads = self
+                    .sets
+                    .guards
+                    .contains_key(&pos)
+                    .then(|| self.threads_info(&set))
+                    .flatten();
                 let mem_ops: Vec<_> = module
                     .operand_ids(instr.operands)
                     .iter()
@@ -383,6 +389,7 @@ impl KernelReportBuilder<'_> {
                         direction: direction.to_owned(),
                         bytes,
                         predicated: instr.predicate.is_some(),
+                        threads: threads.clone(),
                         path: cache_path(
                             module.interner.resolve(instr.mnemonic),
                             &mods,
@@ -847,14 +854,12 @@ impl<'a> KernelReportBuilder<'a> {
         })
     }
 
-    /// The block's selected threads as text, when a branch selects them.
-    fn thread_set_text(&self, b: BlockId) -> Option<String> {
-        let set = &self.sets.blocks[b.0 as usize];
-        let cond = set.render()?;
-        let bound = if set.exact() { "" } else { "<= " };
-        Some(match set.count(self.shape) {
-            Some(n) => format!("{bound}{n} ({cond})"),
-            None => format!("{bound}({cond})"),
+    /// The threads a set selects, when a thread-index condition does.
+    fn threads_info(&self, set: &ThreadSet) -> Option<ThreadsInfo> {
+        Some(ThreadsInfo {
+            condition: set.render()?,
+            count: set.count(self.shape).map(u64::from),
+            at_most: !set.exact(),
         })
     }
 
@@ -873,7 +878,7 @@ impl<'a> KernelReportBuilder<'a> {
                     name: name(b),
                     lines: self.line_span(&instrs),
                     instructions: instrs.len() as u64,
-                    threads: self.thread_set_text(b),
+                    threads: self.threads_info(&self.sets.blocks[b.0 as usize]),
                     successors: self.cfg.block(b).succs.iter().map(|&s| name(s)).collect(),
                     r#loop: in_loop,
                 }
@@ -1404,6 +1409,11 @@ impl<'a> KernelReportBuilder<'a> {
             .map(|(block, source)| LaunchInfo {
                 block,
                 threads: block.iter().map(|&d| d as u64).product(),
+                warps: block
+                    .iter()
+                    .map(|&d| d as u64)
+                    .product::<u64>()
+                    .div_ceil(32),
                 source: source.to_owned(),
                 exact: source != ".maxntid",
             });
@@ -1489,9 +1499,13 @@ mod tests {
                    st.global.f32 [%rd1], %f1;\n$L__END:\nret;\n}\n";
         let r = analyze(src, "t", &opts).expect("analyzes");
         let k = &r.kernels[0];
-        let threads: Vec<Option<&str>> = k.blocks.iter().map(|b| b.threads.as_deref()).collect();
+        let threads: Vec<Option<String>> = k
+            .blocks
+            .iter()
+            .map(|b| b.threads.as_ref().map(ThreadsInfo::render))
+            .collect();
         assert_eq!(
-            threads,
+            threads.iter().map(Option::as_deref).collect::<Vec<_>>(),
             [
                 None,
                 Some("128 (⌊%tid.x/32⌋ >= 4)"),
@@ -1517,7 +1531,11 @@ mod tests {
         );
         let r = analyze(&src, "t", &opts).expect("analyzes");
         assert_eq!(
-            r.kernels[0].blocks[2].threads.as_deref(),
+            r.kernels[0].blocks[2]
+                .threads
+                .as_ref()
+                .map(ThreadsInfo::render)
+                .as_deref(),
             Some("128 (⌊%tid.x/32⌋ < 4)")
         );
     }

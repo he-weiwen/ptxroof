@@ -133,23 +133,26 @@ impl Pred {
 
     /// The thread-index conditions as text; an unknown selector under
     /// a conjunction is left to the `<=` marker, elsewhere it prints
-    /// as `?`.
-    fn render(&self) -> Option<String> {
+    /// as `?`. A disjunction is parenthesized when nested.
+    fn render(&self, nested: bool) -> Option<String> {
         match self {
             Pred::True => None,
             Pred::Unknown => Some("?".to_owned()),
             Pred::Cmp(c) => Some(c.render()),
             Pred::Elect(_) => Some("elected".to_owned()),
-            Pred::Not(p) => Some(format!("not ({})", p.render()?)),
+            Pred::Not(p) => Some(format!("not ({})", p.render(false)?)),
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
                     .filter(|p| !matches!(p.as_ref(), Pred::Unknown))
-                    .filter_map(|p| p.render())
+                    .filter_map(|p| p.render(true))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
-            Pred::Or(a, b) => Some(format!("({} or {})", a.render()?, b.render()?)),
+            Pred::Or(a, b) => {
+                let text = format!("{} or {}", a.render(true)?, b.render(true)?);
+                Some(if nested { format!("({text})") } else { text })
+            }
         }
     }
 }
@@ -263,7 +266,7 @@ impl ThreadSet {
     pub fn render(&self) -> Option<String> {
         self.pred
             .has_condition()
-            .then(|| self.pred.render())
+            .then(|| self.pred.render(false))
             .flatten()
     }
 
@@ -573,7 +576,7 @@ mod tests {
         assert_eq!(either.count([256, 1, 1]), Some(128));
         assert_eq!(
             either.render().as_deref(),
-            Some("(%tid.x == 0 or ⌊%tid.x/32⌋ < 4)")
+            Some("%tid.x == 0 or ⌊%tid.x/32⌋ < 4")
         );
         let neither = ThreadSet {
             pred: !either.pred.clone(),
@@ -582,7 +585,7 @@ mod tests {
         assert_eq!(neither.count([256, 1, 1]), Some(128));
         assert_eq!(
             neither.render().as_deref(),
-            Some("not ((%tid.x == 0 or ⌊%tid.x/32⌋ < 4))")
+            Some("not (%tid.x == 0 or ⌊%tid.x/32⌋ < 4)")
         );
         assert_eq!((!lane0.clone()).eval([0, 0, 0], [64, 1, 1]), Tri::No);
         assert_eq!(!!lane0.clone(), lane0);
@@ -593,7 +596,7 @@ mod tests {
         assert_eq!(hedged.pred.eval([0, 0, 0], [64, 1, 1]), Tri::Yes);
         assert_eq!(hedged.pred.eval([1, 0, 0], [64, 1, 1]), Tri::Maybe);
         assert_eq!(hedged.count([64, 1, 1]), Some(64));
-        assert_eq!(hedged.render().as_deref(), Some("(%tid.x == 0 or ?)"));
+        assert_eq!(hedged.render().as_deref(), Some("%tid.x == 0 or ?"));
         assert_eq!(!Pred::Unknown, Pred::Unknown);
     }
 

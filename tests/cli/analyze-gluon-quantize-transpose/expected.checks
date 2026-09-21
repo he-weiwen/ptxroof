@@ -1,6 +1,6 @@
 kernel quantize_transpose_kernel
 $L__func_begin0  gluon_norm.py:79-99    1049  (end)
-block size: 128 threads (128x1x1 from .reqntid)
+block size: 128 threads, 4 warps (128x1x1 from .reqntid)
 cvt.rn.satfinite.e4m3x2.f32   64
 flops = 256  (f32 256)
 global bytes: load 292 B, store 256 B

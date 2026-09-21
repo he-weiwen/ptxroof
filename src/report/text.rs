@@ -47,10 +47,11 @@ pub fn render(report: &Report) -> String {
             } else {
                 ("<= ", " — a maximum, not the launch")
             };
+            let warps = if l.warps == 1 { "warp" } else { "warps" };
             let _ = writeln!(
                 w,
-                "  block size: {bound}{} threads ({}x{}x{} from {}{note})",
-                l.threads, l.block[0], l.block[1], l.block[2], l.source
+                "  block size: {bound}{} threads, {} {warps} ({}x{}x{} from {}{note})",
+                l.threads, l.warps, l.block[0], l.block[1], l.block[2], l.source
             );
         }
         let sm = &k.shared_memory;
@@ -225,7 +226,13 @@ fn render_blocks(w: &mut String, blocks: &[BlockInfo]) {
                 role,
             ];
             if with_threads {
-                row.insert(3, b.threads.clone().unwrap_or_default());
+                row.insert(
+                    3,
+                    b.threads
+                        .as_ref()
+                        .map(ThreadsInfo::render)
+                        .unwrap_or_default(),
+                );
             }
             row
         })
@@ -297,6 +304,17 @@ fn intensity(ai: &Intensity) -> String {
 
 /// One row per memory operand: site, opcode, what moves, and where it
 /// points or why that is unknown.
+/// `1 thread (%tid.x == 0)`, `<= 128 threads (⌊%tid.x/32⌋ < 4)`, or
+/// `the threads with ⌊%tid.x/32⌋ < 4` without a block shape.
+fn threads_phrase(t: &ThreadsInfo) -> String {
+    let bound = if t.at_most { "<= " } else { "" };
+    match t.count {
+        Some(1) if !t.at_most => format!("1 thread ({})", t.condition),
+        Some(n) => format!("{bound}{n} threads ({})", t.condition),
+        None => format!("the threads with {}", t.condition),
+    }
+}
+
 fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
     if rows.is_empty() {
         return;
@@ -313,7 +331,11 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
         .iter()
         .map(|a| {
             let bytes = a.bytes.map(|b| format!(" {b} B")).unwrap_or_default();
-            let pred = if a.predicated { " (predicated)" } else { "" };
+            let pred = match (&a.threads, a.predicated) {
+                (Some(t), _) => format!(" on {}", threads_phrase(t)),
+                (None, true) => " (predicated)".to_owned(),
+                _ => String::new(),
+            };
             let via = if a.path == "shared memory" {
                 String::new()
             } else {

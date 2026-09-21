@@ -116,17 +116,41 @@ pub struct BlockInfo {
     pub lines: Option<String>,
     pub instructions: u64,
     /// The threads of the CTA that execute the block, when a branch on
-    /// the thread index selects them: the count, if the block shape is
-    /// known, and the condition (`128 (⌊%tid.x/32⌋ < 4)`). Absent when
-    /// every thread runs the block or the selecting branch is not a
-    /// thread-index condition.
+    /// the thread index selects them. Absent when every thread runs the
+    /// block or no selecting branch is a thread-index condition.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub threads: Option<String>,
+    pub threads: Option<ThreadsInfo>,
     /// Successor block names; empty for a block that ends the kernel.
     pub successors: Vec<String>,
     /// The innermost loop containing the block, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub r#loop: Option<BlockLoop>,
+}
+
+/// The threads that execute a block or a guarded instruction, when a
+/// thread-index condition selects them.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ThreadsInfo {
+    /// `⌊%tid.x/32⌋ < 4 and elected`.
+    pub condition: String,
+    /// How many threads of the block satisfy it; absent without a
+    /// block shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+    /// Some selector is not a thread-index condition: the count and
+    /// the condition are an upper bound.
+    pub at_most: bool,
+}
+
+impl ThreadsInfo {
+    /// `128 (⌊%tid.x/32⌋ < 4)`, `<= (%tid.x == 0)` without a shape.
+    pub fn render(&self) -> String {
+        let bound = if self.at_most { "<= " } else { "" };
+        match self.count {
+            Some(n) => format!("{bound}{n} ({})", self.condition),
+            None => format!("{bound}({})", self.condition),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -165,6 +189,7 @@ pub struct SharedMemory {
 pub struct LaunchInfo {
     pub block: [u32; 3],
     pub threads: u64,
+    pub warps: u64,
     /// "flag", ".reqntid", or ".maxntid".
     pub source: String,
     /// `.maxntid` is a maximum, not the launch: `false` there, and
@@ -226,7 +251,12 @@ pub struct Access {
     /// Bytes per thread per execution, when the instruction states them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u32>,
+    /// The instruction is guarded.
     pub predicated: bool,
+    /// The threads the guard selects, when it is a thread-index
+    /// condition; the bytes and footprint count those threads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threads: Option<ThreadsInfo>,
     /// The cache level the access can hit at, from the state space and
     /// the cache operator (PTX ISA §9.7.9.1): "L1 and L2", "L2 only
     /// (.cg)", "read-only path (.nc)", "evict-first streaming (.cs)",

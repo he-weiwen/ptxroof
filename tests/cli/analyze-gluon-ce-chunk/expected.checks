@@ -1,7 +1,7 @@
 kernel ce_chunk_kernel
 |    <block 3>        (no line info)          2  $L__BB0_4
 $L__tmp27        gluon_ce.py:31-65      35  (end)
-block size: 512 threads (512x1x1 from .reqntid)
+block size: 512 threads, 16 warps (512x1x1 from .reqntid)
 shared memory [static]: 0 B per CTA + dynamic (set at launch)
 loop gluon_ce.py:47 ($L__BB0_1)
 trips = 8
@@ -15,9 +15,9 @@ flops = 161  (bf16 8, f32 153)
 global bytes: load 16 B, store 16 B
 global bytes per CTA over the loop's own blocks: requested 131072 B, unique 131072 B
 accesses outside loops:
-gluon_ce.py:40  ld.global.b64                    global load 8 B via L1 and L2                        warp: 1 sector, 1 line  [8 * %ctaid.x + param_1]
-gluon_ce.py:45  ld.global.b16                    global load 2 B via L1 and L2                                                unknown: value defined by unsupported instruction `selp`
-gluon_ce.py:65  atom.global.gpu.acq_rel.max.s32  global load+store 4 B via L2 (atomics) (predicated)  warp: 1 sector, 1 line  [param_4]
+gluon_ce.py:40  ld.global.b64                    global load 8 B via L1 and L2                                              warp: 1 sector, 1 line  [8 * %ctaid.x + param_1]
+gluon_ce.py:45  ld.global.b16                    global load 2 B via L1 and L2                                                                      unknown: value defined by unsupported instruction `selp`
+gluon_ce.py:65  atom.global.gpu.acq_rel.max.s32  global load+store 4 B via L2 (atomics) on 1 thread (%tid.x == 0)           warp: 1 sector, 1 line  [param_4]
 totals [static]:
 unrolled source lines: gluon_ce.py:31 x6, gluon_ce.py:42 x2, gluon_ce.py:45 x11, gluon_ce.py:50 x33, gluon_ce.py:64 x18
 unknowns: none

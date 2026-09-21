@@ -1,5 +1,5 @@
 kernel attn_bwd_kernel
-block size: 256 threads (256x1x1 from .reqntid)
+block size: 256 threads, 8 warps (256x1x1 from .reqntid)
 loop gluon_attn_bwd.py:112 ($L__BB0_2)
 trips = unknown: latch condition depends on special register %ctaid.x
 mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32    160

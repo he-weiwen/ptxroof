@@ -1,8 +1,10 @@
-//! The thread set of every block of every fixture, as the report
-//! renders it, in one reviewable snapshot: a change here is a change
-//! in which threads the tool believes execute a block.
+//! The thread set of every block and every guarded access of every
+//! fixture, as the report renders them, in one reviewable snapshot: a
+//! change here is a change in which threads the tool believes execute
+//! an instruction.
 
 use ptxroof::report::build::{AnalyzeOptions, analyze};
+use ptxroof::report::schema::{Access, LoopNode};
 use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,7 +38,33 @@ fn block_thread_sets_across_the_corpus() {
         for kernel in &report.kernels {
             for block in &kernel.blocks {
                 if let Some(threads) = &block.threads {
-                    let _ = writeln!(out, "{rel}\t{}\t{}\t{threads}", kernel.name, block.name);
+                    let _ = writeln!(
+                        out,
+                        "{rel}\t{}\t{}\t{}",
+                        kernel.name,
+                        block.name,
+                        threads.render()
+                    );
+                }
+            }
+            let mut accesses: Vec<&Access> = kernel.accesses.iter().collect();
+            fn walk<'a>(nodes: &'a [LoopNode], out: &mut Vec<&'a Access>) {
+                for n in nodes {
+                    out.extend(n.accesses.iter());
+                    walk(&n.loops, out);
+                }
+            }
+            walk(&kernel.loops, &mut accesses);
+            for a in accesses {
+                if let Some(threads) = &a.threads {
+                    let _ = writeln!(
+                        out,
+                        "{rel}\t{}\t{}\t{}\t{}",
+                        kernel.name,
+                        a.site,
+                        a.opcode,
+                        threads.render()
+                    );
                 }
             }
         }
