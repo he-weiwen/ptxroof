@@ -1,6 +1,6 @@
 kernel attn_fwd_ws_kernel
-/-------------  <block 1>        gluon_attn_fwd.py:79-229       93  128 (⌊%tid.x/32⌋ < 4)          $L__BB0_62, <block 2>
-|  |      /---  <block 2>        gluon_attn_fwd.py:98-118       55  <= 128 (⌊%tid.x/32⌋ < 4)       $L__BB0_38, $L__tmp5
+/-------------  <block 1>        gluon_attn_fwd.py:79-229       93  128 in 4 warps (⌊%tid.x/32⌋ < 4)             $L__BB0_62, <block 2>
+|  |      /---  <block 2>        gluon_attn_fwd.py:98-118       55  <= 128 in <= 4 warps (⌊%tid.x/32⌋ < 4)       $L__BB0_38, $L__tmp5
 block size: 256 threads, 8 warps (256x1x1 from .reqntid)
 loop gluon_attn_fwd.py:126 ($L__BB0_39)
 trips = unknown: loop exit is not at the latch

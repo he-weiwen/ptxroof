@@ -840,10 +840,13 @@ impl<'a> KernelReportBuilder<'a> {
     /// The threads a set selects, when a thread-index condition does.
     fn threads_info(&self, set: &ThreadSet) -> Option<ThreadsInfo> {
         let counted = set.count(self.shape);
+        let warps = set.warps(self.shape);
         Some(ThreadsInfo {
             condition: set.render()?,
             count: counted.map(|c| u64::from(c.possible)),
             at_most: counted.map_or(!set.exact(), |c| c.certain != c.possible),
+            warps: warps.map(|w| u64::from(w.possible)),
+            warps_at_most: warps.map_or(!set.exact(), |w| w.certain != w.possible),
         })
     }
 
@@ -1494,10 +1497,10 @@ mod tests {
             threads.iter().map(Option::as_deref).collect::<Vec<_>>(),
             [
                 None,
-                Some("128 (⌊%tid.x/32⌋ >= 4)"),
-                Some("128 (⌊%tid.x/32⌋ < 4)"),
+                Some("128 in 4 warps (⌊%tid.x/32⌋ >= 4)"),
+                Some("128 in 4 warps (⌊%tid.x/32⌋ < 4)"),
                 None,
-                Some("1 (%tid.x == 0)"),
+                Some("1 in 1 warp (%tid.x == 0)"),
                 None,
             ]
         );
@@ -1522,7 +1525,7 @@ mod tests {
                 .as_ref()
                 .map(ThreadsInfo::render)
                 .as_deref(),
-            Some("128 (⌊%tid.x/32⌋ < 4)")
+            Some("128 in 4 warps (⌊%tid.x/32⌋ < 4)")
         );
     }
 

@@ -140,15 +140,32 @@ pub struct ThreadsInfo {
     /// Some selector is not a thread-index condition: the count and
     /// the condition are an upper bound.
     pub at_most: bool,
+    /// How many warps of the block have a thread in the set; absent
+    /// without a block shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warps: Option<u64>,
+    /// The warp count is an upper bound.
+    pub warps_at_most: bool,
 }
 
 impl ThreadsInfo {
-    /// `128 (⌊%tid.x/32⌋ < 4)`, `<= (%tid.x == 0)` without a shape.
+    /// `128 in 4 warps (⌊%tid.x/32⌋ < 4)`, `<= (%tid.x == 0)` without
+    /// a shape.
     pub fn render(&self) -> String {
         let bound = if self.at_most { "<= " } else { "" };
         match self.count {
-            Some(n) => format!("{bound}{n} ({})", self.condition),
+            Some(n) => format!("{bound}{n} in {} ({})", self.warps_phrase(), self.condition),
             None => format!("{bound}({})", self.condition),
+        }
+    }
+
+    /// `4 warps`, `<= 4 warps`, `1 warp`.
+    pub fn warps_phrase(&self) -> String {
+        let bound = if self.warps_at_most { "<= " } else { "" };
+        match self.warps {
+            Some(1) if !self.warps_at_most => "1 warp".to_owned(),
+            Some(w) => format!("{bound}{w} warps"),
+            None => "warps".to_owned(),
         }
     }
 }

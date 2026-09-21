@@ -304,13 +304,15 @@ fn intensity(ai: &Intensity) -> String {
 
 /// One row per memory operand: site, opcode, what moves, and where it
 /// points or why that is unknown.
-/// `1 thread (%tid.x == 0)`, `<= 128 threads (⌊%tid.x/32⌋ < 4)`, or
-/// `the threads with ⌊%tid.x/32⌋ < 4` without a block shape.
+/// `1 thread in 1 warp (%tid.x == 0)`, `<= 128 threads in 4 warps
+/// (⌊%tid.x/32⌋ < 4)`, or `the threads with ⌊%tid.x/32⌋ < 4` without a
+/// block shape.
 fn threads_phrase(t: &ThreadsInfo) -> String {
     let bound = if t.at_most { "<= " } else { "" };
+    let warps = t.warps_phrase();
     match t.count {
-        Some(1) if !t.at_most => format!("1 thread ({})", t.condition),
-        Some(n) => format!("{bound}{n} threads ({})", t.condition),
+        Some(1) if !t.at_most => format!("1 thread in {warps} ({})", t.condition),
+        Some(n) => format!("{bound}{n} threads in {warps} ({})", t.condition),
         None => format!("the threads with {}", t.condition),
     }
 }

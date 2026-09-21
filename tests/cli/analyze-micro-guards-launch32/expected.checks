@@ -1,5 +1,5 @@
 kernel micro_guards
-|    <block 1>  (no line info)       1  31 (not (%tid.x == 0 and %tid.x < 32))  $L__BB0_2
+|    <block 1>  (no line info)       1  31 in 1 warp (not (%tid.x == 0 and %tid.x < 32))  $L__BB0_2
 block size: 32 threads, 1 warp (32x1x1 from flag)
 totals per CTA [static]:
 global store 16 B      32
