@@ -326,11 +326,23 @@ impl ThreadSet {
     }
 
     /// How many threads of a block of this shape are in the set, when a
-    /// thread-index condition selects them. An elected lane is
-    /// unspecified (PTX ISA §9.7.14.15 promises only that the same
-    /// leader is elected every time), so every active lane is tried as
-    /// the leader and the count ranges over those choices.
+    /// thread-index condition selects them.
     pub fn count(&self, shape: [u32; 3]) -> Option<Counted> {
+        self.tally(shape, |min, max| (min, max))
+    }
+
+    /// How many warps of a block of this shape have a lane in the set:
+    /// PTX ISA §3.1 forms warps from consecutive thread ids.
+    pub fn warps(&self, shape: [u32; 3]) -> Option<Counted> {
+        self.tally(shape, |min, max| (u32::from(min > 0), u32::from(max > 0)))
+    }
+
+    /// Per warp, the fewest and the most lanes in the set, folded by
+    /// `per_warp`. An elected lane is unspecified (PTX ISA §9.7.14.15
+    /// promises only that the same leader is elected every time), so
+    /// every active lane is tried as the leader and the range covers
+    /// those choices.
+    fn tally(&self, shape: [u32; 3], per_warp: impl Fn(u32, u32) -> (u32, u32)) -> Option<Counted> {
         if !self.pred.has_condition() {
             return None;
         }
@@ -343,7 +355,7 @@ impl ThreadSet {
         let mut possible = 0;
         for base in (0..threads).step_by(32) {
             let lanes = base..(base + 32).min(threads);
-            let tally = |leader: Leader| {
+            let lanes_as = |leader: Leader| {
                 let (mut yes, mut maybe) = (0, 0);
                 for l in lanes.clone() {
                     match self.pred.eval_as(lane_of(l, shape), shape, leader) {
@@ -362,19 +374,20 @@ impl ThreadSet {
                 None => Vec::new(),
             };
             let (min, max) = if self.pred.elect_active().is_none() {
-                let (yes, maybe) = tally(Leader::Lowest);
+                let (yes, maybe) = lanes_as(Leader::Lowest);
                 (yes, yes + maybe)
             } else if candidates.is_empty() {
-                let (yes, maybe) = tally(Leader::Nobody);
+                let (yes, maybe) = lanes_as(Leader::Nobody);
                 (yes, yes + maybe)
             } else {
                 candidates
                     .iter()
-                    .map(|&k| tally(Leader::Lane(k)))
+                    .map(|&k| lanes_as(Leader::Lane(k)))
                     .fold((u32::MAX, 0), |(min, max), (yes, maybe)| {
                         (min.min(yes), max.max(yes + maybe))
                     })
             };
+            let (min, max) = per_warp(min, max);
             certain += min;
             possible += max;
         }
@@ -815,5 +828,58 @@ mod tests {
         };
         assert!(!hedged.exact());
         assert_eq!(hedged.count([128, 1, 1]), Some(exact(4)));
+    }
+
+    #[test]
+    fn warps_count_the_groups_of_32_with_a_lane_in_the_set() {
+        let warp0 = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
+            cmp: "eq".to_owned(),
+        });
+        let lane0 = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Tid(Axis::X)),
+            cmp: "eq".to_owned(),
+        });
+        let set = |pred| ThreadSet { pred };
+        assert_eq!(
+            set(Pred::Cmp(warps_below_4())).warps([256, 1, 1]),
+            Some(exact(4))
+        );
+        assert_eq!(set(lane0.clone()).warps([128, 1, 1]), Some(exact(1)));
+        assert_eq!(set(!lane0.clone()).warps([64, 1, 1]), Some(exact(2)));
+        assert_eq!(set(!lane0.clone()).count([64, 1, 1]), Some(exact(63)));
+        // 100 threads span four warps, the last one partial.
+        let below_100 = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-100)),
+            cmp: "lt".to_owned(),
+        });
+        assert_eq!(set(below_100).warps([128, 1, 1]), Some(exact(4)));
+        // Every warp with an active lane has a leader, whichever lane.
+        assert_eq!(
+            set(Pred::Elect(Box::new(Pred::True))).warps([128, 1, 1]),
+            Some(exact(4))
+        );
+        assert_eq!(
+            set(warp0.and(Pred::Elect(Box::new(Pred::True)))).warps([128, 1, 1]),
+            Some(exact(1))
+        );
+        // Whether warp 0's leader is lane 0 is not known.
+        assert_eq!(
+            set(lane0.clone().and(Pred::Elect(Box::new(Pred::True)))).warps([128, 1, 1]),
+            Some(Counted {
+                certain: 0,
+                possible: 1
+            })
+        );
+        // Lane 0 is certainly in; the other lanes of every warp may be.
+        let hedged = set(lane0.or(Pred::Unknown));
+        assert_eq!(
+            hedged.warps([64, 1, 1]),
+            Some(Counted {
+                certain: 1,
+                possible: 2
+            })
+        );
+        assert_eq!(set(Pred::True).warps([64, 1, 1]), None);
     }
 }
