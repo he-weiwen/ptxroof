@@ -95,6 +95,15 @@ convention (`tests/instruction_contributions.rs`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
+- **No cache model.** Cache operators are performance hints (PTX ISA
+  §9.7.9.1) and are not reported. Sectors and lines per warp request
+  assume 32-byte sectors in 128-byte lines, the geometry Nsight Compute
+  confirmed on sm_89 (the k5 and k1 footprint cross-checks below), and
+  are not checked against `.target`. A loop's unique bytes are one
+  CTA's compulsory footprint, ignoring lines another CTA on the same SM
+  fetched, and `requested − unique` is the most an L1 could reuse, not
+  what it does: k5 at 256³ is the one launch where L2 sectors equalled
+  unique bytes times CTAs.
 
 ### Producers and validation
 
@@ -181,15 +190,12 @@ One line each, with the trigger that would start it.
   the lanes under every alignment of the uniform part, since pointer
   parameters carry no alignment in the PTX, so a coalesced 4-byte
   access reads `4–5 sectors`; needs `--launch` or `.reqntid` and
-  `--bind` for a parameter in a lane coefficient; the cache path from
-  the state space and the cache operator, PTX ISA §9.7.9.1, so the
-  GEMM's `cp.async.cg` copies read "L2 only"; per enclosing loop how
+  `--bind` for a parameter in a lane coefficient; per enclosing loop how
   the address moves per iteration, `k[loop]: +16 B/iter` or
   `invariant`, the per-thread reuse class; and per loop the bytes one
   CTA requests and the distinct bytes it touches, the intervals of
-  every executing thread at every iteration merged per base pointer,
-  so intra-CTA reuse is `requested − unique` and the L2-to-L1 sectors
-  are at least `unique / 32`). What remains is listed above.
+  every executing thread at every iteration merged per base pointer).
+  What remains is listed above.
 - `check` verb: CI gate on a kernel property. Trigger: the first gate.
 - Nsight Compute import beside the static columns. Trigger: the first
   static-versus-measured comparison beyond k5.

@@ -257,11 +257,6 @@ pub struct Access {
     /// condition; the bytes and footprint count those threads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub threads: Option<ThreadsInfo>,
-    /// The cache level the access can hit at, from the state space and
-    /// the cache operator (PTX ISA §9.7.9.1): "L1 and L2", "L2 only
-    /// (.cg)", "read-only path (.nc)", "evict-first streaming (.cs)",
-    /// "shared memory", "L2 (atomics)", and so on.
-    pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

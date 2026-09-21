@@ -336,12 +336,7 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                 (None, true) => " (predicated)".to_owned(),
                 _ => String::new(),
             };
-            let via = if a.path == "shared memory" {
-                String::new()
-            } else {
-                format!(" via {}", a.path)
-            };
-            let what = format!("{} {}{bytes}{via}{pred}", a.space, a.direction);
+            let what = format!("{} {}{bytes}{pred}", a.space, a.direction);
             let plural =
                 |r: &crate::analysis::memory_footprint::CountRange, one: &str, many: &str| {
                     format!("{} {}", range(r), if r.max == 1 { one } else { many })
