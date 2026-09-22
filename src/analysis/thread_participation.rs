@@ -10,7 +10,7 @@
 
 use crate::analysis::control_flow::loops::LoopForest;
 use crate::analysis::scalar::affine::{Affine, Var};
-use crate::analysis::scalar::lane_eval::eval_lane;
+use crate::analysis::scalar::lane_eval::{depends_on_lane, eval_lane};
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Operand, Stmt};
@@ -33,6 +33,10 @@ pub enum Pred {
     True,
     False,
     Unknown,
+    /// A condition the tracer reads but cannot evaluate, the same for
+    /// every thread of the CTA: a comparison of parameters, CTA indices
+    /// and loop counters only.
+    Uniform,
     Cmp(Constraint),
     /// `elect.sync`: the lowest lane of each warp among the threads
     /// executing it, which the inner predicate selects.
@@ -76,6 +80,7 @@ impl std::ops::Not for Pred {
             Pred::True => Pred::False,
             Pred::False => Pred::True,
             Pred::Unknown => Pred::Unknown,
+            Pred::Uniform => Pred::Uniform,
             Pred::Cmp(c) => Pred::Cmp(Constraint {
                 form: c.form,
                 cmp: negate(&c.cmp).to_owned(),
@@ -92,6 +97,7 @@ impl Pred {
             (Pred::False, _) | (_, Pred::False) => Pred::False,
             (Pred::True, p) | (p, Pred::True) => p,
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
+            (Pred::Uniform, Pred::Uniform) => Pred::Uniform,
             (a, b) => Pred::And(Box::new(a), Box::new(b)),
         }
     }
@@ -101,6 +107,7 @@ impl Pred {
             (Pred::True, _) | (_, Pred::True) => Pred::True,
             (Pred::False, p) | (p, Pred::False) => p,
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
+            (Pred::Uniform, Pred::Uniform) => Pred::Uniform,
             (a, b) => Pred::Or(Box::new(a), Box::new(b)),
         }
     }
@@ -113,7 +120,7 @@ impl Pred {
         match self {
             Pred::True => Tri::Yes,
             Pred::False => Tri::No,
-            Pred::Unknown => Tri::Maybe,
+            Pred::Unknown | Pred::Uniform => Tri::Maybe,
             Pred::Cmp(c) => {
                 if holds(&c.cmp, eval_lane(&c.form, tid)) {
                     Tri::Yes
@@ -160,15 +167,27 @@ impl Pred {
     pub fn exact(&self) -> bool {
         match self {
             Pred::True | Pred::False | Pred::Cmp(_) => true,
-            Pred::Unknown => false,
+            Pred::Unknown | Pred::Uniform => false,
             Pred::Elect(p) | Pred::Not(p) => p.exact(),
             Pred::And(a, b) | Pred::Or(a, b) => a.exact() && b.exact(),
         }
     }
 
+    /// Every selector decides the same way for all threads of a warp or
+    /// picks by thread index: which lanes of a warp are in the set is
+    /// known whenever any is.
+    pub fn lane_exact(&self) -> bool {
+        match self {
+            Pred::True | Pred::False | Pred::Cmp(_) | Pred::Uniform => true,
+            Pred::Unknown => false,
+            Pred::Elect(p) | Pred::Not(p) => p.lane_exact(),
+            Pred::And(a, b) | Pred::Or(a, b) => a.lane_exact() && b.lane_exact(),
+        }
+    }
+
     fn has_condition(&self) -> bool {
         match self {
-            Pred::True | Pred::Unknown => false,
+            Pred::True | Pred::Unknown | Pred::Uniform => false,
             Pred::False | Pred::Cmp(_) | Pred::Elect(_) => true,
             Pred::Not(p) => p.has_condition(),
             Pred::And(a, b) | Pred::Or(a, b) => a.has_condition() || b.has_condition(),
@@ -182,14 +201,14 @@ impl Pred {
         match self {
             Pred::True => None,
             Pred::False => Some("no thread".to_owned()),
-            Pred::Unknown => Some("?".to_owned()),
+            Pred::Unknown | Pred::Uniform => Some("?".to_owned()),
             Pred::Cmp(c) => Some(c.render()),
             Pred::Elect(_) => Some("elected".to_owned()),
             Pred::Not(p) => Some(format!("not ({})", p.render(false)?)),
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
-                    .filter(|p| !matches!(p.as_ref(), Pred::Unknown))
+                    .filter(|p| !matches!(p.as_ref(), Pred::Unknown | Pred::Uniform))
                     .filter_map(|p| p.render(true))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
@@ -279,7 +298,7 @@ fn on_lane_only(a: &Affine) -> bool {
         && a.terms.iter().all(|(v, c)| {
             c.as_const().is_some()
                 && matches!(v, Var::Tid(_) | Var::Div(..) | Var::Mod(..))
-                && crate::analysis::scalar::lane_eval::depends_on_lane(v)
+                && depends_on_lane(v)
         })
 }
 
@@ -314,6 +333,10 @@ impl ThreadSet {
     /// Every selector is a thread-index condition.
     pub fn exact(&self) -> bool {
         self.pred.exact()
+    }
+
+    pub fn lane_exact(&self) -> bool {
+        self.pred.lane_exact()
     }
 
     /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
@@ -525,10 +548,7 @@ impl PredicateReader<'_> {
             ops,
         ) {
             ("setp", _, _) => (
-                condition(self.module, self.kernel, self.tracer, def)
-                    .map_or(Pred::Unknown, |(form, cmp)| {
-                        Pred::Cmp(Constraint { form, cmp })
-                    }),
+                condition(self.module, self.kernel, self.tracer, def).unwrap_or(Pred::Unknown),
                 false,
             ),
             ("and" | "or", ["pred"], [_, a, b]) => {
@@ -633,7 +653,7 @@ fn condition(
     kernel: &Kernel,
     tracer: &AffineValueTracer,
     def: usize,
-) -> Option<(Affine, String)> {
+) -> Option<Pred> {
     let Stmt::Instr(setp) = &kernel.stmts[def] else {
         return None;
     };
@@ -657,7 +677,13 @@ fn condition(
     let a = tracer.trace_operand(ops[1], def, None, 0).ok()?;
     let b = tracer.trace_operand(ops[2], def, None, 0).ok()?;
     let form = a - b;
-    on_lane_only(&form).then_some((form, cmp))
+    if on_lane_only(&form) {
+        Some(Pred::Cmp(Constraint { form, cmp }))
+    } else if !form.terms.keys().any(depends_on_lane) {
+        Some(Pred::Uniform)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -881,5 +907,23 @@ mod tests {
             })
         );
         assert_eq!(set(Pred::True).warps([64, 1, 1]), None);
+    }
+
+    #[test]
+    fn a_uniform_unknown_is_lane_exact_but_not_exact() {
+        let set = |pred: Pred| ThreadSet { pred };
+        let uniform = set(Pred::Cmp(warps_below_4()).and(Pred::Uniform));
+        assert!(!uniform.exact() && uniform.lane_exact());
+        assert_eq!(uniform.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));
+        assert_eq!(
+            uniform.count([256, 1, 1]),
+            Some(Counted {
+                certain: 0,
+                possible: 128
+            })
+        );
+        let unknown = set(Pred::Cmp(warps_below_4()).and(Pred::Unknown));
+        assert!(!unknown.exact() && !unknown.lane_exact());
+        assert!(!set(!Pred::Uniform.or(Pred::Unknown)).lane_exact());
     }
 }
