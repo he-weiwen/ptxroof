@@ -173,15 +173,17 @@ impl Pred {
         }
     }
 
-    /// Every selector decides the same way for all threads of a warp or
-    /// picks by thread index: which lanes of a warp are in the set is
-    /// known whenever any is.
+    /// Which lanes of a warp are in the set is known whenever any is:
+    /// a uniform unknown only ever empties the set, which a conjunction
+    /// or an election keeps and a disjunction or a negation does not.
     pub fn lane_exact(&self) -> bool {
         match self {
             Pred::True | Pred::False | Pred::Cmp(_) | Pred::Uniform => true,
             Pred::Unknown => false,
-            Pred::Elect(p) | Pred::Not(p) => p.lane_exact(),
-            Pred::And(a, b) | Pred::Or(a, b) => a.lane_exact() && b.lane_exact(),
+            Pred::Elect(p) => p.lane_exact(),
+            Pred::Not(p) => p.exact(),
+            Pred::And(a, b) => a.lane_exact() && b.lane_exact(),
+            Pred::Or(a, b) => a.exact() && b.exact(),
         }
     }
 
@@ -924,6 +926,11 @@ mod tests {
         );
         let unknown = set(Pred::Cmp(warps_below_4()).and(Pred::Unknown));
         assert!(!unknown.exact() && !unknown.lane_exact());
-        assert!(!set(!Pred::Uniform.or(Pred::Unknown)).lane_exact());
+        // Under a disjunction or a negation the uniform unknown decides
+        // between two lane sets.
+        let lanes = || Pred::Cmp(warps_below_4());
+        assert!(!set(Pred::Uniform.or(lanes())).lane_exact());
+        assert!(!set(!(Pred::Uniform.and(lanes()))).lane_exact());
+        assert!(set(Pred::Elect(Box::new(Pred::Uniform.and(lanes())))).lane_exact());
     }
 }
