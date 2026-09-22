@@ -97,6 +97,17 @@ convention (`tests/instruction_contributions.rs`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
+- **Pointer alignment is unknown.** Sectors per warp request and per
+  loop are ranges over every alignment of the base under which the
+  accesses are aligned (PTX ISA §6.4.1): nvcc declares no `.ptr
+  .align`, Triton declares `.align 1`, and there is no flag to state
+  one. The aligned end matched Nsight Compute on k5 and k1, whose
+  pointers `cudaMalloc` aligned to 256 B. A 16-byte access on a
+  pointer does not narrow the range of a 2-byte access on the same
+  pointer.
+- **No arithmetic intensity over sector bytes.** A loop's sector
+  bytes cover its own blocks while its flops sit in nested loops
+  (k5's K loop: 98,304 B in sectors, no flops of its own).
 - **No cache model.** Cache operators are performance hints (PTX ISA
   §9.7.9.1) and are not reported. Sectors per warp request assume
   32-byte sectors, the granularity Nsight Compute confirmed on sm_89
