@@ -3,8 +3,8 @@
 //! block shape and the threads that execute the instruction.
 //! The lane-dependent part is evaluated for every lane; the uniform
 //! part (CTA index, loop counters, parameters) only shifts the whole
-//! set, so every alignment of it that respects the element size is
-//! tried and the count is reported as a range.
+//! set, so every alignment of it under which the lanes' accesses are
+//! aligned is tried and the count is reported as a range.
 
 #[cfg(test)]
 use crate::analysis::scalar::affine::Axis;
@@ -46,33 +46,45 @@ pub fn warp_footprint(
         return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
     }
     let bytes = i64::from(bytes.max(1));
-    let unit = SECTOR;
-    let (mut min, mut max) = (u32::MAX, 0u32);
-    {
-        for warp in 0..(threads + 31) / 32 {
-            let offsets: Vec<i64> = (warp * 32..((warp + 1) * 32).min(threads))
+    let warps: Vec<Vec<i64>> = (0..(threads + 31) / 32)
+        .map(|warp| {
+            (warp * 32..((warp + 1) * 32).min(threads))
                 .map(|t| [t % nx, (t / nx) % ny, t / (nx * ny)])
                 .filter(|&tid| executes(tid))
                 .map(|tid| lane_terms.iter().map(|(v, k)| k * eval(v, tid)).sum())
+                .collect()
+        })
+        .filter(|offsets: &Vec<i64>| !offsets.is_empty())
+        .collect();
+    // PTX ISA §6.4.1 (Addresses as Operands): an address must be aligned
+    // to the access size, else the behavior is undefined. So the uniform
+    // part is congruent to minus the lanes' common residue.
+    let residue = warps.first().map_or(0, |w| w[0].rem_euclid(bytes));
+    if warps
+        .iter()
+        .flatten()
+        .any(|o| o.rem_euclid(bytes) != residue)
+    {
+        return Err(format!(
+            "lane addresses differ modulo the {bytes} B access size"
+        ));
+    }
+    let (mut min, mut max) = (u32::MAX, 0u32);
+    for offsets in &warps {
+        let mut shift = (bytes - residue) % bytes;
+        while shift < SECTOR {
+            let touched: BTreeSet<i64> = offsets
+                .iter()
+                .flat_map(|&o| {
+                    let lo = (o + shift).div_euclid(SECTOR);
+                    let hi = (o + shift + bytes - 1).div_euclid(SECTOR);
+                    lo..=hi
+                })
                 .collect();
-            if offsets.is_empty() {
-                continue;
-            }
-            let mut shift = 0;
-            while shift < unit {
-                let touched: BTreeSet<i64> = offsets
-                    .iter()
-                    .flat_map(|&o| {
-                        let lo = (o + shift).div_euclid(unit);
-                        let hi = (o + shift + bytes - 1).div_euclid(unit);
-                        lo..=hi
-                    })
-                    .collect();
-                let n = touched.len() as u32;
-                min = min.min(n);
-                max = max.max(n);
-                shift += bytes;
-            }
+            let n = touched.len() as u32;
+            min = min.min(n);
+            max = max.max(n);
+            shift += bytes;
         }
     }
     if min == u32::MAX {
@@ -143,6 +155,28 @@ mod tests {
         assert_eq!(fp_of(&coalesced, 4, [64, 1, 1], |t| t[0] >= 32), (4, 5));
         // No executing lane at this shape.
         assert_eq!(fp_of(&coalesced, 4, [32, 1, 1], |_| false), (0, 0));
+    }
+
+    #[test]
+    fn the_uniform_part_keeps_the_lanes_aligned() {
+        let c = |n: i64| SymExpr::Const(n);
+        // A 4 B word at 2·tid on lane 1 only sits at 2 mod 4, so the
+        // uniform part is 2 mod 4 and the word never straddles a sector.
+        assert_eq!(
+            fp_of(&tid().scale(c(2)), 4, [32, 1, 1], |t| t[0] == 1),
+            (1, 1)
+        );
+        // 4 B words 6 B apart on odd lanes: all at 2 mod 4.
+        assert_eq!(
+            fp_of(&tid().scale(c(6)), 4, [32, 1, 1], |t| t[0] % 2 == 1),
+            (6, 7)
+        );
+        // On every lane no uniform part aligns them all.
+        assert!(
+            warp_footprint(&tid().scale(c(2)), 4, [32, 1, 1], |_| true)
+                .unwrap_err()
+                .contains("modulo")
+        );
     }
 
     #[test]
