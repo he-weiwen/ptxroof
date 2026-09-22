@@ -144,6 +144,7 @@ impl SectorPattern {
         for (shift, slot) in by_residue.iter_mut().enumerate() {
             let touched: BTreeSet<i64> = offsets
                 .iter()
+                .filter(|_| bytes > 0)
                 .flat_map(|&o| {
                     (o + shift as i64).div_euclid(SECTOR)
                         ..=(o + shift as i64 + bytes - 1).div_euclid(SECTOR)
@@ -163,16 +164,16 @@ impl SectorPattern {
     }
 
     /// Whether a base at `rho` modulo a sector keeps every iteration's
-    /// access aligned (PTX ISA §6.4.1).
+    /// access aligned (PTX ISA §6.4.1); iterations count from 1.
     pub fn aligned(&self, rho: i64, trips: i64) -> bool {
         self.residue.is_some_and(|r| {
-            (0..trips).all(|k| (rho + r + self.stride * k).rem_euclid(self.align) == 0)
+            (1..=trips).all(|k| (rho + r + self.stride * k).rem_euclid(self.align) == 0)
         })
     }
 
     /// Sectors touched over the loop with the base at `rho`.
     pub fn total(&self, rho: i64, trips: i64) -> u64 {
-        (0..trips)
+        (1..=trips)
             .map(|k| {
                 u64::from(self.by_residue[(rho + self.stride * k).rem_euclid(SECTOR) as usize])
             })
@@ -269,6 +270,18 @@ mod tests {
         assert!(!SectorPattern::new(&odd, 4, 4, 0).aligned(0, 1));
         // One word for the whole warp: one sector a trip.
         assert_eq!(SectorPattern::new(&[0; 32], 4, 4, 0).total(28, 8), 8);
+        // A copy of no bytes touches nothing.
+        assert_eq!(SectorPattern::new(&offsets, 0, 16, 0).total(16, 4), 0);
+        // Two loads on one base, `4·tid + 4·k − 4` and `4·tid + 4`, over two
+        // trips from k = 1: 17 sectors at the base residue 28, not the 18
+        // a k = 0 start would give.
+        let a = SectorPattern::new(&(0..32).map(|t| 4 * t - 4).collect::<Vec<_>>(), 4, 4, 4);
+        let b = SectorPattern::new(&(0..32).map(|t| 4 * t + 4).collect::<Vec<_>>(), 4, 4, 0);
+        let best = (0..SECTOR)
+            .filter(|&rho| a.aligned(rho, 2) && b.aligned(rho, 2))
+            .map(|rho| a.total(rho, 2) + b.total(rho, 2))
+            .min();
+        assert_eq!(best, Some(17));
     }
 
     #[test]

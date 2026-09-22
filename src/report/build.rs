@@ -872,7 +872,7 @@ impl<'a> KernelReportBuilder<'a> {
                 if intervals.len() as i64 + trips > 1 << 22 {
                     return None;
                 }
-                for k in 0..trips {
+                for k in 1..=trips {
                     let start = base + stride * k;
                     intervals.push((start, start + bytes));
                 }
