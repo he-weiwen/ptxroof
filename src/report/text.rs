@@ -327,6 +327,13 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
         return;
     }
     let _ = writeln!(w, "{pad}{title}:");
+    let shape_note = rows
+        .iter()
+        .filter_map(|a| a.footprint_unknown.as_deref())
+        .find(|why| why.starts_with("block shape unknown"));
+    if let Some(why) = shape_note {
+        let _ = writeln!(w, "{pad}  warp sectors: ? ({why})");
+    }
     let range = |r: &crate::analysis::memory_footprint::CountRange| {
         if r.min == r.max {
             r.min.to_string()
@@ -357,6 +364,7 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                     format!("warp: <= {}{ideal}", plural(s, "sector", "sectors"))
                 }
                 (Some(s), _) => format!("warp: {}{ideal}", plural(s, "sector", "sectors")),
+                (_, Some(why)) if Some(why.as_str()) == shape_note => String::new(),
                 (_, Some(why)) => format!("warp: ? ({why})"),
                 _ => String::new(),
             };

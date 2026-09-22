@@ -3,4 +3,5 @@ kernel micro_smoke
 loop with the most instructions (static): $L__BB0_2
 trips = param_1
 AI(global) = 0.25 flop/B
+warp sectors: ? (block shape unknown: no .reqntid; pass --launch)
 coverage: instructions_classified 100.0%
