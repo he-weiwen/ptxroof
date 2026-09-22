@@ -29,7 +29,7 @@ use crate::analysis::instruction_counts::classify::{
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::analysis::instruction_counts::measurement::{Contribution, MeasureKind};
 use crate::analysis::loop_names::{LoopName, loop_names};
-use crate::analysis::memory_footprint::warp_footprint;
+use crate::analysis::memory_footprint::{CountRange, warp_footprint};
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
@@ -350,7 +350,15 @@ impl KernelReportBuilder<'_> {
                         }
                         _ => None,
                     };
+                    let sectors_at_most = !set.lane_exact();
                     let (sectors_per_request, footprint_unknown) = match footprint {
+                        Some(Ok(f)) if sectors_at_most => (
+                            Some(CountRange {
+                                min: f.max,
+                                max: f.max,
+                            }),
+                            None,
+                        ),
                         Some(Ok(f)) => (Some(f), None),
                         Some(Err(why)) => (None, Some(why)),
                         None => (None, None),
@@ -395,6 +403,7 @@ impl KernelReportBuilder<'_> {
                         address,
                         unknown,
                         sectors_per_request,
+                        sectors_at_most,
                         footprint_unknown,
                         reuse,
                     });

@@ -344,6 +344,9 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                     format!("{} {}", range(r), if r.max == 1 { one } else { many })
                 };
             let warp = match (&a.sectors_per_request, &a.footprint_unknown) {
+                (Some(s), _) if a.sectors_at_most => {
+                    format!("warp: <= {}", plural(s, "sector", "sectors"))
+                }
                 (Some(s), _) => format!("warp: {}", plural(s, "sector", "sectors")),
                 (_, Some(why)) => format!("warp: ? ({why})"),
                 _ => String::new(),
