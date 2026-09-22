@@ -282,9 +282,14 @@ fn render_loop(w: &mut String, l: &LoopNode, depth: usize) {
     render_accesses(w, &format!("{pad}  "), "accesses", &l.accesses);
     if let Some(b) = &l.global_bytes_per_cta {
         let bound = if b.at_most { "<= " } else { "" };
+        let sectors = match b.sector_bytes {
+            Some(s) if s.min == s.max => format!(", in sectors {bound}{} B", s.min),
+            Some(s) => format!(", in sectors {bound}{}–{} B", s.min, s.max),
+            None => String::new(),
+        };
         let _ = writeln!(
             w,
-            "{pad}  global bytes per CTA over the loop's own blocks: requested {bound}{} B, unique {bound}{} B",
+            "{pad}  global bytes per CTA over the loop's own blocks: requested {bound}{} B, unique {bound}{} B{sectors}",
             b.requested, b.unique
         );
     }

@@ -74,8 +74,9 @@ the hardware moves (a warp-collective instruction contributes its warp
 total over the 32 lanes). Per-CTA totals also count warp instructions,
 one issue per warp that has a thread in the block, the unit of Nsight
 Compute's `inst_executed` metrics. With a block shape and a numeric trip count
-each loop also reports the global bytes one CTA requests over it and
-the distinct bytes it touches, the difference being the most a cache
+each loop also reports the global bytes one CTA requests over it, the
+bytes of the sectors those requests move, and the distinct bytes it
+touches, the difference between the last two being the most a cache
 could reuse within the CTA. `<=` marks an upper bound from a conditional
 path, `+ unknown` a total that the scope's unclassified instructions or
 unquantified bytes could raise; whatever cannot be derived is reported

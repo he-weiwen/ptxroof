@@ -249,8 +249,19 @@ pub struct LoopNode {
 pub struct LoopBytes {
     pub requested: u64,
     pub unique: u64,
-    /// Some contributing access is predicated: both are upper bounds.
+    /// The bytes of the 32-byte sectors those requests touch, over the
+    /// alignments of each base pointer, when every access on it is
+    /// aligned under one of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sector_bytes: Option<ByteRange>,
+    /// Some contributing access is predicated: all are upper bounds.
     pub at_most: bool,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+pub struct ByteRange {
+    pub min: u64,
+    pub max: u64,
 }
 
 /// One memory operand of one instruction: where it points, as an

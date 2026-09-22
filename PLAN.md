@@ -24,7 +24,8 @@ comparisons, `%laneid` in a one-dimensional block, combined with
 per-CTA totals count each on its own threads
 (`micro/guards.ptx`, `micro/elect.ptx`); and per loop
 with a numeric trip count, the global bytes one CTA
-requests over the loop's own blocks and the distinct bytes it touches.
+requests over the loop's own blocks, the bytes of the sectors those
+requests touch, and the distinct bytes it touches.
 Text and JSON views of the same tree. Counts are static: per-thread
 unless labeled per-CTA or per-warp, as requested by the PTX; nothing
 is measured (README). Each instruction has one category and independent
@@ -159,7 +160,9 @@ convention (`tests/instruction_contributions.rs`).
   analyze-k5-footprint`, `analyze-k1-footprint`): l1tex global load
   requests and sectors 18,432 / 81,920 (k5) and 1,050,624 / 1,576,960
   (k1), stores 2,048 / 32,768 and 2,048 / 4,096, each the rows'
-  aligned counts times their execution counts. Unique bytes, k5 at
+  aligned counts times their execution counts; per CTA, k5's K loop
+  moves 98,304 B in sectors at the aligned end of its range and the
+  epilogue's 64 loads 65,536 B, 5,120 sectors, times 16 CTAs. Unique bytes, k5 at
   256³ and 16 CTAs: `lts__t_sectors_srcunit_tex_op_read.sum` = 36,868,
   the tool's 65,536 unique B per CTA over the K loop as 2,048 sectors
   plus the epilogue's 256-sector C tile, times 16, plus 4;

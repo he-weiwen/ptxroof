@@ -29,7 +29,7 @@ use crate::analysis::instruction_counts::classify::{
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::analysis::instruction_counts::measurement::{Contribution, MeasureKind};
 use crate::analysis::loop_names::{LoopName, loop_names};
-use crate::analysis::memory_footprint::{CountRange, warp_footprint};
+use crate::analysis::memory_footprint::{CountRange, SECTOR, SectorPattern, warp_footprint};
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
@@ -382,6 +382,7 @@ impl KernelReportBuilder<'_> {
                         forms.entry(scope).or_default().push(AccessForm {
                             form: a.clone(),
                             bytes: b,
+                            align: align.unwrap_or(b),
                             space,
                             set: set.clone(),
                             guard_exact,
@@ -437,6 +438,8 @@ type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
 struct AccessForm {
     form: Affine,
     bytes: u32,
+    /// The access size the address is aligned to.
+    align: u32,
     space: Space,
     /// The threads that execute the instruction.
     set: ThreadSet,
@@ -811,6 +814,7 @@ impl<'a> KernelReportBuilder<'a> {
         let mut requested = 0u64;
         let mut at_most = false;
         let mut per_base: HashMap<Affine, Vec<(i64, i64)>> = HashMap::new();
+        let mut patterns: HashMap<Affine, Vec<SectorPattern>> = HashMap::new();
         for f in global {
             let stride = match f.form.terms.get(&Var::Iter(id)) {
                 Some(c) => c.as_const()?,
@@ -839,7 +843,25 @@ impl<'a> KernelReportBuilder<'a> {
                 !crate::analysis::scalar::lane_eval::depends_on_lane(v) && *v != Var::Iter(id)
             });
             key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
-            let intervals = per_base.entry(key).or_default();
+            let intervals = per_base.entry(key.clone()).or_default();
+            for warp in 0..(threads + 31) / 32 {
+                let offsets: Vec<i64> = (warp * 32..((warp + 1) * 32).min(threads))
+                    .map(|t| [t % nx, (t / nx) % ny, t / (nx * ny)])
+                    .filter(|&tid| set.contains(tid, self.shape))
+                    .map(|tid| crate::analysis::scalar::lane_eval::eval_lane(&f.form, tid))
+                    .collect();
+                if !offsets.is_empty() {
+                    patterns
+                        .entry(key.clone())
+                        .or_default()
+                        .push(SectorPattern::new(
+                            &offsets,
+                            bytes,
+                            i64::from(f.align),
+                            stride,
+                        ));
+                }
+            }
             for t in 0..threads {
                 let tid = [t % nx, (t / nx) % ny, t / (nx * ny)];
                 if !set.contains(tid, self.shape) {
@@ -874,9 +896,24 @@ impl<'a> KernelReportBuilder<'a> {
                 unique += ce - cs;
             }
         }
+        let mut sector_bytes = Some(ByteRange { min: 0, max: 0 });
+        for pats in patterns.values() {
+            let totals: Vec<u64> = (0..SECTOR)
+                .filter(|&rho| pats.iter().all(|p| p.aligned(rho, trips)))
+                .map(|rho| pats.iter().map(|p| p.total(rho, trips)).sum())
+                .collect();
+            sector_bytes = match (sector_bytes, totals.iter().min(), totals.iter().max()) {
+                (Some(s), Some(&lo), Some(&hi)) => Some(ByteRange {
+                    min: s.min + lo * SECTOR as u64,
+                    max: s.max + hi * SECTOR as u64,
+                }),
+                _ => None,
+            };
+        }
         Some(LoopBytes {
             requested,
             unique: unique as u64,
+            sector_bytes,
             at_most,
         })
     }
@@ -1650,13 +1687,17 @@ mod tests {
                    add.s64 %rd3, %rd3, 128;\nadd.s32 %r2, %r2, 1;\nsetp.lt.u32 %p1, %r2, 8;\n\
                    @%p1 bra $L__LOOP;\nret;\n}\n";
         let r = analyze(src, "t", &opts).expect("analyzes");
-        // 32 lanes × 4 B × 8 trips per load; the first sweeps 1024 B, the
-        // second is one word.
+        // 32 lanes × 4 B × 8 trips per load; the first sweeps 1024 B in 4
+        // or 5 sectors a trip, the second is one word in one sector.
         assert_eq!(
             r.kernels[0].loops[0].global_bytes_per_cta,
             Some(LoopBytes {
                 requested: 2048,
                 unique: 1028,
+                sector_bytes: Some(ByteRange {
+                    min: 1280,
+                    max: 1536
+                }),
                 at_most: false,
             })
         );
@@ -1668,6 +1709,10 @@ mod tests {
             Some(LoopBytes {
                 requested: 2016,
                 unique: 1028,
+                sector_bytes: Some(ByteRange {
+                    min: 1280,
+                    max: 1536
+                }),
                 at_most: false,
             })
         );
