@@ -21,6 +21,14 @@ pub struct CountRange {
     pub max: u32,
 }
 
+/// Sectors per warp request, and the fewest the distinct bytes the
+/// executing lanes touch could occupy if packed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Footprint {
+    pub sectors: CountRange,
+    pub ideal: CountRange,
+}
+
 /// Sectors per warp request of an access of `bytes` at an address
 /// aligned to `align` (the access size; `cp.async`'s cp-size when a
 /// smaller src-size is read), or why they cannot be counted:
@@ -32,7 +40,7 @@ pub fn warp_footprint(
     align: u32,
     shape: [u32; 3],
     executes: impl Fn([i64; 3]) -> bool,
-) -> Result<CountRange, String> {
+) -> Result<Footprint, String> {
     let mut lane_terms: Vec<(&Var, i64)> = Vec::new();
     for (v, c) in &a.terms {
         if !depends_on_lane(v) {
@@ -74,7 +82,19 @@ pub fn warp_footprint(
         ));
     }
     let (mut min, mut max) = (u32::MAX, 0u32);
+    let (mut ideal_min, mut ideal_max) = (u32::MAX, 0u32);
     for offsets in &warps {
+        let mut sorted = offsets.clone();
+        sorted.sort_unstable();
+        let mut distinct = 0;
+        let mut end = i64::MIN;
+        for &o in &sorted {
+            distinct += (o + bytes - end.max(o)).max(0);
+            end = end.max(o + bytes);
+        }
+        let packed = ((distinct + SECTOR - 1) / SECTOR) as u32;
+        ideal_min = ideal_min.min(packed);
+        ideal_max = ideal_max.max(packed);
         let mut shift = (align - residue) % align;
         while shift < SECTOR {
             let touched: BTreeSet<i64> = offsets
@@ -92,9 +112,19 @@ pub fn warp_footprint(
         }
     }
     if min == u32::MAX {
-        return Ok(CountRange { min: 0, max: 0 });
+        let none = CountRange { min: 0, max: 0 };
+        return Ok(Footprint {
+            sectors: none,
+            ideal: none,
+        });
     }
-    Ok(CountRange { min, max })
+    Ok(Footprint {
+        sectors: CountRange { min, max },
+        ideal: CountRange {
+            min: ideal_min,
+            max: ideal_max,
+        },
+    })
 }
 
 #[cfg(test)]
@@ -127,7 +157,7 @@ mod tests {
         executes: impl Fn([i64; 3]) -> bool,
     ) -> (u32, u32) {
         let f = warp_footprint(a, bytes, align, shape, executes).unwrap();
-        (f.min, f.max)
+        (f.sectors.min, f.sectors.max)
     }
 
     #[test]
@@ -169,6 +199,38 @@ mod tests {
         assert_eq!(fp_of(&coalesced, 4, [64, 1, 1], |t| t[0] >= 32), (4, 5));
         // No executing lane at this shape.
         assert_eq!(fp_of(&coalesced, 4, [32, 1, 1], |_| false), (0, 0));
+    }
+
+    #[test]
+    fn the_ideal_packs_the_executing_lanes_bytes() {
+        let c = |n: i64| SymExpr::Const(n);
+        let ideal = |a: &Affine, bytes: u32, shape: [u32; 3], executes: fn([i64; 3]) -> bool| {
+            let f = warp_footprint(a, bytes, bytes, shape, executes).unwrap();
+            (f.ideal.min, f.ideal.max)
+        };
+        // 32 lanes × 2 B pack into two sectors; at a 128 B stride they take 32.
+        assert_eq!(ideal(&tid().scale(c(128)), 2, [32, 1, 1], |_| true), (2, 2));
+        // One address for the whole warp: one sector is all it needs.
+        assert_eq!(
+            ideal(&Affine::invariant(SymExpr::sym("p")), 2, [32, 1, 1], |_| {
+                true
+            }),
+            (1, 1)
+        );
+        // Lanes t and t + 16 read the same word: 64 distinct bytes, two sectors.
+        let folded = Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 16)).scale(c(4));
+        assert_eq!(ideal(&folded, 4, [32, 1, 1], |_| true), (2, 2));
+        // 8 lanes × 2 B fit one sector; a 1-lane 4 B word too.
+        assert_eq!(
+            ideal(&tid().scale(c(2)), 2, [32, 1, 1], |t| t[0] < 8),
+            (1, 1)
+        );
+        assert_eq!(
+            ideal(&tid().scale(c(4)), 4, [32, 1, 1], |t| t[0] == 0),
+            (1, 1)
+        );
+        // 33 lanes × 4 B: a full warp needs 4, the lone lane 1.
+        assert_eq!(ideal(&tid().scale(c(4)), 4, [33, 1, 1], |_| true), (1, 4));
     }
 
     #[test]

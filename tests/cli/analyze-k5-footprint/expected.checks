@@ -1,8 +1,8 @@
 kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(int, int, int, float, __half const*, __half const*, float, __half*)
 loop 5_2d_blocktiling.cuh:39 ($L__BB0_2)
-5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B   warp: 4–8 sectors    [32768 * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]          k[5_2d_blocktiling.cuh:39]: +16 B/iter
-5_2d_blocktiling.cuh:46  ld.global.u16  global load 2 B   warp: 2–3 sectors    [128 * %ctaid.x + 4096 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/64⌋ + 2 * (%tid.x mod 64) + param_5 - 4096]      k[5_2d_blocktiling.cuh:39]: +4096 B/iter
+5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B   warp: 4–8 sectors (ideal 2)    [32768 * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]          k[5_2d_blocktiling.cuh:39]: +16 B/iter
+5_2d_blocktiling.cuh:46  ld.global.u16  global load 2 B   warp: 2–3 sectors (ideal 2)    [128 * %ctaid.x + 4096 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/64⌋ + 2 * (%tid.x mod 64) + param_5 - 4096]      k[5_2d_blocktiling.cuh:39]: +4096 B/iter
 global bytes per CTA over the loop's own blocks: requested 65536 B, unique 65536 B
 accesses outside loops:
-5_2d_blocktiling.cuh:69  ld.global.u16  global load 2 B   warp: 16–20 sectors    [128 * %ctaid.x + 32768 * %ctaid.y + 4096 * ⌊%tid.x/8⌋ + 16 * (%tid.x mod 8) + param_7]
-5_2d_blocktiling.cuh:68  st.global.u16  global store 2 B  warp: 16–20 sectors    [128 * %ctaid.x + 32768 * %ctaid.y + 4096 * ⌊%tid.x/8⌋ + 16 * (%tid.x mod 8) + param_7]
+5_2d_blocktiling.cuh:69  ld.global.u16  global load 2 B   warp: 16–20 sectors (ideal 2)    [128 * %ctaid.x + 32768 * %ctaid.y + 4096 * ⌊%tid.x/8⌋ + 16 * (%tid.x mod 8) + param_7]
+5_2d_blocktiling.cuh:68  st.global.u16  global store 2 B  warp: 16–20 sectors (ideal 2)    [128 * %ctaid.x + 32768 * %ctaid.y + 4096 * ⌊%tid.x/8⌋ + 16 * (%tid.x mod 8) + param_7]

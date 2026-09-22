@@ -286,6 +286,10 @@ pub struct Access {
     pub sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sectors_at_most: bool,
+    /// The fewest sectors the distinct bytes the executing lanes touch
+    /// could occupy if packed: the request's coalesced ideal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ideal_sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footprint_unknown: Option<String>,
     /// How the address moves per iteration of each enclosing loop,

@@ -14,7 +14,8 @@ thread in the block; flops by pipe and precision (including atomic FP work), byt
 AI(global), and per
 memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
-sectors one warp's request touches, over the lanes that execute it, once the block shape and the parameters in the lane
+sectors one warp's request touches and the fewest its distinct bytes
+need, over the lanes that execute it, once the block shape and the parameters in the lane
 coefficients are bound; per
 block and per guarded instruction, which threads of the CTA run it
 when the selecting branches and the guard are thread-index

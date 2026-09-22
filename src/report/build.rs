@@ -366,17 +366,17 @@ impl KernelReportBuilder<'_> {
                         _ => None,
                     };
                     let sectors_at_most = !set.lane_exact();
-                    let (sectors_per_request, footprint_unknown) = match footprint {
-                        Some(Ok(f)) if sectors_at_most => (
-                            Some(CountRange {
-                                min: f.max,
-                                max: f.max,
-                            }),
-                            None,
-                        ),
-                        Some(Ok(f)) => (Some(f), None),
-                        Some(Err(why)) => (None, Some(why)),
-                        None => (None, None),
+                    let top = |r: CountRange| CountRange {
+                        min: r.max,
+                        max: r.max,
+                    };
+                    let (sectors_per_request, ideal, footprint_unknown) = match footprint {
+                        Some(Ok(f)) if sectors_at_most => {
+                            (Some(top(f.sectors)), Some(top(f.ideal)), None)
+                        }
+                        Some(Ok(f)) => (Some(f.sectors), Some(f.ideal), None),
+                        Some(Err(why)) => (None, None, Some(why)),
+                        None => (None, None, None),
                     };
                     if let (Some(a), Some(b)) = (&form, bytes) {
                         forms.entry(scope).or_default().push(AccessForm {
@@ -419,6 +419,7 @@ impl KernelReportBuilder<'_> {
                         unknown,
                         sectors_per_request,
                         sectors_at_most,
+                        ideal_sectors_per_request: ideal,
                         footprint_unknown,
                         reuse,
                     });
