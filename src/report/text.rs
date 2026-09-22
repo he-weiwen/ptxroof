@@ -343,17 +343,9 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                 |r: &crate::analysis::memory_footprint::CountRange, one: &str, many: &str| {
                     format!("{} {}", range(r), if r.max == 1 { one } else { many })
                 };
-            let warp = match (
-                &a.sectors_per_request,
-                &a.lines_per_request,
-                &a.footprint_unknown,
-            ) {
-                (Some(s), Some(l), _) => format!(
-                    "warp: {}, {}",
-                    plural(s, "sector", "sectors"),
-                    plural(l, "line", "lines")
-                ),
-                (_, _, Some(why)) => format!("warp: ? ({why})"),
+            let warp = match (&a.sectors_per_request, &a.footprint_unknown) {
+                (Some(s), _) => format!("warp: {}", plural(s, "sector", "sectors")),
+                (_, Some(why)) => format!("warp: ? ({why})"),
                 _ => String::new(),
             };
             let addr = match (&a.address, &a.unknown) {

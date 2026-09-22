@@ -14,8 +14,7 @@ thread in the block; flops by pipe and precision (including atomic FP work), byt
 AI(global), and per
 memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
-sectors and 128-byte lines one warp's request touches, over the lanes
-that execute it, once the block shape and the parameters in the lane
+sectors one warp's request touches, over the lanes that execute it, once the block shape and the parameters in the lane
 coefficients are bound; per
 block and per guarded instruction, which threads of the CTA run it
 when the selecting branches and the guard are thread-index
@@ -97,10 +96,11 @@ convention (`tests/instruction_contributions.rs`).
   source names.
 - Floor division prints as `/`.
 - **No cache model.** Cache operators are performance hints (PTX ISA
-  §9.7.9.1) and are not reported. Sectors and lines per warp request
-  assume 32-byte sectors in 128-byte lines, the geometry Nsight Compute
-  confirmed on sm_89 (the k5 and k1 footprint cross-checks below), and
-  are not checked against `.target`. A loop's unique bytes are one
+  §9.7.9.1) and are not reported. Sectors per warp request assume
+  32-byte sectors, the granularity Nsight Compute confirmed on sm_89
+  (the k5 and k1 footprint cross-checks below), and are not checked
+  against `.target`; 128-byte lines are not reported, no metric having
+  been compared to them. A loop's unique bytes are one
   CTA's compulsory footprint, ignoring lines another CTA on the same SM
   fetched, and `requested − unique` is the most an L1 could reuse, not
   what it does: k5 at 256³ is the one launch where L2 sectors equalled
@@ -189,7 +189,7 @@ One line each, with the trigger that would start it.
 - Access patterns: done 2026-09-15 (the `accesses` rows: every
   fixture's global and shared operands except those listed above,
   including 2D tiles' `⌊%tid.x/8⌋` and `(%tid.x mod 8)` and counters
-  stepped by `4·N`; sectors and lines per warp request by enumerating
+  stepped by `4·N`; sectors per warp request by enumerating
   the lanes under every alignment of the uniform part, since pointer
   parameters carry no alignment in the PTX, so a coalesced 4-byte
   access reads `4–5 sectors`; needs `--launch` or `.reqntid` and

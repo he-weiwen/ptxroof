@@ -1,7 +1,7 @@
 kernel hgemm_naive(int, int, int, float, __half const*, __half const*, float, __half*)
-1_naive.cuh:16  ld.global.u16  global load 2 B  warp: 1 sector, 1 line            [512 * %tid.y + 16384 * %ctaid.y + 8 * k[1_naive.cuh:15] + param_4 - 8]   k[1_naive.cuh:15]: +8 B/iter
-1_naive.cuh:16  ld.global.u16  global load 2 B  warp: 2–3 sectors, 1–2 lines      [2 * %tid.x + 64 * %ctaid.x + 2048 * k[1_naive.cuh:15] + param_5 - 2048]  k[1_naive.cuh:15]: +2048 B/iter
+1_naive.cuh:16  ld.global.u16  global load 2 B  warp: 1 sector       [512 * %tid.y + 16384 * %ctaid.y + 8 * k[1_naive.cuh:15] + param_4 - 8]   k[1_naive.cuh:15]: +8 B/iter
+1_naive.cuh:16  ld.global.u16  global load 2 B  warp: 2–3 sectors    [2 * %tid.x + 64 * %ctaid.x + 2048 * k[1_naive.cuh:15] + param_5 - 2048]  k[1_naive.cuh:15]: +2048 B/iter
 global bytes per CTA over the loop's own blocks: requested 1048576 B, unique 32768 B
 accesses outside loops:
-1_naive.cuh:18  ld.global.u16  global load 2 B   warp: 2–3 sectors, 1–2 lines      [2 * %tid.x + 512 * %tid.y + 64 * %ctaid.x + 16384 * %ctaid.y + param_7]
-1_naive.cuh:18  st.global.u16  global store 2 B  warp: 2–3 sectors, 1–2 lines      [2 * %tid.x + 512 * %tid.y + 64 * %ctaid.x + 16384 * %ctaid.y + param_7]
+1_naive.cuh:18  ld.global.u16  global load 2 B   warp: 2–3 sectors    [2 * %tid.x + 512 * %tid.y + 64 * %ctaid.x + 16384 * %ctaid.y + param_7]
+1_naive.cuh:18  st.global.u16  global store 2 B  warp: 2–3 sectors    [2 * %tid.x + 512 * %tid.y + 64 * %ctaid.x + 16384 * %ctaid.y + param_7]

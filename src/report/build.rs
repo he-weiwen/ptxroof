@@ -350,12 +350,11 @@ impl KernelReportBuilder<'_> {
                         }
                         _ => None,
                     };
-                    let (sectors_per_request, lines_per_request, footprint_unknown) =
-                        match footprint {
-                            Some(Ok(f)) => (Some(f.sectors), Some(f.lines), None),
-                            Some(Err(why)) => (None, None, Some(why)),
-                            None => (None, None, None),
-                        };
+                    let (sectors_per_request, footprint_unknown) = match footprint {
+                        Some(Ok(f)) => (Some(f), None),
+                        Some(Err(why)) => (None, Some(why)),
+                        None => (None, None),
+                    };
                     if let (Some(a), Some(b)) = (&form, bytes) {
                         forms.entry(scope).or_default().push(AccessForm {
                             form: a.clone(),
@@ -396,7 +395,6 @@ impl KernelReportBuilder<'_> {
                         address,
                         unknown,
                         sectors_per_request,
-                        lines_per_request,
                         footprint_unknown,
                         reuse,
                     });

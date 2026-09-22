@@ -60,8 +60,8 @@ ptxroof analyze kernel.ptx --json          # the same result tree as JSON
 ptxroof analyze kernel.ptx --bind 2:K=4096 # numeric columns: bind kernel
                                            # param 2 (positional) to 4096
 ptxroof analyze kernel.ptx --launch 16,16,1  # per-CTA totals, and with the
-                                           # block shape the sectors and lines
-                                           # each warp's request touches
+                                           # block shape the sectors each
+                                           # warp's request touches
 ptxroof analyze kernel.ptx --dump-ast      # parsed module, canonical PTX
 ```
 

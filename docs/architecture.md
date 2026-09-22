@@ -24,7 +24,7 @@ analysis framework is introduced.
 | `analysis/scalar/trace` | Reaching-definition lookup and affine interpretation | `tracer` |
 | `analysis/scalar/trip_counts` | Loop trip matching and unroll pairing | `trips` |
 | `analysis/thread_participation` | Threads that execute a block | `threads` |
-| `analysis/memory_footprint` | Sectors and lines touched by a warp request | remaining `footprint` |
+| `analysis/memory_footprint` | Sectors touched by a warp request | remaining `footprint` |
 | `analysis/instruction_counts` | Classification, measurements, collection, and queries | `classify`, `core/measurement`, `report/collect`, `report/stats` |
 | `report/build` | Analysis orchestration and report-specific aggregation | unchanged |
 | `report/schema` | Owned, serializable output structures | `report/tree` |
