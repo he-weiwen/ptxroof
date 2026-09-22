@@ -21,12 +21,15 @@ pub struct CountRange {
     pub max: u32,
 }
 
-/// Sectors per warp request, or why they cannot be counted:
+/// Sectors per warp request of an access of `bytes` at an address
+/// aligned to `align` (the access size; `cp.async`'s cp-size when a
+/// smaller src-size is read), or why they cannot be counted:
 /// a lane coefficient that is not a constant (bind the parameter), or
 /// a block shape that is not known (`.reqntid` or `--launch`).
 pub fn warp_footprint(
     a: &Affine,
     bytes: u32,
+    align: u32,
     shape: [u32; 3],
     executes: impl Fn([i64; 3]) -> bool,
 ) -> Result<CountRange, String> {
@@ -46,6 +49,7 @@ pub fn warp_footprint(
         return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
     }
     let bytes = i64::from(bytes.max(1));
+    let align = i64::from(align.max(1));
     let warps: Vec<Vec<i64>> = (0..(threads + 31) / 32)
         .map(|warp| {
             (warp * 32..((warp + 1) * 32).min(threads))
@@ -59,19 +63,19 @@ pub fn warp_footprint(
     // PTX ISA §6.4.1 (Addresses as Operands): an address must be aligned
     // to the access size, else the behavior is undefined. So the uniform
     // part is congruent to minus the lanes' common residue.
-    let residue = warps.first().map_or(0, |w| w[0].rem_euclid(bytes));
+    let residue = warps.first().map_or(0, |w| w[0].rem_euclid(align));
     if warps
         .iter()
         .flatten()
-        .any(|o| o.rem_euclid(bytes) != residue)
+        .any(|o| o.rem_euclid(align) != residue)
     {
         return Err(format!(
-            "lane addresses differ modulo the {bytes} B access size"
+            "lane addresses differ modulo the {align} B access size"
         ));
     }
     let (mut min, mut max) = (u32::MAX, 0u32);
     for offsets in &warps {
-        let mut shift = (bytes - residue) % bytes;
+        let mut shift = (align - residue) % align;
         while shift < SECTOR {
             let touched: BTreeSet<i64> = offsets
                 .iter()
@@ -84,7 +88,7 @@ pub fn warp_footprint(
             let n = touched.len() as u32;
             min = min.min(n);
             max = max.max(n);
-            shift += bytes;
+            shift += align;
         }
     }
     if min == u32::MAX {
@@ -112,7 +116,17 @@ mod tests {
         shape: [u32; 3],
         executes: impl Fn([i64; 3]) -> bool,
     ) -> (u32, u32) {
-        let f = warp_footprint(a, bytes, shape, executes).unwrap();
+        fp_aligned(a, bytes, bytes, shape, executes)
+    }
+
+    fn fp_aligned(
+        a: &Affine,
+        bytes: u32,
+        align: u32,
+        shape: [u32; 3],
+        executes: impl Fn([i64; 3]) -> bool,
+    ) -> (u32, u32) {
+        let f = warp_footprint(a, bytes, align, shape, executes).unwrap();
         (f.min, f.max)
     }
 
@@ -171,9 +185,15 @@ mod tests {
             fp_of(&tid().scale(c(6)), 4, [32, 1, 1], |t| t[0] % 2 == 1),
             (6, 7)
         );
+        // A cp.async of 3 source bytes per 16 B slot is aligned to 16, not
+        // 3: the slots start a sector or sit 16 B into one.
+        assert_eq!(
+            fp_aligned(&tid().scale(c(16)), 3, 16, [32, 1, 1], |_| true),
+            (16, 17)
+        );
         // On every lane no uniform part aligns them all.
         assert!(
-            warp_footprint(&tid().scale(c(2)), 4, [32, 1, 1], |_| true)
+            warp_footprint(&tid().scale(c(2)), 4, 4, [32, 1, 1], |_| true)
                 .unwrap_err()
                 .contains("modulo")
         );
@@ -183,12 +203,12 @@ mod tests {
     fn unknown_shape_or_symbolic_lane_coefficient_is_refused() {
         let k = Affine::var(Var::Tid(Axis::Y)).scale(SymExpr::sym("param_2"));
         assert!(
-            warp_footprint(&k, 2, [32, 32, 1], |_| true)
+            warp_footprint(&k, 2, 2, [32, 32, 1], |_| true)
                 .unwrap_err()
                 .contains("bind")
         );
         assert!(
-            warp_footprint(&tid(), 4, [0, 0, 0], |_| true)
+            warp_footprint(&tid(), 4, 4, [0, 0, 0], |_| true)
                 .unwrap_err()
                 .contains("--launch")
         );

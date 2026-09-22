@@ -38,6 +38,7 @@ use crate::analysis::thread_participation::{ThreadSet, ThreadSets, thread_sets};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
+use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::names::demangle;
 use crate::report::schema::*;
@@ -344,9 +345,23 @@ impl KernelReportBuilder<'_> {
                             None,
                         ),
                     };
+                    let align = match module.interner.resolve(instr.mnemonic) {
+                        "cp" => module.operand_ids(instr.operands).iter().find_map(|&id| {
+                            match module.operand(id) {
+                                Operand::Immediate(text) => {
+                                    parse_int(module.interner.resolve(*text))
+                                        .and_then(|v| u32::try_from(v).ok())
+                                }
+                                _ => None,
+                            }
+                        }),
+                        _ => None,
+                    };
                     let footprint = match (&form, bytes) {
                         (Some(a), Some(b)) if matches!(space, Space::Global | Space::Generic) => {
-                            Some(warp_footprint(a, b, shape, |tid| set.contains(tid, shape)))
+                            Some(warp_footprint(a, b, align.unwrap_or(b), shape, |tid| {
+                                set.contains(tid, shape)
+                            }))
                         }
                         _ => None,
                     };
