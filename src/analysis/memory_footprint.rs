@@ -127,6 +127,59 @@ pub fn warp_footprint(
     })
 }
 
+/// One warp's lane pattern of an access inside a loop: the sectors it
+/// touches at every alignment of its base, and how the counter moves it.
+pub struct SectorPattern {
+    by_residue: [u32; SECTOR as usize],
+    /// The lanes' common residue modulo the alignment; none when they
+    /// differ, which no base aligns.
+    residue: Option<i64>,
+    align: i64,
+    stride: i64,
+}
+
+impl SectorPattern {
+    pub fn new(offsets: &[i64], bytes: i64, align: i64, stride: i64) -> SectorPattern {
+        let mut by_residue = [0; SECTOR as usize];
+        for (shift, slot) in by_residue.iter_mut().enumerate() {
+            let touched: BTreeSet<i64> = offsets
+                .iter()
+                .flat_map(|&o| {
+                    (o + shift as i64).div_euclid(SECTOR)
+                        ..=(o + shift as i64 + bytes - 1).div_euclid(SECTOR)
+                })
+                .collect();
+            *slot = touched.len() as u32;
+        }
+        SectorPattern {
+            by_residue,
+            residue: offsets
+                .first()
+                .map(|o| o.rem_euclid(align))
+                .filter(|&r| offsets.iter().all(|o| o.rem_euclid(align) == r)),
+            align,
+            stride,
+        }
+    }
+
+    /// Whether a base at `rho` modulo a sector keeps every iteration's
+    /// access aligned (PTX ISA §6.4.1).
+    pub fn aligned(&self, rho: i64, trips: i64) -> bool {
+        self.residue.is_some_and(|r| {
+            (0..trips).all(|k| (rho + r + self.stride * k).rem_euclid(self.align) == 0)
+        })
+    }
+
+    /// Sectors touched over the loop with the base at `rho`.
+    pub fn total(&self, rho: i64, trips: i64) -> u64 {
+        (0..trips)
+            .map(|k| {
+                u64::from(self.by_residue[(rho + self.stride * k).rem_euclid(SECTOR) as usize])
+            })
+            .sum()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +252,23 @@ mod tests {
         assert_eq!(fp_of(&coalesced, 4, [64, 1, 1], |t| t[0] >= 32), (4, 5));
         // No executing lane at this shape.
         assert_eq!(fp_of(&coalesced, 4, [32, 1, 1], |_| false), (0, 0));
+    }
+
+    #[test]
+    fn a_pattern_sums_its_sectors_over_the_aligned_bases() {
+        // 32 lanes × 4 B, moved 128 B a trip: 4 sectors a trip when the
+        // base starts a sector, 5 otherwise; only 4-aligned bases apply.
+        let offsets: Vec<i64> = (0..32).map(|t| 4 * t).collect();
+        let p = SectorPattern::new(&offsets, 4, 4, 128);
+        assert!(p.aligned(0, 8) && p.aligned(4, 8) && !p.aligned(2, 8));
+        assert_eq!((p.total(0, 8), p.total(4, 8)), (32, 40));
+        // A 2 B step per trip on 4 B words misaligns odd trips.
+        assert!(!SectorPattern::new(&offsets, 4, 4, 2).aligned(0, 2));
+        // Lanes at different residues: no base aligns them.
+        let odd: Vec<i64> = (0..32).map(|t| 2 * t).collect();
+        assert!(!SectorPattern::new(&odd, 4, 4, 0).aligned(0, 1));
+        // One word for the whole warp: one sector a trip.
+        assert_eq!(SectorPattern::new(&[0; 32], 4, 4, 0).total(28, 8), 8);
     }
 
     #[test]
