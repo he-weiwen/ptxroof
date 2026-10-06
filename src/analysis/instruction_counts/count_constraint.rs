@@ -23,11 +23,16 @@ pub fn count_constraint(module: &Module, instr: &Instr) -> CountConstraint {
     }
     // §8.4: strong and synchronizing operations. atom and red default to
     // .relaxed (§9.7.14.5, §9.7.14.6), fence to .acq_rel and membar is
-    // fence.sc (§9.7.14.4), except their .proxy forms.
+    // fence.sc (§9.7.14.4), except their .proxy forms; mbarrier.arrive and
+    // arrive_drop default to .release, test_wait and try_wait to .acquire
+    // (§9.7.14.16.16, §9.7.14.16.17, §9.7.14.16.19).
     let fence = matches!(mnemonic, "fence" | "membar") && !has(&["proxy"]);
+    let mbarrier =
+        mnemonic == "mbarrier" && has(&["arrive", "arrive_drop", "test_wait", "try_wait"]);
     let strong = has(&["relaxed", "acquire", "release", "acq_rel"])
         || matches!(mnemonic, "atom" | "red" | "bar" | "barrier")
-        || fence;
+        || fence
+        || mbarrier;
     // §9.7.3.3–§9.7.5.2: add, sub and mul "with an explicit rounding
     // modifier [are] treated conservatively by the code optimizer";
     // §9.7.3.6, §9.7.3.7: fma and mad round once, by .rnd.
@@ -116,6 +121,11 @@ mod tests {
             "membar.gl;",
             "fence.sc.gpu;",
             "fence.gpu;",
+            "mbarrier.arrive.shared::cta.b64 %rd1, [%r1];",
+            "mbarrier.arrive.release.cta.shared::cta.b64 %rd1, [%r1];",
+            "mbarrier.arrive_drop.shared.b64 %rd1, [%r1];",
+            "mbarrier.test_wait.parity.shared::cta.b64 %p1, [%r1], %r2;",
+            "mbarrier.try_wait.acquire.cta.shared::cta.b64 %p1, [%r1], %rd1;",
         ] {
             assert_eq!(constraint_of(text), Constrained, "{text}");
         }
@@ -125,6 +135,7 @@ mod tests {
             "st.shared.u16 [%r1], %rs1;",
             "membar.proxy.alias;",
             "fence.proxy.alias;",
+            "mbarrier.init.shared::cta.b64 [%r1], %r2;",
         ] {
             assert_eq!(constraint_of(text), Free, "{text}");
         }

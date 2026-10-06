@@ -102,7 +102,7 @@ each clause.
 | Constraint | Instructions | ISA |
 |---|---|---|
 | `Preserved` | `.volatile`, `.mmio` | §8.4.2: "The number of volatile instructions (not operations) executed by a program is preserved"; §8.4.1: mmio reads and writes are "always performed" and "never combined" |
-| `Constrained` | `.relaxed`/`.acquire`/`.release`/`.acq_rel`; `atom`, `red`; `bar`, `barrier`; `fence`, `membar` except `.proxy` | §8.4 strong and synchronizing operations; `atom`/`red` default to `.relaxed` (§9.7.14.5, §9.7.14.6), `fence` to `.acq_rel`, `membar` is `fence.sc` (§9.7.14.4) |
+| `Constrained` | `.relaxed`/`.acquire`/`.release`/`.acq_rel`; `atom`, `red`; `bar`, `barrier`; `fence`, `membar` except `.proxy`; `mbarrier.arrive`, `arrive_drop`, `test_wait`, `try_wait` | §8.4 strong and synchronizing operations; `atom`/`red` default to `.relaxed` (§9.7.14.5, §9.7.14.6), `fence` to `.acq_rel`, `membar` is `fence.sc` (§9.7.14.4); `mbarrier.arrive`/`arrive_drop` default to `.release`, `test_wait`/`try_wait` to `.acquire` (§9.7.14.16.16, §9.7.14.16.17, §9.7.14.16.19) |
 | `Constrained` | `add`, `sub`, `mul` with `.rn`/`.rz`/`.rm`/`.rp`; `fma`, `mad` with one | §9.7.3.3–§9.7.5.2: an explicit rounding modifier "is treated conservatively by the code optimizer"; §9.7.3.6, §9.7.3.7: one rounding, by `.rnd` |
 | `Free` | everything else, including the default `.weak` `ld`/`st` (§9.7.9.8) and unrounded `add`/`mul`, which "may be optimized to use fused-multiply-add instructions" (§9.7.3.3) | — |
 
