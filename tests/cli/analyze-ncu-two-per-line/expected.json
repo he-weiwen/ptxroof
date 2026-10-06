@@ -1,0 +1,9 @@
+{
+  "kernels": [
+    {
+      "measured": [
+        {"name": "<block 0>", "verdict": "consistent", "instructions": 7, "with_sass": 6, "agreeing": 3}
+      ]
+    }
+  ]
+}

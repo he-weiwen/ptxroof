@@ -1,0 +1,12 @@
+{
+  "kernels": [
+    {
+      "measured": [
+        {"name": "<block 0>", "verdict": "unchecked"},
+        {"name": "$L__BB0_A", "verdict": "unchecked"},
+        {"name": "$L__BB0_B", "verdict": "unchecked"},
+        {"name": "<block 3>", "verdict": "unchecked"}
+      ]
+    }
+  ]
+}

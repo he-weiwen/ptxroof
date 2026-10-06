@@ -211,6 +211,11 @@ its shared writes and instruction counts remain counted
   (`tools/ncu/launch.c`), so a branch on loaded data takes its
   zero-data side, and with no dynamic shared memory, so a kernel that
   uses `.extern .shared` (every Gluon fixture) cannot be measured.
+- `--ncu` compares no counts in a kernel with irreducible control
+  flow, whose blocks' executions the tool does not know
+  (`tests/cli/analyze-ncu-irreducible`: every block `unchecked`), nor
+  on a PTX line holding more than one instruction, which a record
+  counts together (`tests/cli/analyze-ncu-two-per-line`).
 - No machine model. AI is printed without a ceiling; the PTX `.target`
   names a family, not a part.
 

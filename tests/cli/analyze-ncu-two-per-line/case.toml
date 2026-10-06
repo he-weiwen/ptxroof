@@ -1,0 +1,5 @@
+# Two fma.rn.f32 on one line: the record counts the line's 64 FFMA
+# executions together, so neither instruction is compared; the block
+# rests on its other lines.
+args = ["analyze", "{case}/in.ptx", "--ncu", "{case}/record.json", "--json"]
+exit = 0

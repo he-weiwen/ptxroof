@@ -1,0 +1,22 @@
+//
+// HAND-WRITTEN: two fma.rn.f32 on one line, for --ncu.
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry two_per_line(
+	.param .u64 two_per_line_param_0
+)
+{
+	.reg .f32 	%f<3>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [two_per_line_param_0];
+	cvta.to.global.u64 	%rd2, %rd1;
+	ld.global.f32 	%f1, [%rd2];
+	fma.rn.f32 	%f2, %f1, %f1, %f1; fma.rn.f32 	%f1, %f2, %f2, %f2;
+	st.global.f32 	[%rd2], %f1;
+	ret;
+
+}

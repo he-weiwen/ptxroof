@@ -1485,6 +1485,13 @@ impl<'a> KernelReportBuilder<'a> {
         cta: &LaunchInfo,
     ) -> Vec<MeasuredBlock> {
         let ctas: u64 = record.grid.iter().map(|&d| u64::from(d)).product();
+        let mut per_line: HashMap<u32, usize> = HashMap::new();
+        for stmt in &self.kernel.stmts {
+            if let Stmt::Instr(i) = stmt {
+                *per_line.entry(lines.line(i.offset)).or_default() += 1;
+            }
+        }
+        let reducible = self.forest.irreducible_edges.is_empty();
         let mut blocks = Vec::new();
         for bm in &self.blocks {
             let Some((mult, chain_at_most)) = self.multiplier(bm.block, None) else {
@@ -1499,10 +1506,13 @@ impl<'a> KernelReportBuilder<'a> {
                 let (threads, _, at_most, explained) =
                     self.executing(bm, &set, chain_at_most, Some(cta));
                 let guarded = self.sets.guards.contains_key(&i.provenance);
+                let line = lines.line(instr.offset);
+                let alone = reducible && per_line[&line] == 1;
                 predictions.push(Prediction {
-                    line: lines.line(instr.offset),
+                    line,
                     constraint: count_constraint(self.module, instr),
-                    executions: mult.as_const().map(|m| (m * threads) as u64 * ctas),
+                    executions: (mult.as_const().filter(|_| alone))
+                        .map(|m| (m * threads) as u64 * ctas),
                     at_most: at_most || (instr.predicate.is_some() && !(guarded && explained)),
                 });
             }

@@ -1,0 +1,5 @@
+# micro/irreducible at param 1 = 32 runs block A ten times per thread
+# (the record: 320 fma.rn.f32 over 32 threads), but A belongs to no
+# natural loop, so the tool has no count for it: no block is compared.
+args = ["analyze", "{fixtures}/micro/irreducible.ptx", "--ncu", "{fixtures}/micro/irreducible.32.ncu.json", "--json"]
+exit = 0
