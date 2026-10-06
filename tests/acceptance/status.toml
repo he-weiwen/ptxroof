@@ -84,5 +84,5 @@ enforced = true
 
 [[min_coverage]]
 metric = "loop_trips_resolved"
-percent = 94.74
+percent = 95.24
 enforced = true

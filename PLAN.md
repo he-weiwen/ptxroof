@@ -123,6 +123,11 @@ its shared writes and instruction counts remain counted
   pointers `cudaMalloc` aligned to 256 B. A 16-byte access on a
   pointer does not narrow the range of a 2-byte access on the same
   pointer.
+- **A loop behind a branch on parameters is a bound even when
+  `--bind` decides the branch.** k5 at K=256: per CTA,
+  `fma.rn.f32 <= 1052672`, and its record measures exactly 16 CTAs
+  times that; the K loop's blocks are `consistent`, not `confirmed`
+  (`tests/cli/analyze-k5-ncu-verdicts`).
 - **No arithmetic intensity over sector bytes.** A loop's sector
   bytes cover its own blocks while its flops sit in nested loops
   (k5's K loop: 98,304 B in sectors, no flops of its own).
@@ -245,8 +250,11 @@ One line each, with the trigger that would start it.
   instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`).
   `analyze --ncu RECORD` takes the record's block shape and `u32`
   parameters for `--launch` and `--bind`, and refuses a record whose
-  lines are not the PTX's (`tests/cli/analyze-k5-ncu-stale`); it does
-  not compare counts yet.
+  lines are not the PTX's (`tests/cli/analyze-k5-ncu-stale`), and
+  gives each block a verdict (`kernels[].measured`): a line whose
+  `CountConstraint` is not `Free` and whose SASS is one opcode must
+  equal an exact prediction or stay within a bound. No per-line
+  differences and no text rendering yet.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a fixture

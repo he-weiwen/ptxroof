@@ -95,6 +95,8 @@ pub struct KernelReport {
     /// unquantifiable bytes, unresolved trips, irreducible regions,
     /// call sites. Never silently empty when something was dropped.
     pub unknowns: Vec<UnknownEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured: Option<Vec<MeasuredBlock>>,
 }
 
 #[derive(Debug, Serialize)]

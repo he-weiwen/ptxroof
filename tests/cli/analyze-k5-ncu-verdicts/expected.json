@@ -1,0 +1,16 @@
+{
+  "kernels": [
+    {
+      "measured": [
+        {"name": "<block 0>", "verdict": "consistent"},
+        {"name": "<block 1>", "verdict": "consistent"},
+        {"name": "$L__BB0_2", "verdict": "consistent"},
+        {"name": "$L__BB0_3", "verdict": "consistent"},
+        {"name": "<block 4>", "verdict": "consistent"},
+        {"name": "<block 5>", "verdict": "consistent"},
+        {"name": "$L__BB0_5", "verdict": "consistent"},
+        {"name": "$L__BB0_6", "verdict": "confirmed"}
+      ]
+    }
+  ]
+}

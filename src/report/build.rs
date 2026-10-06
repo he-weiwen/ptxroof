@@ -27,6 +27,7 @@ use crate::analysis::instruction_counts::classify::{
     ArithKind, ClassifiedInstruction, Direction, InstructionCategory, Pipe, Precision, Space,
 };
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
+use crate::analysis::instruction_counts::count_constraint::count_constraint;
 use crate::analysis::instruction_counts::measurement::{Contribution, MeasureKind};
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{CountRange, SECTOR, SectorPattern, warp_footprint};
@@ -40,7 +41,7 @@ use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
-use crate::report::measured::NcuRecord;
+use crate::report::measured::{LineIndex, NcuRecord, Prediction};
 use crate::report::names::demangle;
 use crate::report::schema::*;
 use std::collections::{BTreeMap, HashMap};
@@ -110,6 +111,7 @@ pub fn analyze(
         record.check(&module, source).map_err(AnalyzeError::Ncu)?;
     }
 
+    let lines = LineIndex::new(source);
     let mut kernels = Vec::new();
     let mut classified = Fraction { num: 0, den: 0 };
     let mut trips_resolved = Fraction { num: 0, den: 0 };
@@ -123,7 +125,8 @@ pub fn analyze(
                 bind_map.insert(name.to_owned(), i64::from(n));
             }
         }
-        let k = KernelReportBuilder::new(&module, kernel, &bind_map).build(opts.launch);
+        let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
+        let k = KernelReportBuilder::new(&module, kernel, &bind_map).build(opts.launch, ncu);
         classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
         classified.den += k.instruction_classes.total;
         let mut count_loops = |nodes: &[LoopNode]| {
@@ -1475,7 +1478,45 @@ impl<'a> KernelReportBuilder<'a> {
         }
     }
 
-    fn build(self, launch_flag: Option<[u32; 3]>) -> KernelReport {
+    fn measured(
+        &self,
+        record: &NcuRecord,
+        lines: &LineIndex,
+        cta: &LaunchInfo,
+    ) -> Vec<MeasuredBlock> {
+        let ctas: u64 = record.grid.iter().map(|&d| u64::from(d)).product();
+        let mut blocks = Vec::new();
+        for bm in &self.blocks {
+            let Some((mult, chain_at_most)) = self.multiplier(bm.block, None) else {
+                continue;
+            };
+            let mut predictions = Vec::new();
+            for i in &bm.instructions {
+                let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
+                    continue;
+                };
+                let set = self.sets.of(bm.block, i.provenance);
+                let (threads, _, at_most, explained) =
+                    self.executing(bm, &set, chain_at_most, Some(cta));
+                let guarded = self.sets.guards.contains_key(&i.provenance);
+                predictions.push(Prediction {
+                    line: lines.line(instr.offset),
+                    constraint: count_constraint(self.module, instr),
+                    executions: mult.as_const().map(|m| (m * threads) as u64 * ctas),
+                    at_most: at_most || (instr.predicate.is_some() && !(guarded && explained)),
+                });
+            }
+            let name = self.cfg.block_name(self.module, bm.block);
+            blocks.push(record.compare(&name, &predictions));
+        }
+        blocks
+    }
+
+    fn build(
+        self,
+        launch_flag: Option<[u32; 3]>,
+        ncu: Option<(&NcuRecord, &LineIndex)>,
+    ) -> KernelReport {
         let name = self.module.interner.resolve(self.kernel.name).to_owned();
         let mut classes = InstructionClasses::default();
         for bm in &self.blocks {
@@ -1512,6 +1553,8 @@ impl<'a> KernelReportBuilder<'a> {
         let totals_per_cta = launch.as_ref().map(|l| self.aggregates(None, Some(l)));
 
         let unknowns = self.unknowns();
+        let measured = (ncu.filter(|(r, _)| r.kernel == name).zip(launch.as_ref()))
+            .map(|((record, lines), cta)| self.measured(record, lines, cta));
 
         KernelReport {
             demangled: demangle(&name),
@@ -1543,6 +1586,7 @@ impl<'a> KernelReportBuilder<'a> {
                 .collect(),
             totals: self.aggregates(None, None),
             unknowns,
+            measured,
         }
     }
 }
