@@ -153,10 +153,12 @@ its shared writes and instruction counts remain counted
   every instruction classifies), and hand-written micro kernels.
   clang is untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 29 of the 30 fixtures; k14's is
+  identical to the original's for 28 of the 32 fixtures. k14's is
   rejected because the in-kernel `.local` depot declaration is
   discarded; assembler diagnostics can vary (the current round trip reports
-  `Arguments mismatch for instruction 'mov'`). This is allowlisted in
+  `Arguments mismatch for instruction 'mov'`). k1's and k2's assemble to
+  different SASS because `.pragma "nounroll";` is discarded, so ptxas
+  unrolls the loop it annotated. These are allowlisted in
   `tests/roundtrip-allowlist.txt`. A `tests/run.py` stage when the
   toolkit is on PATH, skipped otherwise.
 - Generated loops (`tests/gen_loops.py`, a CI step): single counted

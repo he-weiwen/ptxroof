@@ -299,7 +299,7 @@ def sass_text(cubin):
     out = subprocess.run(
         ["cuobjdump", "-sass", str(cubin)], capture_output=True, text=True, check=True
     ).stdout
-    return "\n".join(l for l in out.splitlines() if not l.lstrip().startswith("/*"))
+    return "\n".join(l for l in out.splitlines() if not l.lstrip().startswith("/* 0x"))
 
 
 def roundtrip_fixture(binary, ptx, tmp):
