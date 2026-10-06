@@ -45,16 +45,19 @@ int main(int argc, char **argv) {
     union { unsigned u32; float f32; CUdeviceptr ptr; } *values = calloc(argc, sizeof *values);
     void **args = calloc(argc, sizeof *args);
     for (int i = 0; i < argc - 5; i++) {
-        const char *param = argv[5 + i];
-        size_t bytes = strtoull(param + 4, NULL, 0);
+        const char *param = argv[5 + i], *text = strlen(param) > 4 ? param + 4 : "";
+        char *end = NULL;
+        unsigned long long number = strtoull(text, NULL, 10);
+        float real = strtof(text, &end);
+        int decimal = *text && strspn(text, "0123456789") == strlen(text);
         args[i] = &values[i];
-        if (!strncmp(param, "u32:", 4)) {
-            values[i].u32 = strtoul(param + 4, NULL, 0);
-        } else if (!strncmp(param, "f32:", 4)) {
-            values[i].f32 = strtof(param + 4, NULL);
-        } else if (!strncmp(param, "ptr:", 4)) {
-            check(cuMemAlloc(&values[i].ptr, bytes), param);
-            check(cuMemsetD8(values[i].ptr, 0, bytes), param);
+        if (!strncmp(param, "u32:", 4) && decimal && number <= 0xffffffffULL) {
+            values[i].u32 = number;
+        } else if (!strncmp(param, "f32:", 4) && *text && !*end) {
+            values[i].f32 = real;
+        } else if (!strncmp(param, "ptr:", 4) && decimal) {
+            check(cuMemAlloc(&values[i].ptr, number), param);
+            check(cuMemsetD8(values[i].ptr, 0, number), param);
         } else {
             usage(param);
         }

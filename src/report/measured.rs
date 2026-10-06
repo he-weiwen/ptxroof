@@ -18,7 +18,13 @@ pub struct NcuLine {
 
 impl NcuRecord {
     pub fn bindings(&self) -> Vec<BindingSpec> {
-        let value = |param: &str| param.strip_prefix("u32:")?.parse().ok();
+        let value = |param: &str| {
+            param
+                .strip_prefix("u32:")?
+                .parse::<u32>()
+                .ok()
+                .map(i64::from)
+        };
         (self.params.iter().enumerate())
             .filter_map(|(index, param)| {
                 Some(BindingSpec {
