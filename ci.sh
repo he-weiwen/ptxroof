@@ -4,7 +4,9 @@
 # rust-toolchain.toml) and python3 >= 3.11. No LLVM, no C++; the ptxas
 # round trip of every fixture runs when the CUDA toolkit is on PATH and
 # is skipped otherwise (PTXROOF_REQUIRE_CUDA=1 turns the skip into a
-# failure, for the machine that has it).
+# failure, for the machine that has it). Likewise every Nsight Compute
+# record is measured again where ncu and a GPU are present
+# (PTXROOF_REQUIRE_GPU=1).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -23,5 +25,12 @@ python3 tests/run.py
 # Compare recognized trip counts with a simulator for generated loop kernels.
 python3 tests/gen_loops.py --self-test
 python3 tests/gen_loops.py --seed 1 --count 200
+
+if command -v ncu > /dev/null && nvidia-smi -L > /dev/null 2>&1; then
+    find tests/fixtures -name '*.ncu.json' -print0 | sort -z | xargs -0 -n1 tools/ncu/measure.py --check
+elif [ "${PTXROOF_REQUIRE_GPU:-0}" = 1 ]; then
+    echo "ci.sh: PTXROOF_REQUIRE_GPU=1, but ncu or a GPU is missing" >&2
+    exit 1
+fi
 
 echo "ci.sh: all green"

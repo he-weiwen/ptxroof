@@ -257,7 +257,8 @@ One line each, with the trigger that would start it.
   counts its instructions, those with SASS and those that agree, and
   lists every line whose measured count is not the predicted number,
   with its SASS opcodes (`differing`); the text report prints them
-  under `measured`.
+  under `measured`. `ci.sh` measures every record again on the GPU it
+  names (`measure.py --check`) and fails if it changed.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a fixture

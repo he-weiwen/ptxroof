@@ -7,8 +7,10 @@ gets a .loc naming its own line of the PTX file, which must assemble to
 the original's SASS. The record is rewritten with the GPU and tools,
 and per PTX line that has SASS: the line's text, the SASS opcodes ptxas
 attributed to it, and their predicated-on thread instructions executed.
+With --check the record is measured again on the GPU it names, if this
+is that GPU, and must not change.
 
-Usage: measure.py RECORD
+Usage: measure.py [--check] RECORD
 """
 
 import csv
@@ -62,7 +64,7 @@ def per_line(table):
     return lines
 
 
-def main(path):
+def main(path, check):
     record = json.loads(Path(path).read_text())
     ptx = REPO / record["ptx"]
     driver = run("nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader").splitlines()[0]
@@ -71,6 +73,9 @@ def main(path):
         include = Path(shutil.which("ptxas")).resolve().parents[1] / "include"
         run("gcc", "-O2", Path(__file__).with_name("launch.c"), f"-I{include}", "-lcuda", "-o", tmp / "launch")
         gpu, arch = run(tmp / "launch", "--device").splitlines()
+        if check and record.get("gpu") != gpu:
+            print(f"measure.py: {path} was recorded on {record.get('gpu')}, not {gpu}: skipped")
+            return
         (tmp / "numbered.ptx").write_text(numbered(ptx.read_text(), ptx))
         for name, source in (("original", ptx), ("numbered", tmp / "numbered.ptx")):
             run("ptxas", f"-arch={arch}", "-lineinfo", source, "-o", tmp / f"{name}.cubin")
@@ -87,10 +92,15 @@ def main(path):
     entry = lambda k, v, indent: f"{indent}{json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}"
     fields = ",\n".join(entry(k, v, " ") for k, v in record.items() if k != "lines")
     lines = ",\n".join(entry(k, v, "  ") for k, v in record["lines"].items())
-    Path(path).write_text("{\n" + fields + ',\n "lines": {\n' + lines + "\n }\n}\n")
+    text = "{\n" + fields + ',\n "lines": {\n' + lines + "\n }\n}\n"
+    if check and text != Path(path).read_text():
+        sys.exit(f"measure.py: {path} differs from a fresh measurement; rerun without --check, review the diff")
+    Path(path).write_text(text)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    check = args[:1] == ["--check"]
+    if len(args) != 1 + check:
         sys.exit(__doc__)
-    main(sys.argv[1])
+    main(args[-1], check)
