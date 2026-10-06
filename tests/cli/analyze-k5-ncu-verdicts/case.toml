@@ -4,6 +4,7 @@
 # blocks stay consistent: its fma.rn.f32 and bar.sync lines equal the
 # prediction, but the loop sits behind the branch on K, so every count
 # in it is a bound. $L__BB0_5, the path for K < 1, is a bound that the
-# record's 0 does not exceed.
+# record's 0 does not exceed. Per block: instructions, those with SASS,
+# and those whose count agrees with the prediction.
 args = ["analyze", "{fixtures}/k5/k5.sm_89.ptx", "--ncu", "{fixtures}/k5/k5.sm_89.256.ncu.json", "--json"]
 exit = 0

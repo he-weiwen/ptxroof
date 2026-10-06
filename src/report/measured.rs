@@ -1,7 +1,7 @@
 use crate::analysis::instruction_counts::count_constraint::CountConstraint;
 use crate::ptx::ir::Module;
 use crate::report::build::BindingSpec;
-use crate::report::schema::{MeasuredBlock, Verdict};
+use crate::report::schema::{MeasuredBlock, MeasuredLine, Verdict};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -67,9 +67,21 @@ impl NcuRecord {
     }
 
     pub fn compare(&self, block: &str, predictions: &[Prediction]) -> MeasuredBlock {
-        let (mut agreeing, mut confirmed, mut contradicted) = (false, false, false);
+        let mut out = MeasuredBlock {
+            name: block.to_owned(),
+            verdict: Verdict::Unchecked,
+            instructions: predictions.len() as u64,
+            with_sass: 0,
+            agreeing: 0,
+            differing: Vec::new(),
+        };
+        let (mut confirmed, mut contradicted) = (false, false);
         for p in predictions {
-            let (Some(measured), Some(predicted)) = (self.lines.get(&p.line), p.executions) else {
+            let Some(measured) = self.lines.get(&p.line) else {
+                continue;
+            };
+            out.with_sass += 1;
+            let Some(predicted) = p.executions else {
                 continue;
             };
             let agrees = match p.at_most {
@@ -77,20 +89,28 @@ impl NcuRecord {
                 false => measured.executions == predicted,
             };
             let tested = p.constraint != CountConstraint::Free && measured.sass.len() == 1;
-            agreeing |= agrees;
+            out.agreeing += u64::from(agrees);
             confirmed |= tested && agrees && !p.at_most;
             contradicted |= tested && !agrees;
+            if measured.executions != predicted {
+                out.differing.push(MeasuredLine {
+                    line: p.line,
+                    ptx: measured.ptx.clone(),
+                    tested,
+                    predicted,
+                    at_most: p.at_most,
+                    executions: measured.executions,
+                    sass: measured.sass.clone(),
+                });
+            }
         }
-        let verdict = match (contradicted, confirmed, agreeing) {
+        out.verdict = match (contradicted, confirmed, out.agreeing > 0) {
             (true, _, _) => Verdict::Contradicted,
             (_, true, _) => Verdict::Confirmed,
             (_, _, true) => Verdict::Consistent,
             _ => Verdict::Unchecked,
         };
-        MeasuredBlock {
-            name: block.to_owned(),
-            verdict,
-        }
+        out
     }
 }
 
@@ -191,6 +211,32 @@ mod tests {
         assert_eq!(
             verdict(&r, &[predict(2, Constrained, 1024, true)]),
             Verdict::Contradicted
+        );
+    }
+
+    #[test]
+    fn every_line_whose_executions_are_not_the_predicted_number_is_listed() {
+        let r = record(&[
+            (1, &["FFMA"], 64),
+            (2, &["PRMT", "STG.E.U16"], 128),
+            (3, &["LDS.64"], 16),
+        ]);
+        let block = r.compare(
+            "b",
+            &[
+                predict(1, Constrained, 64, false),
+                predict(2, Free, 64, false),
+                predict(3, Free, 64, true),
+                predict(4, Free, 64, false),
+            ],
+        );
+        let listed: Vec<(u32, u64, bool)> = (block.differing.iter())
+            .map(|d| (d.line, d.executions, d.at_most))
+            .collect();
+        assert_eq!(listed, [(2, 128, false), (3, 16, true)]);
+        assert_eq!(
+            (block.instructions, block.with_sass, block.agreeing),
+            (4, 3, 2)
         );
     }
 

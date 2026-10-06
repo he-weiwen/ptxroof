@@ -253,8 +253,10 @@ One line each, with the trigger that would start it.
   lines are not the PTX's (`tests/cli/analyze-k5-ncu-stale`), and
   gives each block a verdict (`kernels[].measured`): a line whose
   `CountConstraint` is not `Free` and whose SASS is one opcode must
-  equal an exact prediction or stay within a bound. No per-line
-  differences and no text rendering yet.
+  equal an exact prediction or stay within a bound. Each block also
+  counts its instructions, those with SASS and those that agree, and
+  lists every line whose measured count is not the predicted number,
+  with its SASS opcodes (`differing`). No text rendering yet.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a fixture

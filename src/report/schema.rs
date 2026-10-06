@@ -475,6 +475,21 @@ pub struct UnknownEntry {
 pub struct MeasuredBlock {
     pub name: String,
     pub verdict: Verdict,
+    pub instructions: u64,
+    pub with_sass: u64,
+    pub agreeing: u64,
+    pub differing: Vec<MeasuredLine>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredLine {
+    pub line: u32,
+    pub ptx: String,
+    pub tested: bool,
+    pub predicted: u64,
+    pub at_most: bool,
+    pub executions: u64,
+    pub sass: BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]

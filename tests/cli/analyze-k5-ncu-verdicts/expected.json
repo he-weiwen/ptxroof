@@ -2,14 +2,14 @@
   "kernels": [
     {
       "measured": [
-        {"name": "<block 0>", "verdict": "consistent"},
-        {"name": "<block 1>", "verdict": "consistent"},
-        {"name": "$L__BB0_2", "verdict": "consistent"},
-        {"name": "$L__BB0_3", "verdict": "consistent"},
-        {"name": "<block 4>", "verdict": "consistent"},
-        {"name": "<block 5>", "verdict": "consistent"},
-        {"name": "$L__BB0_5", "verdict": "consistent"},
-        {"name": "$L__BB0_6", "verdict": "confirmed"}
+        {"name": "<block 0>", "verdict": "consistent", "instructions": 10, "with_sass": 7, "agreeing": 6},
+        {"name": "<block 1>", "verdict": "consistent", "instructions": 74, "with_sass": 5, "agreeing": 1},
+        {"name": "$L__BB0_2", "verdict": "consistent", "instructions": 155, "with_sass": 119, "agreeing": 117},
+        {"name": "$L__BB0_3", "verdict": "consistent", "instructions": 111, "with_sass": 97, "agreeing": 96},
+        {"name": "<block 4>", "verdict": "consistent", "instructions": 8, "with_sass": 7, "agreeing": 5},
+        {"name": "<block 5>", "verdict": "consistent", "instructions": 1, "with_sass": 1, "agreeing": 1},
+        {"name": "$L__BB0_5", "verdict": "consistent", "instructions": 64, "with_sass": 1, "agreeing": 1},
+        {"name": "$L__BB0_6", "verdict": "confirmed", "instructions": 412, "with_sass": 400, "agreeing": 366}
       ]
     }
   ]
