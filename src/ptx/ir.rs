@@ -10,6 +10,7 @@
 
 use crate::support::index::{IdxRange, IndexVec, newtype_idx};
 use crate::support::intern::{Interner, Symbol};
+use std::path::Path;
 
 newtype_idx! {
     /// Handle into the [`Module::operands`] arena.
@@ -179,5 +180,10 @@ impl Module {
             .iter()
             .find(|f| f.index == index)
             .map(|f| self.interner.resolve(f.path))
+    }
+
+    /// The last component of a `.file` index's path, if it has one.
+    pub fn file_name(&self, index: u32) -> Option<&str> {
+        Path::new(self.file_path(index)?).file_name()?.to_str()
     }
 }

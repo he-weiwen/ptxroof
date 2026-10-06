@@ -1,5 +1,4 @@
-//! Shared storage and path utilities.
+//! Shared storage utilities.
 
 pub mod index;
 pub mod intern;
-pub(crate) mod paths;

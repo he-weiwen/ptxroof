@@ -10,7 +10,6 @@ analysis framework is introduced.
 | --- | --- | --- |
 | `support/index` | Typed indices, index vectors, and pooled ranges | `core/arena` |
 | `support/intern` | String interning | `core/intern` |
-| `support/paths` | Display path basename helper | `cfg/naming` |
 | `ptx/ir` | Parsed, flattened PTX representation | `core/ir` |
 | `ptx/literal` | Shared integer literal interpretation | helper in `parse/parser` |
 | `ptx/parse` | Lexing and parsing | `parse/lexer`, `parse/parser` |

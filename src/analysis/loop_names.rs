@@ -17,7 +17,6 @@
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::ptx::cfg::ControlFlowGraph;
 use crate::ptx::ir::{Kernel, Module, SourceLoc};
-use crate::support::paths::basename;
 
 /// Human-readable identity of one loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +81,10 @@ fn loop_name(
     let loc: Option<SourceLoc> = latch_branch_loc.or_else(latch_any_loc).or_else(header_loc);
     match loc {
         Some(loc) => {
-            let file = basename(module.file_path(loc.file).unwrap_or("<unknown file>"));
+            let file = module
+                .file_name(loc.file)
+                .unwrap_or("<unknown file>")
+                .to_owned();
             let display = format!("{file}:{}", loc.line);
             LoopName {
                 file: Some(file),

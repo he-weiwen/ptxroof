@@ -42,7 +42,6 @@ use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::names::demangle;
 use crate::report::schema::*;
-use crate::support::paths::basename;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, thiserror::Error)]
@@ -403,7 +402,7 @@ impl KernelReportBuilder<'_> {
                     let site = match instr.loc.filter(|l| l.line != 0) {
                         Some(loc) => format!(
                             "{}:{}",
-                            basename(module.file_path(loc.file).unwrap_or("<unknown file>")),
+                            module.file_name(loc.file).unwrap_or("<unknown file>"),
                             loc.line
                         ),
                         None => cfg.block_name(module, bid),
@@ -963,11 +962,10 @@ impl<'a> KernelReportBuilder<'a> {
             .fold((first.line, first.line), |(lo, hi), l| {
                 (lo.min(l.line), hi.max(l.line))
             });
-        let file = basename(
-            self.module
-                .file_path(first.file)
-                .unwrap_or("<unknown file>"),
-        );
+        let file = self
+            .module
+            .file_name(first.file)
+            .unwrap_or("<unknown file>");
         Some(if lo == hi {
             format!("{file}:{lo}")
         } else {
