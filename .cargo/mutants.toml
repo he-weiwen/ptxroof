@@ -1,0 +1,3 @@
+# cargo mutants also runs tests/cli_suite.rs, which drives tests/run.py
+# and tests/gen_loops.py, so a mutant only they catch counts as caught.
+additional_cargo_test_args = ["--", "--include-ignored"]

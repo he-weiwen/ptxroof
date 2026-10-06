@@ -119,6 +119,8 @@ Python ≥ 3.11), generated loop kernels checked against a simulator
 (`tests/gen_loops.py`) and, when the CUDA toolkit is on PATH, a ptxas
 round trip of every fixture's `--dump-ast` output against its SASS,
 and, where `ncu` and a GPU are present, a fresh measurement of every
-Nsight Compute record (`tools/ncu/measure.py --check`). Known limitations, missing features and the scope
+Nsight Compute record (`tools/ncu/measure.py --check`). `cargo mutants`
+also runs the CLI cases and the generated loops, through the ignored
+tests in `tests/cli_suite.rs` that `.cargo/mutants.toml` includes. Known limitations, missing features and the scope
 boundary are listed in `PLAN.md`. The [source layout and SSA migration plan](docs/architecture.md)
 describes module ownership, dependency boundaries, and canonical public paths.

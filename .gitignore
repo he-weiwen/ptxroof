@@ -5,3 +5,5 @@
 /refs
 # compile.py imports the Gluon fixture sources
 __pycache__/
+# cargo mutants output
+/mutants.out*
