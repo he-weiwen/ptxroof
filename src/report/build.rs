@@ -984,6 +984,47 @@ impl<'a> KernelReportBuilder<'a> {
         out
     }
 
+    fn multiplier(&self, b: BlockId, below: Option<LoopId>) -> Option<(SymExpr, bool)> {
+        let chain = self.chain(b);
+        let cut = match below {
+            Some(l) => chain.iter().position(|&x| x == l)?,
+            None => chain.len(),
+        };
+        let mut mult = SymExpr::Const(1);
+        let mut at_most = false;
+        for &l in &chain[..cut] {
+            mult = SymExpr::mul(mult, self.trip_exprs[l.0 as usize].clone());
+            at_most |= self.cond_entry[l.0 as usize];
+        }
+        Some((mult, at_most))
+    }
+
+    // A block selected by thread-index branches runs on exactly
+    // its threads: per CTA that count, and not a bound.
+    fn executing(
+        &self,
+        bm: &BlockMeasurements,
+        set: &ThreadSet,
+        chain_at_most: bool,
+        cta: Option<&LaunchInfo>,
+    ) -> (i64, Option<(i64, bool)>, bool, bool) {
+        let counted = set.count(self.shape);
+        let selected = cta.and(counted.map(|c| c.possible));
+        let explained = selected.is_some() && counted.is_some_and(|c| c.certain == c.possible);
+        let conditional = bm.qualifier == CountQualifier::AtMost && !explained;
+        let at_most = conditional || chain_at_most || cta.is_some_and(|c| !c.exact);
+        let threads = match (cta, selected) {
+            (Some(_), Some(n)) => i64::from(n),
+            (Some(c), None) => c.threads as i64,
+            (None, _) => 1,
+        };
+        let warps = cta.map(|c| match set.warps(self.shape) {
+            Some(w) => (i64::from(w.possible), at_most || w.certain != w.possible),
+            None => (c.warps as i64, at_most),
+        });
+        (threads, warps, at_most, explained)
+    }
+
     /// Aggregate over blocks; `below` = aggregate within this loop
     /// (multipliers stop there), `None` = whole kernel. With
     /// `cta`, every per-thread count additionally scales by the CTA's
@@ -1003,43 +1044,10 @@ impl<'a> KernelReportBuilder<'a> {
         }
 
         for bm in &self.blocks {
-            let chain = self.chain(bm.block);
-            // Inside `below`? (kernel root: always.)
-            let cut = match below {
-                Some(l) => {
-                    let Some(pos) = chain.iter().position(|&x| x == l) else {
-                        continue;
-                    };
-                    pos
-                }
-                None => chain.len(),
+            let Some((mult, chain_at_most)) = self.multiplier(bm.block, below) else {
+                continue;
             };
-            let mut mult = SymExpr::Const(1);
-            let mut chain_at_most = false;
-            for &l in &chain[..cut] {
-                mult = SymExpr::mul(mult, self.trip_exprs[l.0 as usize].clone());
-                chain_at_most |= self.cond_entry[l.0 as usize];
-            }
-            // A block selected by thread-index branches runs on exactly
-            // its threads: per CTA that count, and not a bound.
-            let resolve = |set: &ThreadSet| {
-                let counted = set.count(self.shape);
-                let selected = cta.and(counted.map(|c| c.possible));
-                let explained =
-                    selected.is_some() && counted.is_some_and(|c| c.certain == c.possible);
-                let conditional = bm.qualifier == CountQualifier::AtMost && !explained;
-                let at_most = conditional || chain_at_most || cta.is_some_and(|c| !c.exact);
-                let threads = match (cta, selected) {
-                    (Some(_), Some(n)) => i64::from(n),
-                    (Some(c), None) => c.threads as i64,
-                    (None, _) => 1,
-                };
-                let warps = cta.map(|c| match set.warps(self.shape) {
-                    Some(w) => (i64::from(w.possible), at_most || w.certain != w.possible),
-                    None => (c.warps as i64, at_most),
-                });
-                (threads, warps, at_most, explained)
-            };
+            let resolve = |set: &ThreadSet| self.executing(bm, set, chain_at_most, cta);
             let (threads, warps, block_at_most, _) =
                 resolve(&self.sets.blocks[bm.block.0 as usize]);
             for instruction in &bm.instructions {
