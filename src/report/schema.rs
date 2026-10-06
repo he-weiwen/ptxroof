@@ -468,3 +468,18 @@ pub struct UnknownEntry {
     pub count: Option<u64>,
     pub reason: String,
 }
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredBlock {
+    pub name: String,
+    pub verdict: Verdict,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Confirmed,
+    Consistent,
+    Unchecked,
+    Contradicted,
+}
