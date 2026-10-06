@@ -202,6 +202,9 @@ its shared writes and instruction counts remain counted
 - Counts are PTX, not SASS: ptxas removes most register moves, folds
   address arithmetic into addressing modes, expands `.rn` divides, and
   may add spills.
+- Measurement records launch with every pointer parameter zero-filled
+  (`tools/ncu/launch.c`), so a branch on loaded data takes its
+  zero-data side.
 - No machine model. AI is printed without a ceiling; the PTX `.target`
   names a family, not a part.
 
@@ -235,8 +238,11 @@ One line each, with the trigger that would start it.
   every executing thread at every iteration merged per base pointer).
   What remains is listed above.
 - `check` verb: CI gate on a kernel property. Trigger: the first gate.
-- Nsight Compute import beside the static columns. Trigger: the first
-  static-versus-measured comparison beyond k5.
+- Nsight Compute import beside the static columns: started 2026-10-06.
+  `tools/ncu/measure.py` records one launch per PTX line, the SASS
+  ptxas attributes to the line and their predicated-on thread
+  instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`);
+  the tool does not read the record yet.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a fixture
