@@ -1,0 +1,5 @@
+# A record whose line 439 names a register the PTX's line 439 does not:
+# the record was measured on other PTX, so --ncu refuses it.
+args = ["analyze", "{fixtures}/k5/k5.sm_89.ptx", "--ncu", "{case}/record.json"]
+exit = 2
+check_stream = "stderr"

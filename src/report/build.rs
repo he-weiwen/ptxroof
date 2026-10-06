@@ -40,6 +40,7 @@ use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
+use crate::report::measured::NcuRecord;
 use crate::report::names::demangle;
 use crate::report::schema::*;
 use std::collections::{BTreeMap, HashMap};
@@ -50,6 +51,8 @@ pub enum AnalyzeError {
     Parse(#[from] ParseError),
     #[error("bad --bind: {0}")]
     Binding(String),
+    #[error("--ncu record does not match: {0}")]
+    Ncu(String),
 }
 
 /// One `--bind` argument: `name=value` or `idx:name=value`.
@@ -94,6 +97,7 @@ pub struct AnalyzeOptions {
     /// `--launch x,y,z`; `None` = default to `.reqntid`/`.maxntid`
     /// when the kernel carries one.
     pub launch: Option<[u32; 3]>,
+    pub ncu: Option<NcuRecord>,
 }
 
 pub fn analyze(
@@ -102,6 +106,9 @@ pub fn analyze(
     opts: &AnalyzeOptions,
 ) -> Result<Report, AnalyzeError> {
     let module = parse(source)?;
+    if let Some(record) = &opts.ncu {
+        record.check(&module, source).map_err(AnalyzeError::Ncu)?;
+    }
 
     let mut kernels = Vec::new();
     let mut classified = Fraction { num: 0, den: 0 };

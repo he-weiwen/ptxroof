@@ -1,0 +1,4 @@
+# k5's record against k1's PTX: the recorded kernel is not in the module.
+args = ["analyze", "{fixtures}/k1/k1.sm_89.ptx", "--ncu", "{fixtures}/k5/k5.sm_89.256.ncu.json"]
+exit = 2
+check_stream = "stderr"

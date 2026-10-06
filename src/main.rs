@@ -97,6 +97,7 @@ fn run() -> anyhow::Result<ExitCode> {
     let opts = ptxroof::report::AnalyzeOptions {
         bindings: ncu.as_ref().map_or(bindings, |r| r.bindings()),
         launch: ncu.as_ref().map(|r| r.block).or(launch),
+        ncu,
     };
     let report = ptxroof::report::analyze(&source, &input.display().to_string(), &opts)
         .with_context(|| format!("analyzing {}", input.display()))?;
