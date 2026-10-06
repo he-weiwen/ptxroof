@@ -1,5 +1,6 @@
 {
  "kernel": "_Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0_",
+ "grid": [4, 4, 1],
  "block": [64, 1, 1],
  "params": ["u32:256", "u32:256", "u32:256", "f32:1", "ptr:131072", "ptr:131072", "f32:0", "ptr:131072"],
  "lines": {

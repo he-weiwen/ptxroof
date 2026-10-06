@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Deserialize)]
 pub struct NcuRecord {
     pub kernel: String,
+    pub grid: [u32; 3],
     pub block: [u32; 3],
     pub params: Vec<String>,
     pub lines: BTreeMap<u32, NcuLine>,
@@ -93,6 +94,18 @@ impl NcuRecord {
     }
 }
 
+pub struct LineIndex(Vec<usize>);
+
+impl LineIndex {
+    pub fn new(source: &str) -> Self {
+        LineIndex(source.match_indices('\n').map(|(i, _)| i).collect())
+    }
+
+    pub fn line(&self, offset: u32) -> u32 {
+        self.0.partition_point(|&n| n < offset as usize) as u32 + 1
+    }
+}
+
 fn squeeze(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -110,6 +123,7 @@ mod tests {
         };
         NcuRecord {
             kernel: "k".into(),
+            grid: [1, 1, 1],
             block: [1, 1, 1],
             params: Vec::new(),
             lines: (lines.iter())
