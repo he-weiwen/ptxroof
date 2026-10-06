@@ -101,6 +101,9 @@ pub fn render(report: &Report) -> String {
                 let _ = writeln!(w, "    {}{count} — {}", u.what, u.reason);
             }
         }
+        if let Some(blocks) = &k.measured {
+            render_measured(w, blocks);
+        }
     }
 
     let _ = writeln!(w);
@@ -113,6 +116,41 @@ pub fn render(report: &Report) -> String {
         let _ = writeln!(w, "coverage: {metric} {pct:.1}% ({}/{})", f.num, f.den);
     }
     out
+}
+
+fn render_measured(w: &mut String, blocks: &[MeasuredBlock]) {
+    let _ = writeln!(
+        w,
+        "  measured (predicated-on thread instructions executed over the launch):"
+    );
+    let width = blocks.iter().map(|b| b.name.len()).max().unwrap_or(0);
+    for b in blocks {
+        let verdict = match b.verdict {
+            Verdict::Confirmed => "confirmed",
+            Verdict::Consistent => "consistent",
+            Verdict::Unchecked => "unchecked",
+            Verdict::Contradicted => "contradicted",
+        };
+        let _ = writeln!(
+            w,
+            "    {:<width$}  {verdict:<12}  {} instructions, {} with SASS, {} agreeing",
+            b.name, b.instructions, b.with_sass, b.agreeing
+        );
+        for d in &b.differing {
+            let bound = if d.at_most { "<= " } else { "" };
+            let tested = if d.tested { " [tested]" } else { "" };
+            let sass: Vec<String> = d.sass.iter().map(|(op, n)| format!("{op} x{n}")).collect();
+            let _ = writeln!(
+                w,
+                "      line {}: {}  predicted {bound}{}, measured {}  ({}){tested}",
+                d.line,
+                d.ptx,
+                d.predicted,
+                d.executions,
+                sass.join(", ")
+            );
+        }
+    }
 }
 
 /// One margin string per block row drawing every non-fallthrough edge

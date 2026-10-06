@@ -256,7 +256,8 @@ One line each, with the trigger that would start it.
   equal an exact prediction or stay within a bound. Each block also
   counts its instructions, those with SASS and those that agree, and
   lists every line whose measured count is not the predicted number,
-  with its SASS opcodes (`differing`). No text rendering yet.
+  with its SASS opcodes (`differing`); the text report prints them
+  under `measured`.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a fixture

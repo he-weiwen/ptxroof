@@ -65,7 +65,9 @@ ptxroof analyze kernel.ptx --launch 16,16,1  # per-CTA totals, and with the
                                            # the fewest it needs
 ptxroof analyze kernel.ptx --ncu rec.json  # the launch tools/ncu/measure.py
                                            # recorded: its block shape and
-                                           # u32 parameters
+                                           # u32 parameters, and per block
+                                           # the measured counts against
+                                           # the predicted ones
 ptxroof analyze kernel.ptx --dump-ast      # parsed module, canonical PTX
 ```
 
