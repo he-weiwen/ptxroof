@@ -114,7 +114,8 @@ and write-only for `red`; neither estimates internal atomic or DRAM traffic.
 ## Development
 
 `./ci.sh` runs everything: rustfmt, clippy (warnings deny), unit and
-corpus tests, the CLI/acceptance suite (`tests/run.py`, stdlib-only
+corpus tests, the lit tests in `tests/lit` (LLVM's lit and FileCheck,
+found by `tests/lit.sh`), the CLI/acceptance suite (`tests/run.py`, stdlib-only
 Python ≥ 3.11), generated loop kernels checked against a simulator
 (`tests/gen_loops.py`) and, when the CUDA toolkit is on PATH, a ptxas
 round trip of every fixture's `--dump-ast` output against its SASS,

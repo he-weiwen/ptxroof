@@ -7,3 +7,5 @@
 __pycache__/
 # cargo mutants output
 /mutants.out*
+# lit timing cache
+.lit_test_times.txt

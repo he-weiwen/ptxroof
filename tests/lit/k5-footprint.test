@@ -1,0 +1,15 @@
+# k5 at M=N=K=256, block 64: what one warp's request touches. The A
+# tile load is 4 rows of 8 halves 512 B apart (4 sectors when the base
+# is sector-aligned), the B tile load 32 consecutive halves (2), and the
+# epilogue's C accesses 8 lanes 16 B apart per row (16). Nsight Compute
+# on this launch: 18,432 load requests over 81,920 sectors and 2,048
+# store requests over 32,768, exactly these rows times their counts.
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 | FileCheck %s
+CHECK: kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(int, int, int, float, __half const*, __half const*, float, __half*)
+CHECK: loop 5_2d_blocktiling.cuh:39 ($L__BB0_2)
+CHECK: 5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B   warp: 4–8 sectors (ideal 2)    [32768 * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]          k[5_2d_blocktiling.cuh:39]: +16 B/iter
+CHECK: 5_2d_blocktiling.cuh:46  ld.global.u16  global load 2 B   warp: 2–3 sectors (ideal 2)    [128 * %ctaid.x + 4096 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/64⌋ + 2 * (%tid.x mod 64) + param_5 - 4096]      k[5_2d_blocktiling.cuh:39]: +4096 B/iter
+CHECK: global bytes per CTA over the loop's own blocks: requested 65536 B, unique 65536 B, in sectors 98304–147456 B
+CHECK: accesses outside loops:
+CHECK: 5_2d_blocktiling.cuh:69  ld.global.u16  global load 2 B   warp: 16–20 sectors (ideal 2)    [128 * %ctaid.x + 32768 * %ctaid.y + 4096 * ⌊%tid.x/8⌋ + 16 * (%tid.x mod 8) + param_7]
+CHECK: 5_2d_blocktiling.cuh:68  st.global.u16  global store 2 B  warp: 16–20 sectors (ideal 2)    [128 * %ctaid.x + 32768 * %ctaid.y + 4096 * ⌊%tid.x/8⌋ + 16 * (%tid.x mod 8) + param_7]
