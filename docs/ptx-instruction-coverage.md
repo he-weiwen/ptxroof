@@ -94,6 +94,18 @@ That allowlist contains `wgmma`, used by `micro/unknown_in_loop.ptx` to
 pin lower-bound reporting. The corpus has expanded beyond the original
 nvcc ladder; see PLAN.md for its producers and fixtures.
 
+Separately from its category, each instruction has a `CountConstraint`
+(`src/analysis/instruction_counts/count_constraint.rs`): how far the ISA
+lets ptxas change how often it executes. Unit tests in that file pin
+each clause.
+
+| Constraint | Instructions | ISA |
+|---|---|---|
+| `Preserved` | `.volatile`, `.mmio` | §8.4.2: "The number of volatile instructions (not operations) executed by a program is preserved"; §8.4.1: mmio reads and writes are "always performed" and "never combined" |
+| `Constrained` | `.relaxed`/`.acquire`/`.release`/`.acq_rel`; `atom`, `red`; `bar`, `barrier`; `fence`, `membar` except `.proxy` | §8.4 strong and synchronizing operations; `atom`/`red` default to `.relaxed` (§9.7.14.5, §9.7.14.6), `fence` to `.acq_rel`, `membar` is `fence.sc` (§9.7.14.4) |
+| `Constrained` | `add`, `sub`, `mul` with `.rn`/`.rz`/`.rm`/`.rp`; `fma`, `mad` with one | §9.7.3.3–§9.7.5.2: an explicit rounding modifier "is treated conservatively by the code optimizer"; §9.7.3.6, §9.7.3.7: one rounding, by `.rnd` |
+| `Free` | everything else, including the default `.weak` `ld`/`st` (§9.7.9.8) and unrounded `add`/`mul`, which "may be optimized to use fused-multiply-add instructions" (§9.7.3.3) | — |
+
 Row verdict vocabulary: **OK** (correct as-is), **OK (deferred)**
 (deliberately `Unknown` pending a future family, with its tier),
 **Gap** (should have an arm today; recommendation given), **Wart**
