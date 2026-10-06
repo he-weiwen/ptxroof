@@ -13,21 +13,31 @@ static void check(CUresult result, const char *what) {
 }
 
 static void usage(const char *what) {
-    fprintf(stderr, "launch: %s\nusage: launch CUBIN KERNEL GRID BLOCK [u32:N | f32:X | ptr:BYTES]...\n", what);
+    fprintf(stderr, "launch: %s\nusage: launch CUBIN KERNEL GRID BLOCK [u32:N | f32:X | ptr:BYTES]...\n"
+                    "       launch --device\n", what);
     exit(2);
 }
 
 int main(int argc, char **argv) {
-    unsigned grid[3] = {1, 1, 1}, block[3] = {1, 1, 1};
-    if (argc < 5 || sscanf(argv[3], "%u,%u,%u", &grid[0], &grid[1], &grid[2]) < 1 ||
-        sscanf(argv[4], "%u,%u,%u", &block[0], &block[1], &block[2]) < 1)
-        usage("expected a cubin, a kernel name, and GRID and BLOCK as x,y,z");
     CUdevice device;
     CUcontext context;
     CUmodule module;
     CUfunction kernel;
     check(cuInit(0), "cuInit");
     check(cuDeviceGet(&device, 0), "cuDeviceGet");
+    if (argc == 2 && !strcmp(argv[1], "--device")) {
+        char name[256];
+        int major, minor;
+        check(cuDeviceGetName(name, sizeof name, device), "cuDeviceGetName");
+        check(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device), "major");
+        check(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device), "minor");
+        printf("%s\nsm_%d%d\n", name, major, minor);
+        return 0;
+    }
+    unsigned grid[3] = {1, 1, 1}, block[3] = {1, 1, 1};
+    if (argc < 5 || sscanf(argv[3], "%u,%u,%u", &grid[0], &grid[1], &grid[2]) < 1 ||
+        sscanf(argv[4], "%u,%u,%u", &block[0], &block[1], &block[2]) < 1)
+        usage("expected a cubin, a kernel name, and GRID and BLOCK as x,y,z, or --device");
     check(cuDevicePrimaryCtxRetain(&context, device), "cuDevicePrimaryCtxRetain");
     check(cuCtxSetCurrent(context), "cuCtxSetCurrent");
     check(cuModuleLoad(&module, argv[1]), argv[1]);

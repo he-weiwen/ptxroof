@@ -34,7 +34,7 @@ def numbered(ptx, path):
     out = []
     for n, line in enumerate(ptx.split("\n"), 1):
         code = line.split("//")[0].strip()
-        if code.startswith((".loc", ".file")):
+        if re.match(r"\.(loc|file)\b", code):
             line = ""
         elif code.startswith(".address_size"):
             line += f' .file 1 "{path}"'
@@ -65,18 +65,17 @@ def per_line(table):
 def main(path):
     record = json.loads(Path(path).read_text())
     ptx = REPO / record["ptx"]
-    query = "--query-gpu=name,driver_version,compute_cap"
-    gpu, driver, cc = run("nvidia-smi", query, "--format=csv,noheader").splitlines()[0].split(", ")
-    arch = "sm_" + cc.replace(".", "")
+    driver = run("nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader").splitlines()[0]
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
+        include = Path(shutil.which("ptxas")).resolve().parents[1] / "include"
+        run("gcc", "-O2", Path(__file__).with_name("launch.c"), f"-I{include}", "-lcuda", "-o", tmp / "launch")
+        gpu, arch = run(tmp / "launch", "--device").splitlines()
         (tmp / "numbered.ptx").write_text(numbered(ptx.read_text(), ptx))
         for name, source in (("original", ptx), ("numbered", tmp / "numbered.ptx")):
             run("ptxas", f"-arch={arch}", "-lineinfo", source, "-o", tmp / f"{name}.cubin")
         if sass(tmp / "original.cubin") != sass(tmp / "numbered.cubin"):
             sys.exit(f"measure.py: {record['ptx']} assembles to different SASS with a .loc per line")
-        include = Path(shutil.which("ptxas")).resolve().parents[1] / "include"
-        run("gcc", "-O2", Path(__file__).with_name("launch.c"), f"-I{include}", "-lcuda", "-o", tmp / "launch")
         dims = [",".join(map(str, record[k])) for k in ("grid", "block")]
         launch = [tmp / "launch", tmp / "numbered.cubin", record["kernel"], *dims, *record["params"]]
         run("ncu", "--section", "SourceCounters", "--import-source", "yes", "-o", tmp / "report", *launch)

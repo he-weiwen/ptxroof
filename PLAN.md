@@ -204,7 +204,8 @@ its shared writes and instruction counts remain counted
   may add spills.
 - Measurement records launch with every pointer parameter zero-filled
   (`tools/ncu/launch.c`), so a branch on loaded data takes its
-  zero-data side.
+  zero-data side, and with no dynamic shared memory, so a kernel that
+  uses `.extern .shared` (every Gluon fixture) cannot be measured.
 - No machine model. AI is printed without a ceiling; the PTX `.target`
   names a family, not a part.
 
