@@ -242,8 +242,10 @@ One line each, with the trigger that would start it.
 - Nsight Compute import beside the static columns: started 2026-10-06.
   `tools/ncu/measure.py` records one launch per PTX line, the SASS
   ptxas attributes to the line and their predicated-on thread
-  instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`);
-  the tool does not read the record yet.
+  instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`).
+  `analyze --ncu RECORD` takes the record's block shape and `u32`
+  parameters for `--launch` and `--bind`; it does not compare counts
+  yet.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a fixture

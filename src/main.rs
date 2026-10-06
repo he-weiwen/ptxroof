@@ -7,7 +7,7 @@
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// Exit code for operational errors (unreadable input, parse error,
@@ -44,6 +44,10 @@ enum Command {
         /// defaults to .reqntid/.maxntid when the kernel carries one
         #[arg(long)]
         launch: Option<String>,
+        /// A launch recorded by tools/ncu/measure.py: its block shape and
+        /// integer parameters stand for --launch and --bind
+        #[arg(long, conflicts_with_all = ["bind", "launch"])]
+        ncu: Option<PathBuf>,
         /// Print the parsed module in canonical PTX form and exit
         #[arg(long)]
         dump_ast: bool,
@@ -67,6 +71,7 @@ fn run() -> anyhow::Result<ExitCode> {
         json,
         bind,
         launch,
+        ncu,
         dump_ast,
     } = cli.command;
     let source =
@@ -88,7 +93,11 @@ fn run() -> anyhow::Result<ExitCode> {
         .map(|s| parse_launch(&s))
         .transpose()
         .map_err(anyhow::Error::msg)?;
-    let opts = ptxroof::report::AnalyzeOptions { bindings, launch };
+    let ncu = ncu.map(|path| read_record(&path)).transpose()?;
+    let opts = ptxroof::report::AnalyzeOptions {
+        bindings: ncu.as_ref().map_or(bindings, |r| r.bindings()),
+        launch: ncu.as_ref().map(|r| r.block).or(launch),
+    };
     let report = ptxroof::report::analyze(&source, &input.display().to_string(), &opts)
         .with_context(|| format!("analyzing {}", input.display()))?;
 
@@ -98,6 +107,12 @@ fn run() -> anyhow::Result<ExitCode> {
         print!("{}", ptxroof::report::text::render(&report));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn read_record(path: &Path) -> anyhow::Result<ptxroof::report::measured::NcuRecord> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
 /// `x,y,z` (y/z default to 1).

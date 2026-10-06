@@ -1,0 +1,4 @@
+# --ncu takes the launch from a measurement record: k5 at M=N=K=256 in
+# blocks of 64 threads, the record's u32 parameters bound by position.
+args = ["analyze", "{fixtures}/k5/k5.sm_89.ptx", "--ncu", "{fixtures}/k5/k5.sm_89.256.ncu.json"]
+exit = 0

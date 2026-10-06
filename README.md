@@ -63,6 +63,9 @@ ptxroof analyze kernel.ptx --launch 16,16,1  # per-CTA totals, and with the
                                            # block shape the sectors each
                                            # warp's request touches, and
                                            # the fewest it needs
+ptxroof analyze kernel.ptx --ncu rec.json  # the launch tools/ncu/measure.py
+                                           # recorded: its block shape and
+                                           # u32 parameters
 ptxroof analyze kernel.ptx --dump-ast      # parsed module, canonical PTX
 ```
 

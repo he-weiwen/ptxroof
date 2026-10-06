@@ -1,6 +1,7 @@
 //! Report construction, output schema, and text rendering.
 
 pub mod build;
+pub mod measured;
 pub mod names;
 pub mod schema;
 pub mod text;
