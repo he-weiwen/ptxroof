@@ -7,6 +7,7 @@
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -80,8 +81,7 @@ fn run() -> anyhow::Result<ExitCode> {
     if dump_ast {
         let module = ptxroof::ptx::parse::parser::parse(&source)
             .with_context(|| format!("parsing {}", input.display()))?;
-        print!("{}", ptxroof::ptx::print::dump(&module));
-        return Ok(ExitCode::SUCCESS);
+        return emit(&ptxroof::ptx::print::dump(&module));
     }
 
     let bindings = bind
@@ -102,12 +102,21 @@ fn run() -> anyhow::Result<ExitCode> {
     let report = ptxroof::report::analyze(&source, &input.display().to_string(), &opts)
         .with_context(|| format!("analyzing {}", input.display()))?;
 
-    if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-    } else {
-        print!("{}", ptxroof::report::text::render(&report));
+    match json {
+        true => emit(&(serde_json::to_string_pretty(&report)? + "\n")),
+        false => emit(&ptxroof::report::text::render(&report)),
     }
-    Ok(ExitCode::SUCCESS)
+}
+
+fn emit(text: &str) -> anyhow::Result<ExitCode> {
+    let mut out = std::io::stdout().lock();
+    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(ExitCode::SUCCESS),
+        written => {
+            written.context("writing stdout")?;
+            Ok(ExitCode::SUCCESS)
+        }
+    }
 }
 
 fn read_record(path: &Path) -> anyhow::Result<ptxroof::report::measured::NcuRecord> {

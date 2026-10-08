@@ -1,0 +1,4 @@
+# A reader that stops early is not an error: the 144 KB dump outgrows
+# the pipe, so the writes after head exits fail with EPIPE. bash, since
+# lit's own shell keeps reading a pipe after its reader exits.
+RUN: bash -o pipefail -c '"$0" analyze --dump-ast "$1" | head -c 1' %ptxroof %fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx
