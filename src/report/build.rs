@@ -1794,6 +1794,17 @@ mod tests {
             r.kernels[0].accesses[0].address.as_deref(),
             Some("4 * (%tid.x mod 32) + param_0 + 1024")
         );
+        // No power of two fits above 2^62 in an i64: that order is refused
+        // and the other, the 0 below 1, still read.
+        let wide = src.replace(
+            "mov.u32 %r1, %tid.x;\n",
+            "mov.u64 %rd8, 0x4000000000000000;\nor.b64 %rd9, %rd8, 0;\nadd.s64 %rd1, %rd1, %rd9;\nmov.u32 %r1, %tid.x;\n",
+        );
+        let r = analyze(&wide, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].accesses[0].address.as_deref(),
+            Some("4 * (%tid.x mod 32) + param_0 + 4611686018427388928")
+        );
     }
 
     /// A scope holding an unclassified instruction or an unquantified

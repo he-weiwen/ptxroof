@@ -642,17 +642,23 @@ impl<'a> AffineValueTracer<'a> {
                     if max < 0 {
                         return Err(format!("or with a negative value {max:#x}"));
                     }
-                    let m = 1i64 << (64 - (max as u64).leading_zeros());
+                    let bits = 64 - (max as u64).leading_zeros();
+                    if bits > 62 {
+                        return Err(format!("or with {max:#x}, no power of two above it"));
+                    }
+                    let m = 1i64 << bits;
                     big.clone().div_exact(m).map(|_| ()).ok_or_else(|| {
                         format!(
                             "or with a value below {m:#x} on a value not known to have those bits clear"
                         )
                     })
                 };
-                match (below(&b, &a), below(&a, &b)) {
-                    (Ok(()), _) | (_, Ok(())) => Ok(a + b),
-                    (Err(why), _) if bound(&b).is_some() => Err(why),
-                    (_, Err(why)) => Err(why),
+                match below(&b, &a) {
+                    Ok(()) => Ok(a + b),
+                    Err(why) => match below(&a, &b) {
+                        Ok(()) => Ok(a + b),
+                        Err(other) => Err(if bound(&b).is_some() { why } else { other }),
+                    },
                 }
             }
             "bfe" if ops.len() == 4 => {
