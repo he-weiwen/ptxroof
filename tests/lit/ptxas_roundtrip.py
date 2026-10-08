@@ -33,8 +33,6 @@ class RoundTrip(lit.formats.TestFormat):
             return lit.Test.Result(lit.Test.FAIL, "no .target line")
         env = test.config.environment
         run = lambda *cmd: subprocess.run(cmd, capture_output=True, text=True, env=env)
-        sass = lambda cubin: [l for l in run("cuobjdump", "-sass", cubin).stdout.splitlines()
-                              if not l.lstrip().startswith("/* 0x")]
         with tempfile.TemporaryDirectory() as tmp:
             orig, dump, redo = (os.path.join(tmp, n) for n in ("orig.cubin", "dump.ptx", "dump.cubin"))
             r = run("ptxas", f"-arch={arch}", ptx, "-o", orig)
@@ -48,6 +46,10 @@ class RoundTrip(lit.formats.TestFormat):
             r = run("ptxas", f"-arch={arch}", dump, "-o", redo)
             if r.returncode:
                 return lit.Test.Result(lit.Test.FAIL, f"ptxas rejects the dump:\n{r.stderr}")
-            if sass(orig) != sass(redo):
+            sass = [run("cuobjdump", "-sass", cubin) for cubin in (orig, redo)]
+            if any(r.returncode for r in sass):
+                return lit.Test.Result(lit.Test.FAIL, "cuobjdump failed:\n" + "".join(r.stderr for r in sass))
+            orig_sass, redo_sass = ([l for l in r.stdout.splitlines() if not l.lstrip().startswith("/* 0x")] for r in sass)
+            if orig_sass != redo_sass:
                 return lit.Test.Result(lit.Test.FAIL, "the dump assembles to different SASS")
         return lit.Test.Result(lit.Test.PASS)
