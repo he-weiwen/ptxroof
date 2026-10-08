@@ -630,27 +630,29 @@ impl<'a> AffineValueTracer<'a> {
             }
             "or" if ops.len() == 3 => {
                 // LLVM writes an add as `or` when no bits can overlap: every
-                // part of the other side is a multiple of a power of two above
-                // the constant.
+                // part of one side is a multiple of a power of two above
+                // the other side's largest value.
                 let (a, b) = (arg(1)?, arg(2)?);
                 // The bounded side: a constant, or a form of moduli whose
                 // largest value is known.
                 let bound = |x: &Affine| self.constant(x).or_else(|| x.max_value());
-                let (small, max, big) = match (bound(&a), bound(&b)) {
-                    (_, Some(m)) => (b, m, a),
-                    (Some(m), _) => (a, m, b),
-                    _ => return Err("or of two values neither of known range".to_owned()),
+                let below = |small: &Affine, big: &Affine| -> Result<(), String> {
+                    let max = bound(small)
+                        .ok_or_else(|| "or of two values neither of known range".to_owned())?;
+                    if max < 0 {
+                        return Err(format!("or with a negative value {max:#x}"));
+                    }
+                    let m = 1i64 << (64 - (max as u64).leading_zeros());
+                    big.clone().div_exact(m).map(|_| ()).ok_or_else(|| {
+                        format!(
+                            "or with a value below {m:#x} on a value not known to have those bits clear"
+                        )
+                    })
                 };
-                if max < 0 {
-                    return Err(format!("or with a negative value {max:#x}"));
-                }
-                let m = 1i64 << (64 - (max as u64).leading_zeros());
-                if big.clone().div_exact(m).is_some() {
-                    Ok(big + small)
-                } else {
-                    Err(format!(
-                        "or with a value below {m:#x} on a value not known to have those bits clear"
-                    ))
+                match (below(&b, &a), below(&a, &b)) {
+                    (Ok(()), _) | (_, Ok(())) => Ok(a + b),
+                    (Err(why), _) if bound(&b).is_some() => Err(why),
+                    (_, Err(why)) => Err(why),
                 }
             }
             "bfe" if ops.len() == 4 => {

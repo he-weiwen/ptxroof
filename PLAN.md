@@ -60,7 +60,12 @@ its shared writes and instruction counts remain counted
   a `min` of non-constants even with `--bind`); masks that are not
   one run of bits (the attention backward's dQ stores, `0xdc`); a
   counter's value after its loop (k1's remainder loop reads the main
-  loop's final k: "more than one reaching definition"); `selp`.
+  loop's final k: "more than one reaching definition"); `selp`; an
+  `or` read as an add only when one side's largest value is below a
+  power of two the other side is a multiple of, not by the bits each
+  side can set (rope_norm's `or.b32 %r106, %r104, 16` on
+  `64·%ctaid.x + (⌊%tid.x/8⌋ mod 16)`: "or with a value below 0x20";
+  k14's C stores: "or of two values neither of known range").
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/cli/
   analyze-gluon-ce-chunk`: the load and the store count 131,072 B

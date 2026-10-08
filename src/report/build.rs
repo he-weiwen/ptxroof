@@ -1780,6 +1780,22 @@ mod tests {
         assert!(k.accesses[0].reuse.is_empty());
     }
 
+    /// An `or` whose constant is the high side: the lane part fits below it.
+    #[test]
+    fn an_or_above_the_other_sides_largest_value_is_an_add() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n\
+                   and.b32 %r2, %r1, 31;\nor.b32 %r3, %r2, 256;\nmul.wide.u32 %rd2, %r3, 4;\n\
+                   add.s64 %rd3, %rd1, %rd2;\nld.global.f32 %f1, [%rd3];\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].accesses[0].address.as_deref(),
+            Some("4 * (%tid.x mod 32) + param_0 + 1024")
+        );
+    }
+
     /// A scope holding an unclassified instruction or an unquantified
     /// byte count marks its totals as lower bounds; AI(global) then has
     /// no direction when the sides disagree.
