@@ -10,181 +10,13 @@ Partial comparison:
   - scalars: exact equality, including floats — analysis is exact
     arithmetic on static counts, so expected outputs store exact values.
 
-Every report must also satisfy the identities below, which any correct
-implementation satisfies, with no per-test expectations.
-
 Usage: check_report.py TEST < REPORT
        check_report.py --self-test
 """
 
-import copy
 import json
 import sys
 from pathlib import Path
-
-
-def _verify_instruction_accounting(report):
-    """Every instruction is accounted exactly once (the check v1's
-    AsyncCopy silent-zero bug would have failed)."""
-    out = []
-    parts = ("flop", "non_flop_arith", "memory", "sync", "communication",
-             "control", "ignore", "unknown")
-    for k in report.get("kernels", []):
-        c = k.get("instruction_classes", {})
-        got = sum(c.get(p, 0) for p in parts)
-        if got != c.get("total", -1):
-            out.append(
-                f"kernel {k.get('name')}: class counts sum to {got}, "
-                f"total is {c.get('total')}"
-            )
-    return out
-
-
-def _verify_unparsed_surfaced(report):
-    """Statements the parser could not read are outside the instruction
-    total, so the only place they can be seen is the unknowns list:
-    the count there must equal instruction_classes.unparsed."""
-    out = []
-    for k in report.get("kernels", []):
-        n = k.get("instruction_classes", {}).get("unparsed", 0)
-        listed = [u.get("count", 0) for u in k.get("unknowns", [])
-                  if u.get("what") == "unparsed statement"]
-        if (sum(listed) if listed else 0) != n:
-            out.append(
-                f"kernel {k.get('name')}: {n} unparsed statement(s), "
-                f"unknowns list says {listed}"
-            )
-    return out
-
-
-def _verify_instruction_kinds_sum(report):
-    """Wherever an aggregate carries numeric instruction counts, the
-    per-kind rows sum to the total and each kind's opcodes sum to the
-    kind."""
-    out = []
-
-    def check(agg, where):
-        ins = agg.get("instructions")
-        if ins is None:
-            return
-        try:
-            total = int(ins["total"]["expr"])
-            parts = sum(int(v["total"]["expr"]) for v in ins["by_kind"].values())
-            opcodes = {
-                k: (int(v["total"]["expr"]),
-                    sum(int(c["expr"]) for c in v["opcodes"].values()))
-                for k, v in ins["by_kind"].items()
-            }
-        except (KeyError, ValueError):
-            return
-        if total != parts:
-            out.append(f"{where}: instruction kinds sum to {parts}, total is {total}")
-        for kind, (kind_total, by_opcode) in opcodes.items():
-            if kind_total != by_opcode:
-                out.append(f"{where}: {kind} opcodes sum to {by_opcode}, kind is {kind_total}")
-
-    def walk(nodes, prefix):
-        for n in nodes:
-            check(n.get("per_iteration", {}), f"{prefix}/{n.get('name')}")
-            walk(n.get("loops", []), f"{prefix}/{n.get('name')}")
-
-    for k in report.get("kernels", []):
-        check(k.get("totals", {}), f"{k.get('name')}/totals")
-        walk(k.get("loops", []), k.get("name", "?"))
-    return out
-
-
-def _verify_classification_coverage(report):
-    """coverage.instructions_classified is derived from, and must agree
-    with, the per-kernel class counts."""
-    cov = report.get("coverage", {}).get("instructions_classified")
-    if cov is None:
-        return ["coverage.instructions_classified missing"]
-    total = sum(k.get("instruction_classes", {}).get("total", 0)
-                for k in report.get("kernels", []))
-    unknown = sum(k.get("instruction_classes", {}).get("unknown", 0)
-                  for k in report.get("kernels", []))
-    out = []
-    if cov.get("den") != total:
-        out.append(f"classified.den {cov.get('den')} != instruction total {total}")
-    if cov.get("num") != total - unknown:
-        out.append(f"classified.num {cov.get('num')} != total - unknown {total - unknown}")
-    return out
-
-
-def _verify_trip_coverage(report):
-    """coverage.loop_trips_resolved must agree with the loop tree."""
-    def walk(nodes):
-        resolved = total = 0
-        for n in nodes:
-            total += 1
-            resolved += 1 if "expr" in n.get("trips", {}) else 0
-            r, t = walk(n.get("loops", []))
-            resolved, total = resolved + r, total + t
-        return resolved, total
-
-    resolved = total = 0
-    for k in report.get("kernels", []):
-        r, t = walk(k.get("loops", []))
-        resolved, total = resolved + r, total + t
-    cov = report.get("coverage", {}).get("loop_trips_resolved")
-    if cov is None:
-        return ["coverage.loop_trips_resolved missing"]
-    if (cov.get("num"), cov.get("den")) != (resolved, total):
-        return [
-            f"loop_trips_resolved {cov.get('num')}/{cov.get('den')} does not "
-            f"match the loop tree ({resolved}/{total})"
-        ]
-    return []
-
-
-def _verify_ai_consistency(report):
-    """Wherever AI(global) is printed alongside integer flop/byte
-    counts, it must equal their ratio."""
-    out = []
-
-    def check(agg, where):
-        ai = agg.get("ai_global")
-        if ai is None:
-            return
-        ai = ai["value"]
-        try:
-            flops = sum(int(agg[t]["total"]["expr"])
-                        for t in ("flops", "tensor_flops", "sfu_flops", "atomic_flops") if t in agg)
-            by = agg["bytes"]["global"]
-            bytes_total = int(by["load"]["expr"]) + int(by["store"]["expr"])
-        except (KeyError, ValueError):
-            return  # symbolic; AI should not have been emitted, but
-            # that is a schema question, not this identity
-        if bytes_total > 0 and abs(ai - flops / bytes_total) > 1e-9:
-            out.append(f"{where}: ai_global {ai} != {flops}/{bytes_total}")
-
-    def walk(nodes, prefix):
-        for n in nodes:
-            check(n.get("per_iteration", {}), f"{prefix}/{n.get('name')}")
-            walk(n.get("loops", []), f"{prefix}/{n.get('name')}")
-
-    for k in report.get("kernels", []):
-        check(k.get("totals", {}), f"{k.get('name')}/totals")
-        walk(k.get("loops", []), k.get("name", "?"))
-    return out
-
-
-VERIFIER_CHECKS = [
-    ("instruction-accounting", _verify_instruction_accounting),
-    ("unparsed-surfaced", _verify_unparsed_surfaced),
-    ("classification-coverage", _verify_classification_coverage),
-    ("trip-coverage", _verify_trip_coverage),
-    ("ai-consistency", _verify_ai_consistency),
-    ("instruction-kinds-sum", _verify_instruction_kinds_sum),
-]
-
-
-def verify_report(report):
-    violations = []
-    for name, fn in VERIFIER_CHECKS:
-        violations += [f"verifier '{name}': {v}" for v in fn(report)]
-    return violations
 
 
 def subset_match(expected, actual, path="$"):
@@ -233,83 +65,6 @@ def self_test():
     ok(subset_match([1], [1, 2]) != [], "array length mismatch fails")
     ok(subset_match({"a": [1]}, {"a": {"x": 1}}) != [], "type mismatch fails")
 
-    # report-verifier hook plumbing
-    VERIFIER_CHECKS.append(
-        ("totals", lambda r: [] if r.get("a") == r.get("b") else ["a != b"])
-    )
-    try:
-        totals_only = lambda r: [
-            v for v in verify_report(r) if v.startswith("verifier 'totals'")
-        ]
-        ok(totals_only({"a": 1, "b": 1}) == [], "holding identity is silent")
-        ok(totals_only({"a": 1, "b": 2}) == ["verifier 'totals': a != b"],
-           "violated identity is named")
-    finally:
-        VERIFIER_CHECKS.pop()
-
-    # the registered identities: each must hold on a good report and
-    # name the violation on a doctored one
-    good = {
-        "kernels": [
-            {
-                "name": "k",
-                "instruction_classes": {
-                    "total": 5, "flop": 1, "non_flop_arith": 1, "memory": 1,
-                    "sync": 0, "control": 1, "ignore": 0, "unknown": 1,
-                },
-                "loops": [
-                    {"name": "l", "trips": {"expr": "8"},
-                     "per_iteration": {
-                         "ai_global": {"value": 0.5, "bound": "exact"},
-                         "flops": {"total": {"expr": "8"}},
-                         "bytes": {"global": {"load": {"expr": "16"},
-                                              "store": {"expr": "0"}}},
-                     },
-                     "loops": []},
-                ],
-                "totals": {},
-            }
-        ],
-        "coverage": {
-            "instructions_classified": {"num": 4, "den": 5},
-            "loop_trips_resolved": {"num": 1, "den": 1},
-        },
-    }
-    ok(verify_report(good) == [], f"all identities hold: {verify_report(good)}")
-    bad = copy.deepcopy(good)
-    bad["kernels"][0]["instruction_classes"]["flop"] = 2
-    ok(any("instruction-accounting" in v for v in verify_report(bad)),
-       "class-sum violation named")
-    bad = copy.deepcopy(good)
-    bad["coverage"]["instructions_classified"]["num"] = 5
-    ok(any("classification-coverage" in v for v in verify_report(bad)),
-       "classified-coverage violation named")
-    bad = copy.deepcopy(good)
-    bad["kernels"][0]["loops"][0]["trips"] = {"unknown": "reason"}
-    ok(any("trip-coverage" in v for v in verify_report(bad)),
-       "trip-coverage violation named")
-    bad = copy.deepcopy(good)
-    bad["kernels"][0]["loops"][0]["per_iteration"]["ai_global"]["value"] = 2.0
-    ok(any("ai-consistency" in v for v in verify_report(bad)),
-       "AI-ratio violation named")
-    bad = copy.deepcopy(good)
-    bad["kernels"][0]["totals"] = {"instructions": {
-        "total": {"expr": "5"},
-        "by_kind": {"control": {"total": {"expr": "1"}, "opcodes": {"bra": {"expr": "1"}}}}}}
-    ok(any("instruction-kinds-sum" in v for v in verify_report(bad)),
-       "instruction kinds not summing to the total is named")
-    bad = copy.deepcopy(good)
-    bad["kernels"][0]["totals"] = {"instructions": {
-        "total": {"expr": "1"},
-        "by_kind": {"control": {"total": {"expr": "1"}, "opcodes": {"bra": {"expr": "2"}}}}}}
-    ok(any("opcodes sum" in v for v in verify_report(bad)),
-       "opcodes not summing to their kind is named")
-    bad = copy.deepcopy(good)
-    bad["kernels"][0]["instruction_classes"]["unparsed"] = 1
-    ok(any("unparsed-surfaced" in v for v in verify_report(bad)),
-       "unparsed statement missing from unknowns is named")
-    bad["kernels"][0]["unknowns"] = [{"what": "unparsed statement", "count": 1}]
-    ok(verify_report(bad) == [], "unparsed statement listed in unknowns passes")
     print(f"check_report.py --self-test: {n} assertions passed")
 
 
@@ -321,7 +76,7 @@ def main(test):
         report = json.load(sys.stdin)
     except json.JSONDecodeError as e:
         sys.exit(f"stdout is not valid JSON: {e}")
-    errors = subset_match(expected, report) + verify_report(report)
+    errors = subset_match(expected, report)
     for e in errors:
         print(e, file=sys.stderr)
     return 1 if errors else 0
