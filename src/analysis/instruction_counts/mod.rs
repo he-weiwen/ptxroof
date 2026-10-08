@@ -1,6 +1,5 @@
-//! Instruction classification and per-execution measurement queries.
+//! Instruction classification and per-execution measurements.
 
 pub mod classify;
 pub mod collect;
 pub mod measurement;
-pub mod stats;

@@ -1,8 +1,10 @@
 //! One instruction retains one category while contributing to several totals.
 use ptxroof::analysis::control_flow::loop_forest;
-use ptxroof::analysis::instruction_counts::classify::{Direction, InstructionCategory, Space};
-use ptxroof::analysis::instruction_counts::collect::{CountQualifier, collect};
-use ptxroof::analysis::instruction_counts::stats;
+use ptxroof::analysis::instruction_counts::classify::{
+    Direction, InstructionCategory, Pipe, Precision, Space,
+};
+use ptxroof::analysis::instruction_counts::collect::collect;
+use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
 use ptxroof::report::schema::{ContributionDetails, InstructionVariant};
@@ -89,17 +91,6 @@ fn predicated_atomic_has_one_issued_instruction_and_bounded_contributions() {
     let kernel = &module.kernels[0];
     let cfg = build_cfg(&module, kernel);
     let blocks = collect(&module, kernel, &cfg, &loop_forest(&cfg));
-    let ids = stats::all_blocks(&blocks);
-    let bytes = stats::bytes(&blocks, &ids, Some(Space::Global), None);
-    assert_eq!(
-        (bytes.value, bytes.ops, bytes.qualifier),
-        (8, 1, CountQualifier::AtMost)
-    );
-    assert_eq!(
-        stats::bytes(&blocks, &ids, None, Some(Direction::Load)).ops,
-        1
-    );
-    assert_eq!(stats::flops(&blocks, &ids, None).ops, 1);
     let instruction = &blocks[0].instructions[0];
     assert_eq!(instruction.classified.category, InstructionCategory::Memory);
     assert!(instruction.predicated);
@@ -108,7 +99,34 @@ fn predicated_atomic_has_one_issued_instruction_and_bounded_contributions() {
         .iter()
         .filter(|m| m.provenance == instruction.provenance)
         .collect();
-    assert_eq!(contributions.len(), 3);
+    let mut kinds: Vec<_> = contributions.iter().map(|m| (m.kind, m.count)).collect();
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        [
+            (
+                MeasureKind::Flops {
+                    pipe: Pipe::Atomic,
+                    precision: Precision::F32
+                },
+                1
+            ),
+            (
+                MeasureKind::Bytes {
+                    space: Space::Global,
+                    direction: Direction::Load
+                },
+                4
+            ),
+            (
+                MeasureKind::Bytes {
+                    space: Space::Global,
+                    direction: Direction::Store
+                },
+                4
+            ),
+        ]
+    );
     assert!(contributions.iter().all(|m| m.predicated));
     let report = analyze(&src, "predicated", &Default::default()).unwrap();
     let totals = &report.kernels[0].totals;

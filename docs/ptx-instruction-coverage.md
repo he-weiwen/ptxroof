@@ -60,8 +60,8 @@ Collection attaches `predicated` and statement `provenance` to each
 contribution to produce `Measurement` records. `cp.async` emits separate
 read and write measurements; FP `atom.add` emits read bytes, write bytes,
 and atomic FLOPs. Every instruction is counted once, including ignored
-instructions, and `stats::Tally.ops` counts distinct contributing
-instructions rather than measurement records. Memory contributions identify
+instructions, from the retained instruction records rather than the
+measurement records. Memory contributions identify
 which memory operand they reference, so an atomic's two sides share one
 address while a copy retains its source and destination.
 

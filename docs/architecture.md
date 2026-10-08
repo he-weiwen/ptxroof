@@ -24,7 +24,7 @@ analysis framework is introduced.
 | `analysis/scalar/trip_counts` | Loop trip matching and unroll pairing | `trips` |
 | `analysis/thread_participation` | Threads that execute a block | `threads` |
 | `analysis/memory_footprint` | Sectors touched by a warp request | remaining `footprint` |
-| `analysis/instruction_counts` | Classification, measurements, collection, and queries | `classify`, `core/measurement`, `report/collect`, `report/stats` |
+| `analysis/instruction_counts` | Classification, measurements, and collection | `classify`, `core/measurement`, `report/collect` |
 | `report/build` | Analysis orchestration and report-specific aggregation | unchanged |
 | `report/schema` | Owned, serializable output structures | `report/tree` |
 | `report/names` | Kernel demangling for display | demangling portion of `cfg/naming` |
@@ -86,8 +86,8 @@ thread_participation -> lane_eval -> affine
 memory_footprint -----> lane_eval
 memory_footprint -----------------> affine
 
-instruction_counts::stats -> collect -> classify <-> measurement
-                               +-> control_flow
+instruction_counts::collect -> classify <-> measurement
+                      +-> control_flow
 ```
 
 `loop_names` is more than presentation: trip analysis uses source file/line
@@ -95,14 +95,11 @@ identity to pair unrolled main and remainder loops. It stays below reporting.
 `report/build` retains its current mixed orchestration and aggregation role;
 renaming it a driver would not separate those responsibilities.
 
-Measurement queries in `analysis::instruction_counts::stats` are free functions:
-pass the collected measurement slice, selected block IDs, and filters explicitly.
-They return owned tallies; there is no `Stats` wrapper or separate borrowed-view
-object. The slice must retain `collect`'s block ordering. `classify` returns one
-`InstructionCategory` and a list of `Contribution` records. `collect` retains
-individual instructions and attaches execution context to their contributions;
-`stats::Tally.ops` counts distinct instruction provenance. Report grouping can
-therefore show one opcode with multiple contributions without counting it twice.
+`classify` returns one `InstructionCategory` and a list of `Contribution`
+records. `collect` retains individual instructions and attaches execution
+context to their contributions. Report grouping counts the retained
+instructions, so it can show one opcode with multiple contributions without
+counting it twice.
 The classification axes and contribution types are shared between `classify`
 and `measurement`.
 

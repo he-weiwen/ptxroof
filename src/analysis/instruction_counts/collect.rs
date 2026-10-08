@@ -31,16 +31,6 @@ pub enum CountQualifier {
     AtMost,
 }
 
-impl CountQualifier {
-    pub fn and(self, other: CountQualifier) -> CountQualifier {
-        if self == CountQualifier::Exact && other == CountQualifier::Exact {
-            CountQualifier::Exact
-        } else {
-            CountQualifier::AtMost
-        }
-    }
-}
-
 /// Instruction-class tallies for one block; the accounting identity is
 /// `flop + non_flop_arith + memory + sync + communication + control +
 /// ignore + unknown == total`.

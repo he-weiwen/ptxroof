@@ -16,7 +16,7 @@
 use ptxroof::analysis::control_flow::loop_forest;
 use ptxroof::analysis::instruction_counts::classify::Precision;
 use ptxroof::analysis::instruction_counts::collect::collect;
-use ptxroof::analysis::instruction_counts::stats;
+use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
 use ptxroof::analysis::loop_names::loop_names;
 use ptxroof::analysis::scalar::trip_counts::trip_counts;
 use ptxroof::ptx::cfg::build_cfg;
@@ -214,8 +214,13 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
                 mult *= trips_num[l.0 as usize];
                 cur = f.get(l).parent;
             }
-            let flat = stats::flops(&blocks, &[bm.block], None).value as i64;
-            independent += flat * mult;
+            let flat: u64 = bm
+                .measurements
+                .iter()
+                .filter(|m| matches!(m.kind, MeasureKind::Flops { .. }))
+                .map(|m| m.count)
+                .sum();
+            independent += flat as i64 * mult;
         }
         assert_eq!(reported, independent, "{fixture}: two paths disagree");
         // Sanity: cuda-core work in this corpus is all f32.
