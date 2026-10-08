@@ -96,11 +96,10 @@ its shared writes and instruction counts remain counted
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.
-- **The uniformity analysis treats every value with more than one
-  reaching definition, or defined in a loop and read after it, as
-  divergent** (`src/analysis/uniformity.rs`,
-  `a_value_from_several_definitions_is_divergent`), so a condition on
-  such a value leaves its block's lanes a bound.
+- **The uniformity analysis treats every value defined in a loop and
+  read after it as divergent** (`src/analysis/uniformity.rs`, "is read
+  after the loop defining it"), so a condition on such a value leaves
+  its block's lanes a bound.
 
 ### Presentation
 

@@ -3,8 +3,9 @@
 //! special registers and at instructions not computed lane by lane from
 //! their operands (loads, warp collectives, tensor-core operations), and
 //! spreads forward through the definitions and branch predicates that
-//! read it, to a fixed point. A read with more than one reaching
-//! definition, or of a definition inside a loop from outside it, is
+//! read it, to a fixed point. Where definitions meet, the branches that
+//! select between them gate the value, as a γ's predicate does in Gated
+//! SSA. A read of a definition inside a loop from outside it is
 //! divergent.
 
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
@@ -57,10 +58,11 @@ impl Uniformity {
         }
         for b in (0..t.cfg.blocks.len() as u32).map(BlockId) {
             if let Some((pos, instr)) = t.last_instr(b)
-                && t.module.interner.resolve(instr.mnemonic) == "bra"
-                && let Some(p) = instr.predicate
+                && matches!(t.module.interner.resolve(instr.mnemonic), "bra" | "brx")
             {
-                reads.push((Node::Branch(b), read(t, p.reg, pos)));
+                let mut regs = registers(t.module, t.module.operand_ids(instr.operands));
+                regs.extend(instr.predicate.map(|p| p.reg));
+                reads.extend(regs.into_iter().map(|r| (Node::Branch(b), read(t, r, pos))));
             }
         }
         let mut users: HashMap<Node, Vec<Node>> = HashMap::new();
@@ -114,8 +116,19 @@ impl Uniformity {
 
 fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
     let name = t.module.interner.resolve(reg);
-    let d = match t.reach_def(reg, pos, None) {
-        ReachingDefinition::Def(d) => d,
+    let here = t.block_of(pos);
+    let reaches = |a: BlockId, b: BlockId| a == b || t.reach[a.0 as usize][b.0 as usize];
+    let defs = match t.reach_def(reg, pos, None) {
+        ReachingDefinition::Def(d) => vec![d],
+        ReachingDefinition::Merged(defs) => defs,
+        ReachingDefinition::Carried(_) => t.defs[&reg]
+            .iter()
+            .copied()
+            .filter(|&d| {
+                (d < pos && t.block_of(d) == here)
+                    || t.reach[t.block_of(d).0 as usize][here.0 as usize]
+            })
+            .collect(),
         ReachingDefinition::None => {
             return match special_register(name) {
                 Some(SpecialRegister::PerCta) => Read::Uniform,
@@ -123,18 +136,30 @@ fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
                 None => Read::Divergent(format!("reads {name}, which has no definition")),
             };
         }
-        ReachingDefinition::Merged(_) | ReachingDefinition::Carried(_) => {
-            return Read::Divergent(format!("{name} has more than one reaching definition"));
-        }
     };
-    let mut l = t.forest.block_loop[t.block_of(d).0 as usize];
-    while let Some(id) = l {
-        if !t.in_loop(id, pos) {
-            return Read::Divergent(format!("{name} is read after the loop defining it"));
+    let mut sources: Vec<Node> = defs.iter().map(|&d| Node::Def(d)).collect();
+    for &d in &defs {
+        let mut l = t.forest.block_loop[t.block_of(d).0 as usize];
+        while let Some(id) = l {
+            if !t.in_loop(id, pos) {
+                return Read::Divergent(format!("{name} is read after the loop defining it"));
+            }
+            l = t.forest.get(id).parent;
         }
-        l = t.forest.get(id).parent;
     }
-    Read::On(vec![Node::Def(d)])
+    // A γ's gating predicates: branches with two successors that reach
+    // the read, one of them through a definition.
+    if defs.len() > 1 {
+        sources.extend((0..t.cfg.blocks.len() as u32).map(BlockId).filter_map(|b| {
+            let succs = &t.cfg.block(b).succs;
+            (succs.iter().filter(|&&s| reaches(s, here)).count() > 1
+                && defs
+                    .iter()
+                    .any(|&d| succs.iter().any(|&s| reaches(s, t.block_of(d)))))
+            .then_some(Node::Branch(b))
+        }));
+    }
+    Read::On(sources)
 }
 
 /// Each lane's result is a function of its own operands.
@@ -181,14 +206,19 @@ mod tests {
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
-    /// Whether `reg` is uniform where the first `st.global.u32` reads it;
-    /// `%r0` holds a parameter and `%r1` the thread index.
+    /// Whether `reg` is uniform where the first `st.global.u32` reads it,
+    /// one after `body` if it has none; `%r0` holds a parameter and `%r1`
+    /// the thread index.
     fn uniform(body: &str, reg: &str) -> Result<(), String> {
+        let store = match body.contains("st.global.u32") {
+            true => String::new(),
+            false => format!("st.global.u32 [%rd9], {reg};"),
+        };
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
              .visible .entry k(\n.param .u32 k_param_0\n)\n{{\n\
              ld.param.u32 %r0, [k_param_0];\nmov.u32 %r1, %tid.x;\n{body}\n\
-             st.global.u32 [%rd9], {reg};\nret;\n}}\n"
+             {store}\nret;\n}}\n"
         );
         let m = parse(&src).expect("test source parses");
         let k = &m.kernels[0];
@@ -234,12 +264,35 @@ mod tests {
     }
 
     #[test]
-    fn a_value_from_several_definitions_is_divergent() {
-        let body = "setp.lt.u32 %p1, %r0, 16;\n@%p1 bra $L__A;\nmov.u32 %r2, 64;\n\
-                    bra.uni $L__J;\n$L__A:\nmov.u32 %r2, 0;\n$L__J:";
-        assert_eq!(
-            uniform(body, "%r2"),
-            Err("%r2 has more than one reaching definition".to_owned())
+    fn a_join_is_divergent_when_a_divergent_branch_selects_the_definition() {
+        let join = |on: &str| {
+            format!(
+                "setp.lt.u32 %p1, {on}, 16;\n@%p1 bra $L__A;\nmov.u32 %r2, 64;\n\
+                 bra.uni $L__J;\n$L__A:\nmov.u32 %r2, 0;\n$L__J:"
+            )
+        };
+        assert_eq!(uniform(&join("%r1"), "%r2"), tid());
+        assert_eq!(uniform(&join("%r0"), "%r2"), Ok(()));
+        // A divergent branch whose other side never reaches the read
+        // selects nothing (k1's bounds check around its K loop).
+        let guarded = format!(
+            "setp.lt.u32 %p3, %r1, 100;\n@%p3 bra $L__X;\n{}\n\
+             st.global.u32 [%rd9], %r2;\n$L__X:",
+            join("%r0")
         );
+        assert_eq!(uniform(&guarded, "%r2"), Ok(()));
+    }
+
+    #[test]
+    fn a_counter_is_uniform_in_its_loop_unless_a_divergent_branch_skips_its_step() {
+        let looped = |skip: &str| {
+            format!(
+                "mov.u32 %r2, 0;\n$L__L:\nst.global.u32 [%rd9], %r2;\n\
+                 setp.lt.u32 %p2, {skip}, 3;\n@%p2 bra $L__S;\nadd.s32 %r2, %r2, 1;\n\
+                 $L__S:\nsetp.lt.u32 %p1, %r2, %r0;\n@%p1 bra $L__L;"
+            )
+        };
+        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
     }
 }
