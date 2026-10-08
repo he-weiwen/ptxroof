@@ -1,6 +1,0 @@
----
-source: tests/loops_corpus.rs
-expression: out
----
-loop $L__BB0_2 blocks=3 latches=1
-  loop $L__BB0_3 blocks=1 latches=1

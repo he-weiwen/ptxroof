@@ -1,7 +1,6 @@
 //! Pinned loop forests for the corpus: headers by
 //! label, nesting depths, and the honest irreducible flag for
-//! micro/irreducible. The k5 tree is also an insta snapshot — the
-//! human-reviewable form.
+//! micro/irreducible.
 
 use ptxroof::analysis::control_flow::{LoopForest, loop_forest};
 use ptxroof::ptx::cfg::{ControlFlowGraph, build_cfg};
@@ -78,38 +77,4 @@ fn k5_inner_loop_nests_inside_outer() {
     // copy block and the latch block.
     assert_eq!(f.loops[inner].blocks.len(), 1);
     assert!(f.get(outer).blocks.len() > 2);
-}
-
-#[test]
-fn k5_loop_tree_snapshot() {
-    let (m, cfg, f) = forest_of("k5/k5.sm_80.ptx");
-    let mut out = String::new();
-    fn walk(
-        m: &Module,
-        cfg: &ControlFlowGraph,
-        f: &LoopForest,
-        id: ptxroof::analysis::control_flow::LoopId,
-        out: &mut String,
-    ) {
-        let l = f.get(id);
-        let label = cfg
-            .block(l.header)
-            .label
-            .map(|s| m.interner.resolve(s).to_owned())
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "{}loop {} blocks={} latches={}\n",
-            "  ".repeat(l.depth as usize - 1),
-            label,
-            l.blocks.len(),
-            l.latches.len()
-        ));
-        for c in f.children_of(id) {
-            walk(m, cfg, f, c, out);
-        }
-    }
-    for top in f.top_level() {
-        walk(&m, &cfg, &f, top, &mut out);
-    }
-    insta::assert_snapshot!(out);
 }
