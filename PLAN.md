@@ -22,7 +22,9 @@ when the selecting branches and the guard are thread-index
 comparisons, `%laneid` in a one-dimensional block, combined with
 `and`, `or` and `not`, or `elect.sync`'s one lane per warp, so
 per-CTA totals count each on its own threads
-(`micro/guards.ptx`, `micro/elect.ptx`); and per loop
+(`micro/guards.ptx`, `micro/elect.ptx`), and which lanes of a warp
+run it when the rest of the condition is the same for every thread
+(rmsnorm's `mov.pred %p1, -1` guard: `warp: 16–17 sectors`); and per loop
 with a numeric trip count, the global bytes one CTA
 requests over the loop's own blocks, the bytes of the sectors those
 requests touch, and the distinct bytes it touches.
@@ -94,6 +96,11 @@ its shared writes and instruction counts remain counted
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.
+- **The uniformity analysis treats every value with more than one
+  reaching definition, or defined in a loop and read after it, as
+  divergent** (`src/analysis/uniformity.rs`,
+  `a_value_from_several_definitions_is_divergent`), so a condition on
+  such a value leaves its block's lanes a bound.
 
 ### Presentation
 

@@ -6,3 +6,4 @@ pub mod loop_names;
 pub mod memory_footprint;
 pub mod scalar;
 pub mod thread_participation;
+pub mod uniformity;

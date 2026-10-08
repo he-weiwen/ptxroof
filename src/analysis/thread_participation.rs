@@ -6,12 +6,14 @@
 //! alone, the block runs exactly on the threads satisfying all of them,
 //! counted by enumeration over the block shape. A predicate that
 //! involves anything else (a CTA index, a parameter, a loaded value)
-//! is an unknown selector, and the block's counts stay bounds.
+//! is an unknown selector, and the block's counts stay bounds; one the
+//! same for every thread empties or keeps whole warps.
 
 use crate::analysis::control_flow::loops::LoopForest;
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval_lane};
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
+use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Operand, Stmt};
 use crate::support::intern::Symbol;
@@ -33,9 +35,10 @@ pub enum Pred {
     True,
     False,
     Unknown,
-    /// A condition the tracer reads but cannot evaluate, the same for
-    /// every thread of the CTA: a comparison of parameters, CTA indices
-    /// and loop counters only.
+    /// A condition that cannot be evaluated but is the same for every
+    /// thread of the CTA: a comparison the tracer reads of parameters,
+    /// CTA indices and loop counters only, or one the uniformity
+    /// analysis finds uniform.
     Uniform,
     Cmp(Constraint),
     /// `elect.sync`: the lowest lane of each warp among the threads
@@ -429,6 +432,7 @@ struct PredicateReader<'a> {
     cfg: &'a ControlFlowGraph,
     forest: &'a LoopForest,
     tracer: &'a AffineValueTracer<'a>,
+    uniformity: Uniformity,
     memo: HashMap<usize, Pred>,
     blocks: Vec<Option<Pred>>,
 }
@@ -478,7 +482,12 @@ impl PredicateReader<'_> {
     }
 
     fn of(&mut self, reg: Symbol, pos: usize, depth: u32) -> Pred {
-        self.read(reg, pos, depth).0
+        match self.read(reg, pos, depth).0 {
+            Pred::Unknown if self.uniformity.is_uniform(self.tracer, reg, pos).is_ok() => {
+                Pred::Uniform
+            }
+            p => p,
+        }
     }
 
     /// The predicate `reg` holds at `pos`, and whether the depth budget
@@ -625,6 +634,7 @@ pub(crate) fn thread_sets(
         cfg,
         forest,
         tracer,
+        uniformity: Uniformity::new(tracer),
         memo: HashMap::new(),
         blocks: vec![None; cfg.blocks.len()],
     };
