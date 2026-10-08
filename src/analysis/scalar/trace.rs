@@ -528,7 +528,7 @@ impl<'a> AffineValueTracer<'a> {
                     None if name.starts_with("%ntid") || name.starts_with("%nctaid") => {
                         Ok(Affine::invariant(SymExpr::sym(name)))
                     }
-                    None if is_special_register(name) => Err(format!(
+                    None if special_register(name).is_some() => Err(format!(
                         "latch condition depends on special register {name}"
                     )),
                     None => Err(format!("no definition found for {name}")),
@@ -855,7 +855,8 @@ impl<'a> AffineValueTracer<'a> {
             ReachingDefinition::Def(d) => d,
             ReachingDefinition::None => {
                 let name = self.module.interner.resolve(reg);
-                return is_special_register(name)
+                return special_register(name)
+                    .is_some()
                     .then(|| format!("latch condition depends on special register {name}"));
             }
             ReachingDefinition::Carried(_) | ReachingDefinition::Merged(_) => {
@@ -917,10 +918,22 @@ pub(crate) fn refuse(a: &Affine, id: Option<LoopId>, what: &str) -> String {
     format!("{what} of an induction variable")
 }
 
-pub(crate) fn is_special_register(name: &str) -> bool {
-    ["%tid", "%ctaid", "%ntid", "%nctaid", "%laneid", "%warpid"]
-        .iter()
-        .any(|p| name.starts_with(p))
+/// Whether the threads of one CTA can read different values of a
+/// special register.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpecialRegister {
+    /// PTX ISA §10.1 `%tid`, §10.3 `%laneid`, §10.4 `%warpid`.
+    PerThread,
+    /// PTX ISA §10.2 `%ntid`, §10.6 `%ctaid`, §10.7 `%nctaid`.
+    PerCta,
+}
+
+pub(crate) fn special_register(name: &str) -> Option<SpecialRegister> {
+    match name.split('.').next()? {
+        "%tid" | "%laneid" | "%warpid" => Some(SpecialRegister::PerThread),
+        "%ntid" | "%ctaid" | "%nctaid" => Some(SpecialRegister::PerCta),
+        _ => None,
+    }
 }
 
 /// Mnemonics whose first operand is a register destination (for the
@@ -943,4 +956,30 @@ fn defines_dest(mnemonic: &str) -> bool {
             | "nop"
             | "prefetch"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn special_registers_by_the_threads_that_share_them() {
+        for name in ["%tid.x", "%tid.z", "%laneid", "%warpid"] {
+            assert_eq!(
+                special_register(name),
+                Some(SpecialRegister::PerThread),
+                "{name}"
+            );
+        }
+        for name in ["%ctaid.y", "%ntid.x", "%nctaid.z"] {
+            assert_eq!(
+                special_register(name),
+                Some(SpecialRegister::PerCta),
+                "{name}"
+            );
+        }
+        for name in ["%r5", "%tidx", "%nwarpid"] {
+            assert_eq!(special_register(name), None, "{name}");
+        }
+    }
 }
