@@ -95,6 +95,11 @@ impl Uniformity {
         Uniformity { divergent }
     }
 
+    /// Whether every lane executing definition `d` writes the same value.
+    pub(crate) fn is_uniform_def(&self, d: usize) -> bool {
+        !self.divergent.contains_key(&Node::Def(d))
+    }
+
     /// Whether every lane executing `pos` reads the same value of `reg`;
     /// the reason when not.
     pub(crate) fn is_uniform(

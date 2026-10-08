@@ -45,7 +45,11 @@ its shared writes and instruction counts remain counted
 
 - **Register effects are incomplete.** The affine tracer records only a
   scalar first-operand register destination, misses tuple/pipe outputs and
-  barrier reductions, and does not model guarded definitions. Its blacklist
+  barrier reductions, and does not model guarded definitions: a branch
+  or guard comparing such a value is checked against the uniformity
+  analysis only when the comparison is free of the thread index
+  (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and
+  an address through one is read as the last write. Its blacklist
   treats `stackrestore` and register-valued `nanosleep` inputs as definitions.
   The parser drops TMA coordinates, leaves bare register names as symbol
   references, and merges same-named registers in sibling scopes; negated

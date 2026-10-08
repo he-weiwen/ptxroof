@@ -482,17 +482,22 @@ impl PredicateReader<'_> {
     }
 
     fn of(&mut self, reg: Symbol, pos: usize, depth: u32) -> Pred {
-        match self.read(reg, pos, depth).0 {
-            Pred::Unknown if self.uniformity.is_uniform(self.tracer, reg, pos).is_ok() => {
-                Pred::Uniform
+        self.read(reg, pos, depth).0
+    }
+
+    /// The predicate `reg` holds at `pos`, uniform when it cannot be read
+    /// but the uniformity analysis finds it so, and whether the depth
+    /// budget cut the reading short (then it is not memoized).
+    fn read(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
+        match self.read_definition(reg, pos, depth) {
+            (Pred::Unknown, cut) if self.uniformity.is_uniform(self.tracer, reg, pos).is_ok() => {
+                (Pred::Uniform, cut)
             }
-            p => p,
+            read => read,
         }
     }
 
-    /// The predicate `reg` holds at `pos`, and whether the depth budget
-    /// cut the reading short (then it is not memoized).
-    fn read(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
+    fn read_definition(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
         let ReachingDefinition::Def(def) = self.tracer.reach_def(reg, pos, None) else {
             return (Pred::Unknown, false);
         };
@@ -559,7 +564,8 @@ impl PredicateReader<'_> {
             ops,
         ) {
             ("setp", _, _) => (
-                condition(self.module, self.kernel, self.tracer, def).unwrap_or(Pred::Unknown),
+                condition(self.module, self.kernel, self.tracer, &self.uniformity, def)
+                    .unwrap_or(Pred::Unknown),
                 false,
             ),
             ("and" | "or", ["pred"], [_, a, b]) => {
@@ -659,11 +665,14 @@ pub(crate) fn thread_sets(
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, when it
-/// compares two such forms.
+/// compares two such forms. A form free of the thread index whose
+/// comparison the uniformity analysis finds divergent was read wrong
+/// (through a guarded write), and is none.
 fn condition(
     module: &Module,
     kernel: &Kernel,
     tracer: &AffineValueTracer,
+    uniformity: &Uniformity,
     def: usize,
 ) -> Option<Pred> {
     let Stmt::Instr(setp) = &kernel.stmts[def] else {
@@ -689,9 +698,12 @@ fn condition(
     let a = tracer.trace_operand(ops[1], def, None, 0).ok()?;
     let b = tracer.trace_operand(ops[2], def, None, 0).ok()?;
     let form = a - b;
-    if on_lane_only(&form) {
+    let lanes = form.terms.keys().any(depends_on_lane);
+    if !lanes && !uniformity.is_uniform_def(def) {
+        None
+    } else if on_lane_only(&form) {
         Some(Pred::Cmp(Constraint { form, cmp }))
-    } else if !form.terms.keys().any(depends_on_lane) {
+    } else if !lanes {
         Some(Pred::Uniform)
     } else {
         None

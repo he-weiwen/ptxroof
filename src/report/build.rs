@@ -1780,6 +1780,26 @@ mod tests {
         assert!(k.accesses[0].reuse.is_empty());
     }
 
+    /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
+    /// read but uniform, so each warp's lanes are still known.
+    #[test]
+    fn a_uniform_half_of_an_and_keeps_the_lanes_exact() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
+                   .reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r3, [k_param_1];\n\
+                   mov.u32 %r1, %tid.x;\nsetp.lt.u32 %p1, %r1, 16;\n\
+                   max.s32 %r5, %r3, 9;\nmin.s32 %r6, %r5, %r3;\n\
+                   setp.lt.s32 %p2, %r6, 7;\nand.pred %p3, %p1, %p2;\n\
+                   mul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                   @%p3 ld.global.f32 %f1, [%rd3];\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let a = &r.kernels[0].accesses[0];
+        assert!(!a.sectors_at_most);
+        assert_eq!(a.sectors_per_request, Some(CountRange { min: 2, max: 3 }));
+    }
+
     /// An `or` whose constant is the high side: the lane part fits below it.
     #[test]
     fn an_or_above_the_other_sides_largest_value_is_an_add() {
