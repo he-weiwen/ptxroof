@@ -158,6 +158,6 @@ refactor. No generic dataflow framework, new IR, or pass manager is added here.
 ## Validation
 
 Run `cargo fmt --all -- --check`, `cargo test --offline`, and build the CLI before
-running `python3 tests/run.py --bin target/debug/ptxroof` and `tests/lit.sh tests/lit`.
+running `tests/lit.sh tests/lit`.
 Keep existing snapshots and lit test expectations unchanged. CUDA round trips
 run only when the required toolkit executables are available.

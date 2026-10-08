@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# CI: Rust checks, lit tests, fixture lint, and generated loops.
+# CI: Rust checks, lit tests, and generated loops.
 # Requires a rustup-managed toolchain (pinned by
 # rust-toolchain.toml), python3, and lit and FileCheck from
 # LLVM's tools (tests/lit.sh). No C++; the ptxas
-# round trip of every fixture runs when the CUDA toolkit is on PATH and
-# is skipped otherwise (PTXROOF_REQUIRE_CUDA=1 turns the skip into a
-# failure, for the machine that has it). Likewise every Nsight Compute
+# round trip of every fixture (tests/lit/roundtrip) runs when the CUDA
+# toolkit is on PATH and is unsupported otherwise
+# (PTXROOF_REQUIRE_CUDA=1 turns that into a failure, for the machine
+# that has it). Likewise every Nsight Compute
 # record is measured again where a GPU, ncu, the toolkit and gcc are
 # present (PTXROOF_REQUIRE_GPU=1).
 set -euo pipefail
@@ -19,10 +20,8 @@ cargo fmt --check
 # cache (observed here: PR 10 lints surfacing two PRs late).
 CARGO_INCREMENTAL=0 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-cargo build --locked # the test runner drives target/debug/ptxroof
+cargo build --locked # the lit tests run target/debug/ptxroof
 
-python3 tests/run.py --self-test
-python3 tests/run.py
 tests/lit.sh -sv tests/lit
 # Compare recognized trip counts with a simulator for generated loop kernels.
 python3 tests/gen_loops.py --self-test

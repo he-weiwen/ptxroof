@@ -5,7 +5,7 @@
 //!    holes in frontend coverage and require review.
 //! 2. dump → reparse → dump is idempotent on every fixture: the
 //!    dump is a fixed point for this frontend. Assembler acceptance is
-//!    checked separately by tests/run.py with a round-trip allowlist.
+//!    checked separately by tests/lit/roundtrip with a round-trip allowlist.
 //! 3. The k2/k5 param tables match the signatures nvcc emits — pinned
 //!    here because `--bind idx:name=value` (PR 12) addresses params by
 //!    these positions.

@@ -12,12 +12,6 @@ fn python(script: &[&str]) {
 
 #[test]
 #[ignore = "ci.sh runs it directly; .cargo/mutants.toml includes it"]
-fn fixture_lint_and_round_trip() {
-    python(&["tests/run.py"]);
-}
-
-#[test]
-#[ignore = "ci.sh runs it directly; .cargo/mutants.toml includes it"]
 fn generated_loops_match_the_simulator() {
     python(&["tests/gen_loops.py", "--seed", "1", "--count", "200"]);
 }

@@ -1,0 +1,4 @@
+# Every fixture says where it came from (PLAN.md, fixture policy).
+RUN: python3 "%S/fixture_provenance.py" %fixtures
+RUN: python3 "%S/fixture_provenance.py" --self-test | FileCheck "%s"
+CHECK: fixture_provenance.py --self-test: 5 assertions passed

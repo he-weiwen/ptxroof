@@ -164,8 +164,8 @@ its shared writes and instruction counts remain counted
   `Arguments mismatch for instruction 'mov'`). k1's and k2's assemble to
   different SASS because `.pragma "nounroll";` is discarded, so ptxas
   unrolls the loop it annotated. These are allowlisted in
-  `tests/roundtrip-allowlist.txt`. A `tests/run.py` stage when the
-  toolkit is on PATH, skipped otherwise.
+  `tests/roundtrip-allowlist.txt`. One lit test per fixture
+  (`tests/lit/roundtrip`), unsupported without the toolkit.
 - Generated loops (`tests/gen_loops.py`, a CI step): single counted
   loops drawn from a grammar of steps, initial values, bounds,
   comparisons, operand orders, branch polarities and read positions,
@@ -289,7 +289,7 @@ a scenario case waits on the GEMM's flops and bytes), S5 CI gate.
 ## Fixture policy
 
 Every committed PTX carries a provenance header and a `regen.sh`
-beside it that rebuilds it from source; `tests/run.py` lints this.
+beside it that rebuilds it from source; `tests/lit/fixture-provenance.test` checks this.
 Hand-written micro kernels say so in their header.
 
 ## Conventions
