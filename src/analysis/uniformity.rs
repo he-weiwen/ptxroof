@@ -177,7 +177,12 @@ fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
 fn lane_wise(module: &Module, instr: &Instr) -> bool {
     let c = classify(module, instr);
     match c.category {
-        InstructionCategory::NonFlopArith { .. } => true,
+        // PTX ISA §9.7.2: addc, subc and madc also read the carry flag
+        // CC.CF, which no register holds.
+        InstructionCategory::NonFlopArith { .. } => !matches!(
+            module.interner.resolve(instr.mnemonic),
+            "addc" | "subc" | "madc"
+        ),
         InstructionCategory::Flop => c.contributions.iter().all(|k| {
             matches!(
                 k.kind,
@@ -270,6 +275,12 @@ mod tests {
         assert_eq!(
             uniform("shfl.sync.idx.b32 %r2, %r0, 0, 31, -1;", "%r2"),
             Err("comes from `shfl.sync.idx.b32`".to_owned())
+        );
+        // The carry out of a per-thread sum: 1 in lanes 16 and up.
+        let carry = "add.cc.u32 %r2, %r1, 0xfffffff0;\naddc.u32 %r3, 0, 0;";
+        assert_eq!(
+            uniform(carry, "%r3"),
+            Err("comes from `addc.u32`".to_owned())
         );
     }
 
