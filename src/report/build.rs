@@ -1228,11 +1228,7 @@ impl<'a> KernelReportBuilder<'a> {
                 if !is_workload {
                     continue;
                 }
-                let file = self
-                    .module
-                    .file_path(loc.file)
-                    .map(|p| p.rsplit('/').next().unwrap_or(p).to_owned())
-                    .unwrap_or_else(|| "<unknown file>".to_owned());
+                let file = self.module.file_name(loc.file).unwrap_or("<unknown file>");
                 *per_line.entry(format!("{file}:{}", loc.line)).or_default() += 1;
             }
         }
