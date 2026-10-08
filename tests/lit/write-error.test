@@ -1,0 +1,6 @@
+# A write that fails for another reason than a closed pipe is an error.
+# bash redirects to /dev/full: on a failed command lit reads back the
+# files it redirected to, and /dev/full reads as endless zeros.
+RUN: not bash -c '"$0" analyze "$1" > /dev/full' %ptxroof %fixtures/micro/branchy.ptx 2> "%t.err"
+RUN: FileCheck "%s" < "%t.err"
+CHECK: ptxroof: writing stdout: No space left on device
