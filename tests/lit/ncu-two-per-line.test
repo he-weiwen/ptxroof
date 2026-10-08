@@ -1,7 +1,7 @@
 # Two fma.rn.f32 on one line: the record counts the line's 64 FFMA
 # executions together, so neither instruction is compared; the block
 # rests on its other lines.
-RUN: %ptxroof analyze "%S/Inputs/ncu-two-per-line.ptx" --ncu "%S/Inputs/ncu-two-per-line.json" --json | %check-report "%s"
+RUN: %ptxroof analyze "%S/Inputs/ncu-two-per-line.ptx" --ncu "%S/Inputs/ncu-two-per-line.ncu.json" --json | %check-report "%s"
 {
   "kernels": [
     {

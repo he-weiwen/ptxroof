@@ -1,5 +1,5 @@
 {
- "ptx": "tests/cli/analyze-ncu-two-per-line/in.ptx",
+ "ptx": "tests/lit/Inputs/ncu-two-per-line.ptx",
  "kernel": "two_per_line",
  "grid": [1, 1, 1],
  "block": [32, 1, 1],
