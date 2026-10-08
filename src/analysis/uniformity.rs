@@ -144,9 +144,17 @@ fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
     };
     let mut sources: Vec<Node> = defs.iter().map(|&d| Node::Def(d)).collect();
     // An η's gating predicates: the exits of every loop holding a
-    // definition but not the read.
+    // definition but not the read. A cycle with more than one entry is
+    // no loop of the forest, and its exits are not known.
     for &d in &defs {
-        let mut l = t.forest.block_loop[t.block_of(d).0 as usize];
+        let at = t.block_of(d);
+        if !t.forest.irreducible_edges.is_empty()
+            && t.reach[at.0 as usize][at.0 as usize]
+            && !(reaches(here, at) && reaches(at, here))
+        {
+            return Read::Divergent(format!("{name} is read after a cycle defining it"));
+        }
+        let mut l = t.forest.block_loop[at.0 as usize];
         while let Some(id) = l {
             let blocks = &t.forest.get(id).blocks;
             if !t.in_loop(id, pos) {
@@ -345,6 +353,19 @@ mod tests {
         // The lanes still in the loop agree on it.
         let inside = looped("%r1").replace("add.s32", "st.global.u32 [%rd9], %r2;\nadd.s32");
         assert_eq!(uniform(&inside, "%r2"), Ok(()));
+    }
+
+    /// A cycle entered at A or B: no loop of the forest, so its exits do
+    /// not gate the counter, which is divergent after it.
+    #[test]
+    fn a_value_from_a_cycle_with_two_entries_is_divergent_after_it() {
+        let body = "mov.u32 %r2, 0;\nsetp.lt.u32 %p1, %r0, 5;\n@%p1 bra $L__B;\n\
+                    $L__A:\nadd.s32 %r2, %r2, 1;\n$L__B:\nadd.s32 %r2, %r2, 1;\n\
+                    setp.lt.u32 %p2, %r2, %r1;\n@%p2 bra $L__A;";
+        assert_eq!(
+            uniform(body, "%r2"),
+            Err("%r2 is read after a cycle defining it".to_owned())
+        );
     }
 
     /// k1's remainder loop starts from the main loop's last counter, or 0

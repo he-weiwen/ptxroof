@@ -100,6 +100,10 @@ its shared writes and instruction counts remain counted
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.
+- **In a kernel with a cycle of more than one entry**, the uniformity
+  analysis takes every value defined on a cycle and read outside it as
+  divergent, whatever the cycle's exits compare
+  (`a_value_from_a_cycle_with_two_entries_is_divergent_after_it`).
 
 ### Presentation
 
