@@ -1,0 +1,13 @@
+# k11 text report: the plain wmma kernel, tile loads by ordinary
+# vectorized ld/st. Same design point as k12/k14 and the same machine line;
+# ceildiv trips because the K loop is `for (k = 0; k < K; k += 16)`.
+RUN: %ptxroof analyze %fixtures/k11/k11.sm_80.ptx | FileCheck "%s"
+CHECK: kernel void hgemm_wmma<128, 128, 16, 64, 64, 128>(
+CHECK: shared memory [static]: 8192 B per CTA
+CHECK: loop 11_wmma.cuh:85 ($L__BB0_2)
+CHECK: trips = ⌈param_2/16⌉
+CHECK: tensor flops = 4096  (f16 4096)
+CHECK: global bytes: load 64 B, store 0 B
+CHECK: shared bytes: load 320 B, store 64 B
+CHECK: AI(global) = 64 flop/B
+CHECK: unknowns: none

@@ -1,0 +1,22 @@
+# The lm_head grad-input GEMM: bf16 activation quantized in-kernel, e4m3
+# weight, promoted accumulation, 8 warps. The in-kernel quantization's
+# inline-asm scopes declare `.reg .b16 lo, hi;`, which the parser rejects
+# (8 unparsed statements), and the strided K counter yields a trip count
+# that is not folded (PLAN.md).
+RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx | FileCheck "%s"
+CHECK: kernel fp8_gemm_kernel
+CHECK: block size: 256 threads, 8 warps (256x1x1 from .reqntid)
+CHECK: loop gluon_fp8.py:173 ($L__BB0_3)
+CHECK: trips = ⌈param_10/64⌉
+CHECK: cvt.rn.satfinite.e4m3x2.f32                             16
+CHECK: tensor fp8                                                32
+CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     32
+CHECK: ld.global.v4.b32                                         4
+CHECK: global -> shared copy 16 B                              <= 2
+CHECK: cp.async.cg.shared.global                             <= 2
+CHECK: flops = 96  (f32 96)
+CHECK: tensor flops = 8192  (fp8 8192)
+CHECK: global bytes: load <= 96 B, store 0 B
+CHECK: AI(global) >= 86.33333333333333 flop/B
+CHECK: unknowns: none
+CHECK: coverage: instructions_classified 100.0% (950/950)

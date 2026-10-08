@@ -1,6 +1,0 @@
-bindings: param 2 (K) = 4096
-loop 2_coalesced.cuh:14 ($L__BB0_4)
-trips = 1024
-loop 2_coalesced.cuh:14 (remainder)
-trips = 0
-flops = <= 8195

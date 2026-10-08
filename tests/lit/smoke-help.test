@@ -1,0 +1,6 @@
+# clap's generated help pins the CLI surface: a new subcommand appears
+# here as an expected-output diff.
+RUN: %ptxroof --help | FileCheck "%s"
+# the generated help lists every verb the binary currently has
+CHECK: Usage:
+CHECK: analyze

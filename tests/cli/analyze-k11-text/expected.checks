@@ -1,9 +1,0 @@
-kernel void hgemm_wmma<128, 128, 16, 64, 64, 128>(
-shared memory [static]: 8192 B per CTA
-loop 11_wmma.cuh:85 ($L__BB0_2)
-trips = ⌈param_2/16⌉
-tensor flops = 4096  (f16 4096)
-global bytes: load 64 B, store 0 B
-shared bytes: load 320 B, store 64 B
-AI(global) = 64 flop/B
-unknowns: none

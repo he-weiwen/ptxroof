@@ -73,13 +73,13 @@ its shared writes and instruction counts remain counted
   `64·%ctaid.x + (⌊%tid.x/8⌋ mod 16)`: "or with a value below 0x20";
   k14's C stores: "or of two values neither of known range").
 - **Unique bytes per loop assume different pointer parameters are
-  disjoint** (the cross-entropy's second pass, `tests/cli/
-  analyze-gluon-ce-chunk`: the load and the store count 131,072 B
+  disjoint** (the cross-entropy's second pass, `tests/lit/
+  gluon-ce-chunk.test`: the load and the store count 131,072 B
   unique for the 131,072 B requested; aliasing would halve it), count
   the loop's own blocks only, and need a numeric trip count, the block
   shape, and constant lane and counter coefficients. k5's K loop at
-  256³ (`analyze-k5-footprint`): requested 65,536 B, unique 65,536 B;
-  k1's (`analyze-k1-footprint`): 1,048,576 B, 32,768 B.
+  256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
+  k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B.
 
 ### Reported as unknowns
 
@@ -180,7 +180,7 @@ its shared writes and instruction counts remain counted
   iterations, 128 threads and 768 CTAs; `sm__inst_executed_pipe_tensor`
   = 2,359,296 = 64 `mma` per warp-iteration likewise, the tool's
   `<= 3072` warp `mma` per CTA at K=768 times 768 CTAs
-  (`analyze-gluon-fp8-gemm-c-fc-warps`); l1tex global-load
+  (`gluon-fp8-gemm-c-fc-warps.test`); l1tex global-load
   bytes (151,191,552) = every `cp.async` byte (150,994,944: two
   prologue stages plus ten of the twelve iterations, the predicated
   prefetches off at the end) plus 256 B per CTA for the two scale
@@ -192,8 +192,8 @@ its shared writes and instruction counts remain counted
   for the backward, 6,336 visits times 160 per warp; the pre and post
   kernels' cuda-core flops (2·ffma + fadd + fmul) 6,684,672 and
   3,145,728 are the tool's per-CTA 17,408 and 8,192 times 384 CTAs.
-  Sectors per warp request, k5 and k1 at M=N=K=256 (`tests/cli/
-  analyze-k5-footprint`, `analyze-k1-footprint`): l1tex global load
+  Sectors per warp request, k5 and k1 at M=N=K=256 (`tests/lit/
+  k5-footprint.test`, `k1-footprint.test`): l1tex global load
   requests and sectors 18,432 / 81,920 (k5) and 1,050,624 / 1,576,960
   (k1), stores 2,048 / 32,768 and 2,048 / 4,096, each the rows'
   aligned counts times their execution counts; per CTA, k5's K loop
@@ -255,7 +255,7 @@ One line each, with the trigger that would start it.
   instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`).
   `analyze --ncu RECORD` takes the record's block shape and `u32`
   parameters for `--launch` and `--bind`, and refuses a record whose
-  lines are not the PTX's (`tests/cli/analyze-k5-ncu-stale`), and
+  lines are not the PTX's (`tests/lit/k5-ncu-stale.test`), and
   gives each block a verdict (`kernels[].measured`): a line whose
   `CountConstraint` is not `Free` and whose SASS is one opcode must
   equal an exact prediction or stay within a bound. Each block also
@@ -283,7 +283,7 @@ Ids used by `tests/acceptance/status.toml`:
 | S10.1, S10.2 | Is my tensor-core work visible, and only the work? | mma_demo, k14 |
 
 Planned, no case yet: S2 spill diff, S3 coalescing, S4 black-box
-Triton kernel (fixtures and CLI cases exist, `tests/cli/analyze-gluon-*`;
+Triton kernel (fixtures and lit tests exist, `tests/lit/gluon-*`;
 a scenario case waits on the GEMM's flops and bytes), S5 CI gate.
 
 ## Fixture policy

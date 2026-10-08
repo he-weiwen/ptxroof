@@ -1,7 +1,0 @@
-# --ncu takes the launch from a measurement record: k5 at M=N=K=256 in
-# blocks of 64 threads, the record's u32 parameters bound by position.
-# Its text view: in the inner loop ptxas runs four address lines once per
-# K iteration (32768 of <= 262144) and merges the eight ld.shared.u16
-# lines into three loads; each epilogue st.global.u16 gains a PRMT.
-args = ["analyze", "{fixtures}/k5/k5.sm_89.ptx", "--ncu", "{fixtures}/k5/k5.sm_89.256.ncu.json"]
-exit = 0

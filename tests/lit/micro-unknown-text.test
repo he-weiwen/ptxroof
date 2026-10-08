@@ -1,0 +1,14 @@
+# An instruction the classifier does not model inside a counted loop:
+# the loop's flop and global/shared byte totals carry `+ unknown`, the
+# flops' per-precision entries do not (they are what was counted), and
+# AI(global) has no direction because both sides are lower bounds.
+RUN: %ptxroof analyze %fixtures/micro/unknown_in_loop.ptx | FileCheck "%s"
+CHECK: kernel micro_unknown_in_loop
+CHECK: trips = param_1
+CHECK: wgmma.fence.sync.aligned  1
+CHECK: flops = 2 + unknown  (f32 2)
+CHECK: tensor flops = 0 + unknown
+CHECK: global bytes: load 4 B + unknown, store 4 B + unknown
+CHECK: AI(global): not bounded (flops are a lower bound, global bytes are a lower bound)
+CHECK: unknowns:
+CHECK: instruction `wgmma` x1 — not classified — its flops/bytes are not counted

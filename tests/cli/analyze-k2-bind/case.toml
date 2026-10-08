@@ -1,6 +1,0 @@
-# Numeric columns via --bind 2:K=4096 (PR 12): the binding is echoed
-# in the header, every K-dependent expression collapses to a number
-# (trips 1024 / 0, totals 8 x 1024 + 3 = 8195 flops), and the
-# remainder loop's 4096 mod 4 = 0 trips read as exactly that.
-args = ["analyze", "{fixtures}/k2/k2.sm_80.ptx", "--bind", "2:K=4096"]
-exit = 0

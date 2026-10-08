@@ -1,0 +1,9 @@
+# Smoke test for the analyze verb on a minimal kernel.
+RUN: %ptxroof analyze "%S/Inputs/smoke-analyze.ptx" | FileCheck "%s"
+# Text report essentials, in order.
+CHECK: kernel micro_smoke
+CHECK: loop with the most instructions (static): $L__BB0_2
+CHECK: trips = param_1
+CHECK: AI(global) = 0.25 flop/B
+CHECK: warp sectors: ? (block shape unknown: no .reqntid; pass --launch)
+CHECK: coverage: instructions_classified 100.0%

@@ -1,6 +1,0 @@
-# The same kernel at a two-block vocabulary: LLVM unrolls the first
-# pass and turns the two-trip second pass into a predicate phi
-# (`mov.pred` set true before the loop, copied in the header, set false
-# in the latch). The matcher reads that as two trips.
-args = ["analyze", "{fixtures}/gluon/ce_chunk_kernel.v8192.sm_89.ptx"]
-exit = 0

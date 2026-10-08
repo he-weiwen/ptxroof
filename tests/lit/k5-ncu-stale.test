@@ -1,0 +1,5 @@
+# A record whose line 439 names a register the PTX's line 439 does not:
+# the record was measured on other PTX, so --ncu refuses it.
+RUN: not %ptxroof analyze %fixtures/k5/k5.sm_89.ptx --ncu "%S/Inputs/k5-ncu-stale.json" 2> "%t.err"
+RUN: FileCheck "%s" < "%t.err"
+CHECK: --ncu record does not match: line 439: the record measured `fma.rn.f32 %f724, %f324, %f331, %f724;`, the PTX has `fma.rn.f32 %f724, %f323, %f331, %f724;`

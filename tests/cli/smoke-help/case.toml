@@ -1,5 +1,0 @@
-# Smoke test for the runner's exit-code and stdout CHECK paths against a
-# command that succeeds: clap's generated help. Doubles as a pin on the
-# CLI surface — a new subcommand appears here as an expected-output diff.
-args = ["--help"]
-exit = 0

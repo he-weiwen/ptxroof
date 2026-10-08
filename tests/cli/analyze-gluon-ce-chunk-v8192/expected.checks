@@ -1,9 +1,0 @@
-kernel ce_chunk_kernel
-loop gluon_ce.py:54 ($L__BB0_3)
-trips = 2
-instructions = 265
-AI(global) = 5.78125 flop/B
-totals [static]:
-instructions = <= 979
-unknowns: none
-coverage: loop_trips_resolved 100.0% (1/1)

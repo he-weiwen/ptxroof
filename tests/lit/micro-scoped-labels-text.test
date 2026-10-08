@@ -1,0 +1,11 @@
+# The same label in two sibling asm scopes: two separate self-loops,
+# named by their scope-unique labels, each with its own trip count.
+RUN: %ptxroof analyze %fixtures/micro/scoped_labels.ptx | FileCheck "%s"
+CHECK: kernel micro_scoped_labels
+CHECK: <->  spin$scope1  scoped_labels.cu:5        3  spin$scope1, <block 2>  scoped_labels.cu:5 (header, latch)
+CHECK: <->  spin$scope2  scoped_labels.cu:9        3  spin$scope2, <block 4>  scoped_labels.cu:9 (header, latch)
+CHECK: loop scoped_labels.cu:5 (spin$scope1)
+CHECK: trips = param_0
+CHECK: loop scoped_labels.cu:9 (spin$scope2)
+CHECK: trips = param_1
+CHECK: unknowns: none

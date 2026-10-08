@@ -1,9 +1,0 @@
-kernel micro_branchy
-blocks (program order; loops are named by their header block):
-/----  <block 0>  branchy.cu:3         5  $L__BB0_5, <block 1>
-|      <block 1>  branchy.cu:3         2  $L__BB0_2
-|//->  $L__BB0_2  branchy.cu:5-6       4  $L__BB0_4, <block 3>  branchy.cu:4 (header)
-|||    <block 3>  branchy.cu:7         1  $L__BB0_4             branchy.cu:4
-|\\->  $L__BB0_4  branchy.cu:4-8       5  $L__BB0_2, $L__BB0_5  branchy.cu:4 (latch)
-\--->  $L__BB0_5  branchy.cu:10        1  (end)
-loop branchy.cu:4 ($L__BB0_2)

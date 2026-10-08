@@ -1,0 +1,10 @@
+# Rotary + QK-norm: one block, no branches; flops exact, masked loads
+# and stores bounded. Nothing unknown.
+RUN: %ptxroof analyze %fixtures/gluon/rope_norm_kernel.sm_89.ptx | FileCheck "%s"
+CHECK: kernel rope_norm_kernel
+CHECK: $L__func_begin0  gluon_rope_norm.py:18-42     878  (end)
+CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
+CHECK: flops = 432  (f32 432)
+CHECK: global bytes: load <= 256 B, store <= 128 B
+CHECK: unknowns: none
+CHECK: coverage: instructions_classified 100.0% (878/878)

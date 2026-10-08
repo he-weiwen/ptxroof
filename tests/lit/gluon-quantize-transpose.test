@@ -1,0 +1,13 @@
+# Residual RMSNorm pass 2 (e4m3 quantization and transpose): one block,
+# no branches, no masks, so every total is exact, including the 64
+# conversions declared inside inline-asm scopes.
+RUN: %ptxroof analyze %fixtures/gluon/quantize_transpose_kernel.sm_89.ptx | FileCheck "%s"
+CHECK: kernel quantize_transpose_kernel
+CHECK: $L__func_begin0  gluon_norm.py:79-99    1049  (end)
+CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
+CHECK: cvt.rn.satfinite.e4m3x2.f32   64
+CHECK: flops = 256  (f32 256)
+CHECK: global bytes: load 292 B, store 256 B
+CHECK: AI(global) = 0.46715328467153283 flop/B
+CHECK: unknowns: none
+CHECK: coverage: instructions_classified 100.0% (1049/1049)

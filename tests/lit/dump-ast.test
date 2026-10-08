@@ -1,0 +1,11 @@
+# Pins the --dump-ast debug view (PR 04): canonical PTX out, exit 0.
+RUN: %ptxroof analyze --dump-ast %fixtures/micro/single_loop.ptx | FileCheck "%s"
+# Canonical dump of micro/single_loop.ptx, in order: header, kernel,
+# loop label, body, trailer.
+CHECK: .version 8.7
+CHECK: .visible .entry micro_single_loop(
+CHECK: .reg .pred %p<3>;
+CHECK: $L__BB0_2:
+CHECK: fma.rn.f32 %f2, %f1, %f1, 0f3F800000;
+CHECK: @%p2 bra $L__BB0_2;
+CHECK: .file 1 "micro/single_loop.cu"

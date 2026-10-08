@@ -1,0 +1,40 @@
+# k5 text report (PR 12): tile loop ceildiv trips, AI(global) = 32 at
+# the steady-state tile altitude, the un-unrolled dot loop with
+# constant trips 8, and line aggregation recovering the fully-unrolled
+# register-tile loops (8 copies of line 55, 64 of line 60).
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx | FileCheck "%s"
+CHECK: kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(
+CHECK: blocks (program order; loops are named by their header block):
+CHECK: block      lines                       instrs  successors            loop
+CHECK: /----  <block 0>  5_2d_blocktiling.cuh:10-39      10  $L__BB0_5, <block 1>
+CHECK: |/-->  $L__BB0_2  5_2d_blocktiling.cuh:17-48     155  $L__BB0_3             5_2d_blocktiling.cuh:39 (header)
+CHECK: ||<->  $L__BB0_3  5_2d_blocktiling.cuh:42-60     111  $L__BB0_3, <block 4>  5_2d_blocktiling.cuh:53 (header, latch)
+CHECK: |\---  <block 4>  5_2d_blocktiling.cuh:39-62       8  $L__BB0_2, <block 5>  5_2d_blocktiling.cuh:39 (latch)
+CHECK: | /--  <block 5>  5_2d_blocktiling.cuh:39          1  $L__BB0_6
+CHECK: \--->  $L__BB0_5  (no line info)                  64  $L__BB0_6
+CHECK: {{  }}\->  $L__BB0_6  5_2d_blocktiling.cuh:13-72     412  (end)
+CHECK: loop with the most instructions (static): 5_2d_blocktiling.cuh:39
+CHECK: shared memory [static]: 2048 B per CTA
+CHECK: loop 5_2d_blocktiling.cuh:39 ($L__BB0_2)
+CHECK: trips = ⌈param_2/8⌉
+CHECK: instructions = 1051
+CHECK: cuda-core f32       512
+CHECK: {{  }}fma.rn.f32        512
+CHECK: integer arithmetic  212
+CHECK: {{  }}add.s32            70
+CHECK: conversion          128
+CHECK: {{  }}cvt.f32.f16       128
+CHECK: shared load 2 B     128
+CHECK: {{  }}ld.shared.u16     128
+CHECK: register move        19
+CHECK: AI(global) = 32 flop/B
+CHECK: accesses:
+CHECK: 5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B   warp: ? (the coefficient of ⌊%tid.x/8⌋ is 2 * param_2; bind it)       [(128 * param_2) * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + (2 * param_2) * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]                      k[5_2d_blocktiling.cuh:39]: +16 B/iter
+CHECK: 5_2d_blocktiling.cuh:42  st.shared.u16  shared store 2 B                                                                        [2 * %tid.x + As]                                                                                                                                    k[5_2d_blocktiling.cuh:39]: invariant
+CHECK: 5_2d_blocktiling.cuh:46  ld.global.u16  global load 2 B   warp: ? (the coefficient of ⌊%tid.x/64⌋ is 2 * param_1; bind it)      [128 * %ctaid.x + (16 * param_1) * k[5_2d_blocktiling.cuh:39] + (2 * param_1) * ⌊%tid.x/64⌋ + 2 * (%tid.x mod 64) + param_5 - 16 * param_1]          k[5_2d_blocktiling.cuh:39]: 16 * param_1 B/iter
+CHECK: loop 5_2d_blocktiling.cuh:53 ($L__BB0_3)
+CHECK: trips = 8
+CHECK: unrolled source lines: 5_2d_blocktiling.cuh:55 x8, 5_2d_blocktiling.cuh:57 x8, 5_2d_blocktiling.cuh:60 x64
+CHECK: 5_2d_blocktiling.cuh:55  ld.shared.u16  shared load 2 B    [2 * k[5_2d_blocktiling.cuh:53] + 128 * ⌊%tid.x/8⌋ + As - 2]         k[5_2d_blocktiling.cuh:53]: +2 B/iter, k[5_2d_blocktiling.cuh:39]: invariant
+CHECK: 5_2d_blocktiling.cuh:57  ld.shared.u16  shared load 2 B    [128 * k[5_2d_blocktiling.cuh:53] + 16 * (%tid.x mod 8) + Bs - 128]  k[5_2d_blocktiling.cuh:53]: +128 B/iter, k[5_2d_blocktiling.cuh:39]: invariant
+CHECK: coverage: loop_trips_resolved 100.0% (2/2)

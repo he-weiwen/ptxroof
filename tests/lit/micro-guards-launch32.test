@@ -1,0 +1,10 @@
+# The same guards at a 32-thread launch: the not.pred guard selects no
+# thread, so its 16-byte store issues 32 times and contributes 0 B.
+RUN: %ptxroof analyze %fixtures/micro/guards.ptx --launch 32,1,1 | FileCheck "%s"
+CHECK: kernel micro_guards
+CHECK: |    <block 1>  (no line info)       1  31 in 1 warp (not (%tid.x == 0 and %tid.x < 32))  $L__BB0_2
+CHECK: block size: 32 threads, 1 warp (32x1x1 from flag)
+CHECK: totals per CTA [static]:
+CHECK: global store 16 B      32
+CHECK: st.global.v4.f32     32
+CHECK: global bytes: load 260 B, store <= 702 B

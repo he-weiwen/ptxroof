@@ -1,0 +1,4 @@
+# k5's record against k1's PTX: the recorded kernel is not in the module.
+RUN: not %ptxroof analyze %fixtures/k1/k1.sm_89.ptx --ncu %fixtures/k5/k5.sm_89.256.ncu.json 2> "%t.err"
+RUN: FileCheck "%s" < "%t.err"
+CHECK: --ncu record does not match: no kernel `_Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0_`

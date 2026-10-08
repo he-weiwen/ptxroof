@@ -1,3 +1,0 @@
-# Pins the --dump-ast debug view (PR 04): canonical PTX out, exit 0.
-args = ["analyze", "--dump-ast", "{fixtures}/micro/single_loop.ptx"]
-exit = 0

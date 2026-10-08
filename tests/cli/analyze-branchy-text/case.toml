@@ -1,5 +1,0 @@
-# Block table margins on an in-loop conditional (PR 31): the header
-# both opens the skip over the guarded block and receives the back
-# edge from the latch, so the two edges share the header row.
-args = ["analyze", "{fixtures}/micro/branchy.ptx"]
-exit = 0

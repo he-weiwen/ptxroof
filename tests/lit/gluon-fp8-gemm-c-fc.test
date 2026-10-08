@@ -1,0 +1,30 @@
+# The nanochat c_fc GEMM (both operands e4m3, 4 warps). Pinned as the
+# tool reads it today; the limitations it shows are PLAN.md's: the fp8
+# `mma` is unclassified, the hex-sized `cp.async` bytes are unknown, the
+# trip count is not folded to a ceiling, and the byte total next to the
+# unknown copies is printed as an upper bound.
+RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx | FileCheck "%s"
+CHECK: kernel fp8_gemm_kernel
+CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
+CHECK: shared memory [static]: 0 B per CTA + dynamic (set at launch)
+CHECK: loop gluon_fp8.py:173 ($L__BB0_3)
+CHECK: trips = ⌈param_10/64⌉
+CHECK: tensor fp8                                                64
+CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     64
+CHECK: ldmatrix.sync.aligned.m8n8.x4.shared.b16                16
+CHECK: global -> shared copy 16 B                              <= 8
+CHECK: cp.async.cg.shared.global                             <= 8
+CHECK: tensor flops = 16384  (fp8 16384)
+CHECK: global bytes: load <= 128 B, store 0 B
+CHECK: shared bytes: load 256 B, store <= 128 B
+CHECK: AI(global) >= 128 flop/B
+CHECK: accesses:
+CHECK: gluon_fp8.py:188  ldmatrix.sync.aligned.m8n8.x4.shared.b16  shared load 16 B     unknown: depends on special register %tid.x, behind `xor.b32`
+CHECK: gluon_fp8.py:199  cp.async.cg.shared.global                 global load 16 B     unknown: div by a non-constant divisor
+CHECK: totals [static]:
+CHECK: flops = 129  (f32 129)
+CHECK: tensor flops = <= 16384 * ⌈param_10/64⌉  (fp8 <= 16384 * ⌈param_10/64⌉)
+CHECK: global bytes: load <= 128 * ⌈param_10/64⌉ + 264 B, store 256 B
+CHECK: unknowns: none
+CHECK: coverage: instructions_classified 100.0% (966/966)
+CHECK: coverage: loop_trips_resolved 100.0% (1/1)

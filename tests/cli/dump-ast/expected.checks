@@ -1,9 +1,0 @@
-# Canonical dump of micro/single_loop.ptx, in order: header, kernel,
-# loop label, body, trailer.
-.version 8.7
-.visible .entry micro_single_loop(
-.reg .pred %p<3>;
-$L__BB0_2:
-fma.rn.f32 %f2, %f1, %f1, 0f3F800000;
-@%p2 bra $L__BB0_2;
-.file 1 "micro/single_loop.cu"

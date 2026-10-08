@@ -1,0 +1,30 @@
+# The cross-entropy chunk at nanochat's vocabulary: two eight-trip
+# loops, fully counted, in a seven-row block table (LLVM's `$L__tmpN`
+# debug labels are not branch targets and start no block). The
+# reductions inlined from Triton's standard.py are attributed to the
+# gluon_ce.py lines they were inlined at (50 and 64), two hops down.
+RUN: %ptxroof analyze %fixtures/gluon/ce_chunk_kernel.sm_89.ptx | FileCheck "%s"
+CHECK: kernel ce_chunk_kernel
+CHECK: |    <block 3>        (no line info)          2  $L__BB0_4
+CHECK: $L__tmp27        gluon_ce.py:31-65      35  (end)
+CHECK: block size: 512 threads, 16 warps (512x1x1 from .reqntid)
+CHECK: shared memory [static]: 0 B per CTA + dynamic (set at launch)
+CHECK: loop gluon_ce.py:47 ($L__BB0_1)
+CHECK: trips = 8
+CHECK: flops = 89  (f32 89)
+CHECK: global bytes: load 16 B, store 0 B
+CHECK: AI(global) = 7.0625 flop/B
+CHECK: global bytes per CTA over the loop's own blocks: requested 65536 B, unique 65536 B, in sectors 65536–69632 B
+CHECK: loop gluon_ce.py:54 ($L__BB0_5)
+CHECK: trips = 8
+CHECK: flops = 161  (bf16 8, f32 153)
+CHECK: global bytes: load 16 B, store 16 B
+CHECK: global bytes per CTA over the loop's own blocks: requested 131072 B, unique 131072 B, in sectors 131072–139264 B
+CHECK: accesses outside loops:
+CHECK: gluon_ce.py:40  ld.global.b64                    global load 8 B                                                 warp: 1 sector (ideal 1)  [8 * %ctaid.x + param_1]
+CHECK: gluon_ce.py:45  ld.global.b16                    global load 2 B                                                                           unknown: value defined by unsupported instruction `selp`
+CHECK: gluon_ce.py:65  atom.global.gpu.acq_rel.max.s32  global load+store 4 B on 1 thread in 1 warp (%tid.x == 0)       warp: 1 sector (ideal 1)  [param_4]
+CHECK: totals [static]:
+CHECK: unrolled source lines: gluon_ce.py:31 x6, gluon_ce.py:42 x2, gluon_ce.py:45 x11, gluon_ce.py:50 x33, gluon_ce.py:64 x18
+CHECK: unknowns: none
+CHECK: coverage: instructions_classified 100.0% (589/589)

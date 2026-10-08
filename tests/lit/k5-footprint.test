@@ -4,7 +4,7 @@
 # epilogue's C accesses 8 lanes 16 B apart per row (16). Nsight Compute
 # on this launch: 18,432 load requests over 81,920 sectors and 2,048
 # store requests over 32,768, exactly these rows times their counts.
-RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 | FileCheck %s
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 | FileCheck "%s"
 CHECK: kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(int, int, int, float, __half const*, __half const*, float, __half*)
 CHECK: loop 5_2d_blocktiling.cuh:39 ($L__BB0_2)
 CHECK: 5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B   warp: 4–8 sectors (ideal 2)    [32768 * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]          k[5_2d_blocktiling.cuh:39]: +16 B/iter

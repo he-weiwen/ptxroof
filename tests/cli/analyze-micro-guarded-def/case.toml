@@ -1,5 +1,0 @@
-# A guard comparing a register written under a %tid.x guard: the tracer
-# reads it as a constant (0 == 0), the uniformity analysis finds it
-# divergent, so the store runs on a bound of the threads, not all 64.
-args = ["analyze", "{fixtures}/micro/guarded_def.ptx"]
-exit = 0

@@ -1,0 +1,22 @@
+# The same kernel with a left window of 768: the key loop's lower bound
+# adds a branch; the trip count still depends on the CTA index.
+RUN: %ptxroof analyze %fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx | FileCheck "%s"
+CHECK: kernel attn_fwd_ws_kernel
+CHECK: /-------------  <block 1>        gluon_attn_fwd.py:79-229       93  128 in 4 warps (⌊%tid.x/32⌋ < 4)             $L__BB0_62, <block 2>
+CHECK: |  |      /---  <block 2>        gluon_attn_fwd.py:98-118       63  <= 128 in <= 4 warps (⌊%tid.x/32⌋ < 4)       $L__BB0_38, $L__tmp5
+CHECK: block size: 256 threads, 8 warps (256x1x1 from .reqntid)
+CHECK: loop gluon_attn_fwd.py:126 ($L__BB0_39)
+CHECK: trips = unknown: loop exit is not at the latch
+CHECK: loop gluon_attn_fwd.py:131 (waitLoop$scope1)
+CHECK: trips = unknown: latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison
+CHECK: loop gluon_attn_fwd.py:143 ($L__BB0_43)
+CHECK: trips = unknown: latch condition depends on special register %ctaid.x
+CHECK: mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32                                                              <= 128
+CHECK: tensor flops = <= 16384  (bf16 <= 16384)
+CHECK: global bytes: load <= 128 B, store 0 B
+CHECK: loop gluon_attn_fwd.py:213 ($L__BB0_2)
+CHECK: trips = unknown: loop has multiple latches
+CHECK: totals per CTA [static]:
+CHECK: tensor flops = <= 2097152 * trips(gluon_attn_fwd.py:143) * trips(gluon_attn_fwd.py:126) + 2097152 * trips(gluon_attn_fwd.py:213) * trips(gluon_attn_fwd.py:213) * trips(gluon_attn_fwd.py:213)  (bf16 <= 2097152 * trips(gluon_attn_fwd.py:143) * trips(gluon_attn_fwd.py:126) + 2097152 * trips(gluon_attn_fwd.py:213) * trips(gluon_attn_fwd.py:213) * trips(gluon_attn_fwd.py:213))
+CHECK: unknowns:
+CHECK: coverage: instructions_classified 100.0% (3024/3024)

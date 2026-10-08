@@ -1,0 +1,14 @@
+# Flash-attention backward, main kernel: one CTA per key block walks
+# the query blocks at or after it, 160 bf16 mma per iteration (five
+# 64x64x128 GEMMs over 8 warps). The trip count depends on the CTA
+# index, which the reason names.
+RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_kernel.sm_89.ptx | FileCheck "%s"
+CHECK: kernel attn_bwd_kernel
+CHECK: block size: 256 threads, 8 warps (256x1x1 from .reqntid)
+CHECK: loop gluon_attn_bwd.py:112 ($L__BB0_2)
+CHECK: trips = unknown: latch condition depends on special register %ctaid.x
+CHECK: mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32    160
+CHECK: tensor flops = 20480  (bf16 20480)
+CHECK: global bytes: load <= 192 B, store <= 128 B
+CHECK: unknowns:
+CHECK: coverage: instructions_classified 100.0% (1247/1247)

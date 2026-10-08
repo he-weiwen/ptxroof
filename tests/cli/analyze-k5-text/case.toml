@@ -1,6 +1,0 @@
-# k5 text report (PR 12): tile loop ceildiv trips, AI(global) = 32 at
-# the steady-state tile altitude, the un-unrolled dot loop with
-# constant trips 8, and line aggregation recovering the fully-unrolled
-# register-tile loops (8 copies of line 55, 64 of line 60).
-args = ["analyze", "{fixtures}/k5/k5.sm_80.ptx"]
-exit = 0

@@ -1,5 +1,0 @@
-# k11 text report: the plain wmma kernel, tile loads by ordinary
-# vectorized ld/st. Same design point as k12/k14 and the same machine line;
-# ceildiv trips because the K loop is `for (k = 0; k < K; k += 16)`.
-args = ["analyze", "{fixtures}/k11/k11.sm_80.ptx"]
-exit = 0

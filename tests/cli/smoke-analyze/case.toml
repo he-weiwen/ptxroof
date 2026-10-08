@@ -1,4 +1,0 @@
-# Smoke test for the analyze verb on a minimal kernel; in.ptx lives in
-# the case dir, so this also pins the {case} placeholder expansion.
-args = ["analyze", "{case}/in.ptx"]
-exit = 0

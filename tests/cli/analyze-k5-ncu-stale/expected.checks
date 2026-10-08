@@ -1,1 +1,0 @@
---ncu record does not match: line 439: the record measured `fma.rn.f32 %f724, %f324, %f331, %f724;`, the PTX has `fma.rn.f32 %f724, %f323, %f331, %f724;`

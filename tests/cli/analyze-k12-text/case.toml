@@ -1,6 +1,0 @@
-# k12 text report: the wmma + cp.async double buffer. Same tile as k14,
-# so the same per-iteration design point (4096 tensor flops, 64 global
-# bytes via cp.async, AI 64) and the same A100 machine line; the fragments
-# come through wmma.load from shared (4 A x 16 B + 16 B x 16 B = 320 B).
-args = ["analyze", "{fixtures}/k12/k12.sm_80.ptx"]
-exit = 0

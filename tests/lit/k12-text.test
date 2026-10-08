@@ -1,0 +1,23 @@
+# k12 text report: the wmma + cp.async double buffer. Same tile as k14,
+# so the same per-iteration design point (4096 tensor flops, 64 global
+# bytes via cp.async, AI 64) and the same A100 machine line; the fragments
+# come through wmma.load from shared (4 A x 16 B + 16 B x 16 B = 320 B).
+RUN: %ptxroof analyze %fixtures/k12/k12.sm_80.ptx | FileCheck "%s"
+CHECK: kernel void hgemm_double_buffer<128, 128, 16, 64, 64, 128>(
+CHECK: loop with the most instructions (static): 12_double_buffer.cuh:114
+CHECK: shared memory [static]: 16384 B per CTA
+CHECK: loop 12_double_buffer.cuh:114 ($L__BB0_5)
+CHECK: trips = param_2 / 16
+CHECK: instructions = <= 98
+CHECK: shared load 16 B                                        20
+CHECK: {{  }}wmma.load.b.sync.aligned.row.m16n16k16.shared.f16     16
+CHECK: {{  }}wmma.load.a.sync.aligned.row.m16n16k16.shared.f16      4
+CHECK: tensor f16                                              16
+CHECK: {{  }}wmma.mma.sync.aligned.row.row.m16n16k16.f32.f32       16
+CHECK: tensor flops = 4096  (f16 4096)
+CHECK: global bytes: load <= 64 B, store 0 B
+CHECK: shared bytes: load 320 B, store <= 64 B
+CHECK: AI(global) >= 64 flop/B
+CHECK: unknowns: none
+CHECK: coverage: instructions_classified 100.0%
+CHECK: coverage: loop_trips_resolved 100.0% (1/1)
