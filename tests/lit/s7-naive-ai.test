@@ -1,0 +1,20 @@
+# S7.1 (PLAN.md, acceptance scenarios): did tiling pay off? — the naive side. k1's main
+# loop runs at AI(global) = 0.5 flop/B, shape-independent (no --bind).
+# Contrast with S7.2 (k5 at 32 flop/B): two independent runs, two
+# comparable numbers, no diff verb. The same contrast
+# shows in shared memory: the naive kernel reserves 0 B/CTA, the tiled
+# one 2048 (both confirmed against `ptxas -v` — `bytes smem`).
+RUN: %ptxroof analyze %fixtures/k1/k1.sm_80.ptx --json | %check-report "%s"
+{
+  "kernels": [
+    {
+      "name": "_Z11hgemm_naiveiiifPK6__halfS1_fPS_",
+      "shared_memory": {"static_bytes": 0, "dynamic": false},
+      "loops": [
+        {"name": "1_naive.cuh:15", "per_iteration": {"ai_global": {"value": 0.5, "bound": "exact"}}},
+        {"name": "1_naive.cuh:15 (remainder)", "per_iteration": {"ai_global": {"value": 0.5, "bound": "exact"}}}
+      ]
+    }
+  ],
+  "coverage": {"instructions_classified": {"num": 100, "den": 100}, "loop_trips_resolved": {"num": 2, "den": 2}}
+}

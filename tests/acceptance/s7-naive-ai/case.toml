@@ -1,8 +1,0 @@
-# S7.1 (PLAN.md, acceptance scenarios): did tiling pay off? — the naive side. k1's main
-# loop runs at AI(global) = 0.5 flop/B, shape-independent (no --bind).
-# Contrast with S7.2 (k5 at 32 flop/B): two independent runs, two
-# comparable numbers, no diff verb. Flips at PR 12. The same contrast
-# shows in shared memory: the naive kernel reserves 0 B/CTA, the tiled
-# one 2048 (both confirmed against `ptxas -v` — `bytes smem`).
-args = ["analyze", "{fixtures}/k1/k1.sm_80.ptx", "--json"]
-json = true

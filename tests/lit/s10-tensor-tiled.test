@@ -1,3 +1,15 @@
+# S10.2 (PLAN.md, acceptance scenarios): the k14 design point on paper. Per BK=16 tile
+# each warp issues 4x4 output tiles x 2 mma.sync.m16n8k16 = 32 MMAs
+# = 32 * 128 = 4096 tensor flops per lane; the tile's A and B panels
+# arrive by four 16-byte cp.async per thread = 64 global bytes (an
+# upper bound: the prefetch is guarded by `tile + 2 < num_k_tiles`),
+# so AI(global) = 64. Fragments come from shared via ldmatrix: 4 x4
+# (16 B) + 8 x2 (8 B) = 128 B per lane. K / 16 trips through nvcc's
+# signed-divide sequence. On the A100 table 64 flop/B is below the
+# f16 tensor peak ratio (312 TFLOPS / 1555 GB/s = 200.6 flop/B). The tile issues 101
+# instructions per lane per iteration, 48 of them workload: 32 mma,
+# 12 ldmatrix, 4 cp.async.
+RUN: %ptxroof analyze %fixtures/k14/k14.sm_80.ptx --json | %check-report "%s"
 {
   "kernels": [
     {
@@ -106,7 +118,7 @@
       "unknowns": []
     }
   ],
-  "coverage": {
+  "coverage": {"instructions_classified": {"num": 1099, "den": 1099}, 
     "loop_trips_resolved": {
       "num": 2,
       "den": 2

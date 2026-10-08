@@ -16,3 +16,4 @@ config.environment["FILECHECK_OPTS"] = "--strict-whitespace"
 ptxroof = os.environ.get("PTXROOF", os.path.join(repo, "target", "debug", "ptxroof"))
 config.substitutions.append(("%ptxroof", shlex.quote(ptxroof)))
 config.substitutions.append(("%fixtures", shlex.quote(os.path.join(repo, "tests", "fixtures"))))
+config.substitutions.append(("%check-report", "python3 " + shlex.quote(os.path.join(config.test_source_root, "check_report.py"))))

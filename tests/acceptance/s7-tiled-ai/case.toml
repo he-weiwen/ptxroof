@@ -1,7 +1,0 @@
-# S7.2 (PLAN.md, acceptance scenarios): did tiling pay off? — the tiled side. k5's outer
-# tile loop runs at AI(global) = 32 flop/B, shape-independent. The
-# 64x contrast with S7.1's 0.5 is the answer. Flips at PR 12. Tiling's
-# cost shows in shared memory: 2048 B/CTA (As 1024 + Bs 1024), the
-# `2048 bytes smem` ptxas reports for this fixture, vs S7.1's 0.
-args = ["analyze", "{fixtures}/k5/k5.sm_80.ptx", "--json"]
-json = true

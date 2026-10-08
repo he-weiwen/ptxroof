@@ -1,3 +1,12 @@
+# k5 at M=N=K=256 against its Nsight Compute record, block by block.
+# The epilogue is confirmed: each fma.rn.f32 line is one FFMA per
+# execution and executes 64 threads x 16 CTAs = 1024 times. The K loop's
+# blocks stay consistent: its fma.rn.f32 and bar.sync lines equal the
+# prediction, but the loop sits behind the branch on K, so every count
+# in it is a bound. $L__BB0_5, the path for K < 1, is a bound that the
+# record's 0 does not exceed. Per block: instructions, those with SASS,
+# and those whose count agrees with the prediction.
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_89.ptx --ncu %fixtures/k5/k5.sm_89.256.ncu.json --json | %check-report "%s"
 {
   "kernels": [
     {
@@ -12,5 +21,6 @@
         {"name": "$L__BB0_6", "verdict": "confirmed", "instructions": 412, "with_sass": 400, "agreeing": 366}
       ]
     }
-  ]
+  ],
+  "coverage": {"instructions_classified": {"num": 835, "den": 835}, "loop_trips_resolved": {"num": 2, "den": 2}}
 }

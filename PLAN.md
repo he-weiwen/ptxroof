@@ -127,7 +127,7 @@ its shared writes and instruction counts remain counted
   `--bind` decides the branch.** k5 at K=256: per CTA,
   `fma.rn.f32 <= 1052672`, and its record measures exactly 16 CTAs
   times that; the K loop's blocks are `consistent`, not `confirmed`
-  (`tests/cli/analyze-k5-ncu-verdicts`).
+  (`tests/lit/k5-ncu-verdicts.test`).
 - **No arithmetic intensity over sector bytes.** A loop's sector
   bytes cover its own blocks while its flops sit in nested loops
   (k5's K loop: 98,304 B in sectors, no flops of its own).
@@ -213,9 +213,9 @@ its shared writes and instruction counts remain counted
   uses `.extern .shared` (every Gluon fixture) cannot be measured.
 - `--ncu` compares no counts in a kernel with irreducible control
   flow, whose blocks' executions the tool does not know
-  (`tests/cli/analyze-ncu-irreducible`: every block `unchecked`), nor
+  (`tests/lit/ncu-irreducible.test`: every block `unchecked`), nor
   on a PTX line holding more than one instruction, which a record
-  counts together (`tests/cli/analyze-ncu-two-per-line`).
+  counts together (`tests/lit/ncu-two-per-line.test`).
 - No machine model. AI is printed without a ceiling; the PTX `.target`
   names a family, not a part.
 
@@ -271,7 +271,7 @@ One line each, with the trigger that would start it.
 
 ## Acceptance scenarios
 
-Ids used by `tests/acceptance/status.toml`:
+Each id names a lit test, `tests/lit/s*.test`, in its first comment:
 
 | id | question | fixture |
 |---|---|---|

@@ -1,0 +1,17 @@
+# micro/irreducible at param 1 = 32 runs block A ten times per thread
+# (the record: 320 fma.rn.f32 over 32 threads), but A belongs to no
+# natural loop, so the tool has no count for it: no block is compared.
+RUN: %ptxroof analyze %fixtures/micro/irreducible.ptx --ncu %fixtures/micro/irreducible.32.ncu.json --json | %check-report "%s"
+{
+  "kernels": [
+    {
+      "measured": [
+        {"name": "<block 0>", "verdict": "unchecked"},
+        {"name": "$L__BB0_A", "verdict": "unchecked"},
+        {"name": "$L__BB0_B", "verdict": "unchecked"},
+        {"name": "<block 3>", "verdict": "unchecked"}
+      ]
+    }
+  ],
+  "coverage": {"instructions_classified": {"num": 15, "den": 15}, "loop_trips_resolved": {"num": 0, "den": 0}}
+}

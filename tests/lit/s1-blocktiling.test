@@ -1,3 +1,8 @@
+# S1 (PLAN.md, acceptance scenarios): is this kernel's design point what I computed on
+# paper? k5 at BM=64 BN=64 BK=8 TM=8 TN=8: per tile 1024 f32 flops
+# over 32 requested global bytes, AI(global) = 32 flop/B, exact.
+# Shape-independent, so no --bind.
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --json | %check-report "%s"
 {
   "kernels": [
     {
@@ -51,5 +56,6 @@
         }
       ]
     }
-  ]
+  ],
+  "coverage": {"instructions_classified": {"num": 835, "den": 835}, "loop_trips_resolved": {"num": 2, "den": 2}}
 }

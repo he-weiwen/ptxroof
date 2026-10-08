@@ -12,7 +12,7 @@ fn python(script: &[&str]) {
 
 #[test]
 #[ignore = "ci.sh runs it directly; .cargo/mutants.toml includes it"]
-fn cli_and_acceptance_cases() {
+fn fixture_lint_and_round_trip() {
     python(&["tests/run.py"]);
 }
 

@@ -1,6 +1,0 @@
-# S1.2 (PLAN.md, acceptance scenarios): the same kernel compiled at sm_89 (the PTX body
-# is identical to the sm_80 fixture; only .target differs — verified
-# at generation) reports the same design point: the counts depend on
-# the PTX, not on the target directive.
-args = ["analyze", "{fixtures}/k5/k5.sm_89.ptx", "--json"]
-json = true

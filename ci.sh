@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# CI: Rust checks, CLI/acceptance cases, and generated loops.
+# CI: Rust checks, lit tests, fixture lint, and generated loops.
 # Requires a rustup-managed toolchain (pinned by
-# rust-toolchain.toml), python3 >= 3.11, and lit and FileCheck from
+# rust-toolchain.toml), python3, and lit and FileCheck from
 # LLVM's tools (tests/lit.sh). No C++; the ptxas
 # round trip of every fixture runs when the CUDA toolkit is on PATH and
 # is skipped otherwise (PTXROOF_REQUIRE_CUDA=1 turns the skip into a

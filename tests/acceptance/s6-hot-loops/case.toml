@@ -1,6 +1,0 @@
-# S6 (PLAN.md, acceptance scenarios): where does the work go? k2's loops ranked by
-# instructions executed (symbolic): the unrolled main loop (K-dependent) first, its
-# nounroll remainder (K mod 4) second, linked as one logical loop.
-# Flips at PR 12.
-args = ["analyze", "{fixtures}/k2/k2.sm_80.ptx", "--json"]
-json = true

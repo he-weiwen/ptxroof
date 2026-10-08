@@ -1,3 +1,9 @@
+# S9.2 (PLAN.md, acceptance scenarios): an in-loop data-dependent conditional makes the
+# conditional block's counts upper bounds; the at_most marker must
+# propagate into every aggregate that includes them.
+# Also pins the block table: the guarded fma sits alone in an unlabelled
+# fallthrough block inside the loop, neither header nor latch.
+RUN: %ptxroof analyze %fixtures/micro/branchy.ptx --json | %check-report "%s"
 {
   "kernels": [
     {
@@ -79,5 +85,6 @@
         }
       ]
     }
-  ]
+  ],
+  "coverage": {"instructions_classified": {"num": 18, "den": 18}, "loop_trips_resolved": {"num": 1, "den": 1}}
 }

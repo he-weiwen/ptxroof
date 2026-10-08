@@ -1,3 +1,10 @@
+# Symbolic k2 analysis (PR 12): pins the kernel-total expressions in
+# the exact SymExpr printing convention, the instruction-class
+# accounting, the ranking, and full coverage. Hand-derivation of the
+# totals: main loop 8 flops/16 B per iteration x (K - K mod 4)/4
+# trips, remainder 2/4 x (K mod 4), epilogue 3 flops + 2 B load +
+# 2 B store, all behind the bounds guard (hence at_most).
+RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx --json | %check-report "%s"
 {
   "bindings": [],
   "kernels": [

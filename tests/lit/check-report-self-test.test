@@ -1,0 +1,4 @@
+# The partial JSON comparison and the report identities, each holding on
+# a good report and named on a doctored one.
+RUN: %check-report --self-test | FileCheck "%s"
+CHECK: check_report.py --self-test: 19 assertions passed

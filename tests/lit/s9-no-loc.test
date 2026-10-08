@@ -1,0 +1,14 @@
+# S9.3 (PLAN.md, acceptance scenarios): no .loc anywhere — loops fall back to label
+# naming and the report still completes with exit 0.
+RUN: %ptxroof analyze %fixtures/micro/no_loc.ptx --json | %check-report "%s"
+{
+  "kernels": [
+    {
+      "name": "micro_no_loc",
+      "loops": [
+        {"name": "$L__BB0_2"}
+      ]
+    }
+  ],
+  "coverage": {"instructions_classified": {"num": 15, "den": 15}, "loop_trips_resolved": {"num": 1, "den": 1}}
+}

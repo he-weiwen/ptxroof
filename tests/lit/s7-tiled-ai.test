@@ -1,0 +1,18 @@
+# S7.2 (PLAN.md, acceptance scenarios): did tiling pay off? — the tiled side. k5's outer
+# tile loop runs at AI(global) = 32 flop/B, shape-independent. The
+# 64x contrast with S7.1's 0.5 is the answer. Tiling's
+# cost shows in shared memory: 2048 B/CTA (As 1024 + Bs 1024), the
+# `2048 bytes smem` ptxas reports for this fixture, vs S7.1's 0.
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --json | %check-report "%s"
+{
+  "kernels": [
+    {
+      "name": "_Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0_",
+      "shared_memory": {"static_bytes": 2048, "dynamic": false},
+      "loops": [
+        {"name": "5_2d_blocktiling.cuh:39", "per_iteration": {"ai_global": {"value": 32.0, "bound": "exact"}}}
+      ]
+    }
+  ],
+  "coverage": {"instructions_classified": {"num": 835, "den": 835}, "loop_trips_resolved": {"num": 2, "den": 2}}
+}

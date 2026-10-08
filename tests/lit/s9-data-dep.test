@@ -1,0 +1,20 @@
+# S9.1 (PLAN.md, acceptance scenarios): does the tool admit what it can't see? The latch
+# depends on a loaded value: trips become a named unknown with a
+# reason, totals stay symbolic (never a silent zero), the trip
+# coverage stat drops below 100%, and the exit code is still 0 —
+# unknowns are results, not errors.
+RUN: %ptxroof analyze %fixtures/micro/data_dep.ptx --json | %check-report "%s"
+{
+  "kernels": [
+    {
+      "name": "micro_data_dep",
+      "loops": [
+        {
+          "name": "data_dep.cu:4",
+          "trips": {"unknown": "latch condition depends on a value loaded inside the loop"}
+        }
+      ]
+    }
+  ],
+  "coverage": {"instructions_classified": {"num": 9, "den": 9}, "loop_trips_resolved": {"num": 0, "den": 1}}
+}
