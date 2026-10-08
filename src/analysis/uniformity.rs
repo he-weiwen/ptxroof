@@ -5,8 +5,8 @@
 //! spreads forward through the definitions and branch predicates that
 //! read it, to a fixed point. Where definitions meet, the branches that
 //! select between them gate the value, as a γ's predicate does in Gated
-//! SSA. A read of a definition inside a loop from outside it is
-//! divergent.
+//! SSA; a definition inside a loop read outside it is gated by the
+//! loop's exits, as by an η's.
 
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
@@ -138,11 +138,22 @@ fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
         }
     };
     let mut sources: Vec<Node> = defs.iter().map(|&d| Node::Def(d)).collect();
+    // An η's gating predicates: the exits of every loop holding a
+    // definition but not the read.
     for &d in &defs {
         let mut l = t.forest.block_loop[t.block_of(d).0 as usize];
         while let Some(id) = l {
+            let blocks = &t.forest.get(id).blocks;
             if !t.in_loop(id, pos) {
-                return Read::Divergent(format!("{name} is read after the loop defining it"));
+                sources.extend(
+                    blocks
+                        .iter()
+                        .filter(|&&b| {
+                            let succs = &t.cfg.block(b).succs;
+                            succs.iter().any(|s| blocks.binary_search(s).is_err())
+                        })
+                        .map(|&b| Node::Branch(b)),
+                );
             }
             l = t.forest.get(id).parent;
         }
@@ -220,16 +231,25 @@ mod tests {
              ld.param.u32 %r0, [k_param_0];\nmov.u32 %r1, %tid.x;\n{body}\n\
              {store}\nret;\n}}\n"
         );
-        let m = parse(&src).expect("test source parses");
+        uniform_at(&src, reg, None, "st.global.u32")
+    }
+
+    /// Whether `reg` is uniform at the first `opcode` after `label`.
+    fn uniform_at(src: &str, reg: &str, label: Option<&str>, opcode: &str) -> Result<(), String> {
+        let m = parse(src).expect("test source parses");
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
         let t = AffineValueTracer::new(&m, k, &cfg, &forest);
-        let pos = k
-            .stmts
-            .iter()
-            .position(|s| matches!(s, Stmt::Instr(i) if m.opcode(i) == "st.global.u32"))
-            .expect("the store");
+        let start = label.map_or(0, |l| {
+            k.stmts
+                .iter()
+                .position(|s| matches!(s, Stmt::Label(s) if m.interner.resolve(*s) == l))
+                .expect("the label")
+        });
+        let pos = (start..k.stmts.len())
+            .find(|&i| matches!(&k.stmts[i], Stmt::Instr(i) if m.opcode(i) == opcode))
+            .expect("the read");
         Uniformity::new(&t).is_uniform(&t, m.interner.get(reg).expect("register"), pos)
     }
 
@@ -294,5 +314,32 @@ mod tests {
         };
         assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
         assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+    }
+
+    #[test]
+    fn a_value_from_a_loop_is_divergent_after_it_when_its_exit_is() {
+        let looped = |exit: &str| {
+            format!(
+                "mov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, 1;\n\
+                 setp.lt.u32 %p1, %r2, {exit};\n@%p1 bra $L__L;"
+            )
+        };
+        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+        // The lanes still in the loop agree on it.
+        let inside = looped("%r1").replace("add.s32", "st.global.u32 [%rd9], %r2;\nadd.s32");
+        assert_eq!(uniform(&inside, "%r2"), Ok(()));
+    }
+
+    /// k1's remainder loop starts from the main loop's last counter, or 0
+    /// when K < 4 skips it; both choices compare parameters only, and the
+    /// bounds check on the thread index skips both loops.
+    #[test]
+    fn k1s_counter_after_its_main_loop_is_uniform() {
+        let k1 = include_str!("../../tests/fixtures/k1/k1.sm_89.ptx");
+        assert_eq!(
+            uniform_at(k1, "%r34", Some("$L__BB0_5"), "mad.lo.s32"),
+            Ok(())
+        );
     }
 }
