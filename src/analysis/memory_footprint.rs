@@ -41,6 +41,13 @@ pub fn warp_footprint(
     shape: [u32; 3],
     executes: impl Fn([i64; 3]) -> bool,
 ) -> Result<Footprint, String> {
+    if bytes == 0 {
+        let zero = CountRange { min: 0, max: 0 };
+        return Ok(Footprint {
+            sectors: zero,
+            ideal: zero,
+        });
+    }
     let mut lane_terms: Vec<(&Var, i64)> = Vec::new();
     for (v, c) in &a.terms {
         if !depends_on_lane(v) {
@@ -56,7 +63,7 @@ pub fn warp_footprint(
     if threads == 0 {
         return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
     }
-    let bytes = i64::from(bytes.max(1));
+    let bytes = i64::from(bytes);
     let align = i64::from(align.max(1));
     let warps: Vec<Vec<i64>> = (0..(threads + 31) / 32)
         .map(|warp| {
@@ -341,6 +348,19 @@ mod tests {
             warp_footprint(&tid().scale(c(2)), 4, 4, [32, 1, 1], |_| true)
                 .unwrap_err()
                 .contains("modulo")
+        );
+    }
+
+    #[test]
+    fn zero_bytes_need_neither_shape_nor_lane_coefficients() {
+        let address = tid().scale(SymExpr::sym("stride"));
+        let zero = CountRange { min: 0, max: 0 };
+        assert_eq!(
+            warp_footprint(&address, 0, 16, [0, 0, 0], |_| panic!("no lanes needed")),
+            Ok(Footprint {
+                sectors: zero,
+                ideal: zero
+            })
         );
     }
 

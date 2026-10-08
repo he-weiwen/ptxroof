@@ -195,3 +195,75 @@ fn ignored_unknown_and_unquantified_contributions_stay_distinct() {
     assert!(totals.bytes["global"].load.at_least);
     assert!(!kernel.unknowns.is_empty());
 }
+
+#[test]
+fn zero_source_copy_has_no_global_sectors_but_keeps_shared_writes() {
+    let src = ".version 8.7
+.target sm_80
+.address_size 64
+.visible .entry zero_copy(.param .u64 input) {
+    .reg .b64 %rd<3>;
+    .reg .b32 %r<4>;
+    .reg .pred %p;
+    .shared .align 16 .b8 destination[512];
+    ld.param.u64 %rd1, [input];
+    mov.u32 %r1, %tid.x;
+    mul.wide.u32 %rd2, %r1, 16;
+    add.u64 %rd2, %rd1, %rd2;
+    mul.lo.u32 %r1, %r1, 16;
+    mov.u32 %r3, destination;
+    add.u32 %r1, %r3, %r1;
+    mov.u32 %r2, 0;
+L:
+    cp.async.cg.shared.global [%r1], [%rd2], 16, 0;
+    add.u32 %r2, %r2, 1;
+    setp.lt.u32 %p, %r2, 2;
+    @%p bra L;
+    cp.async.wait_all;
+    ret;
+}";
+    let zero = ptxroof::analysis::memory_footprint::CountRange { min: 0, max: 0 };
+    for launch in [Some([32, 1, 1]), None] {
+        let report = analyze(
+            src,
+            "zero-copy",
+            &AnalyzeOptions {
+                launch,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let kernel = &report.kernels[0];
+        let loop_node = &kernel.loops[0];
+        let global = loop_node
+            .accesses
+            .iter()
+            .find(|a| a.space == "global")
+            .unwrap();
+        assert_eq!(global.bytes, Some(0));
+        assert_eq!(global.sectors_per_request, Some(zero));
+        assert_eq!(global.ideal_sectors_per_request, Some(zero));
+        assert!(global.footprint_unknown.is_none());
+        assert_eq!(kernel.totals.bytes["global"].load.expr, "0");
+        assert_eq!(kernel.totals.bytes["shared"].store.expr, "32");
+        assert_eq!(
+            variants(&kernel.totals, "cp.async.cg.shared.global")[0]
+                .issued
+                .expr,
+            "2"
+        );
+        if launch.is_some() {
+            let bytes = loop_node.global_bytes_per_cta.as_ref().unwrap();
+            assert_eq!(bytes.requested, 0);
+            assert_eq!(bytes.unique, 0);
+            let sectors = bytes.sector_bytes.as_ref().unwrap();
+            assert_eq!((sectors.min, sectors.max), (0, 0));
+            let cta = kernel.totals_per_cta.as_ref().unwrap();
+            assert_eq!(cta.bytes["shared"].store.expr, "1024");
+            assert_eq!(
+                variants(cta, "cp.async.cg.shared.global")[0].issued.expr,
+                "64"
+            );
+        }
+    }
+}

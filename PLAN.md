@@ -32,7 +32,10 @@ is measured (README). Each instruction has one category and independent
 contributions; text expands instructions with multiple contributions and JSON
 retains variants for differing immediate sizes. Atomic FP arithmetic contributes
 to `atomic_flops` and AI, with the existing atom read+write / red write-only byte
-convention (`tests/instruction_contributions.rs`).
+convention (`tests/instruction_contributions.rs`). A `cp.async` with immediate
+source size zero has zero global sectors per request and over the loop;
+its shared writes and instruction counts remain counted
+(`zero_source_copy_has_no_global_sectors_but_keeps_shared_writes` in that test).
 
 ## Known limitations
 
