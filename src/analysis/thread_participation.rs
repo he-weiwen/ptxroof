@@ -504,7 +504,12 @@ impl PredicateReader<'_> {
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return (Pred::Unknown, false);
         };
-        if instr.predicate.is_some() {
+        if instr.predicate.is_some()
+            || self
+                .uniformity
+                .gates_uniform(self.tracer, reg, pos)
+                .is_err()
+        {
             return (Pred::Unknown, false);
         }
         if depth >= 8 {

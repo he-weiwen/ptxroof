@@ -100,6 +100,26 @@ impl Uniformity {
         !self.divergent.contains_key(&Node::Def(d))
     }
 
+    /// Whether the branches between `reg`'s definition and `pos` (the
+    /// exits of loops holding the definition but not `pos`, and those
+    /// selecting among definitions) send every lane the same way; the
+    /// reason when not.
+    pub(crate) fn gates_uniform(
+        &self,
+        t: &AffineValueTracer,
+        reg: Symbol,
+        pos: usize,
+    ) -> Result<(), String> {
+        match read(t, reg, pos) {
+            Read::Uniform => Ok(()),
+            Read::Divergent(why) => Err(why),
+            Read::On(sources) => (sources.iter())
+                .filter(|s| matches!(s, Node::Branch(_)))
+                .find_map(|s| self.divergent.get(s))
+                .map_or(Ok(()), |why| Err(why.clone())),
+        }
+    }
+
     /// Whether every lane executing `pos` reads the same value of `reg`;
     /// the reason when not.
     pub(crate) fn is_uniform(
