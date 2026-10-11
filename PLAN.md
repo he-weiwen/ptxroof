@@ -46,7 +46,9 @@ its shared writes and instruction counts remain counted
 - **Register effects are incomplete.** The affine tracer records a
   first operand that is a register, a `p|q` pair or a `{…}` vector as
   destinations (`micro/vector_def.ptx`: a guard on a register a vector
-  load overwrote is a bound, `<= 9 sectors`), misses outputs in other
+  load overwrote is a bound, `<= 9 sectors`), refuses an element of a
+  multi-element `ld.param` vector rather than reading the parameter's
+  bits, misses outputs in other
   positions and barrier reductions, and does not model guarded definitions: a branch
   or guard comparing such a value is checked against the uniformity
   analysis only when the comparison is free of the thread index

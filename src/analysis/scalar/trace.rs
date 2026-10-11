@@ -565,8 +565,11 @@ impl<'a> AffineValueTracer<'a> {
         let ops = self.module.operand_ids(instr.operands).to_vec();
         let arg =
             |i: usize| -> Result<Affine, String> { self.trace_operand(ops[i], def, id, depth + 1) };
-        if mnemonic != "ld"
-            && let Some(Operand::VectorList { .. }) = ops.first().map(|&o| self.module.operand(o))
+        // A brace-enclosed destination's registers are the value's elements in
+        // order (PTX ISA 6.4.3, "Vectors as Operands"): each is a parameter's
+        // whole value only when the load has one element.
+        if let Some(Operand::VectorList { children }) = ops.first().map(|&o| self.module.operand(o))
+            && (mnemonic != "ld" || mods.contains(&"param") && children.len() > 1)
         {
             let opcode = self.module.opcode(instr);
             return Err(format!("{name} is one of `{opcode}`'s vector destinations"));

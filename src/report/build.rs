@@ -1920,6 +1920,22 @@ mod tests {
         );
     }
 
+    /// `ld.param.v2.u32 {%r1, %r2}` loads two words of the parameter: %r2
+    /// is the second, not param_0.
+    #[test]
+    fn a_vector_parameter_load_element_is_not_the_parameter() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .align 8 .b8 k_param_0[8]\n)\n{\n\
+                   ld.param.v2.u32 {%r1, %r2}, [k_param_0];\n\
+                   cvt.u64.u32 %rd2, %r2;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].accesses[0].unknown.as_deref(),
+            Some("%r2 is one of `ld.param.v2.u32`'s vector destinations")
+        );
+    }
+
     /// An `or` whose constant is the high side: the lane part fits below it.
     #[test]
     fn an_or_above_the_other_sides_largest_value_is_an_add() {
