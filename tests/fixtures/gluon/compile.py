@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Run each nanochat Gluon entry point once, at a nanochat shape, with a fresh Triton cache.
 
-Usage: compile.py SRC_DIR OUT_DIR. Writes OUT_DIR/<kernel>[.<site>].ptx per launch and
-prints one "name<TAB>module<TAB>wrapper" line per file for regen.sh's provenance header.
+Usage: compile.py SRC_DIR OUT_DIR. Writes OUT_DIR/<kernel>[.<site>].ptx per launch, and
+beside it .ncu.json, the kernel's first launch as a tools/ncu/measure.py record without its
+ptx, and prints one "name<TAB>module<TAB>wrapper" line per file for regen.sh's provenance header.
 """
 import glob
+import json
 import os
+import re
 import sys
 import tempfile
 
@@ -15,6 +18,50 @@ sys.path.insert(0, src_dir)
 import torch  # noqa: E402
 import gluon_attn_bwd, gluon_attn_fwd, gluon_ce, gluon_fp8, gluon_norm, gluon_rope_norm  # noqa: E401,E402
 
+from triton.backends.nvidia.driver import CudaLauncher  # noqa: E402
+
+first_launch = {}  # compiled kernel hash -> its first launch
+
+
+def param(ty, arg):
+    if ty.startswith("*"):
+        return f"ptr:{arg.untyped_storage().nbytes() - arg.storage_offset() * arg.element_size()}"
+    if ty == "u32" and 0 <= arg < 2**32 or ty == "i32" and -(2**31) <= arg < 2**31:
+        return f"{ty}:{arg}"
+    if ty == "fp32":
+        return f"f32:{float(arg)!r}"
+    raise ValueError(f"no launch.c form for a {ty} parameter {arg!r}")
+
+
+def flat(signature, args):
+    for ty, arg in zip(signature, args):
+        if isinstance(ty, tuple):
+            yield from flat(ty, arg)
+        elif ty != "constexpr":
+            yield ty, arg
+
+
+launcher_init, launcher_call = CudaLauncher.__init__, CudaLauncher.__call__
+
+
+def init(self, src, metadata):
+    launcher_init(self, src, metadata)
+    self.recorded = metadata.hash, metadata.shared, list(src.signature.values())
+
+
+# The PTX parameters are the non-constexpr arguments, then the global and profile scratch
+# pointers, null when of no bytes (CudaLauncher.__call__).
+def call(self, gx, gy, gz, *rest):
+    key, shared, signature = self.recorded
+    if key not in first_launch:
+        params = [param(ty, arg) for ty, arg in flat(signature, rest[6:])]
+        for size in (self.global_scratch_size, self.profile_scratch_size):
+            params.append(f"ptr:{gx * gy * gz * self.num_ctas * size}")
+        first_launch[key] = {"grid": [gx, gy, gz], "shared": shared, "params": params}
+    return launcher_call(self, gx, gy, gz, *rest)
+
+
+CudaLauncher.__init__, CudaLauncher.__call__ = init, call
 torch.manual_seed(0)
 dev = "cuda"
 M, K, N = 4096, 768, 3072  # c_fc at an eighth of the tokens (tests/test_gluon_fp8.py)
@@ -68,5 +115,12 @@ for site, module, wrapper, run in launches:
         kernel = os.path.basename(path)[: -len(".ptx")]
         name = f"{kernel}.{site}" if site else kernel
         with open(path) as f, open(os.path.join(out_dir, name + ".ptx"), "w") as out:
-            out.write(f.read())
+            ptx = f.read()
+            out.write(ptx)
+        with open(path[: -len(".ptx")] + ".json") as f:
+            launch = first_launch[json.load(f)["hash"]]
+        block = [int(re.search(r"\.reqntid (\d+)", ptx).group(1)), 1, 1]
+        record = {"kernel": kernel, "grid": launch["grid"], "block": block, **launch}
+        with open(os.path.join(out_dir, name + ".ncu.json"), "w") as out:
+            json.dump(record, out)
         print(f"{name}\t{module}\t{wrapper}")

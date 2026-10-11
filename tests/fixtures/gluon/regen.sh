@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Regenerates the Gluon fixtures (PLAN.md, fixture policy): compile.py runs
 # each nanochat entry point once with a fresh Triton cache, and the
-# provenance header is prefixed here. Needs torch, triton and a GPU; the
-# PTX target is whatever GPU is present, so the file name carries it.
+# provenance header is prefixed here. Each kernel's first launch becomes a
+# Nsight Compute record beside it, measured by tools/ncu/measure.py. Needs
+# torch, triton, a GPU and ncu; the PTX target is whatever GPU is present,
+# so the file name carries it.
 set -euo pipefail
 cd "$(dirname "$0")"
 repo=$(git rev-parse --show-toplevel)
@@ -25,5 +27,9 @@ while IFS=$'\t' read -r name module wrapper; do
         echo "//"
         cat "$tmp/$name.ptx"
     } > "$name.$arch.ptx"
+    ptx=$(realpath --relative-to="$repo" "$name.$arch.ptx")
+    python3 -c 'import json, sys; print(json.dumps({"ptx": sys.argv[2], **json.load(open(sys.argv[1]))}))' \
+        "$tmp/$name.ncu.json" "$ptx" > "$name.$arch.ncu.json"
+    "$repo/tools/ncu/measure.py" "$name.$arch.ncu.json"
 done < "$tmp/manifest.tsv"
 rm -rf "$tmp"
