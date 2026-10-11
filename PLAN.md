@@ -102,7 +102,8 @@ its shared writes and instruction counts remain counted
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
-  textures and surfaces; `multimem`; video instructions.
+  textures and surfaces; `multimem`; video instructions. `tcgen05`
+  is in seven of the B200 fixtures (`tests/fixtures/b200`).
 - **Calls.** Module-scope `.func` declarations and definitions are
   discarded (`module_scope_functions_are_skipped`), so no callee's
   instructions are counted; nvcc's parenthesized `call.uni` is
@@ -165,10 +166,12 @@ its shared writes and instruction counts remain counted
   nanochat kernels (`tests/fixtures/gluon`: twelve PTX files; the
   GEMM, the cross-entropy chunk and the warp-specialized attention
   forward at two shapes each, the attention backward's three kernels;
-  every instruction classifies), and hand-written micro kernels.
-  clang is untested.
+  every instruction classifies), Triton 3.9.0 output for the 26 kernel
+  launches of 20 production-shaped serving and training cases
+  (`tests/fixtures/b200`, sm_100a, from sol-study's B200 Nsight
+  Compute reports), and hand-written micro kernels. clang is untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 28 of the 32 fixtures. k14's is
+  identical to the original's for 58 of the 62 fixtures. k14's is
   rejected because the in-kernel `.local` depot declaration is
   discarded; assembler diagnostics can vary (the current round trip reports
   `Arguments mismatch for instruction 'mov'`). k1's and k2's assemble to
@@ -266,6 +269,12 @@ One line each, with the trigger that would start it.
   ptxas attributes to the line and their predicated-on thread
   instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
   every Gluon kernel's first launch, `tests/fixtures/gluon/*.ncu.json`).
+  The B200 records (`tests/fixtures/b200/*.ncu.json`) come from
+  sol-study's reports instead: `import_reports.py` attributes their
+  per-SASS counts to PTX lines through the same `.loc` recompile under
+  Triton's ptxas command, and takes each launch's parameters from a
+  replay of its case as the B200, matched by SASS and grid; the PTX
+  must still assemble to the recorded SASS (`b200-sass.test`).
   `analyze --ncu RECORD` takes the record's block shape and `u32`
   and `i32` parameters for `--launch` and `--bind`, and refuses a record whose
   lines are not the PTX's (`tests/lit/k5-ncu-stale.test`), and
@@ -279,8 +288,9 @@ One line each, with the trigger that would start it.
   names (`measure.py --check`) and fails if it changed.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
-- sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a fixture
-  and a per-instruction issue scope, which the model lacks.
+- sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
+  per-instruction issue scope, which the model lacks; sm_100 fixtures
+  exist (`tests/fixtures/b200`), sm_90 ones do not.
 
 ## Acceptance scenarios
 

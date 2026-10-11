@@ -6,3 +6,7 @@
 # sm_90 family (PLAN.md, missing features); micro/unknown_in_loop.ptx
 # uses its fence to pin the lower-bound marking of an unmodelled op.
 wgmma
+
+# sm_100 family (PLAN.md, missing features): Triton's B200 GEMM, MoE and
+# attention kernels in tests/fixtures/b200 use tensor memory.
+tcgen05
