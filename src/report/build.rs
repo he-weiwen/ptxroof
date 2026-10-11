@@ -1936,6 +1936,25 @@ mod tests {
         );
     }
 
+    /// Both paths write `{%r2, %r3}` from one 64-bit immediate: %r3 is its
+    /// upper half, not the immediate.
+    #[test]
+    fn merged_vector_writes_of_one_immediate_are_not_that_immediate() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u32 k_param_0\n)\n{\n\
+                   ld.param.u32 %r1, [k_param_0];\nsetp.eq.u32 %p1, %r1, 0;\n\
+                   @%p1 bra $L1;\nmov.b64 {%r2, %r3}, 1;\nbra.uni $L2;\n\
+                   $L1:\nmov.b64 {%r2, %r3}, 1;\n$L2:\n\
+                   cvt.u64.u32 %rd2, %r3;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let access = &r.kernels[0].accesses[0];
+        assert_eq!(
+            (access.address.as_deref(), access.unknown.as_deref()),
+            (None, Some("%r3 has more than one reaching definition"))
+        );
+    }
+
     /// An `or` whose constant is the high side: the lane part fits below it.
     #[test]
     fn an_or_above_the_other_sides_largest_value_is_an_add() {

@@ -129,10 +129,12 @@ impl<'a> AffineValueTracer<'a> {
             let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
                 return None;
             };
-            let [_, src] = self.module.operand_ids(instr.operands) else {
+            let [dst, src] = self.module.operand_ids(instr.operands) else {
                 return None;
             };
-            let Operand::Immediate(text) = self.module.operand(*src) else {
+            let (Operand::Register(_), Operand::Immediate(text)) =
+                (self.module.operand(*dst), self.module.operand(*src))
+            else {
                 return None;
             };
             if self.module.interner.resolve(instr.mnemonic) != "mov" {
