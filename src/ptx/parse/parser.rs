@@ -172,6 +172,11 @@ impl<'a> Parser<'a> {
                     let index = self.expect_u32(".file index")?;
                     let t = self.expect(TokenKind::String, ".file path")?;
                     let path = self.interner.intern(t.text.trim_matches('"'));
+                    if self.eat(TokenKind::Comma) {
+                        self.expect(TokenKind::Number, ".file timestamp")?;
+                        self.expect(TokenKind::Comma, "',' before the .file size")?;
+                        self.expect(TokenKind::Number, ".file size")?;
+                    }
                     self.files.push(FileDirective { index, path });
                 }
                 "section" => {
@@ -897,6 +902,13 @@ mod tests {
         assert_eq!(m.version, (8, 7));
         assert_eq!(m.interner.resolve(m.target), "sm_80");
         assert_eq!(m.address_size, 64);
+    }
+
+    #[test]
+    fn file_with_timestamp_and_size() {
+        let src = wrap_body("ret;") + ".file 1 \"kernel.cu\", 1339013327, 64118\n";
+        let m = parse(&src).expect("PTX ISA §11.5.3 example parses");
+        assert_eq!(m.file_path(1), Some("kernel.cu"));
     }
 
     #[test]
