@@ -209,8 +209,10 @@ its shared writes and instruction counts remain counted
   may add spills.
 - Measurement records launch with every pointer parameter zero-filled
   (`tools/ncu/launch.c`), so a branch on loaded data takes its
-  zero-data side. No Gluon fixture has a record: its grid, parameters
-  and dynamic shared bytes are known only to the Triton launch.
+  zero-data side. A line of a loop that branches back on an mbarrier
+  wait's result runs a timing-dependent number of times: such lines
+  are marked `timing_dependent` and not checked (the attention forward
+  records: 30 lines each).
 - `--ncu` compares no counts in a kernel with irreducible control
   flow, whose blocks' executions the tool does not know
   (`tests/lit/ncu-irreducible.test`: every block `unchecked`), nor
@@ -252,7 +254,8 @@ One line each, with the trigger that would start it.
 - Nsight Compute import beside the static columns: started 2026-10-06.
   `tools/ncu/measure.py` records one launch per PTX line, the SASS
   ptxas attributes to the line and their predicated-on thread
-  instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`).
+  instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
+  every Gluon kernel's first launch, `tests/fixtures/gluon/*.ncu.json`).
   `analyze --ncu RECORD` takes the record's block shape and `u32`
   and `i32` parameters for `--launch` and `--bind`, and refuses a record whose
   lines are not the PTX's (`tests/lit/k5-ncu-stale.test`), and

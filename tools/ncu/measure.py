@@ -8,8 +8,10 @@ gets a .loc naming its own line of the PTX file, which must assemble to
 the original's SASS. The record is rewritten with the GPU and tools,
 and per PTX line that has SASS: the line's text, the SASS opcodes ptxas
 attributed to it, and their predicated-on thread instructions executed.
-With --check the record is measured again on the GPU it names, if this
-is that GPU, and must not change.
+Lines of a loop that branches back on an mbarrier test_wait or try_wait
+result are marked timing_dependent. With --check the record is measured
+again on the GPU it names, if this is that GPU, and must not change but
+for those lines' executions.
 
 Usage: measure.py [--check] RECORD
 """
@@ -45,6 +47,22 @@ def numbered(ptx, path):
             line = f".loc 1 {n} 0 {line}"
         out.append(line)
     return "\n".join(out)
+
+
+def timing_dependent(ptx):
+    """Lines of the loops that branch back on an mbarrier test_wait or try_wait result. It says
+    whether the phase has completed, or for try_wait whether a system-dependent time limit passed
+    first (PTX ISA 9.7.14.16.19), so how often such a loop runs depends on timing."""
+    lines, seen, out = [l.split("//")[0].strip() for l in ptx.split("\n")], {}, set()
+    for n, code in enumerate(lines, 1):
+        if label := re.match(r"([\w$]+):", code):
+            seen[label[1]] = n
+        elif (bra := re.match(r"@!?(\w+)\s+bra(?:\.uni)?\s+([\w$]+);", code)) and bra[2] in seen:
+            span = range(seen[bra[2]], n + 1)
+            wait = rf"mbarrier\.(test|try)_wait\S*\s+{bra[1]}\b"
+            if any(re.match(wait, lines[k - 1]) for k in span):
+                out.update(span)
+    return out
 
 
 def sass(cubin):
@@ -90,7 +108,13 @@ def main(path, check):
         table = run("ncu", "--import", report, "--page", "source", "--print-source", "cuda,sass", "--csv")
     ptxas = next(l for l in run("ptxas", "--version").splitlines() if "release" in l)
     ncu = run("ncu", "--version").splitlines()[-1]
-    record.update(gpu=gpu, driver=driver, arch=arch, ptxas=ptxas, ncu=ncu, lines=per_line(table))
+    lines = per_line(table)
+    stored = json.loads(Path(path).read_text()).get("lines", {}) if check else {}
+    for n in timing_dependent(ptx.read_text()) & set(map(int, lines)):
+        lines[str(n)]["timing_dependent"] = True
+        if str(n) in stored:
+            lines[str(n)]["executions"] = stored[str(n)]["executions"]
+    record.update(gpu=gpu, driver=driver, arch=arch, ptxas=ptxas, ncu=ncu, lines=lines)
     entry = lambda k, v, indent: f"{indent}{json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}"
     fields = ",\n".join(entry(k, v, " ") for k, v in record.items() if k != "lines")
     lines = ",\n".join(entry(k, v, "  ") for k, v in record["lines"].items())
