@@ -1,5 +1,6 @@
 # Every B200 fixture's PTX still assembles, with the ptxas command its record
 # names, to the SASS the report measured: the per-line attribution holds.
-REQUIRES: ptxas
+# Another ptxas release may assemble other SASS without the fixture changing.
+REQUIRES: ptxas-13.4
 RUN: python3 %fixtures/b200/import_reports.py --check %fixtures/b200/*.ncu.json | FileCheck "%s"
 CHECK: 26 PTX files assemble to their recorded SASS

@@ -36,6 +36,8 @@ class RoundTrip(lit.formats.TestFormat):
         with tempfile.TemporaryDirectory() as tmp:
             orig, dump, redo = (os.path.join(tmp, n) for n in ("orig.cubin", "dump.ptx", "dump.cubin"))
             r = run("ptxas", f"-arch={arch}", ptx, "-o", orig)
+            if "Unsupported .version" in r.stderr:
+                return lit.Test.Result(lit.Test.UNSUPPORTED, r.stderr)
             if r.returncode:
                 return lit.Test.Result(lit.Test.FAIL, f"the fixture itself does not assemble:\n{r.stderr}")
             r = run(self.ptxroof, "analyze", "--dump-ast", ptx)

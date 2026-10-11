@@ -178,7 +178,8 @@ its shared writes and instruction counts remain counted
   different SASS because `.pragma "nounroll";` is discarded, so ptxas
   unrolls the loop it annotated. These are allowlisted in
   `tests/roundtrip-allowlist.txt`. One lit test per fixture
-  (`tests/lit/roundtrip`), unsupported without the toolkit.
+  (`tests/lit/roundtrip`), unsupported without the toolkit or when
+  ptxas rejects the fixture's `.version` as newer than its own.
 - Generated loops (`tests/gen_loops.py`, a CI step): single counted
   loops drawn from a grammar of steps, initial values, bounds,
   comparisons, operand orders, branch polarities and read positions,
@@ -274,7 +275,9 @@ One line each, with the trigger that would start it.
   per-SASS counts to PTX lines through the same `.loc` recompile under
   Triton's ptxas command, and takes each launch's parameters from a
   replay of its case as the B200, matched by SASS and grid; the PTX
-  must still assemble to the recorded SASS (`b200-sass.test`).
+  must still assemble to the recorded SASS (`b200-sass.test`, under
+  ptxas 13.4 only). `ci.sh` does not re-measure them with
+  `measure.py --check`, which would launch on zeroed inputs.
   `analyze --ncu RECORD` takes the record's block shape and `u32`
   and `i32` parameters for `--launch` and `--bind`, and refuses a record whose
   lines are not the PTX's (`tests/lit/k5-ncu-stale.test`), and
