@@ -1,0 +1,6 @@
+# The loop count leaves the loop unequal between lanes, so the address
+# is unknown, unless a binding removes the count from it.
+RUN: %ptxroof analyze %fixtures/micro/exit_pred_stride.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/exit_pred_stride.ptx --bind 1:stride=0 | FileCheck --check-prefix=ZERO "%s"
+FREE: st.global.u32  global store 4 B    unknown: k[$L__BB0_1] differs between lanes after its loop, whose exit depends on %tid.x
+ZERO: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)  [param_0]

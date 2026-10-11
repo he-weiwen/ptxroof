@@ -365,13 +365,12 @@ impl KernelReportBuilder<'_> {
                             (Some(addr), None, None)
                         }
                         Operand::Register(_) => match (tracer.trace_operand(*base, pos, scope, 0))
+                            .map(|a| {
+                                (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map)
+                            })
                             .and_then(|a| per_lane(a, tracer, uniformity, pos, &name))
                         {
-                            Ok(a) => {
-                                let a =
-                                    (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map);
-                                (Some(shorten(a.render(name))), None, Some(a))
-                            }
+                            Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
                             Err(reason) => (
                                 None,
                                 Some(
