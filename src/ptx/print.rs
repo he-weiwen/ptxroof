@@ -17,7 +17,9 @@ pub fn dump(module: &Module) -> String {
     let (major, minor) = module.version;
     let _ = writeln!(out, ".version {major}.{minor}");
     let _ = writeln!(out, ".target {}", module.interner.resolve(module.target));
-    let _ = writeln!(out, ".address_size {}", module.address_size);
+    if let Some(bits) = module.address_size {
+        let _ = writeln!(out, ".address_size {bits}");
+    }
     for decl in &module.shared_decls {
         dump_shared_decl(module, decl, &mut out);
     }
@@ -183,5 +185,13 @@ mod tests {
         let d1 = dump(&parse(src).expect("src parses"));
         let d2 = dump(&parse(&d1).expect("dump reparses"));
         assert_eq!(d1, d2);
+    }
+
+    #[test]
+    fn omitted_address_size_stays_omitted() {
+        let src = ".version 8.7\n.target sm_80\n.visible .entry k()\n{\nret;\n}\n";
+        let m = parse(src).expect("module without .address_size parses");
+        assert_eq!(m.address_size, None);
+        assert!(!dump(&m).contains(".address_size"));
     }
 }

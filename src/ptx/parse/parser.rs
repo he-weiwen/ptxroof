@@ -46,7 +46,7 @@ struct Parser<'a> {
     interner: Interner,
     version: (u32, u32),
     target: Option<Symbol>,
-    address_size: u32,
+    address_size: Option<u32>,
     files: Vec<FileDirective>,
     kernels: Vec<Kernel>,
     shared_decls: Vec<SharedDecl>,
@@ -69,7 +69,7 @@ impl<'a> Parser<'a> {
             interner: Interner::default(),
             version: (0, 0),
             target: None,
-            address_size: 64,
+            address_size: None,
             files: Vec::new(),
             kernels: Vec::new(),
             shared_decls: Vec::new(),
@@ -166,7 +166,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 "address_size" => {
-                    self.address_size = self.expect_u32(".address_size")?;
+                    self.address_size = Some(self.expect_u32(".address_size")?);
                 }
                 "file" => {
                     let index = self.expect_u32(".file index")?;
@@ -901,7 +901,7 @@ mod tests {
         let m = parse_body("ret;");
         assert_eq!(m.version, (8, 7));
         assert_eq!(m.interner.resolve(m.target), "sm_80");
-        assert_eq!(m.address_size, 64);
+        assert_eq!(m.address_size, Some(64));
     }
 
     #[test]

@@ -135,7 +135,9 @@ pub struct Module {
     pub version: (u32, u32),
     /// `.target` first argument (`sm_80`).
     pub target: Symbol,
-    pub address_size: u32,
+    /// `.address_size`, `None` when omitted: the manual's default of 32
+    /// (PTX ISA §11.1.3) is not what ptxas assembles, which is 64.
+    pub address_size: Option<u32>,
     pub files: Vec<FileDirective>,
     pub kernels: Vec<Kernel>,
     /// Operand arena; `Operand::Memory::base` points here.
