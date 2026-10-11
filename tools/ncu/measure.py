@@ -3,7 +3,7 @@
 
 RECORD names the launch: ptx (repository-relative), kernel, grid,
 block, the dynamic shared bytes (shared, 0 when absent), and params in
-launch.c's u32:/f32:/ptr: forms. Every instruction
+launch.c's u32:/i32:/f32:/ptr: forms. Every instruction
 gets a .loc naming its own line of the PTX file, which must assemble to
 the original's SASS. The record is rewritten with the GPU and tools,
 and per PTX line that has SASS: the line's text, the SASS opcodes ptxas

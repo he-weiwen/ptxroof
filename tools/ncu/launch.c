@@ -13,7 +13,7 @@ static void check(CUresult result, const char *what) {
 }
 
 static void usage(const char *what) {
-    fprintf(stderr, "launch: %s\nusage: launch CUBIN KERNEL GRID BLOCK SHARED [u32:N | f32:X | ptr:BYTES]...\n"
+    fprintf(stderr, "launch: %s\nusage: launch CUBIN KERNEL GRID BLOCK SHARED [u32:N | i32:N | f32:X | ptr:BYTES]...\n"
                     "       launch --device\n", what);
     exit(2);
 }
@@ -54,11 +54,16 @@ int main(int argc, char **argv) {
         const char *param = argv[6 + i], *text = strlen(param) > 4 ? param + 4 : "";
         char *end = NULL;
         unsigned long long number = strtoull(text, NULL, 10);
+        long long integer = strtoll(text, NULL, 10);
         float real = strtof(text, &end);
         int decimal = *text && strspn(text, "0123456789") == strlen(text);
+        int negative = *text == '-' && text[1] && strspn(text + 1, "0123456789") == strlen(text + 1);
         args[i] = &values[i];
         if (!strncmp(param, "u32:", 4) && decimal && number <= 0xffffffffULL) {
             values[i].u32 = number;
+        } else if (!strncmp(param, "i32:", 4) && (decimal || negative) && integer >= -2147483648LL &&
+                   integer <= 2147483647LL) {
+            values[i].u32 = (unsigned)integer;
         } else if (!strncmp(param, "f32:", 4) && *text && !*end) {
             values[i].f32 = real;
         } else if (!strcmp(param, "ptr:0")) {

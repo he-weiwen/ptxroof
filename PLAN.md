@@ -254,7 +254,7 @@ One line each, with the trigger that would start it.
   ptxas attributes to the line and their predicated-on thread
   instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`).
   `analyze --ncu RECORD` takes the record's block shape and `u32`
-  parameters for `--launch` and `--bind`, and refuses a record whose
+  and `i32` parameters for `--launch` and `--bind`, and refuses a record whose
   lines are not the PTX's (`tests/lit/k5-ncu-stale.test`), and
   gives each block a verdict (`kernels[].measured`): a line whose
   `CountConstraint` is not `Free` and whose SASS is one opcode must

@@ -30,12 +30,10 @@ pub struct Prediction {
 
 impl NcuRecord {
     pub fn bindings(&self) -> Vec<BindingSpec> {
-        let value = |param: &str| {
-            param
-                .strip_prefix("u32:")?
-                .parse::<u32>()
-                .ok()
-                .map(i64::from)
+        let value = |param: &str| match param.split_once(':')? {
+            ("u32", v) => v.parse::<u32>().ok().map(i64::from),
+            ("i32", v) => v.parse::<i32>().ok().map(i64::from),
+            _ => None,
         };
         (self.params.iter().enumerate())
             .filter_map(|(index, param)| {
@@ -168,6 +166,17 @@ mod tests {
 
     fn verdict(record: &NcuRecord, predictions: &[Prediction]) -> Verdict {
         record.compare("b", predictions).verdict
+    }
+
+    #[test]
+    fn u32_and_i32_parameters_bind_by_position() {
+        let mut r = record(&[]);
+        r.params = ["u32:4294967295", "i32:-1", "f32:1", "ptr:4", "u32:-1"]
+            .map(String::from)
+            .to_vec();
+        let bound: Vec<(Option<usize>, i64)> =
+            r.bindings().iter().map(|b| (b.index, b.value)).collect();
+        assert_eq!(bound, [(Some(0), 4294967295), (Some(1), -1)]);
     }
 
     #[test]
