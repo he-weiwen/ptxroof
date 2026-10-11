@@ -158,3 +158,52 @@ commit; steps 1–5 must show none.
    answer (all inputs are immutable after construction)?
 5. Should the destination heuristic move now (step 1) or wait for the
    decoder?
+
+## Review findings (codex, 2026-10-11)
+
+Not yet folded into the plan above.
+
+1. `(reg, defs)` is a value identity only with complete write
+   discovery: a write the definition table misses lets two reads of
+   one register in one thread see different values under one key.
+   The table now records `{…}` destinations, but not registers
+   declared without `%`, guarded writes as merges, or the outputs the
+   audit lists (PLAN, Wrong output).
+2. `Value` loses distinctions users rely on. `Merged([d])` (only one
+   branch defines the register) would become a plain definition, so
+   `trace_reg`, the predicate reader and the trip matchers could
+   accept what they refuse today. `Carried` names the innermost loop
+   holding `pos` with an interfering definition, not where values
+   merge, so `header_of` claims more than the code knows.
+3. Steps 1–5 are not output-preserving: the singleton-merge
+   conflation (1, 3); filling `Carried` by reachability keeps
+   overwritten entry definitions the two-trip matcher excludes (4);
+   induction discovery reads only a register first operand while the
+   table reads `p|q` and `{…}` (5; `micro/counter_vector_write.ptx`).
+4. Corrections to "What exists": `Merged` need not hold a dominating
+   definition, several sites, or sorted ones, and can keep killed
+   definitions; `None` means no candidate found; `reach_def` returns
+   early for a missing register or a same-block definition. Missed
+   users: `predicate_reason` (`trip_counts.rs`), which scans the latch
+   with its own first-operand rule, and `Uniformity::new`, which
+   enumerates every definition site. `find_setp` skips intervening
+   non-`setp` writes, so step 7 can change trip counts within a latch.
+5. Open questions: (1) `Merged` over-approximates and omits undefined
+   incoming paths; it is not a φ. (2) An outer-only interfering write
+   selects the outer loop; a dominating write can return `Def`.
+   (3) A guarded result needs guard, new value and old value; keep
+   today's behaviour in the refactor and fix guards separately.
+   (4) No staleness within one kernel's immutable CFG and forest.
+   (5) Move the destination rule now only with its exact behaviour;
+   do not unify induction discovery's rule in a step claimed to
+   preserve output.
+6. Keep the interface explicitly approximate until operand roles are
+   decoded (audit, "A small implementation plan"); prefer an opaque
+   value identity with queries over exposing site sets.
+
+Also: each kernel builds two tracers (`trip_counts.rs` and
+`report/build.rs`), each scanning for definitions. Which operands an
+instruction reads or writes is decided in six places: the definition
+table, induction discovery, `find_setp`, `predicate_reason`,
+`uniformity::registers`, and the predicate reader's per-mnemonic
+decoding.
