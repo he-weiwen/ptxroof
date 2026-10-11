@@ -209,8 +209,8 @@ its shared writes and instruction counts remain counted
   may add spills.
 - Measurement records launch with every pointer parameter zero-filled
   (`tools/ncu/launch.c`), so a branch on loaded data takes its
-  zero-data side, and with no dynamic shared memory, so a kernel that
-  uses `.extern .shared` (every Gluon fixture) cannot be measured.
+  zero-data side. No Gluon fixture has a record: its grid, parameters
+  and dynamic shared bytes are known only to the Triton launch.
 - `--ncu` compares no counts in a kernel with irreducible control
   flow, whose blocks' executions the tool does not know
   (`tests/lit/ncu-irreducible.test`: every block `unchecked`), nor

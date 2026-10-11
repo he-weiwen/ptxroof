@@ -2,7 +2,8 @@
 """Measure one kernel launch per PTX line with Nsight Compute.
 
 RECORD names the launch: ptx (repository-relative), kernel, grid,
-block, and params in launch.c's u32:/f32:/ptr: forms. Every instruction
+block, the dynamic shared bytes (shared, 0 when absent), and params in
+launch.c's u32:/f32:/ptr: forms. Every instruction
 gets a .loc naming its own line of the PTX file, which must assemble to
 the original's SASS. The record is rewritten with the GPU and tools,
 and per PTX line that has SASS: the line's text, the SASS opcodes ptxas
@@ -82,7 +83,8 @@ def main(path, check):
         if sass(tmp / "original.cubin") != sass(tmp / "numbered.cubin"):
             sys.exit(f"measure.py: {record['ptx']} assembles to different SASS with a .loc per line")
         dims = [",".join(map(str, record[k])) for k in ("grid", "block")]
-        launch = [tmp / "launch", tmp / "numbered.cubin", record["kernel"], *dims, *record["params"]]
+        launch = [tmp / "launch", tmp / "numbered.cubin", record["kernel"], *dims, record.get("shared", 0)]
+        launch += record["params"]
         run("ncu", "--section", "SourceCounters", "--import-source", "yes", "-o", tmp / "report", *launch)
         report = next(tmp.glob("report.*"))
         table = run("ncu", "--import", report, "--page", "source", "--print-source", "cuda,sass", "--csv")
