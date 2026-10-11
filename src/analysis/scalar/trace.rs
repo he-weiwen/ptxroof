@@ -72,7 +72,8 @@ impl<'a> AffineValueTracer<'a> {
             {
                 let written = match module.operand(first) {
                     Operand::Register(_) => std::slice::from_ref(&first),
-                    Operand::MultipleDestinations { children } => module.operand_ids(*children),
+                    Operand::MultipleDestinations { children }
+                    | Operand::VectorList { children } => module.operand_ids(*children),
                     _ => &[],
                 };
                 for &id in written {
@@ -564,6 +565,12 @@ impl<'a> AffineValueTracer<'a> {
         let ops = self.module.operand_ids(instr.operands).to_vec();
         let arg =
             |i: usize| -> Result<Affine, String> { self.trace_operand(ops[i], def, id, depth + 1) };
+        if mnemonic != "ld"
+            && let Some(Operand::VectorList { .. }) = ops.first().map(|&o| self.module.operand(o))
+        {
+            let opcode = self.module.opcode(instr);
+            return Err(format!("{name} is one of `{opcode}`'s vector destinations"));
+        }
 
         match mnemonic.as_str() {
             "mov" => arg(1),

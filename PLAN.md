@@ -43,9 +43,11 @@ its shared writes and instruction counts remain counted
 
 ### Wrong output
 
-- **Register effects are incomplete.** The affine tracer records only a
-  scalar first-operand register destination, misses tuple/pipe outputs and
-  barrier reductions, and does not model guarded definitions: a branch
+- **Register effects are incomplete.** The affine tracer records a
+  first operand that is a register, a `p|q` pair or a `{…}` vector as
+  destinations (`micro/vector_def.ptx`: a guard on a register a vector
+  load overwrote is a bound, `<= 9 sectors`), misses outputs in other
+  positions and barrier reductions, and does not model guarded definitions: a branch
   or guard comparing such a value is checked against the uniformity
   analysis only when the comparison is free of the thread index
   (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and
@@ -66,7 +68,9 @@ its shared writes and instruction counts remain counted
   a `min` of non-constants even with `--bind`); masks that are not
   one run of bits (the attention backward's dQ stores, `0xdc`); a
   counter's value after its loop (k1's remainder loop reads the main
-  loop's final k: "more than one reaching definition"); `selp`; an
+  loop's final k: "more than one reaching definition"); values loaded
+  from memory (the cross-entropy's target gather: "depends on a value
+  loaded from memory, behind `selp.b64`"); an
   `or` read as an add only when one side's largest value is below a
   power of two the other side is a multiple of, not by the bits each
   side can set (rope_norm's `or.b32 %r106, %r104, 16` on

@@ -1904,6 +1904,22 @@ mod tests {
         assert_eq!(a.sectors_per_request, Some(CountRange { min: 2, max: 3 }));
     }
 
+    /// `mov.b64 {%r2, %r3}, %rd1` writes %r2 as half of %rd1, not %rd1:
+    /// an address through it is unknown, not param_0.
+    #[test]
+    fn a_vector_destination_is_not_the_whole_source() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.b64 {%r2, %r3}, %rd1;\n\
+                   cvt.u64.u32 %rd2, %r2;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].accesses[0].unknown.as_deref(),
+            Some("%r2 is one of `mov.b64`'s vector destinations")
+        );
+    }
+
     /// An `or` whose constant is the high side: the lane part fits below it.
     #[test]
     fn an_or_above_the_other_sides_largest_value_is_an_add() {
