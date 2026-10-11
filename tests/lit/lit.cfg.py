@@ -1,5 +1,6 @@
 import os
 import shlex
+import shutil
 
 import lit.formats
 
@@ -17,3 +18,5 @@ config.ptxroof = os.environ.get("PTXROOF", os.path.join(repo, "target", "debug",
 config.substitutions.append(("%ptxroof", shlex.quote(config.ptxroof)))
 config.substitutions.append(("%fixtures", shlex.quote(os.path.join(repo, "tests", "fixtures"))))
 config.substitutions.append(("%check-report", "python3 " + shlex.quote(os.path.join(config.test_source_root, "check_report.py"))))
+if shutil.which("ptxas") and shutil.which("cuobjdump"):
+    config.available_features.add("ptxas")
