@@ -97,6 +97,10 @@ its shared writes and instruction counts remain counted
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
   textures and surfaces; `multimem`; video instructions.
+- **Calls.** Module-scope `.func` declarations and definitions are
+  discarded (`module_scope_functions_are_skipped`), so no callee's
+  instructions are counted; nvcc's parenthesized `call.uni` is
+  unparsed (above).
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.

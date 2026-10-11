@@ -208,6 +208,19 @@ impl<'a> Parser<'a> {
                     }
                     self.eat(TokenKind::Semicolon);
                 }
+                "func" => {
+                    while !self.at(TokenKind::Semicolon)
+                        && !self.at(TokenKind::LBrace)
+                        && !self.at(TokenKind::EndOfFile)
+                    {
+                        self.bump();
+                    }
+                    if self.at(TokenKind::LBrace) {
+                        self.skip_balanced_braces()?;
+                    } else {
+                        self.expect(TokenKind::Semicolon, "';' after a .func declaration")?;
+                    }
+                }
                 "entry" => {
                     let kernel = self.parse_kernel()?;
                     self.kernels.push(kernel);
@@ -902,6 +915,20 @@ mod tests {
         assert_eq!(m.version, (8, 7));
         assert_eq!(m.interner.resolve(m.target), "sm_80");
         assert_eq!(m.address_size, Some(64));
+    }
+
+    #[test]
+    fn module_scope_functions_are_skipped() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .extern .func  (.param .b32 func_retval0) vprintf\n(\n\
+                   .param .b64 vprintf_param_0,\n.param .b64 vprintf_param_1\n)\n;\n\
+                   .func  (.param .b32 func_retval0) _Z2sqf(\n.param .b32 _Z2sqf_param_0\n)\n\
+                   {\n.reg .f32 %f<3>;\nld.param.f32 %f1, [_Z2sqf_param_0];\n\
+                   mul.f32 %f2, %f1, %f1;\nst.param.f32 [func_retval0+0], %f2;\nret;\n}\n\
+                   .visible .entry k()\n{\nret;\n}\n";
+        let m = parse(src).expect("nvcc's .func declaration and definition parse");
+        assert_eq!(m.kernels.len(), 1);
+        assert_eq!(m.interner.resolve(m.kernels[0].name), "k");
     }
 
     #[test]
