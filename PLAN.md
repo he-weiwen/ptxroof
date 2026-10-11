@@ -100,11 +100,6 @@ its shared writes and instruction counts remain counted
 - **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.
-- **An address through a value leaving a loop whose exit is divergent**
-  is read as one value for the warp: `micro/exit_pred.ptx`'s
-  `micro_exit_pred_addr` stores at `4 * k[$L__BB2_1] + param_0`, reported
-  as `warp: 1 sector`, where lane t stores at 4·max(t, 1) (4 sectors in
-  warp 0). Predicates leaving such a loop are bounds.
 - **In a kernel with a cycle of more than one entry**, the uniformity
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare

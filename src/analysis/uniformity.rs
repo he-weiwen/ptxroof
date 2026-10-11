@@ -121,6 +121,14 @@ impl Uniformity {
         }
     }
 
+    /// Whether the lanes in loop `id` leave it at the same iteration: its
+    /// exits are uniform; the reason when not.
+    pub(crate) fn exits_uniform(&self, t: &AffineValueTracer, id: LoopId) -> Result<(), String> {
+        exits(t, id)
+            .find_map(|n| self.divergent.get(&n))
+            .map_or(Ok(()), |why| Err(why.clone()))
+    }
+
     /// Whether every lane executing `pos` reads the same value of `reg`;
     /// the reason when not.
     pub(crate) fn is_uniform(

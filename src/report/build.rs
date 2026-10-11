@@ -212,10 +212,42 @@ fn resolve_bindings(
 /// of its block. `cp.async` gives a store row for its shared
 /// destination and a load row for its global source; an atomic gives
 /// one `load+store` row. Parameter loads are not accesses.
+/// `a`, unless it counts the iterations of a loop that does not hold
+/// `pos` and that lanes leave at different iterations: then each lane
+/// reads its own count.
+fn per_lane(
+    a: Affine,
+    tracer: &AffineValueTracer,
+    uniformity: &Uniformity,
+    pos: usize,
+    name: &dyn Fn(&Var) -> String,
+) -> Result<Affine, String> {
+    fn iter_of(v: &Var) -> Option<LoopId> {
+        match v {
+            Var::Iter(l) => Some(*l),
+            Var::Div(inner, _) | Var::Mod(inner, _) => iter_of(inner),
+            Var::Tid(_) | Var::Ctaid(_) => None,
+        }
+    }
+    for v in a.terms.keys() {
+        if let Some(l) = iter_of(v).filter(|&l| !tracer.in_loop(l, pos)) {
+            let why = uniformity.exits_uniform(tracer, l).err();
+            if let Some(why) = why {
+                let k = name(&Var::Iter(l));
+                return Err(format!(
+                    "{k} differs between lanes after its loop, whose exit {why}"
+                ));
+            }
+        }
+    }
+    Ok(a)
+}
+
 impl KernelReportBuilder<'_> {
     fn accesses_by_scope(
         &self,
         tracer: &AffineValueTracer,
+        uniformity: &Uniformity,
     ) -> (ByScope<Access>, ByScope<AccessForm>) {
         let (module, kernel, cfg, forest, bind_map) = (
             self.module,
@@ -332,7 +364,9 @@ impl KernelReportBuilder<'_> {
                             };
                             (Some(addr), None, None)
                         }
-                        Operand::Register(_) => match tracer.trace_operand(*base, pos, scope, 0) {
+                        Operand::Register(_) => match (tracer.trace_operand(*base, pos, scope, 0))
+                            .and_then(|a| per_lane(a, tracer, uniformity, pos, &name))
+                        {
                             Ok(a) => {
                                 let a =
                                     (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map);
@@ -792,7 +826,7 @@ impl<'a> KernelReportBuilder<'a> {
             AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
         let uniformity = Uniformity::new(&tracer);
         b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer, &uniformity);
-        let (accesses, access_forms) = b.accesses_by_scope(&tracer);
+        let (accesses, access_forms) = b.accesses_by_scope(&tracer, &uniformity);
         b.accesses = accesses;
         b.access_forms = access_forms;
         b
