@@ -36,6 +36,7 @@ use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
 use crate::analysis::thread_participation::{ThreadSet, ThreadSets, thread_sets};
+use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
@@ -789,7 +790,8 @@ impl<'a> KernelReportBuilder<'a> {
         };
         let tracer =
             AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
-        b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer);
+        let uniformity = Uniformity::new(&tracer);
+        b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer, &uniformity);
         let (accesses, access_forms) = b.accesses_by_scope(&tracer);
         b.accesses = accesses;
         b.access_forms = access_forms;

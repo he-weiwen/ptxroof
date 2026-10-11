@@ -432,7 +432,7 @@ struct PredicateReader<'a> {
     cfg: &'a ControlFlowGraph,
     forest: &'a LoopForest,
     tracer: &'a AffineValueTracer<'a>,
-    uniformity: Uniformity,
+    uniformity: &'a Uniformity,
     memo: HashMap<usize, Pred>,
     blocks: Vec<Option<Pred>>,
 }
@@ -569,7 +569,7 @@ impl PredicateReader<'_> {
             ops,
         ) {
             ("setp", _, _) => (
-                condition(self.module, self.kernel, self.tracer, &self.uniformity, def)
+                condition(self.module, self.kernel, self.tracer, self.uniformity, def)
                     .unwrap_or(Pred::Unknown),
                 false,
             ),
@@ -637,6 +637,7 @@ pub(crate) fn thread_sets(
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
     tracer: &AffineValueTracer,
+    uniformity: &Uniformity,
 ) -> ThreadSets {
     let sym_bra = module.interner.get("bra");
     let mut reader = PredicateReader {
@@ -645,7 +646,7 @@ pub(crate) fn thread_sets(
         cfg,
         forest,
         tracer,
-        uniformity: Uniformity::new(tracer),
+        uniformity,
         memo: HashMap::new(),
         blocks: vec![None; cfg.blocks.len()],
     };

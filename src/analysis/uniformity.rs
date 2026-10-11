@@ -8,6 +8,7 @@
 //! SSA; a definition inside a loop read outside it is gated by the
 //! loop's exits, as by an η's.
 
+use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
 use crate::analysis::scalar::trace::{
@@ -176,17 +177,8 @@ fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
         }
         let mut l = t.forest.block_loop[at.0 as usize];
         while let Some(id) = l {
-            let blocks = &t.forest.get(id).blocks;
             if !t.in_loop(id, pos) {
-                sources.extend(
-                    blocks
-                        .iter()
-                        .filter(|&&b| {
-                            let succs = &t.cfg.block(b).succs;
-                            succs.iter().any(|s| blocks.binary_search(s).is_err())
-                        })
-                        .map(|&b| Node::Branch(b)),
-                );
+                sources.extend(exits(t, id));
             }
             l = t.forest.get(id).parent;
         }
@@ -204,6 +196,14 @@ fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
         }));
     }
     Read::On(sources)
+}
+
+/// The branches of loop `id`'s blocks that can leave it.
+fn exits<'a>(t: &'a AffineValueTracer, id: LoopId) -> impl Iterator<Item = Node> + 'a {
+    let blocks = &t.forest.get(id).blocks;
+    (blocks.iter())
+        .filter(|&&b| (t.cfg.block(b).succs.iter()).any(|s| blocks.binary_search(s).is_err()))
+        .map(|&b| Node::Branch(b))
 }
 
 /// Each lane's result is a function of its own operands.
