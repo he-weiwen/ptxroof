@@ -1,0 +1,27 @@
+//
+// HAND-WRITTEN: `setp.lt.u32` compares unsigned (PTX ISA §9.7.6.2), so
+// %tid.x - 16 < 32 holds on threads 16 to 47 only (ptxas 13.4:
+// `ISETP.GE.U32.AND P0, PT, R0, 0x20, PT` then `@P0 EXIT`).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_setp_unsigned(
+	.param .u64 micro_setp_unsigned_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_setp_unsigned_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s32 	%r2, %r1, -16;
+	setp.lt.u32 	%p1, %r2, 32;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r1;
+	ret;
+}
