@@ -1,0 +1,4 @@
+# The sol-study reports regen.sh imports, relative to the checkout, each
+# optionally limited to one kernel: every profiled case of the
+# b200_ncu_triton run.
+results/b200_ncu_triton/ncu/*.ncu-rep

@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
-"""Writes a fixture for each kernel launch in sol-study's B200 Nsight Compute
-reports: its PTX with a provenance header, and a tools/ncu/measure.py record of
-the report's predicated-on thread instructions executed per PTX line.
+"""Writes a fixture for each kernel launch of the sol-study B200 Nsight
+Compute reports that reports.txt selects: its PTX with a provenance header,
+and a tools/ncu/measure.py record of the report's predicated-on thread
+instructions executed per PTX line.
 
 A report's kernel is matched to the PTX it ran by SASS and block size among
-the study's Triton caches, and to its launch by SASS and grid among the
-launches record_launches.py recorded. The PTX must assemble to the report's
-SASS with Triton's ptxas command, also with a .loc per line (measure.py),
-whose line table attributes each SASS instruction to a PTX line.
+the study's Triton caches, nearest its own run first, and to its launch by
+SASS and grid among the launches record_launches.py recorded replaying the
+report's command. The PTX must assemble to the report's SASS with Triton's
+ptxas command, also with a .loc per line (measure.py), whose line table
+attributes each SASS instruction to a PTX line.
 
 Usage: import_reports.py SOL_STUDY CORPUS LAUNCHES OUT_DIR
+       import_reports.py --commands SOL_STUDY SCRATCH
        import_reports.py --check RECORD...
---check: each record's PTX still assembles to its recorded SASS.
+--commands: the commands of the reports reports.txt selects, one JSON list
+per line, for record_launches.py. --check: each record's PTX still
+assembles to its recorded SASS.
 """
 
 import csv
 import io
 import json
+import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -29,9 +36,6 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "tools" / "ncu"))
 import sass  # noqa: E402
 from measure import numbered, timing_dependent  # noqa: E402
-
-RUN = "results/b200_ncu_triton"
-
 
 def run(*cmd):
     return subprocess.run([str(c) for c in cmd], capture_output=True, text=True, check=True).stdout
@@ -97,6 +101,35 @@ def write_record(path, record):
     path.write_text("{\n" + fields + ',\n "lines": {\n' + lines + "\n }\n}\n")
 
 
+def selected(sol):
+    """reports.txt: a report glob relative to the sol-study checkout per line,
+    optionally followed by the one kernel to take from it."""
+    for line in (HERE / "reports.txt").read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            pattern, *kernel = line.split()
+            for rep in sorted(sol.glob(pattern)):
+                yield rep, kernel[0] if kernel else None
+
+
+def command(rep):
+    """The profiled command: ncu quotes an argument with spaces in single
+    quotes and leaves double quotes as they are."""
+    prefix = '"Profiler Command Line","'
+    text = run("ncu", "--import", rep, "--page", "session", "--csv")
+    lexer = shlex.shlex(next(l for l in text.splitlines() if l.startswith(prefix))[len(prefix):].rstrip('"'), posix=True)
+    lexer.quotes, lexer.whitespace_split = "'", True
+    argv = list(lexer)
+    return argv[next(i for i, a in enumerate(argv) if a.endswith(("/python", "/python3"))) + 1:]
+
+
+def commands(sol, scratch):
+    """Each selected report's command as record_launches.py takes it, run from
+    the checkout (/sol on Modal) and writing to SCRATCH instead of /out."""
+    for rep in dict.fromkeys(rep for rep, _ in selected(sol)):
+        argv = [re.sub(r"^/out/", f"{scratch}/", re.sub(r"^/sol/", f"{sol}/", a)) for a in command(rep)]
+        print(json.dumps([str(rep.relative_to(sol)), *argv]))
+
+
 def import_reports(sol, corpus, launches_path, out):
     bin_dir = sol / "vendor/triton/backends/nvidia/bin"
     sol_commit = run("git", "-C", sol, "describe", "--always", "--dirty", "--abbrev=12").strip()
@@ -106,38 +139,43 @@ def import_reports(sol, corpus, launches_path, out):
         row = json.loads(line)
         manifest[row["output_file"]] = row
     caches = {}
-    for cubin in sorted(sol.glob("results/*/triton_cache/*/*.cubin")):
+    for cubin in sorted(sol.glob("results/**/triton_cache/*/*.cubin")):
         caches.setdefault(sass.digest(sass.of_cubin(cubin)), []).append(cubin)
     launches = [json.loads(line) for line in launches_path.read_text().splitlines()]
-    cases = json.loads((sol / RUN / "ncu_summary.json").read_text())
-    for case in cases:
-        rep = sol / RUN / "ncu" / (case.replace("/", "__") + ".ncu-rep")
+    for rep, only in selected(sol):
+        label = str(rep.relative_to(sol))
         created, ncu = session(rep)
-        for k in report_kernels(rep):
+        kernels = [k for k in report_kernels(rep) if only in (None, k["kernel"])]
+        assert kernels, (label, only)
+        for k in kernels:
             digest = sass.digest(k["sass"])
             threads = k["block"][0] * k["block"][1] * k["block"][2]
-            own_run_first = sorted(caches.get(digest, []), key=lambda c: RUN not in str(c))
-            cubin = next(c for c in own_run_first
+            nearest_run_first = sorted(caches.get(digest, []), key=lambda c: -len(os.path.commonpath([c, rep])))
+            cubin = next(c for c in nearest_run_first
                          if re.search(rf"\.reqntid {threads}\b", next(c.parent.glob("*.ptx")).read_text()))
-            params = {tuple(l["params"]) for l in launches
-                      if l["case"] == case and l["sass"] == digest and l["grid"] == k["grid"]}
-            assert len(params) == 1, (case, k["kernel"], len(params))
-            shared = {l["shared"] for l in launches if l["case"] == case and l["sass"] == digest}.pop()
+            mine = [l for l in launches if l["label"] == label and l["sass"] == digest]
+            params = {tuple(l["params"]) for l in mine if l["grid"] == k["grid"]}
+            assert len(params) == 1, (label, k["kernel"], len(params))
             tool, release, note_flags = tool_note(cubin)
             # Triton's make_cubin also passes --regAllocOptLevel=2, which the
             # cubin's note omits (vendor/triton/backends/nvidia/compiler.py).
             flags = [f for f in note_flags if f != "-v"] + ["--regAllocOptLevel=2"]
             original = next(cubin.parent.glob("*.ptx")).read_text()
-            source = re.search(r'\.file\s+1\s+"/corpus/([^"]+)"', original)[1]
-            row = manifest[source]
-            name = f"{case.replace('/', '__')}.{k['kernel']}.sm_100a"
+            source = re.search(r'\.file\s+1\s+"([^"]+)"', original)[1]
+            if source.startswith("/corpus/"):
+                row = manifest[source.removeprefix("/corpus/")]
+                source = f"{row['origin_url']} ({row['license']})"
+            else:
+                source = f"sol-study {sol_commit} {source.removeprefix('/sol/')}"
+            twins = sum(other["kernel"] == k["kernel"] for other in report_kernels(rep))
+            name = f"{rep.stem}.{k['kernel']}" + (f".{k['id']}" if twins > 1 else "") + ".sm_100a"
+            triton = json.loads(next(p for p in cubin.parent.glob("*.json") if not p.name.startswith("__grp")).read_text())
             header = [
                 "//",
                 "// Provenance: generated by regen.sh in this directory — do not edit.",
-                f"//   source:   {row['origin_url']} ({row['license']})",
-                f"//   launch:   sol-study {sol_commit} {case}, kernel {k['id']} of {rep.relative_to(sol)}",
-                f"//   compiler: triton {json.loads(next(p for p in cubin.parent.glob('*.json') if not p.name.startswith('__grp')).read_text())['triton_version']} "
-                f"({triton_commit}), {tool} {release} {' '.join(flags)}",
+                f"//   source:   {source}",
+                f"//   launch:   sol-study {sol_commit} {label}, kernel {k['id']}: {' '.join(command(rep)).replace('/sol/', '', 1)}",
+                f"//   compiler: triton {triton['triton_version']} ({triton_commit}), {tool} {release} {' '.join(flags)}",
                 f"//   measured: Nsight Compute {ncu}, NVIDIA B200, {created}",
                 "//",
             ]
@@ -164,7 +202,7 @@ def import_reports(sol, corpus, launches_path, out):
                     lines[str(n)]["timing_dependent"] = True
             write_record(out / f"{name}.ncu.json", {
                 "ptx": str(ptx.resolve().relative_to(REPO)), "kernel": k["kernel"], "grid": k["grid"],
-                "block": k["block"], "shared": shared, "params": list(params.pop()), "gpu": "NVIDIA B200",
+                "block": k["block"], "shared": mine[0]["shared"], "params": list(params.pop()), "gpu": "NVIDIA B200",
                 "arch": "sm_100a", "ptxas": f"{tool} {release}", "ptxas_flags": flags, "ncu": ncu,
                 "sass_sha256": digest, "lines": dict(sorted(lines.items(), key=lambda kv: int(kv[0]))),
             })
@@ -185,6 +223,8 @@ if __name__ == "__main__":
     args = sys.argv[1:]
     if args[:1] == ["--check"] and len(args) > 1:
         check(args[1:])
+    elif args[:1] == ["--commands"] and len(args) == 3:
+        commands(Path(args[1]), args[2])
     elif len(args) == 4:
         import_reports(*map(Path, args))
     else:

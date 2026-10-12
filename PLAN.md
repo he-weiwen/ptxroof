@@ -306,7 +306,9 @@ One line each, with the trigger that would start it.
   sol-study's reports instead: `import_reports.py` attributes their
   per-SASS counts to PTX lines through the same `.loc` recompile under
   Triton's ptxas command, and takes each launch's parameters from a
-  replay of its case as the B200, matched by SASS and grid; the PTX
+  replay of the report's own command as the B200, matched by SASS and
+  grid, with `i64:`, `i1:` and `tensormap:128` for the parameters of a
+  tensor descriptor, which launch.c does not take; the PTX
   must still assemble to the recorded SASS (`b200-sass.test`, under
   ptxas 13.4 only). `ci.sh` does not re-measure them with
   `measure.py --check`, which would launch on zeroed inputs.
