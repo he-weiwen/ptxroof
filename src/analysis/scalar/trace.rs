@@ -363,9 +363,19 @@ impl<'a> AffineValueTracer<'a> {
         pos: usize,
         exclude: Option<LoopId>,
     ) -> ReachingDefinition {
-        let Some(all) = self.defs.get(&reg) else {
-            return ReachingDefinition::None;
-        };
+        match self.defs.get(&reg) {
+            Some(all) => self.reach_sites(all, pos, exclude),
+            None => ReachingDefinition::None,
+        }
+    }
+
+    /// Which of the definitions at statements `all` reach `pos`.
+    pub(crate) fn reach_sites(
+        &self,
+        all: &[usize],
+        pos: usize,
+        exclude: Option<LoopId>,
+    ) -> ReachingDefinition {
         let sites: Vec<usize> = all
             .iter()
             .copied()

@@ -151,13 +151,18 @@ impl Uniformity {
 }
 
 fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
-    let name = t.module.interner.resolve(reg);
+    let sites = t.defs.get(&reg).map_or(&[][..], Vec::as_slice);
+    read_sites(t, t.module.interner.resolve(reg), sites, pos)
+}
+
+/// A read at `pos` of `name`, which the statements `sites` define.
+fn read_sites(t: &AffineValueTracer, name: &str, sites: &[usize], pos: usize) -> Read {
     let here = t.block_of(pos);
     let reaches = |a: BlockId, b: BlockId| a == b || t.reach[a.0 as usize][b.0 as usize];
-    let defs = match t.reach_def(reg, pos, None) {
+    let defs = match t.reach_sites(sites, pos, None) {
         ReachingDefinition::Def(d) => vec![d],
         ReachingDefinition::Merged(defs) => defs,
-        ReachingDefinition::Carried(_) => t.defs[&reg]
+        ReachingDefinition::Carried(_) => sites
             .iter()
             .copied()
             .filter(|&d| {
