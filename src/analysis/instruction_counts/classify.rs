@@ -5,7 +5,7 @@
 //! flops, non-flop arithmetic (conversions counted separately — they
 //! are the precision-audit overhead S8 reports), memory, copies that
 //! read one space and write another, sync, control, ignore, unknown.
-//! What has no arm (Hopper bulk copies and warpgroup MMA, integer and
+//! What is not modelled (Hopper bulk copies and warpgroup MMA, integer and
 //! sparse MMA kinds, textures) classifies as `Unknown`: visible,
 //! counted, and policed by the corpus coverage check — never silently
 //! zero. `docs/ptx-instruction-coverage.md` walks the ISA chapter row
@@ -313,9 +313,14 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
             ClassifiedInstruction::simple(InstructionCategory::Ignore)
         }
 
-        // -- everything else: unsupported instruction families ----------
+        // -- unsupported instruction families ------------------------------
         // Counted and named by the coverage check.
-        _ => ClassifiedInstruction::simple(InstructionCategory::Unknown),
+        Clusterlaunchcontrol | Fabric | Movmatrix | Multimem | Tcgen05 | Tensormap | Wgmma
+        | Tex | Tld4 | Txq | Suld | Suq | Sured | Sust | Vabsdiff | Vabsdiff2 | Vabsdiff4
+        | Vadd | Vadd2 | Vadd4 | Vavrg2 | Vavrg4 | Vmad | Vmax | Vmax2 | Vmax4 | Vmin | Vmin2
+        | Vmin4 | Vset | Vset2 | Vset4 | Vshl | Vshr | Vsub | Vsub2 | Vsub4 => {
+            ClassifiedInstruction::simple(InstructionCategory::Unknown)
+        }
     };
     if result.category == InstructionCategory::Unknown {
         result.contributions.push(Contribution::new(

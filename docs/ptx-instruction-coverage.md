@@ -450,7 +450,7 @@ wildly wrong.
 
 ## §9.7.19 Video Instructions
 
-All `Unknown` today (distinct mnemonics, no arms). Legacy fixed-point
+All `Unknown` today (distinct mnemonics, listed in the `Unknown` arm). Legacy fixed-point
 video ops; modern compilers essentially never emit them (`dp4a`/`dp2a`
 superseded the common uses). All Tier 4; if one ever appears, each is
 a one-line `Integer` arm (`vset*` → `Predicate`-flavored `Integer`,
