@@ -316,7 +316,7 @@ Current **counting route**: `A` non-flop arithmetic, `F` flop classification, `M
 
 | ISA section / instruction | W | R | Execution effects and decoding requirements | Counting route |
 |---|---|---|---|---|
-| [9.7.9.3](../refs/ptx-isa.html#data-movement-and-conversion-instructions-mov) `mov` | d | a / special register / symbol address | Special-register observations need stability classification; symbol address is not a memory load. | A |
+| [9.7.9.3](../refs/ptx-isa.html#data-movement-and-conversion-instructions-mov) `mov` | d | a / special register / symbol address | Special-register observations are classified per register (`special_register`, `src/analysis/scalar/trace.rs`): per thread, per CTA, varying between reads, the zero fourth element, or not modelled where §10 does not say. Symbol address is not a memory load. | A |
 | [9.7.9.4](../refs/ptx-isa.html#data-movement-and-conversion-instructions-mov-2) `mov` | all destination components | all source components | Pack/unpack; skip sink _, preserve component order and widths. | A |
 | [9.7.9.5](../refs/ptx-isa.html#data-movement-and-conversion-instructions-shfl) `shfl (deprecated)` | d and optional p | a, b, c | Cross-lane exchange; p reports source-range validity. Invalid/inactive source rules are not old-d preservation. Deprecated, target restrictions apply. | C |
 | [9.7.9.6](../refs/ptx-isa.html#data-movement-and-conversion-instructions-shfl-sync) `shfl.sync` | d and optional p | a, b, c, membermask | Cross-lane exchange; p reports source-range validity. Invalid/inactive source rules are not old-d preservation. Warp rendezvous and membership constraints. | C |

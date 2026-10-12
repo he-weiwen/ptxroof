@@ -121,6 +121,11 @@ its shared writes and instruction counts remain counted
   textures and surfaces; `multimem`; video instructions. `tcgen05`
   is in 12 of the B200 fixtures (`tests/fixtures/b200`), bulk tensor
   copies (`cp.async.bulk*`) in five.
+- **Special registers PTX ISA §10 does not describe** — `%pm*`
+  ("behavior is currently undefined"), `%envreg*` (driver-defined),
+  `%globaltimer*` (target-specific), `%reserved_smem_offset_*` — read
+  as divergent, "is not modelled"
+  (`special_registers_by_the_threads_that_share_them`).
 - **Instruction keywords after PTX ISA 9.3.** The parser knows the
   pinned manual's Table 2 and `fabric`; a keyword a later ISA adds
   leaves its statement unparsed (`mnemonics_outside_the_isa_are_unparsed`;

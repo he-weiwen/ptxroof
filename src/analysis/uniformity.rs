@@ -243,7 +243,10 @@ fn read_special(reg: SpecialReg) -> Read {
     match special_register(reg) {
         Some(SpecialRegister::PerCta | SpecialRegister::Zero) => Read::Uniform,
         Some(SpecialRegister::PerThread) => Read::Divergent(format!("depends on {name}")),
-        None => Read::Divergent(format!("reads {name}, which has no definition")),
+        Some(SpecialRegister::Varying) => {
+            Read::Divergent(format!("{name} can change between reads"))
+        }
+        None => Read::Divergent(format!("{name} is not modelled")),
     }
 }
 

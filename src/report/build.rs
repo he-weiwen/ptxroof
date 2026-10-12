@@ -1877,6 +1877,35 @@ mod tests {
 
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
     /// read but uniform, so each warp's lanes are still known.
+    /// §10.32: `%dynamic_smem_size` is set "for the CTA … at launch time",
+    /// so a branch on it keeps a warp whole; §10.23: `%clock` is a cycle
+    /// counter, so a branch on it may split one.
+    #[test]
+    fn a_branch_on_a_per_cta_special_register_keeps_the_lanes_exact() {
+        let opts = AnalyzeOptions::default();
+        let sectors = |sreg: &str| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 128, 1, 1\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, {sreg};\n\
+                 setp.lt.u32 %p1, %r1, 1024;\n@%p1 bra $L__end;\n\
+                 mov.u32 %r2, %tid.x;\nmul.wide.u32 %rd2, %r2, 4;\n\
+                 add.s64 %rd3, %rd1, %rd2;\nld.global.f32 %f1, [%rd3];\n$L__end:\nret;\n}}\n"
+            );
+            let r = analyze(&src, "t", &opts).expect("analyzes");
+            let a = &r.kernels[0].accesses[0];
+            (a.sectors_at_most, a.sectors_per_request)
+        };
+        assert_eq!(
+            sectors("%dynamic_smem_size"),
+            (false, Some(CountRange { min: 4, max: 5 }))
+        );
+        assert_eq!(
+            sectors("%clock"),
+            (true, Some(CountRange { min: 5, max: 5 }))
+        );
+    }
+
     #[test]
     fn a_uniform_half_of_an_and_keeps_the_lanes_exact() {
         let opts = AnalyzeOptions::default();
