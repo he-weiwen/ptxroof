@@ -56,8 +56,8 @@ its shared writes and instruction counts remain counted
   an address through one is read as the last write. Forms the
   register-effects decoder does not decode yet
   (`tests/register_effects_corpus.rs`) fall back to a blacklist, which
-  admits `mbarrier` and `wmma.store`; they record nothing only because
-  their first operand is an address, an immediate or `_`. The parser drops TMA coordinates (five B200 fixtures
+  admits `wmma.store`; it records nothing only because its first
+  operand is an address. The parser drops TMA coordinates (five B200 fixtures
   do not round-trip: `Arguments mismatch for instruction
   'cp.async.bulk.tensor'`); negated source predicates, parenthesized
   call operands and an address followed by `.unified` (PTX ISA

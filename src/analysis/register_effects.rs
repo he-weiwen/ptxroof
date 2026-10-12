@@ -15,6 +15,13 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
             "sync" | "arrive" | "warp" | "cluster" => Some(0),
             _ => None,
         },
+        Mbarrier => match modifiers.next()? {
+            "init" | "inval" | "expect_tx" | "complete_tx" => Some(0),
+            "arrive" | "arrive_drop" | "pending_count" | "check_layout" => Some(1),
+            "test_wait" | "try_wait" => (module.operand_ids(instr.operands).iter())
+                .position(|&op| matches!(module.operand(op), Operand::Memory { .. })),
+            _ => None,
+        },
         Abs | Activemask | Add | Addc | Alloca | And | Atom | Bfe | Bfi | Bfind | Bmsk | Brev
         | Clmad | Clz | Cnot | Copysign | Cos | Createpolicy | Cvt | Cvta | Div | Dp2a | Dp4a
         | Elect | Ex2 | Fma | Fns | Getctarank | Isspacep | Ld | Ldmatrix | Ldu | Lg2 | Lop3
@@ -154,6 +161,48 @@ mod tests {
             ("barrier.cluster.wait;", Some("")),
             ("bar.warp.sync %r1;", Some("")),
             ("barrier.cta;", None),
+        ] {
+            assert_eq!(written(instr).as_deref(), regs, "{instr}");
+        }
+    }
+
+    #[test]
+    fn an_mbarrier_wait_writes_the_operands_before_its_address() {
+        for (instr, regs) in [
+            (
+                "mbarrier.test_wait.parity.phase_type::primary.shared::cta.b64 \
+                 %p1|%p2, %r3, [%r4], %r5;",
+                Some("%p1 %p2 %r3"),
+            ),
+            (
+                "mbarrier.try_wait.phase_type::primary.shared::cta.b64 \
+                 %p1|%p2, [%r4], %rd5, %r6;",
+                Some("%p1 %p2"),
+            ),
+            (
+                "mbarrier.try_wait.parity.shared::cta.b64 %p1, [%r4], %r5, %r6;",
+                Some("%p1"),
+            ),
+            (
+                "mbarrier.arrive.release.cluster.shared::cluster.b64 _, [%r2];",
+                Some(""),
+            ),
+            ("mbarrier.arrive_drop.shared.b64 %rd1, [%r2];", Some("%rd1")),
+            ("mbarrier.pending_count.b64 %r1, %rd2;", Some("%r1")),
+            (
+                "mbarrier.check_layout.layout::v1.shared::cta.b64 %p1, [%r2];",
+                Some("%p1"),
+            ),
+            (
+                "mbarrier.expect_tx.relaxed.cta.shared::cta.b64 [%r1], 64;",
+                Some(""),
+            ),
+            (
+                "mbarrier.complete_tx.relaxed.cta.shared::cta.b64 [%r1], 64;",
+                Some(""),
+            ),
+            ("mbarrier.test_wait.b64 %p1, %rd2;", None),
+            ("mbarrier.wait.b64 %p1, [%r2];", None),
         ] {
             assert_eq!(written(instr).as_deref(), regs, "{instr}");
         }
