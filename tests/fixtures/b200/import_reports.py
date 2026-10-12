@@ -107,7 +107,10 @@ def selected(sol):
     for line in (HERE / "reports.txt").read_text().splitlines():
         if line.strip() and not line.startswith("#"):
             pattern, *kernel = line.split()
-            for rep in sorted(sol.glob(pattern)):
+            reports = sorted(sol.glob(pattern))
+            if not reports:
+                sys.exit(f"import_reports.py: no report in {sol} matches {pattern}")
+            for rep in reports:
                 yield rep, kernel[0] if kernel else None
 
 
@@ -142,6 +145,7 @@ def import_reports(sol, corpus, launches_path, out):
     for cubin in sorted(sol.glob("results/**/triton_cache/*/*.cubin")):
         caches.setdefault(sass.digest(sass.of_cubin(cubin)), []).append(cubin)
     launches = [json.loads(line) for line in launches_path.read_text().splitlines()]
+    names = {}
     for rep, only in selected(sol):
         label = str(rep.relative_to(sol))
         created, ncu = session(rep)
@@ -169,6 +173,8 @@ def import_reports(sol, corpus, launches_path, out):
                 source = f"sol-study {sol_commit} {source.removeprefix('/sol/')}"
             twins = sum(other["kernel"] == k["kernel"] for other in report_kernels(rep))
             name = f"{rep.stem}.{k['kernel']}" + (f".{k['id']}" if twins > 1 else "") + ".sm_100a"
+            if names.setdefault(name, label) != label:
+                sys.exit(f"import_reports.py: {label} and {names[name]} both name a fixture {name}")
             triton = json.loads(next(p for p in cubin.parent.glob("*.json") if not p.name.startswith("__grp")).read_text())
             header = [
                 "//",
