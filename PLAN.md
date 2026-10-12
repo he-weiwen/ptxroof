@@ -254,12 +254,6 @@ its shared writes and instruction counts remain counted
   wait's result runs a timing-dependent number of times: such lines
   are marked `timing_dependent` and not checked (the attention forward
   records: 30 lines each).
-- The `.loc` per line (`measure.py`, `numbered`) goes before any line
-  ending in `;`, so in a `.branchtargets` list spread over lines it
-  lands inside the directive and ptxas rejects the file (`Parsing error
-  near '.loc'`): the seven launches of Triton's sm_100a warp-specialized
-  kernels in sol-study's reports, which dispatch partitions through
-  `brx.idx`, cannot be measured or imported.
 - Kernels that ship only SASS have no PTX to read: 18 of the 149
   launches in sol-study's B200 reports (cuBLAS, cuDNN, CUTLASS and CuTe
   DSL, flashinfer's trtllm-gen attention, PyTorch's elementwise).

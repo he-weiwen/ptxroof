@@ -1,0 +1,8 @@
+# measure.py gives each statement a .loc naming its line: none goes inside a
+# .branchtargets list spread over lines, which ptxas would reject.
+RUN: python3 -c "import sys; sys.path.insert(0, sys.argv[1]); from measure import numbered; print(numbered(open(sys.argv[2]).read(), 'k.ptx'))" %S/../../tools/ncu %S/Inputs/numbered-branchtargets.ptx | FileCheck "%s"
+CHECK: .loc 1 8 0 {{.*}}ld.param.u32
+CHECK: {{^}}	.branchtargets
+CHECK-NEXT: {{^}}		$L__BB0_1,
+CHECK-NEXT: {{^}}		$L__BB0_2;
+CHECK-NEXT: .loc 1 14 0 {{.*}}brx.idx

@@ -36,15 +36,20 @@ def run(*cmd):
 
 
 def numbered(ptx, path):
-    out = []
+    """A statement ends with a semicolon (PTX ISA 4.3), so a line after one
+    ending in a comma, or after `.branchtargets`, continues a statement."""
+    out, continued = [], False
     for n, line in enumerate(ptx.split("\n"), 1):
         code = line.split("//")[0].strip()
         if re.match(r"\.(loc|file)\b", code):
             line = ""
         elif code.startswith(".address_size"):
             line += f' .file 1 "{path}"'
-        elif code.endswith((";", "}")) and not code.startswith((".", "}")) and not re.match(r"[\w$]+:", code):
+        elif (not continued and code.endswith((";", "}")) and not code.startswith((".", "}"))
+              and not re.match(r"[\w$]+:", code)):
             line = f".loc 1 {n} 0 {line}"
+        if code:
+            continued = code.endswith(",") or code == ".branchtargets"
         out.append(line)
     return "\n".join(out)
 

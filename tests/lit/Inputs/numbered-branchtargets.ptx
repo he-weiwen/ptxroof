@@ -1,0 +1,19 @@
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry k(.param .u32 k_param_0)
+{
+	.reg .b32 %r<3>;
+	ld.param.u32 %r1, [k_param_0];
+	and.b32 %r2, %r1, 1;
+JTI0_0:
+	.branchtargets
+		$L__BB0_1,
+		$L__BB0_2;
+	brx.idx %r2, JTI0_0;
+$L__BB0_1:
+	ret;
+$L__BB0_2:
+	ret;
+}
