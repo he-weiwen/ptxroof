@@ -15,7 +15,7 @@ use crate::analysis::scalar::trace::{
     AffineValueTracer, ReachingDefinition, SpecialRegister, special_register,
 };
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Stmt};
+use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, SpecialReg, Stmt};
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
@@ -163,7 +163,9 @@ fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
                     || t.reach[t.block_of(d).0 as usize][here.0 as usize]
             })
             .collect(),
-        ReachingDefinition::None => return read_unwritten(name),
+        ReachingDefinition::None => {
+            return Read::Divergent(format!("reads {name}, which has no definition"));
+        }
     };
     let mut sources: Vec<Node> = defs.iter().map(|&d| Node::Def(d)).collect();
     // An η's gating predicates: the exits of every loop holding a
@@ -236,8 +238,9 @@ fn lane_wise(module: &Module, instr: &Instr) -> bool {
     }
 }
 
-fn read_unwritten(name: &str) -> Read {
-    match special_register(name) {
+fn read_special(reg: SpecialReg) -> Read {
+    let name = reg.name();
+    match special_register(reg) {
         Some(SpecialRegister::PerCta) => Read::Uniform,
         Some(SpecialRegister::PerThread) => Read::Divergent(format!("depends on {name}")),
         None => Read::Divergent(format!("reads {name}, which has no definition")),
@@ -248,7 +251,7 @@ fn operand_reads(t: &AffineValueTracer, ops: &[OperandId], pos: usize) -> Vec<Re
     ops.iter()
         .flat_map(|&op| match t.module.operand(op) {
             Operand::Register(r) => vec![read(t, *r, pos)],
-            Operand::Special(reg) => vec![read_unwritten(&reg.name())],
+            Operand::Special(reg) => vec![read_special(*reg)],
             Operand::Memory { base, .. } => operand_reads(t, &[*base], pos),
             Operand::VectorList { children } | Operand::MultipleDestinations { children } => {
                 operand_reads(t, t.module.operand_ids(*children), pos)

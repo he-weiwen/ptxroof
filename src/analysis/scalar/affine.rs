@@ -8,6 +8,7 @@
 
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::scalar::symexpr::SymExpr;
+use crate::ptx::ir::{Element, SpecialReg, SpecialVector};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -32,20 +33,22 @@ pub enum Var {
 
 impl Var {
     /// `%tid.x`, `%ctaid.y`; the launch shape (`%ntid`, `%nctaid`) is a
-    /// symbol, not a variable, and other names stay opaque.
-    pub fn special(name: &str) -> Option<Var> {
-        let (reg, axis) = name.strip_prefix('%')?.split_once('.')?;
-        let axis = match axis {
-            "x" => Axis::X,
-            "y" => Axis::Y,
-            "z" => Axis::Z,
-            _ => return None,
+    /// symbol, not a variable, and other special registers stay opaque.
+    pub fn special(reg: SpecialReg) -> Option<Var> {
+        let SpecialReg::Vector(vector, Some(element)) = reg else {
+            return None;
         };
-        Some(match reg {
-            "tid" => Var::Tid(axis),
-            "ctaid" => Var::Ctaid(axis),
-            _ => return None,
-        })
+        let axis = match element {
+            Element::X => Axis::X,
+            Element::Y => Axis::Y,
+            Element::Z => Axis::Z,
+            Element::W => return None,
+        };
+        match vector {
+            SpecialVector::Tid => Some(Var::Tid(axis)),
+            SpecialVector::Ctaid => Some(Var::Ctaid(axis)),
+            _ => None,
+        }
     }
 }
 
@@ -321,10 +324,11 @@ mod tests {
 
     #[test]
     fn special_registers_with_an_axis_are_variables() {
-        assert_eq!(Var::special("%ctaid.y"), Some(Var::Ctaid(Axis::Y)));
-        assert_eq!(Var::special("%laneid"), None);
-        assert_eq!(Var::special("%ntid.x"), None);
-        assert_eq!(Var::special("%r5"), None);
+        let special = |name| Var::special(SpecialReg::from_name(name).expect(name));
+        assert_eq!(special("%ctaid.y"), Some(Var::Ctaid(Axis::Y)));
+        assert_eq!(special("%laneid"), None);
+        assert_eq!(special("%ntid.x"), None);
+        assert_eq!(special("%tid.w"), None);
     }
 
     #[test]

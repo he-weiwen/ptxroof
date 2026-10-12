@@ -20,7 +20,10 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId, Stmt};
+use crate::ptx::ir::{
+    Instr, Kernel, Module, Opcode, Operand, OperandId, SpecialReg, SpecialScalar, SpecialVector,
+    Stmt,
+};
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
 use std::collections::{HashMap, HashSet};
@@ -463,7 +466,7 @@ impl<'a> AffineValueTracer<'a> {
         match self.module.operand(op) {
             Operand::Register(reg) => self.trace_reg(*reg, pos, id, depth, None),
             Operand::Special(_) if depth > 32 => Err("value trace exceeds depth limit".to_owned()),
-            Operand::Special(reg) => self.trace_unwritten(&reg.name()),
+            Operand::Special(reg) => self.trace_special(*reg),
             Operand::Immediate(text) => {
                 let text = self.module.interner.resolve(*text);
                 parse_int(text)
@@ -481,25 +484,27 @@ impl<'a> AffineValueTracer<'a> {
         }
     }
 
-    /// A register no instruction writes: a special register, or none.
-    fn trace_unwritten(&self, name: &str) -> Result<Affine, String> {
-        match Var::special(name) {
-            Some(v) => Ok(Affine::var(v)),
+    fn trace_special(&self, reg: SpecialReg) -> Result<Affine, String> {
+        if let Some(v) = Var::special(reg) {
+            return Ok(Affine::var(v));
+        }
+        match reg {
             // PTX ISA §10.3: %laneid is "the thread's lane within the
             // warp", and §3.1: a warp "contains threads of consecutive,
             // increasing thread IDs with the first warp containing
             // thread 0"; in a one-dimensional block that is %tid.x mod 32.
-            None if name == "%laneid" && self.one_dimensional() => {
+            SpecialReg::Scalar(SpecialScalar::Laneid) if self.one_dimensional() => {
                 Ok(Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
             }
             // The launch shape is uniform: a symbol, bound when known.
-            None if name.starts_with("%ntid") || name.starts_with("%nctaid") => {
-                Ok(Affine::invariant(SymExpr::sym(name)))
+            SpecialReg::Vector(SpecialVector::Ntid | SpecialVector::Nctaid, _) => {
+                Ok(Affine::invariant(SymExpr::sym(reg.name())))
             }
-            None if special_register(name).is_some() => Err(format!(
-                "latch condition depends on special register {name}"
+            _ if special_register(reg).is_some() => Err(format!(
+                "latch condition depends on special register {}",
+                reg.name()
             )),
-            None => Err(format!("no definition found for {name}")),
+            _ => Err(format!("no definition found for {}", reg.name())),
         }
     }
 
@@ -540,7 +545,7 @@ impl<'a> AffineValueTracer<'a> {
                     .obstacle_of_any_def(reg, id)
                     .unwrap_or_else(|| format!("{name} has more than one reaching definition")));
             }
-            ReachingDefinition::None => return self.trace_unwritten(name),
+            ReachingDefinition::None => return Err(format!("no definition found for {name}")),
         };
 
         // The counter of this loop or an enclosing one, read at or after
@@ -875,9 +880,7 @@ impl<'a> AffineValueTracer<'a> {
         }
         let def = match self.reach_def(reg, pos, None) {
             ReachingDefinition::Def(d) => d,
-            ReachingDefinition::None => {
-                return unwritten_obstacle(self.module.interner.resolve(reg));
-            }
+            ReachingDefinition::None => return None,
             ReachingDefinition::Carried(_) | ReachingDefinition::Merged(_) => {
                 return self.obstacle_of_any_def(reg, id);
             }
@@ -918,7 +921,7 @@ impl<'a> AffineValueTracer<'a> {
     ) -> Option<String> {
         match self.module.operand(op) {
             Operand::Register(r) => self.obstacle(*r, pos, id, seen),
-            Operand::Special(reg) => unwritten_obstacle(&reg.name()),
+            Operand::Special(reg) => special_obstacle(*reg),
             _ => None,
         }
     }
@@ -931,10 +934,10 @@ impl<'a> AffineValueTracer<'a> {
     }
 }
 
-fn unwritten_obstacle(name: &str) -> Option<String> {
-    special_register(name)
+fn special_obstacle(reg: SpecialReg) -> Option<String> {
+    special_register(reg)
         .is_some()
-        .then(|| format!("latch condition depends on special register {name}"))
+        .then(|| format!("latch condition depends on special register {}", reg.name()))
 }
 
 /// Why an arithmetic form is refused: a special register or an enclosing
@@ -964,10 +967,14 @@ pub(crate) enum SpecialRegister {
     PerCta,
 }
 
-pub(crate) fn special_register(name: &str) -> Option<SpecialRegister> {
-    match name.split('.').next()? {
-        "%tid" | "%laneid" | "%warpid" => Some(SpecialRegister::PerThread),
-        "%ntid" | "%ctaid" | "%nctaid" => Some(SpecialRegister::PerCta),
+pub(crate) fn special_register(reg: SpecialReg) -> Option<SpecialRegister> {
+    use SpecialVector::*;
+    match reg {
+        SpecialReg::Vector(Tid, _)
+        | SpecialReg::Scalar(SpecialScalar::Laneid | SpecialScalar::Warpid) => {
+            Some(SpecialRegister::PerThread)
+        }
+        SpecialReg::Vector(Ntid | Ctaid | Nctaid, _) => Some(SpecialRegister::PerCta),
         _ => None,
     }
 }
@@ -1000,22 +1007,15 @@ mod tests {
 
     #[test]
     fn special_registers_by_the_threads_that_share_them() {
+        let of = |name| special_register(SpecialReg::from_name(name).expect(name));
         for name in ["%tid.x", "%tid.z", "%laneid", "%warpid"] {
-            assert_eq!(
-                special_register(name),
-                Some(SpecialRegister::PerThread),
-                "{name}"
-            );
+            assert_eq!(of(name), Some(SpecialRegister::PerThread), "{name}");
         }
         for name in ["%ctaid.y", "%ntid.x", "%nctaid.z"] {
-            assert_eq!(
-                special_register(name),
-                Some(SpecialRegister::PerCta),
-                "{name}"
-            );
+            assert_eq!(of(name), Some(SpecialRegister::PerCta), "{name}");
         }
-        for name in ["%r5", "%tidx", "%nwarpid"] {
-            assert_eq!(special_register(name), None, "{name}");
+        for name in ["%nwarpid", "%clock"] {
+            assert_eq!(of(name), None, "{name}");
         }
     }
 }
