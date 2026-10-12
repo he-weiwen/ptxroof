@@ -53,11 +53,11 @@ its shared writes and instruction counts remain counted
   or guard comparing such a value is checked against the uniformity
   analysis only when the comparison is free of the thread index
   (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and
-  an address through one is read as the last write. Its blacklist
-  treats `stackrestore` and register-valued `nanosleep` inputs as
-  definitions, and admits `cp.async`, `mbarrier` and `wmma.store`, which
-  record nothing only because their first operand is an address, an
-  immediate or `_`. The parser drops TMA coordinates (five B200 fixtures
+  an address through one is read as the last write. Forms the
+  register-effects decoder does not decode yet
+  (`tests/register_effects_corpus.rs`) fall back to a blacklist, which
+  admits `mbarrier` and `wmma.store`; they record nothing only because
+  their first operand is an address, an immediate or `_`. The parser drops TMA coordinates (five B200 fixtures
   do not round-trip: `Arguments mismatch for instruction
   'cp.async.bulk.tensor'`); negated source predicates, parenthesized
   call operands and an address followed by `.unified` (PTX ISA

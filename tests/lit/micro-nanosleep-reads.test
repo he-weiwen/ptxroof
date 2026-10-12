@@ -1,0 +1,5 @@
+# `nanosleep` reads its operand, so %r1 after it is still the thread
+# index and the store's address is read.
+RUN: %ptxroof analyze %fixtures/micro/nanosleep_reads.ptx | FileCheck "%s"
+CHECK: kernel micro_nanosleep_reads
+CHECK: st.global.u32  global store 4 B  warp: 4–5 sectors (ideal 4)    [4 * %tid.x + param_0]

@@ -16,6 +16,9 @@ pub fn written_operands(_module: &Module, instr: &Instr) -> Option<usize> {
         | Neg | Not | Or | Popc | Prmt | Rcp | Redux | Rem | Rsqrt | Sad | Selp | Set | Setp
         | Shf | Shfl | Shl | Shr | Sin | Slct | Sqrt | Stacksave | Sub | Subc | Szext | Tanh
         | Testp | Vote | Xor => Some(1),
+        Applypriority | Bra | Brkpt | Brx | Cp | Discard | Exit | Fence | Griddepcontrol
+        | Membar | Nanosleep | Pmevent | Prefetch | Prefetchu | Red | Ret | Setmaxnreg | St
+        | Stackrestore | Stmatrix | Tensormap | Trap => Some(0),
         _ => None,
     }
 }
@@ -108,6 +111,25 @@ mod tests {
             ("vote.ballot.b32 %r1, %p2;", "%r1"),
         ] {
             assert_eq!(written(instr).as_deref(), Some(regs), "{instr}");
+        }
+    }
+
+    #[test]
+    fn keywords_outside_the_corpus_write_nothing() {
+        for instr in [
+            "applypriority.global.L2::evict_normal [%rd1], 128;",
+            "brkpt;",
+            "discard.global.L2 [%rd1], 128;",
+            "exit;",
+            "membar.gl;",
+            "pmevent.mask 7;",
+            "prefetch.global.L2::evict_last [%rd1];",
+            "prefetchu.L1 [%rd1];",
+            "stackrestore.u32 %r1;",
+            "tensormap.replace.tile.global_address.global.b1024.b64 [%rd1], %rd2;",
+            "trap;",
+        ] {
+            assert_eq!(written(instr).as_deref(), Some(""), "{instr}");
         }
     }
 }
