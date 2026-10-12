@@ -43,6 +43,11 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
             "fence" | "commit_group" | "wait_group" => Some(0),
             _ => None,
         },
+        Wmma => match modifiers.next()? {
+            "load" | "mma" => Some(1),
+            "store" => Some(0),
+            _ => None,
+        },
         Abs | Activemask | Add | Addc | Alloca | And | Atom | Bfe | Bfi | Bfind | Bmsk | Brev
         | Clmad | Clz | Cnot | Copysign | Cos | Createpolicy | Cvt | Cvta | Div | Dp2a | Dp4a
         | Elect | Ex2 | Fma | Fns | Getctarank | Isspacep | Ld | Ldmatrix | Ldu | Lg2 | Lop3
@@ -261,6 +266,23 @@ mod tests {
             ("wgmma.commit_group.sync.aligned;", Some("")),
             ("wgmma.wait_group.sync.aligned 0;", Some("")),
             ("wgmma.mma.sync.aligned;", None),
+        ] {
+            assert_eq!(written(instr).as_deref(), regs, "{instr}");
+        }
+    }
+
+    #[test]
+    fn wmma_writes_unless_it_stores() {
+        for (instr, regs) in [
+            (
+                "wmma.load.c.sync.aligned.row.m16n16k16.shared.f32 {%f1, %f2}, [%r1], 16;",
+                Some("%f1 %f2"),
+            ),
+            (
+                "wmma.store.d.sync.aligned.row.m16n16k16.global.f32 [%rd1], {%f1, %f2};",
+                Some(""),
+            ),
+            ("wmma.fill.sync.aligned %r1;", None),
         ] {
             assert_eq!(written(instr).as_deref(), regs, "{instr}");
         }
