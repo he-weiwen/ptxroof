@@ -170,3 +170,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 
 | Case | Corpus | Differs from today | Test |
 |---|---|---|---|
+| A and A-carry: the first operand (74 keywords) | 36 keywords, 184 forms, 51,527 statements | no | the snapshot; the other 38 keywords by one manual example each (`register_effects.rs`); no lit test, as no output can differ |

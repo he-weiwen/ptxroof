@@ -17,6 +17,7 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::analysis::register_effects::{registers, written_operands};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -69,20 +70,12 @@ impl<'a> AffineValueTracer<'a> {
     ) -> Self {
         let mut defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
         for (i, stmt) in kernel.stmts.iter().enumerate() {
-            if let Stmt::Instr(instr) = stmt
-                && let Some(&first) = module.operand_ids(instr.operands).first()
-                && defines_dest(instr.mnemonic)
-            {
-                let written = match module.operand(first) {
-                    Operand::Register(_) => std::slice::from_ref(&first),
-                    Operand::MultipleDestinations { children }
-                    | Operand::VectorList { children } => module.operand_ids(*children),
-                    _ => &[],
-                };
-                for &id in written {
-                    if let Operand::Register(reg) = module.operand(id) {
-                        defs.entry(*reg).or_default().push(i);
-                    }
+            let Stmt::Instr(instr) = stmt else { continue };
+            let written = written_operands(module, instr)
+                .unwrap_or(usize::from(defines_dest(instr.mnemonic)));
+            for &op in module.operand_ids(instr.operands).iter().take(written) {
+                for reg in registers(module, op) {
+                    defs.entry(reg).or_default().push(i);
                 }
             }
         }
