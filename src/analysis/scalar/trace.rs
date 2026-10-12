@@ -50,7 +50,8 @@ pub(crate) struct AffineValueTracer<'a> {
     pub(crate) forest: &'a LoopForest,
     /// Definition sites (statement indices) per register symbol.
     pub(crate) defs: HashMap<Symbol, Vec<usize>>,
-    /// The statements that write the carry flag CC.CF.
+    /// The statements that write the carry flag CC.CF, unparsed ones
+    /// included.
     pub(crate) carry_defs: Vec<usize>,
     /// param symbol -> positional index.
     pub(crate) params: HashMap<Symbol, usize>,
@@ -73,12 +74,17 @@ impl<'a> AffineValueTracer<'a> {
         let mut defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
         let mut carry_defs = Vec::new();
         for (i, stmt) in kernel.stmts.iter().enumerate() {
-            let Stmt::Instr(instr) = stmt else { continue };
-            for reg in written_registers(module, instr) {
-                defs.entry(reg).or_default().push(i);
-            }
-            if carry(module, instr).0 {
-                carry_defs.push(i);
+            match stmt {
+                Stmt::Instr(instr) => {
+                    for reg in written_registers(module, instr) {
+                        defs.entry(reg).or_default().push(i);
+                    }
+                    if carry(module, instr).0 {
+                        carry_defs.push(i);
+                    }
+                }
+                Stmt::Unparsed { .. } => carry_defs.push(i),
+                _ => {}
             }
         }
         let params = kernel

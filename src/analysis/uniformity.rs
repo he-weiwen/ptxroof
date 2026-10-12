@@ -24,6 +24,8 @@ use std::collections::{BTreeSet, HashMap};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Node {
     Def(usize),
+    /// The carry flag CC.CF a statement writes.
+    Carry(usize),
     Branch(BlockId),
 }
 
@@ -40,33 +42,20 @@ pub(crate) struct Uniformity {
 impl Uniformity {
     pub(crate) fn new(t: &AffineValueTracer) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
-        let defs: BTreeSet<usize> = (t.defs.values().flatten().chain(&t.carry_defs))
-            .copied()
-            .collect();
+        let defs: BTreeSet<usize> = t.defs.values().flatten().copied().collect();
         for d in defs {
-            let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
-                continue;
-            };
-            let node = Node::Def(d);
-            if !lane_wise(t.module, instr) {
-                let why = format!("comes from `{}`", t.module.opcode(instr));
-                reads.push((node, Read::Divergent(why)));
-                continue;
-            }
-            let (written, inputs) = split_operands(t.module, instr);
-            let (writes_carry, reads_carry) = carry(t.module, instr);
-            let mut rs = operand_reads(t, inputs, d);
-            if reads_carry {
-                rs.push(read_sites(t, "CC.CF", &t.carry_defs, d));
-            }
-            if let Some(p) = instr.predicate {
-                rs.push(read(t, p.reg, d));
-                rs.extend(operand_reads(t, written, d));
-                if writes_carry {
-                    rs.push(read_sites(t, "CC.CF", &t.carry_defs, d));
-                }
-            }
-            reads.extend(rs.into_iter().map(|r| (node, r)));
+            reads.extend(
+                def_reads(t, d, false)
+                    .into_iter()
+                    .map(|r| (Node::Def(d), r)),
+            );
+        }
+        for &d in &t.carry_defs {
+            reads.extend(
+                def_reads(t, d, true)
+                    .into_iter()
+                    .map(|r| (Node::Carry(d), r)),
+            );
         }
         for b in (0..t.cfg.blocks.len() as u32).map(BlockId) {
             if let Some((pos, instr)) = t.last_instr(b)
@@ -159,13 +148,54 @@ impl Uniformity {
     }
 }
 
-fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
-    let sites = t.defs.get(&reg).map_or(&[][..], Vec::as_slice);
-    read_sites(t, t.module.interner.resolve(reg), sites, pos)
+/// What the registers statement `d` writes depend on, or with
+/// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
+/// guard and the value it keeps where the guard is false.
+fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool) -> Vec<Read> {
+    let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
+        return vec![Read::Divergent(
+            "comes from a statement not parsed".to_owned(),
+        )];
+    };
+    if !lane_wise(t.module, instr) {
+        return vec![Read::Divergent(format!(
+            "comes from `{}`",
+            t.module.opcode(instr)
+        ))];
+    }
+    let (written, inputs) = split_operands(t.module, instr);
+    let mut rs = operand_reads(t, inputs, d);
+    if carry(t.module, instr).1 {
+        rs.push(read_carry(t, d));
+    }
+    if let Some(p) = instr.predicate {
+        rs.push(read(t, p.reg, d));
+        match carry_out {
+            true => rs.push(read_carry(t, d)),
+            false => rs.extend(operand_reads(t, written, d)),
+        }
+    }
+    rs
 }
 
-/// A read at `pos` of `name`, which the statements `sites` define.
-fn read_sites(t: &AffineValueTracer, name: &str, sites: &[usize], pos: usize) -> Read {
+fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
+    let sites = t.defs.get(&reg).map_or(&[][..], Vec::as_slice);
+    read_sites(t, t.module.interner.resolve(reg), sites, pos, Node::Def)
+}
+
+fn read_carry(t: &AffineValueTracer, pos: usize) -> Read {
+    read_sites(t, "CC.CF", &t.carry_defs, pos, Node::Carry)
+}
+
+/// A read at `pos` of `name`, which the statements `sites` define, each
+/// the source `node` names.
+fn read_sites(
+    t: &AffineValueTracer,
+    name: &str,
+    sites: &[usize],
+    pos: usize,
+    node: fn(usize) -> Node,
+) -> Read {
     let here = t.block_of(pos);
     let reaches = |a: BlockId, b: BlockId| a == b || t.reach[a.0 as usize][b.0 as usize];
     let defs = match t.reach_sites(sites, pos, None) {
@@ -183,7 +213,7 @@ fn read_sites(t: &AffineValueTracer, name: &str, sites: &[usize], pos: usize) ->
             return Read::Divergent(format!("reads {name}, which has no definition"));
         }
     };
-    let mut sources: Vec<Node> = defs.iter().map(|&d| Node::Def(d)).collect();
+    let mut sources: Vec<Node> = defs.iter().map(|&d| node(d)).collect();
     // An η's gating predicates: the exits of every loop holding a
     // definition but not the read. A cycle with more than one entry is
     // no loop of the forest, and its exits are not known.
@@ -346,6 +376,15 @@ mod tests {
         let carry = "add.cc.u32 %r2, %r1, 0xfffffff0;\nsetp.eq.u32 %p1, %r0, 0;\n\
                      mov.u32 %r4, 0;\n@%p1 add.cc.u32 %r4, %r0, 1;\naddc.u32 %r3, 0, 0;";
         assert_eq!(uniform(carry, "%r3"), tid());
+        // The carry it keeps is not part of its register result.
+        assert_eq!(uniform(carry, "%r4"), Ok(()));
+        // PTX ISA §9.7.2: calls do not preserve CC.CF, and one with a
+        // parenthesized list is not parsed.
+        let carry = "add.cc.u32 %r2, %r0, 1;\ncall (%r5), f, (%r0);\naddc.u32 %r3, 0, 0;";
+        assert_eq!(
+            uniform(carry, "%r3"),
+            Err("comes from a statement not parsed".to_owned())
+        );
     }
 
     #[test]

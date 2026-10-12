@@ -122,8 +122,9 @@ fn carry(module, instr) -> (bool, bool);
   and the tracer's vector checks still read positions from the
   operands.
 - A guarded definition keeps the old value when the guard is false:
-  the uniformity analysis reads its written operands, and CC.CF if it
-  writes it, as well as its inputs and guard.
+  the uniformity analysis reads its written operands as well as its
+  inputs and guard, and the CC.CF it writes, a node of its own, reads
+  the old CC.CF. An unparsed statement may write CC.CF.
 - A form not decoded (`call`, an unlisted sub-operation) writes and
   reads every register it names and CC.CF (Fact 3: calls do not
   preserve it).
