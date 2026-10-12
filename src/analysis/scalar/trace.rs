@@ -17,7 +17,7 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::register_effects::{registers, written_operands};
+use crate::analysis::register_effects::{registers, written_operands, written_registers};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -157,7 +157,7 @@ impl<'a> AffineValueTracer<'a> {
     fn inputs(&self, instr: &Instr) -> &[OperandId] {
         let ops = self.module.operand_ids(instr.operands);
         &ops[written_operands(self.module, instr)
-            .unwrap_or(1)
+            .unwrap_or(0)
             .min(ops.len())..]
     }
 
@@ -1024,37 +1024,6 @@ pub(crate) fn special_register(reg: SpecialReg) -> Option<SpecialRegister> {
             | ReservedSmemOffsetCap,
         ) => return None,
     })
-}
-
-/// The registers of the operands `instr` writes.
-fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
-    let written =
-        written_operands(module, instr).unwrap_or(usize::from(defines_dest(instr.mnemonic)));
-    (module.operand_ids(instr.operands).iter().take(written))
-        .flat_map(|&op| registers(module, op))
-        .collect()
-}
-
-/// Mnemonics whose first operand is a register destination (for the
-/// def table). Memory stores, branches, and sync ops define nothing.
-fn defines_dest(mnemonic: Opcode) -> bool {
-    !matches!(
-        mnemonic,
-        Opcode::St
-            | Opcode::Bra
-            | Opcode::Brx
-            | Opcode::Ret
-            | Opcode::Exit
-            | Opcode::Bar
-            | Opcode::Barrier
-            | Opcode::Membar
-            | Opcode::Fence
-            | Opcode::Red
-            | Opcode::Call
-            | Opcode::Trap
-            | Opcode::Brkpt
-            | Opcode::Prefetch
-    )
 }
 
 #[cfg(test)]

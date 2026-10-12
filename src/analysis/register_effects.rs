@@ -80,8 +80,18 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
     }
 }
 
-/// The registers operand `op` names: itself, or the elements of a `{…}`
-/// or `p|q`, as in `tex`'s `{…}|p`.
+/// The registers `instr` writes: those its written operands name, or for
+/// a form not decoded every register it names.
+pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
+    let ops = module.operand_ids(instr.operands);
+    let written = written_operands(module, instr).unwrap_or(ops.len());
+    (ops.iter().take(written))
+        .flat_map(|&op| registers(module, op))
+        .collect()
+}
+
+/// The registers operand `op` names: itself, the elements of a `{…}` or
+/// `p|q`, as in `tex`'s `{…}|p`, or an address's base.
 pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
     match module.operand(op) {
         Operand::Register(r) => vec![*r],
@@ -90,6 +100,7 @@ pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
                 .flat_map(|&c| registers(module, c))
                 .collect()
         }
+        Operand::Memory { base, .. } => registers(module, *base),
         _ => Vec::new(),
     }
 }
@@ -100,8 +111,8 @@ mod tests {
     use crate::ptx::ir::Stmt;
     use crate::ptx::parse::parser::parse;
 
-    /// The registers `instr`'s written operands name, by name.
-    fn written(instr: &str) -> Option<String> {
+    /// The registers `instr` writes, by name, and whether it is decoded.
+    fn written_by(instr: &str) -> (bool, String) {
         let src = format!(
             ".version 8.7\n.target sm_90\n.address_size 64\n\
              .visible .entry k()\n{{\n{instr}\nret;\n}}\n"
@@ -110,11 +121,24 @@ mod tests {
         let Stmt::Instr(i) = &m.kernels[0].stmts[0] else {
             panic!("{instr}: not an instruction");
         };
-        let n = written_operands(&m, i)?;
-        let regs = (m.operand_ids(i.operands).iter().take(n))
-            .flat_map(|&op| registers(&m, op))
-            .map(|r| m.interner.resolve(r).to_owned());
-        Some(regs.collect::<Vec<_>>().join(" "))
+        let names = (written_registers(&m, i).into_iter())
+            .map(|r| m.interner.resolve(r).to_owned())
+            .collect::<Vec<_>>();
+        (written_operands(&m, i).is_some(), names.join(" "))
+    }
+
+    /// The registers a decoded `instr` writes, by name.
+    fn written(instr: &str) -> Option<String> {
+        let (decoded, regs) = written_by(instr);
+        decoded.then_some(regs)
+    }
+
+    #[test]
+    fn a_form_not_decoded_writes_every_register_it_names() {
+        assert_eq!(
+            written_by("mbarrier.wait.b64 %p1, [%r2], %rd3;"),
+            (false, "%p1 %r2 %rd3".to_owned())
+        );
     }
 
     #[test]

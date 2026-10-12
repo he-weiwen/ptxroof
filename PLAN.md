@@ -53,10 +53,11 @@ its shared writes and instruction counts remain counted
   or guard comparing such a value is checked against the uniformity
   analysis only when the comparison is free of the thread index
   (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and
-  an address through one is read as the last write. Forms the
-  register-effects decoder does not decode, none of them in the corpus
-  (`tests/register_effects_corpus.rs`), fall back to a blacklist that
-  takes the first operand of all but 14 keywords as written. The parser drops TMA coordinates (five B200 fixtures
+  an address through one is read as the last write. A form the
+  register-effects decoder does not decode, `call` or a sub-operation
+  it does not list (none in the corpus,
+  `tests/register_effects_corpus.rs`), is taken to write every register
+  it names. The parser drops TMA coordinates (five B200 fixtures
   do not round-trip: `Arguments mismatch for instruction
   'cp.async.bulk.tensor'`) and a texture's coordinates and its
   module's `.texref` (`micro/texture_outputs.ptx`: `Arguments mismatch
