@@ -57,8 +57,8 @@ so that roadmap wording cannot hide an effect-model gap. Excluded as requested:
 This excludes `istypep` even though the current classifier recognizes it, and
 fabric-specific proxy-fence variants. Tensor maps/TMA are included: they are not
 texture or surface instructions. `ld.global.nc` is included despite its cache path.
-`nop`, an implementation-recognized spelling without an instruction section in the
-pinned inventory, is discussed separately below.
+`nop`, which has no instruction section in the pinned inventory, is discussed
+separately below.
 
 This is an **instruction-effects and SSA audit**, not a proof of every numerical
 operation, exhaustive target/qualifier validation, or a hardware conformance test.
@@ -476,11 +476,11 @@ counting category was returned, not that an instruction was semantically decoded
 | P1 | [Broad memory/sync arms](../src/analysis/instruction_counts/classify.rs#L263) route `st.async`, `red.async`, `st.bulk`, and all `mbarrier` forms into existing classes. | Async completion, dynamic bulk size, RMW, conditional report outputs and actual barrier memory effects are absent from these classes. `st.bulk` is unquantified under the type-width helper, not measured by its size operand. |
 | P2 | [Ignore arm](../src/analysis/instruction_counts/classify.rs#L315) includes `createpolicy`, `griddepcontrol`, `discard`, `setmaxnreg`, and `nanosleep`. | Zero roofline contribution is not proof of no register or execution effects, nor permission to delete/reorder the instruction. `createpolicy` even defines an explicit register. |
 
-`nop` is recognized by the classifier and excluded from the tracer's destination
-heuristic, but has no standalone instruction section in this pinned manual. Treat
-it as an implementation spelling with an explicit provenance/validation decision,
-not an ISA-verified family. The syntax-only parser can accept arbitrary invented
-mnemonics; that is not support for their semantics.
+`nop` has no instruction section in this pinned manual and is not in Table 2;
+ptxas 13.4 rejects it ("Not a name of any known instruction: 'nop'"), and the
+parser leaves it unparsed (`mnemonics_outside_the_isa_are_unparsed`). The parser
+accepts only the instruction keywords of Table 2 and `fabric`; accepting a keyword
+is not support for its semantics.
 
 ### Reproduced parser/classifier probes
 

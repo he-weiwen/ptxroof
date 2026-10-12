@@ -59,7 +59,7 @@ impl Uniformity {
         }
         for b in (0..t.cfg.blocks.len() as u32).map(BlockId) {
             if let Some((pos, instr)) = t.last_instr(b)
-                && matches!(t.module.interner.resolve(instr.mnemonic), "bra" | "brx")
+                && matches!(instr.mnemonic.name(), "bra" | "brx")
             {
                 let mut regs = registers(t.module, t.module.operand_ids(instr.operands));
                 regs.extend(instr.predicate.map(|p| p.reg));
@@ -220,10 +220,9 @@ fn lane_wise(module: &Module, instr: &Instr) -> bool {
     match c.category {
         // PTX ISA §9.7.2: addc, subc and madc also read the carry flag
         // CC.CF, which no register holds.
-        InstructionCategory::NonFlopArith { .. } => !matches!(
-            module.interner.resolve(instr.mnemonic),
-            "addc" | "subc" | "madc"
-        ),
+        InstructionCategory::NonFlopArith { .. } => {
+            !matches!(instr.mnemonic.name(), "addc" | "subc" | "madc")
+        }
         InstructionCategory::Flop => c.contributions.iter().all(|k| {
             matches!(
                 k.kind,
@@ -234,7 +233,7 @@ fn lane_wise(module: &Module, instr: &Instr) -> bool {
             )
         }),
         _ => {
-            module.interner.resolve(instr.mnemonic) == "ld"
+            instr.mnemonic.name() == "ld"
                 && module
                     .modifiers(instr)
                     .iter()

@@ -15,7 +15,7 @@
 //! class is unrepresentable.
 
 use crate::analysis::instruction_counts::classify::{ArithKind, Direction, Pipe, Precision, Space};
-use crate::support::intern::Symbol;
+use crate::ptx::ir::Opcode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MeasureKind {
@@ -45,7 +45,7 @@ pub enum MeasureKind {
     /// An instruction the classifier does not handle: counted by
     /// mnemonic, reported by name.
     UnknownOps {
-        mnemonic: Symbol,
+        mnemonic: Opcode,
     },
 }
 

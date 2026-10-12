@@ -8,7 +8,7 @@ pub enum CountConstraint {
 }
 
 pub fn count_constraint(module: &Module, instr: &Instr) -> CountConstraint {
-    let mnemonic = module.interner.resolve(instr.mnemonic);
+    let mnemonic = instr.mnemonic.name();
     let mods: Vec<&str> = module
         .modifiers(instr)
         .iter()

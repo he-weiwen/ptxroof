@@ -14,7 +14,7 @@
 //! for a conditional branch `succs[0]` is the taken target and
 //! `succs[1]` the fallthrough.
 
-use crate::ptx::ir::{Instr, Kernel, Module, Operand, Stmt};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, Stmt};
 use crate::support::index::IndexVec;
 use crate::support::index::newtype_idx;
 use crate::support::intern::Symbol;
@@ -47,8 +47,9 @@ pub struct ControlFlowGraph {
     /// is genuinely absent (malformed input) or the parser did not
     /// register it — and since compilers do not emit dangling branches,
     /// the latter is the likelier cause on real input. Surfaced as a
-    /// report unknown; empty on the whole committed corpus.
-    pub unresolved_branches: Vec<(BlockId, Symbol)>,
+    /// report unknown; empty on the whole committed corpus. `None` when
+    /// the branch names no label.
+    pub unresolved_branches: Vec<(BlockId, Option<Symbol>)>,
 }
 
 impl ControlFlowGraph {
@@ -78,15 +79,11 @@ impl ControlFlowGraph {
 }
 
 pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
-    let sym = |text: &str| module.interner.get(text);
-    let sym_bra = sym("bra");
-    let sym_brx = sym("brx");
-    let sym_ret = sym("ret");
-    let sym_exit = sym("exit");
-    let sym_call = sym("call");
     let is_branch = |i: &Instr| {
-        let m = Some(i.mnemonic);
-        m == sym_bra || m == sym_brx || m == sym_ret || m == sym_exit
+        matches!(
+            i.mnemonic,
+            Opcode::Bra | Opcode::Brx | Opcode::Ret | Opcode::Exit
+        )
     };
 
     // -- leaders ----------------------------------------------------------
@@ -95,7 +92,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
     let mut targets: HashSet<Symbol> = HashSet::new();
     for stmt in &kernel.stmts {
         match stmt {
-            Stmt::Instr(i) if Some(i.mnemonic) == sym_bra || Some(i.mnemonic) == sym_brx => {
+            Stmt::Instr(i) if matches!(i.mnemonic, Opcode::Bra | Opcode::Brx) => {
                 for &id in module.operand_ids(i.operands) {
                     if let Operand::SymbolRef(s) = module.operand(id) {
                         targets.insert(*s);
@@ -171,7 +168,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
         // Record call sites while we're walking the statements.
         for (si, stmt) in kernel.stmts[block.start..block.end].iter().enumerate() {
             if let Stmt::Instr(instr) = stmt
-                && Some(instr.mnemonic) == sym_call
+                && instr.mnemonic == Opcode::Call
             {
                 call_sites.push(block.start + si);
             }
@@ -186,7 +183,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
             });
 
         match last_instr {
-            Some(i) if Some(i.mnemonic) == sym_bra => {
+            Some(i) if i.mnemonic == Opcode::Bra => {
                 let target = branch_target(module, kernel, i, &label_to_block);
                 match target {
                     Ok(t) => succs.push(t),
@@ -198,7 +195,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
                     succs.push(next); // fallthrough after untaken branch
                 }
             }
-            Some(i) if Some(i.mnemonic) == sym_brx => {
+            Some(i) if i.mnemonic == Opcode::Brx => {
                 // `brx.idx %r, TBL;` — successors are the .branchtargets
                 // list bound to label TBL.
                 let mut resolved = false;
@@ -215,7 +212,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
                                 match label_to_block.get(t) {
                                     Some(&b) if !succs.contains(&b) => succs.push(b),
                                     Some(_) => {}
-                                    None => unresolved.push((bid, *t)),
+                                    None => unresolved.push((bid, Some(*t))),
                                 }
                             }
                             resolved = true;
@@ -223,9 +220,9 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
                         }
                     }
                 }
-                if !resolved && let Some(i) = last_instr {
+                if !resolved {
                     // Table not found: honest hole, recorded.
-                    unresolved.push((bid, i.mnemonic));
+                    unresolved.push((bid, None));
                 }
                 if let Some(i) = last_instr
                     && i.predicate.is_some()
@@ -234,7 +231,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
                     succs.push(next);
                 }
             }
-            Some(i) if Some(i.mnemonic) == sym_ret || Some(i.mnemonic) == sym_exit => {
+            Some(i) if matches!(i.mnemonic, Opcode::Ret | Opcode::Exit) => {
                 // Terminator. Predicated ret/exit falls through.
                 if i.predicate.is_some()
                     && let Some(next) = next
@@ -270,13 +267,13 @@ fn branch_target(
     _kernel: &Kernel,
     instr: &Instr,
     labels: &std::collections::HashMap<Symbol, BlockId>,
-) -> Result<BlockId, Symbol> {
+) -> Result<BlockId, Option<Symbol>> {
     for &id in module.operand_ids(instr.operands) {
         if let Operand::SymbolRef(name) = module.operand(id) {
-            return labels.get(name).copied().ok_or(*name);
+            return labels.get(name).copied().ok_or(Some(*name));
         }
     }
-    Err(instr.mnemonic)
+    Err(None)
 }
 
 #[cfg(test)]

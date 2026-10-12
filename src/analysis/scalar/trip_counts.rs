@@ -254,7 +254,7 @@ fn predicate_phi_trips(
         let Stmt::Instr(instr) = &tracer.kernel.stmts[site] else {
             return None;
         };
-        if tracer.module.interner.resolve(instr.mnemonic) != "mov" {
+        if instr.mnemonic.name() != "mov" {
             return None;
         }
         let [_, src] = tracer.module.operand_ids(instr.operands) else {

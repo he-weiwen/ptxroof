@@ -15,7 +15,7 @@ use crate::analysis::scalar::lane_eval::{depends_on_lane, eval_lane};
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Operand, Stmt};
+use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Stmt};
 use crate::support::intern::Symbol;
 use std::collections::HashMap;
 
@@ -442,7 +442,6 @@ impl PredicateReader<'_> {
         if let Some(p) = &self.blocks[b.0 as usize] {
             return p.clone();
         }
-        let sym_bra = self.module.interner.get("bra");
         let mut pred = Pred::True;
         let mut cur = self.forest.doms.idom[b.0 as usize];
         while let Some(d) = cur {
@@ -457,7 +456,7 @@ impl PredicateReader<'_> {
                     _ => None,
                 });
             if let Some((pos, instr)) = last
-                && Some(instr.mnemonic) == sym_bra
+                && instr.mnemonic == Opcode::Bra
                 && let Some(guard) = instr.predicate
                 && let [taken, fallthrough] = blk.succs[..]
             {
@@ -539,7 +538,7 @@ impl PredicateReader<'_> {
             .is_some_and(
                 |&id| matches!(self.module.operand(id), Operand::Register(r) if *r == reg),
             );
-        let p = match (self.module.interner.resolve(instr.mnemonic), second) {
+        let p = match (instr.mnemonic.name(), second) {
             ("setp", true) => !p,
             ("elect", false) => Pred::Unknown,
             (_, true) if !matches!(p, Pred::Elect(_)) => Pred::Unknown,
@@ -563,11 +562,7 @@ impl PredicateReader<'_> {
             Operand::Register(r) => Some(*r),
             _ => None,
         };
-        match (
-            self.module.interner.resolve(instr.mnemonic),
-            mods.as_slice(),
-            ops,
-        ) {
+        match (instr.mnemonic.name(), mods.as_slice(), ops) {
             ("setp", _, _) => (
                 condition(self.module, self.kernel, self.tracer, self.uniformity, def)
                     .unwrap_or(Pred::Unknown),
@@ -578,7 +573,7 @@ impl PredicateReader<'_> {
                     return (Pred::Unknown, false);
                 };
                 let ((a, ca), (b, cb)) = (self.read(a, def, depth), self.read(b, def, depth));
-                let p = if self.module.interner.resolve(instr.mnemonic) == "and" {
+                let p = if instr.mnemonic.name() == "and" {
                     a.and(b)
                 } else {
                     a.or(b)
@@ -639,7 +634,6 @@ pub(crate) fn thread_sets(
     tracer: &AffineValueTracer,
     uniformity: &Uniformity,
 ) -> ThreadSets {
-    let sym_bra = module.interner.get("bra");
     let mut reader = PredicateReader {
         module,
         kernel,
@@ -661,7 +655,7 @@ pub(crate) fn thread_sets(
         let Some(guard) = instr.predicate else {
             continue;
         };
-        if Some(instr.mnemonic) == sym_bra {
+        if instr.mnemonic == Opcode::Bra {
             continue;
         }
         let p = reader.of(guard.reg, pos, 0);

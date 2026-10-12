@@ -20,7 +20,7 @@ newtype_idx! {
 macro_rules! named_enum {
     ($(#[$m:meta])* $vis:vis enum $name:ident { $($variant:ident = $text:literal),* $(,)? }) => {
         $(#[$m])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         $vis enum $name { $($variant),* }
 
         impl $name {
@@ -59,6 +59,40 @@ impl FundamentalType {
             B128 => Some(16),
             Pred => None,
         }
+    }
+}
+
+named_enum! {
+    /// PTX ISA §4.3.2, Table 2, and `fabric` (§9.7.10.5), which Table 2 omits.
+    pub enum Opcode {
+        Abs = "abs", Activemask = "activemask", Add = "add", Addc = "addc", Alloca = "alloca",
+        And = "and", Applypriority = "applypriority", Atom = "atom", Bar = "bar",
+        Barrier = "barrier", Bfe = "bfe", Bfi = "bfi", Bfind = "bfind", Bmsk = "bmsk", Bra = "bra",
+        Brev = "brev", Brkpt = "brkpt", Brx = "brx", Call = "call", Clmad = "clmad",
+        Clusterlaunchcontrol = "clusterlaunchcontrol", Clz = "clz", Cnot = "cnot",
+        Copysign = "copysign", Cos = "cos", Cp = "cp", Createpolicy = "createpolicy", Cvt = "cvt",
+        Cvta = "cvta", Discard = "discard", Div = "div", Dp2a = "dp2a", Dp4a = "dp4a",
+        Elect = "elect", Ex2 = "ex2", Exit = "exit", Fabric = "fabric", Fence = "fence",
+        Fma = "fma", Fns = "fns", Getctarank = "getctarank", Griddepcontrol = "griddepcontrol",
+        Isspacep = "isspacep", Istypep = "istypep", Ld = "ld", Ldmatrix = "ldmatrix", Ldu = "ldu",
+        Lg2 = "lg2", Lop3 = "lop3", Mad = "mad", Mad24 = "mad24", Madc = "madc", Mapa = "mapa",
+        Match = "match", Max = "max", Mbarrier = "mbarrier", Membar = "membar", Min = "min",
+        Mma = "mma", Mov = "mov", Movmatrix = "movmatrix", Mul = "mul", Mul24 = "mul24",
+        Multimem = "multimem", Nanosleep = "nanosleep", Neg = "neg", Not = "not", Or = "or",
+        Pmevent = "pmevent", Popc = "popc", Prefetch = "prefetch", Prefetchu = "prefetchu",
+        Prmt = "prmt", Rcp = "rcp", Red = "red", Redux = "redux", Rem = "rem", Ret = "ret",
+        Rsqrt = "rsqrt", Sad = "sad", Selp = "selp", Set = "set", Setmaxnreg = "setmaxnreg",
+        Setp = "setp", Shf = "shf", Shfl = "shfl", Shl = "shl", Shr = "shr", Sin = "sin",
+        Slct = "slct", Sqrt = "sqrt", St = "st", Stackrestore = "stackrestore",
+        Stacksave = "stacksave", Stmatrix = "stmatrix", Sub = "sub", Subc = "subc", Suld = "suld",
+        Suq = "suq", Sured = "sured", Sust = "sust", Szext = "szext", Tanh = "tanh",
+        Tcgen05 = "tcgen05", Tensormap = "tensormap", Testp = "testp", Tex = "tex", Tld4 = "tld4",
+        Trap = "trap", Txq = "txq", Vabsdiff = "vabsdiff", Vabsdiff2 = "vabsdiff2",
+        Vabsdiff4 = "vabsdiff4", Vadd = "vadd", Vadd2 = "vadd2", Vadd4 = "vadd4", Vavrg2 = "vavrg2",
+        Vavrg4 = "vavrg4", Vmad = "vmad", Vmax = "vmax", Vmax2 = "vmax2", Vmax4 = "vmax4",
+        Vmin = "vmin", Vmin2 = "vmin2", Vmin4 = "vmin4", Vote = "vote", Vset = "vset",
+        Vset2 = "vset2", Vset4 = "vset4", Vshl = "vshl", Vshr = "vshr", Vsub = "vsub",
+        Vsub2 = "vsub2", Vsub4 = "vsub4", Wgmma = "wgmma", Wmma = "wmma", Xor = "xor",
     }
 }
 
@@ -101,7 +135,7 @@ pub enum Operand {
 /// One executable instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Instr {
-    pub mnemonic: Symbol,
+    pub mnemonic: Opcode,
     /// Span into [`Module::modifier_pool`].
     pub modifiers: IdxRange<Symbol>,
     /// Span into [`Module::operand_lists`].
@@ -214,9 +248,12 @@ impl Module {
     /// The instruction as PTX spells it: mnemonic plus modifiers,
     /// e.g. `ld.shared.v4.b32`.
     pub fn opcode(&self, instr: &Instr) -> String {
-        std::iter::once(instr.mnemonic)
-            .chain(self.modifiers(instr).iter().copied())
-            .map(|s| self.interner.resolve(s))
+        std::iter::once(instr.mnemonic.name())
+            .chain(
+                self.modifiers(instr)
+                    .iter()
+                    .map(|&s| self.interner.resolve(s)),
+            )
             .collect::<Vec<_>>()
             .join(".")
     }

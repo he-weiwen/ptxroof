@@ -189,7 +189,7 @@ ret;",
 #[test]
 fn ignored_unknown_and_unquantified_contributions_stay_distinct() {
     let report = analyze(
-        &source("nop;\nfuture.op %r1;\nld.global %r1, [source];\nret;"),
+        &source("prefetch.global.L2 [source];\nwgmma.fence.sync.aligned;\nld.global %r1, [source];\nret;"),
         "unknown",
         &Default::default(),
     )
@@ -199,12 +199,12 @@ fn ignored_unknown_and_unquantified_contributions_stay_distinct() {
     assert_eq!(kernel.instruction_classes.unknown, 1);
     let totals = &kernel.totals;
     assert!(
-        variants(totals, "nop")[0]
+        variants(totals, "prefetch.global.L2")[0]
             .contributions_per_execution
             .is_empty()
     );
     assert!(
-        matches!(&variants(totals, "future.op")[0].contributions_per_execution[0], ContributionDetails::UnknownOps { mnemonic } if mnemonic == "future")
+        matches!(&variants(totals, "wgmma.fence.sync.aligned")[0].contributions_per_execution[0], ContributionDetails::UnknownOps { mnemonic } if mnemonic == "wgmma")
     );
     assert!(
         matches!(&variants(totals, "ld.global")[0].contributions_per_execution[0], ContributionDetails::UnquantifiedBytes { space, direction } if space == "global" && direction == "load")

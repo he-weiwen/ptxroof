@@ -104,6 +104,10 @@ its shared writes and instruction counts remain counted
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
   textures and surfaces; `multimem`; video instructions. `tcgen05`
   is in seven of the B200 fixtures (`tests/fixtures/b200`).
+- **Instruction keywords after PTX ISA 9.3.** The parser knows the
+  pinned manual's Table 2 and `fabric`; a keyword a later ISA adds
+  leaves its statement unparsed (`mnemonics_outside_the_isa_are_unparsed`;
+  nvcc 13.4 already emits `.version 9.4`).
 - **Calls.** Module-scope `.func` declarations and definitions are
   discarded (`module_scope_functions_are_skipped`), so no callee's
   instructions are counted; nvcc's parenthesized `call.uni` is

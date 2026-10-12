@@ -219,7 +219,7 @@ impl ClassifiedInstruction {
 
 pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
     let interner = &module.interner;
-    let mnemonic = interner.resolve(instr.mnemonic);
+    let mnemonic = instr.mnemonic.name();
     let mods: Vec<&str> = module
         .modifiers(instr)
         .iter()
@@ -840,7 +840,7 @@ mod tests {
             ClassifiedInstruction::simple(InstructionCategory::Control)
         );
         assert_eq!(
-            class_of("nop;"),
+            class_of("prefetch.global.L2 [%rd1];"),
             ClassifiedInstruction::simple(InstructionCategory::Ignore)
         );
     }
@@ -1207,7 +1207,7 @@ mod tests {
 
     #[test]
     fn unknown_is_explicit_but_ignored_has_no_contributions() {
-        let unknown = class_of("future.op %r1;");
+        let unknown = class_of("wgmma.fence.sync.aligned;");
         assert_eq!(unknown.category, InstructionCategory::Unknown);
         assert!(matches!(
             unknown.contributions.as_slice(),
@@ -1217,7 +1217,11 @@ mod tests {
                 ..
             }]
         ));
-        assert!(class_of("nop;").contributions.is_empty());
+        assert!(
+            class_of("prefetch.global.L2 [%rd1];")
+                .contributions
+                .is_empty()
+        );
     }
 
     #[test]

@@ -50,7 +50,7 @@ fn every_corpus_instruction_classifies_or_is_allowlisted() {
                 if let Stmt::Instr(i) = stmt {
                     total += 1;
                     if classify(&m, i).category == InstructionCategory::Unknown {
-                        let name = m.interner.resolve(i.mnemonic).to_owned();
+                        let name = i.mnemonic.name().to_owned();
                         *unknown.entry(name).or_default() += 1;
                     }
                 }

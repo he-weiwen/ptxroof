@@ -68,7 +68,7 @@ impl<'a> AffineValueTracer<'a> {
         for (i, stmt) in kernel.stmts.iter().enumerate() {
             if let Stmt::Instr(instr) = stmt
                 && let Some(&first) = module.operand_ids(instr.operands).first()
-                && defines_dest(module.interner.resolve(instr.mnemonic))
+                && defines_dest(instr.mnemonic.name())
             {
                 let written = match module.operand(first) {
                     Operand::Register(_) => std::slice::from_ref(&first),
@@ -137,7 +137,7 @@ impl<'a> AffineValueTracer<'a> {
             else {
                 return None;
             };
-            if self.module.interner.resolve(instr.mnemonic) != "mov" {
+            if instr.mnemonic.name() != "mov" {
                 return None;
             }
             let c = parse_int(self.module.interner.resolve(*text))?;
@@ -204,7 +204,7 @@ impl<'a> AffineValueTracer<'a> {
                 if let Stmt::Instr(instr) = stmt
                     && let Some(&first) = self.module.operand_ids(instr.operands).first()
                     && let Operand::Register(reg) = self.module.operand(first)
-                    && defines_dest(self.module.interner.resolve(instr.mnemonic))
+                    && defines_dest(instr.mnemonic.name())
                 {
                     in_loop_defs.entry(*reg).or_default().push(blk.start + i);
                 }
@@ -223,7 +223,7 @@ impl<'a> AffineValueTracer<'a> {
                 return None;
             };
             let ops = self.module.operand_ids(instr.operands);
-            match (self.module.interner.resolve(instr.mnemonic), ops) {
+            match (instr.mnemonic.name(), ops) {
                 ("mov", [_, src]) => match self.module.operand(*src) {
                     Operand::Register(r) => Some((*r, SymExpr::Const(0))),
                     _ => None,
@@ -317,7 +317,7 @@ impl<'a> AffineValueTracer<'a> {
             .rev()
             .find_map(|(i, s)| match s {
                 Stmt::Instr(instr)
-                    if self.module.interner.resolve(instr.mnemonic) == "setp"
+                    if instr.mnemonic.name() == "setp"
                         && self
                             .module
                             .operand_ids(instr.operands)
@@ -546,7 +546,7 @@ impl<'a> AffineValueTracer<'a> {
             if let Some((step, phi)) = self.ivs[cur.0 as usize].get(&reg)
                 && self.in_loop(cur, def)
                 && let Stmt::Instr(instr) = &self.kernel.stmts[def]
-                && matches!(self.module.interner.resolve(instr.mnemonic), "add" | "mov")
+                && matches!(instr.mnemonic.name(), "add" | "mov")
             {
                 let init = self.iv_init(*phi, cur, depth + 1)?;
                 return Ok(Affine::term(Var::Iter(cur), step.clone()) + init);
@@ -557,7 +557,7 @@ impl<'a> AffineValueTracer<'a> {
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return Err("definition is not an instruction".to_owned());
         };
-        let mnemonic = self.module.interner.resolve(instr.mnemonic).to_owned();
+        let mnemonic = instr.mnemonic.name().to_owned();
         let mods: Vec<&str> = self
             .module
             .modifiers(instr)
@@ -889,7 +889,7 @@ impl<'a> AffineValueTracer<'a> {
             .modifiers(instr)
             .iter()
             .any(|&m| self.module.interner.resolve(m) == "param");
-        match self.module.interner.resolve(instr.mnemonic) {
+        match instr.mnemonic.name() {
             "ld" if !is_param_load => Some(
                 if id.is_some_and(|l| self.in_loop(l, def)) {
                     "latch condition depends on a value loaded inside the loop"

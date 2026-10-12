@@ -388,7 +388,7 @@ impl KernelReportBuilder<'_> {
                             None,
                         ),
                     };
-                    let align = match module.interner.resolve(instr.mnemonic) {
+                    let align = match instr.mnemonic.name() {
                         "cp" => module.operand_ids(instr.operands).iter().find_map(|&id| {
                             match module.operand(id) {
                                 Operand::Immediate(text) => {
@@ -635,7 +635,7 @@ fn arith_key(kind: ArithKind) -> &'static str {
     }
 }
 
-fn contribution_details(c: &Contribution, module: &Module) -> ContributionDetails {
+fn contribution_details(c: &Contribution) -> ContributionDetails {
     let count = c.count;
     match c.kind {
         MeasureKind::Flops { pipe, precision } => ContributionDetails::Flops {
@@ -663,7 +663,7 @@ fn contribution_details(c: &Contribution, module: &Module) -> ContributionDetail
         MeasureKind::CommunicationOps => ContributionDetails::CommunicationOps { count },
         MeasureKind::ControlOps => ContributionDetails::ControlOps { count },
         MeasureKind::UnknownOps { mnemonic } => ContributionDetails::UnknownOps {
-            mnemonic: module.interner.resolve(mnemonic).to_owned(),
+            mnemonic: mnemonic.name().to_owned(),
         },
     }
 }
@@ -1223,7 +1223,7 @@ impl<'a> KernelReportBuilder<'a> {
                                     warps: issued.warps(),
                                     contributions_per_execution: contributions
                                         .iter()
-                                        .map(|c| contribution_details(c, self.module))
+                                        .map(contribution_details)
                                         .collect(),
                                 });
                         }
@@ -1382,9 +1382,7 @@ impl<'a> KernelReportBuilder<'a> {
             for m in &bm.measurements {
                 match m.kind {
                     MeasureKind::UnknownOps { mnemonic } => {
-                        *unknown_ops
-                            .entry(self.module.interner.resolve(mnemonic).to_owned())
-                            .or_default() += m.count;
+                        *unknown_ops.entry(mnemonic.name().to_owned()).or_default() += m.count;
                     }
                     MeasureKind::UnquantifiedBytes { space, direction } => {
                         let dir = match direction {
@@ -1462,7 +1460,7 @@ impl<'a> KernelReportBuilder<'a> {
             out.push(UnknownEntry {
                 what: format!(
                     "branch to `{}` from {from}",
-                    self.module.interner.resolve(*target)
+                    target.map_or("?", |t| self.module.interner.resolve(t))
                 ),
                 count: None,
                 reason: "branch target matched no label in this kernel; its edge \

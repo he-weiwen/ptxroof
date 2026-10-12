@@ -19,8 +19,8 @@
 //! PTX validation, and lexer panics on arbitrary UTF-8 are not caught.
 
 use crate::ptx::ir::{
-    FileDirective, FundamentalType, Instr, Kernel, Module, Operand, OperandId, Param, Predicate,
-    RegDecl, SharedDecl, SourceLoc, Stmt,
+    FileDirective, FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, Param,
+    Predicate, RegDecl, SharedDecl, SourceLoc, Stmt,
 };
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::lexer::{Token, TokenKind, tokenize};
@@ -718,8 +718,9 @@ impl<'a> Parser<'a> {
         if !self.at(TokenKind::Identifier) {
             return unparsed(self);
         }
-        let mnemonic_tok = self.bump();
-        let mnemonic = self.interner.intern(mnemonic_tok.text);
+        let Some(mnemonic) = Opcode::from_name(self.bump().text) else {
+            return unparsed(self);
+        };
 
         // Modifiers: '.' identifier (digit-leading names like `5d` were
         // already promoted to identifiers by the lexer; plain numeric
@@ -931,6 +932,13 @@ mod tests {
     }
 
     #[test]
+    fn mnemonics_outside_the_isa_are_unparsed() {
+        let m = parse_body("nop;\nfuture.op %r1;\nret;");
+        assert_eq!(unparsed_count(&m), 2);
+        assert_eq!(instrs(&m)[0].mnemonic, Opcode::Ret);
+    }
+
+    #[test]
     fn opaque_params_are_a_parse_error() {
         let src =
             ".version 8.7\n.target sm_80\n.visible .entry k(\n.param .texref t\n)\n{\nret;\n}\n";
@@ -952,7 +960,7 @@ mod tests {
     fn instruction_modifiers_and_operands() {
         let m = parse_body("fma.rn.f32 \t%f22, %f14, %f15, %f34;");
         let i = instrs(&m)[0];
-        assert_eq!(m.interner.resolve(i.mnemonic), "fma");
+        assert_eq!(i.mnemonic, Opcode::Fma);
         let mods: Vec<_> = m
             .modifiers(i)
             .iter()
@@ -1155,7 +1163,7 @@ mod tests {
         assert_eq!(labels, ["spin$scope1", "spin$scope2", "$L__END"]);
         let targets: Vec<&str> = instrs(&m)
             .iter()
-            .filter(|i| m.interner.resolve(i.mnemonic) == "bra")
+            .filter(|i| i.mnemonic == Opcode::Bra)
             .map(|i| match m.operand(m.operand_ids(i.operands)[0]) {
                 Operand::SymbolRef(s) => m.interner.resolve(*s),
                 other => panic!("{other:?}"),

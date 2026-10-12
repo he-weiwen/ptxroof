@@ -26,8 +26,13 @@ including corrections to stale parsing claims in the tables below.
 ## The tool's model (what "fits" means)
 
 The parser accepts instruction-shaped statements as
-`mnemonic + modifiers + operands` with no per-mnemonic knowledge
-(`src/ptx/parse/parser.rs`). A dotted opcode like `cp.async.bulk.tensor`
+`mnemonic + modifiers + operands` (`src/ptx/parse/parser.rs`). The
+mnemonic must be an instruction keyword, `Opcode` in `src/ptx/ir.rs`:
+§4.3.2 Table 2, plus `fabric`, which Table 2 omits and §9.7.10.5
+documents. Any other word leaves the statement unparsed, `nop`
+included (ptxas 13.4: "Not a name of any known instruction";
+`mnemonics_outside_the_isa_are_unparsed`). Modifiers and operands carry
+no per-instruction knowledge. A dotted opcode like `cp.async.bulk.tensor`
 becomes mnemonic `cp` with modifiers `async`, `bulk`, `tensor` — so
 one `match` arm in `classify.rs` covers every dotted variant of a base
 mnemonic; the "Today" column names the arm where routing matters.
@@ -53,7 +58,7 @@ The category counts instructions; contributions count work independently.
 | `Sync` | Barriers, fences, waits | Synchronization operations |
 | `Communication` | Shuffles, votes, `match`, `redux`, `elect` | Communication operations |
 | `Control` | Branches, returns, calls, traps | Control operations |
-| `Ignore` | Provably zero counted work (`nop`, hints) | Empty contribution list |
+| `Ignore` | Provably zero counted work (hints such as `prefetch`) | Empty contribution list |
 | `Unknown` | Unsupported instruction | Explicit named unknown contribution |
 
 Collection attaches `predicated` and statement `provenance` to each
