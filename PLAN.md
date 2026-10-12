@@ -54,17 +54,45 @@ its shared writes and instruction counts remain counted
   analysis only when the comparison is free of the thread index
   (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and
   an address through one is read as the last write. Its blacklist
-  treats `stackrestore` and register-valued `nanosleep` inputs as definitions.
-  The parser drops TMA coordinates (five B200 fixtures do not round-trip:
-  `Arguments mismatch for instruction 'cp.async.bulk.tensor'`), leaves bare register names as symbol
-  references, and merges same-named registers in sibling scopes; negated
-  source predicates, parenthesized call operands and an address followed
-  by `.unified` (PTX ISA §9.7.9.8, `unified_address_is_unparsed`) become
-  `Unparsed`.
+  treats `stackrestore` and register-valued `nanosleep` inputs as
+  definitions, and admits `cp.async`, `mbarrier` and `wmma.store`, which
+  record nothing only because their first operand is an address, an
+  immediate or `_`. The parser drops TMA coordinates (five B200 fixtures
+  do not round-trip: `Arguments mismatch for instruction
+  'cp.async.bulk.tensor'`); negated source predicates, parenthesized
+  call operands and an address followed by `.unified` (PTX ISA
+  §9.7.9.8, `unified_address_is_unparsed`) become `Unparsed`.
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a
   fixed source-read size even with a runtime ignore-source predicate.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
+- **Registers declared without `%` are symbols.** The parser reads `lo`
+  in `{ .reg .b16 lo, hi; … }` (PTX ISA §4.4, §9.7.13.1) as a symbol
+  reference, and the same name in sibling scopes as one, so an
+  instruction writing it defines nothing and one reading it reads
+  nothing: Gluon's fp8 conversions (`cvt.rn.satfinite.e4m3x2.f32 lo,
+  …` then `mov.b32 %r106, {lo, hi}` in quantize_transpose and the
+  lm_head_dx GEMM) and the attention forward's `mbarrier.test_wait`
+  into `complete`, read by `@!complete` guards. In
+  `micro/bare_registers.ptx` the packed value is taken as the same in
+  every thread: a store only thread 0 runs is `warp: 4–5 sectors`.
+- **`cvt` is read as its last operand unchanged** (PTX ISA §9.7.9.22):
+  a two-source pack (`cvt.rn.bf16x2.f32 d, a, b` puts `a` in the
+  upper half; 400 in seven Gluon fixtures), the bits of an
+  integer-to-float conversion and a narrowing conversion are each read
+  as the source's value (`micro/cvt_reads.ptx`: the three addresses are `4 * %tid.x +
+  param_0`, the last plus `17179869184`; only the last is 4·%tid.x).
+- **Induction-variable discovery reads a counter's writes by their
+  first operand alone**, a register, unlike the definition table, so a
+  counter that a `{…}` or `p|q` destination also writes is still a
+  counter (`micro/counter_vector_write.ptx`: `trips = 10` for a counter
+  a load overwrites every iteration).
+- **A parameter load at an offset reads the whole parameter** (PTX
+  ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
+  the load at offset 0, so comparing two fields of a by-value
+  aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
+  threads in 2 warps`, `store 256 B` per CTA). The parser also drops
+  the parameter's `.align` and `[size]`.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
@@ -134,7 +162,6 @@ its shared writes and instruction counts remain counted
   discarded (`module_scope_functions_are_skipped`), so no callee's
   instructions are counted; nvcc's parenthesized `call.uni` is
   unparsed (above).
-- **By-value aggregate parameters** are not field-resolvable.
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.
 - **In a kernel with a cycle of more than one entry**, the uniformity

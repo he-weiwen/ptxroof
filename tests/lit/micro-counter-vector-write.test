@@ -1,0 +1,6 @@
+# Wrong output (PLAN.md): induction-variable discovery sees only a
+# register first operand, so it misses the vector load's write of %r1
+# and takes %r1 for a counter from 0 by 1.
+RUN: %ptxroof analyze %fixtures/micro/counter_vector_write.ptx | FileCheck "%s"
+CHECK: kernel micro_counter_vector_write
+CHECK: trips = 10

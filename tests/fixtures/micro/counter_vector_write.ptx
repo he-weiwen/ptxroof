@@ -1,0 +1,27 @@
+//
+// HAND-WRITTEN: the loop's counter %r1 is incremented by one, but a
+// vector load overwrites it first on every iteration, so the trip
+// count depends on memory.
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_counter_vector_write(
+	.param .u64 micro_counter_vector_write_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_counter_vector_write_param_0];
+	mov.u32 	%r1, 0;
+$L__loop:
+	ld.global.v2.u32 	{%r1, %r2}, [%rd1];
+	add.s32 	%r1, %r1, 1;
+	setp.lt.u32 	%p1, %r1, 10;
+	@%p1 bra 	$L__loop;
+	ret;
+}

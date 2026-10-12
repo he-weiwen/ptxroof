@@ -1,0 +1,7 @@
+# Wrong output (PLAN.md): a parameter load is read as the whole
+# parameter whatever its offset, so the guard compares a value with
+# itself and the store runs on all 64 threads.
+RUN: %ptxroof analyze %fixtures/micro/param_fields.ptx | FileCheck "%s"
+CHECK: kernel micro_param_fields
+CHECK: st.global.u32  global store 4 B on 64 threads in 2 warps (0 == 0)
+CHECK: global bytes: load 0 B, store 256 B

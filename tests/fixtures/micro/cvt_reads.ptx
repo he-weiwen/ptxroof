@@ -1,0 +1,39 @@
+//
+// HAND-WRITTEN: three addresses through a `cvt` that changes the
+// value: a bf16x2 pack of 1.0 and the thread index, the bits of the
+// thread index converted to f32, and a 64-to-32-bit truncation of
+// the thread index plus 2^32. Only the last address is 4·%tid.x.
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_cvt_reads(
+	.param .u64 micro_cvt_reads_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<6>;
+	.reg .f32 	%f<3>;
+	.reg .b64 	%rd<11>;
+
+	ld.param.u64 	%rd1, [micro_cvt_reads_param_0];
+	mov.u32 	%r1, %tid.x;
+	cvt.rn.f32.u32 	%f1, %r1;
+	mov.f32 	%f2, 0f3F800000;
+	cvt.rn.bf16x2.f32 	%r2, %f2, %f1;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	mov.b32 	%r3, %f1;
+	mul.wide.u32 	%rd4, %r3, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r1;
+	cvt.u64.u32 	%rd6, %r1;
+	add.s64 	%rd7, %rd6, 4294967296;
+	cvt.u32.u64 	%r4, %rd7;
+	mul.wide.u32 	%rd8, %r4, 4;
+	add.s64 	%rd9, %rd1, %rd8;
+	st.global.u32 	[%rd9], %r1;
+	ret;
+}
