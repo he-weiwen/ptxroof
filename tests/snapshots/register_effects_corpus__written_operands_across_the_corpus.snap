@@ -263,7 +263,7 @@ tcgen05.st.sync.aligned.32x32b.x64.b32	0	20
 tcgen05.wait::ld.sync.aligned	0	36
 tcgen05.wait::st.sync.aligned	0	28
 tex.1d.v4.s32.s32	1	1
-vadd.u32.u32.u32	-	1
+vadd.u32.u32.u32	1	1
 wgmma.fence.sync.aligned	0	1
 wmma.load.a.sync.aligned.row.m16n16k16.global.f16	1	1
 wmma.load.a.sync.aligned.row.m16n16k16.shared.f16	1	8

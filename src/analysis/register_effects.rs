@@ -66,6 +66,9 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
         | Shf | Shfl | Shl | Shr | Sin | Slct | Sqrt | Stacksave | Sub | Subc | Szext | Tanh
         | Testp | Vote | Xor => Some(1),
         Istypep | Suld | Suq | Tex | Tld4 | Txq => Some(1),
+        Vabsdiff | Vabsdiff2 | Vabsdiff4 | Vadd | Vadd2 | Vadd4 | Vavrg2 | Vavrg4 | Vmad | Vmax
+        | Vmax2 | Vmax4 | Vmin | Vmin2 | Vmin4 | Vset | Vset2 | Vset4 | Vshl | Vshr | Vsub
+        | Vsub2 | Vsub4 => Some(1),
         Applypriority | Bra | Brkpt | Brx | Cp | Discard | Exit | Fence | Griddepcontrol
         | Membar | Nanosleep | Pmevent | Prefetch | Prefetchu | Red | Ret | Setmaxnreg | St
         | Stackrestore | Stmatrix | Sured | Sust | Tensormap | Trap => Some(0),
@@ -367,6 +370,22 @@ mod tests {
             ("sured.b.add.2d.u32.trap [surf1, {%r3, %r4}], %r1;", ""),
         ] {
             assert_eq!(written(instr).as_deref(), Some(regs), "{instr}");
+        }
+    }
+
+    #[test]
+    fn video_instructions_write_their_first_operand() {
+        for instr in [
+            "vabsdiff.u32.u32.u32 %r1, %r2, %r3;",
+            "vadd.s32.u32.s32.sat.add %r1, %r2, %r3, %r4;",
+            "vshl.u32.u32.u32.clamp %r1, %r2, %r3;",
+            "vmad.s32.s32.u32.sat %r1, %r2, %r3, %r4;",
+            "vset.s32.u32.lt %r1, %r2, %r3;",
+            "vadd2.s32.s32.u32 %r1, %r2, %r3, %r4;",
+            "vavrg4.u32.u32.u32 %r1, %r2, %r3, %r4;",
+            "vset4.u32.u32.ne %r1, %r2, %r3, %r4;",
+        ] {
+            assert_eq!(written(instr).as_deref(), Some("%r1"), "{instr}");
         }
     }
 }
