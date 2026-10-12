@@ -1942,6 +1942,28 @@ mod tests {
         );
     }
 
+    /// The base at depth 0, `%r30` at 2 and `%r0` at 32, the deepest
+    /// definition the tracer follows: `%tid.x` below it is a leaf.
+    #[test]
+    fn a_special_register_at_the_depth_limit_is_read() {
+        let opts = AnalyzeOptions::default();
+        let chain: String = (1..=30)
+            .map(|i| format!("add.u32 %r{i}, %r{}, 1;\n", i - 1))
+            .collect();
+        let src = format!(
+            ".version 8.7\n.target sm_80\n.address_size 64\n\
+             .visible .entry k(\n.param .u64 k_param_0\n)\n{{\n\
+             ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r0, %tid.x;\n{chain}\
+             mul.wide.u32 %rd2, %r30, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+             ld.global.f32 %f1, [%rd3];\nret;\n}}\n"
+        );
+        let r = analyze(&src, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].accesses[0].address.as_deref(),
+            Some("4 * %tid.x + param_0 + 120")
+        );
+    }
+
     /// PTX ISA §6.4.3: `{Ra, Rb, Rc, Rd}` take `V.x`, `V.y`, `V.z`, `V.w`;
     /// §10.1: `%tid`'s fourth element "always returns zero".
     #[test]

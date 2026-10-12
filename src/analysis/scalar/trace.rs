@@ -467,7 +467,6 @@ impl<'a> AffineValueTracer<'a> {
     ) -> Result<Affine, String> {
         match self.module.operand(op) {
             Operand::Register(reg) => self.trace_reg(*reg, pos, id, depth, None),
-            Operand::Special(_) if depth > 32 => Err("value trace exceeds depth limit".to_owned()),
             Operand::Special(reg) => self.trace_special(*reg),
             Operand::Immediate(text) => {
                 let text = self.module.interner.resolve(*text);
