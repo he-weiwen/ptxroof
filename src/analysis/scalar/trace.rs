@@ -298,6 +298,8 @@ impl<'a> AffineValueTracer<'a> {
             })
     }
 
+    /// The last write of `pred` in block `b` before statement `before`,
+    /// if it is a `setp` whose first output is `pred`.
     pub(crate) fn find_setp(
         &self,
         b: BlockId,
@@ -305,26 +307,21 @@ impl<'a> AffineValueTracer<'a> {
         pred: Symbol,
     ) -> Option<(usize, &Instr)> {
         let blk = self.cfg.block(b);
-        self.kernel.stmts[blk.start..before]
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(i, s)| match s {
-                Stmt::Instr(instr)
-                    if instr.mnemonic == Opcode::Setp
-                        && self
-                            .module
-                            .operand_ids(instr.operands)
-                            .first()
-                            .is_some_and(|&id| {
-                                matches!(self.module.operand(id),
-                                         Operand::Register(r) if *r == pred)
-                            }) =>
-                {
-                    Some((blk.start + i, instr))
-                }
-                _ => None,
-            })
+        let defs = self.defs.get(&pred)?;
+        let &d = (defs.iter().rev()).find(|&&d| blk.start <= d && d < before)?;
+        let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
+            return None;
+        };
+        let first = match self
+            .module
+            .operand(*self.module.operand_ids(instr.operands).first()?)
+        {
+            Operand::MultipleDestinations { children } => self
+                .module
+                .operand(*self.module.operand_ids(*children).first()?),
+            op => op,
+        };
+        (instr.mnemonic == Opcode::Setp && *first == Operand::Register(pred)).then_some((d, instr))
     }
 
     /// Reaching definition of `reg` strictly before statement `pos`:

@@ -449,6 +449,26 @@ mod tests {
         );
     }
 
+    /// PTX ISA §9.7.6.2: `setp`'s second output is the complemented
+    /// comparison, which the latch matcher does not read.
+    #[test]
+    fn a_latch_on_setps_first_output_is_a_trip_count() {
+        let trips = |dests: &str, pred: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\n\
+                     setp.lt.s32 {dests}, %r2, %r1;\n@{pred} bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.as_ref().map(ToString::to_string).ok()
+        };
+        assert_eq!(trips("%p1|%p2", "%p1"), Some("param_0".to_owned()));
+        assert_eq!(trips("%p2|%p1", "%p1"), None);
+        assert_eq!(trips("_|%p1", "%p1"), None);
+    }
+
     #[test]
     fn up_counting_ne_form() {
         let src = kernel_with(

@@ -146,10 +146,12 @@ which no analysis reads since `wgmma` is not computed lane by lane.
    `skip(1)` sites read the operands after the written ones; CC.CF is
    read through `carry_defs`, keeping the guarded old-value
    dependencies, and `lane_wise`'s carry case goes.
-4. **Output identity, then `find_setp` and `predicate_reason`**: the
-   predicate reader takes `setp`'s second output as the negated
-   comparison for scalar types only (`micro/setp_f16x2.ptx`), and the
-   latch's last write of the predicate decides, not the last `setp`.
+4. **`find_setp`, then `predicate_reason`**: the latch's last write of
+   the predicate decides, and only a `setp` whose first output it is.
+   `predicate_reason` moves after step 5: it still recognises the
+   attention kernels' bare `complete` by its symbol. What `setp`'s
+   second output means for packed types (`micro/setp_f16x2.ptx`) is
+   the predicate reader's reading of `setp`, not a register effect.
 5. **Parser recovery**: scoped names for every declaration kind,
    guards and bracket bases included (`micro/bare_registers.ptx`,
    `micro/scoped_shadow.ptx`); coordinates after a bracket's base;
@@ -181,3 +183,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 | a form not decoded (`call`, unlisted sub-operations): every register it names, written and read; `defines_dest` removed | none | no | `a_form_not_decoded_writes_every_register_it_names`; no lit test: no form that ptxas accepts and the parser keeps is left undecoded (`call` with registers is `Unparsed`) |
 | uniformity: a definition reads the operands after its written ones, and with a guard also the written ones (`split_operands`, shared with the tracer's reasons) | every lane-wise definition | no: every lane-wise form writes one operand | no lit test, as no output can differ |
 | CC.CF: `.cc` writes it, `addc`, `subc`, `madc` read it; uniformity reads it instead of taking the `*c` forms to differ per thread | none (no `.cc` in the corpus) | for a carry chain on values every thread shares | `micro/carry_uniform.ptx`, before: `warp: <= 5 sectors`; the guarded case by `divergence_follows_data_from_per_thread_registers_and_loads` |
+| `find_setp`: the last write of the latch predicate in the latch, if a `setp` writes it as its first output | every latch; the mbarrier spin-waits keep their reasons | where another write of the predicate follows the `setp`, or the predicate is a `p\|q` output | `micro/latch_pred_overwritten.ptx`, before: `trips = 10` where ptxas runs 3; `a_latch_on_setps_first_output_is_a_trip_count` |
