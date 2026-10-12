@@ -500,8 +500,9 @@ impl<'a> AffineValueTracer<'a> {
             SpecialReg::Scalar(SpecialScalar::Laneid) if self.one_dimensional() => {
                 Ok(Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
             }
-            // The launch shape is uniform: a symbol, bound when known.
-            SpecialReg::Vector(SpecialVector::Ntid | SpecialVector::Nctaid, _) => {
+            // One value for the CTA (the launch shape, the cluster, the
+            // shared memory sizes): a symbol, bound when known.
+            _ if special_register(reg) == Some(SpecialRegister::PerCta) => {
                 Ok(Affine::invariant(SymExpr::sym(reg.name())))
             }
             _ => Err(format!(

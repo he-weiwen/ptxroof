@@ -19,8 +19,9 @@
 //! `le` → floordiv(−A0, A1) + 1;  `gt`/`ge` → mirrored.
 //!
 //! Anything else — multiple exits, exits not at the latch, latch
-//! values loaded in the loop, special-register dependence, two IVs in
-//! one condition — degrades to an `Err(reason)`: a *named* unknown,
+//! values loaded in the loop, dependence on a special register that is
+//! not one value for the CTA, two IVs in one condition — degrades to an
+//! `Err(reason)`: a *named* unknown,
 //! never a guess (honesty principle). The symbols are assumed
 //! nonnegative, and unsigned/signed comparison width is deliberately
 //! not modeled (documented domain assumption).
@@ -401,6 +402,35 @@ mod tests {
         );
         let trips = trips_of(&src);
         assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+    }
+
+    /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;
+    /// §10.24: `%clock64` is a cycle counter.
+    #[test]
+    fn a_bound_fixed_for_the_cta_is_a_symbol() {
+        let trips = |sreg: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "mov.u32 %r1, {sreg};\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 4;\n\
+                     setp.lt.u32 %p1, %r2, %r1;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0]
+                .1
+                .as_ref()
+                .map(ToString::to_string)
+                .map_err(Clone::clone)
+        };
+        assert_eq!(
+            trips("%dynamic_smem_size"),
+            Ok("⌈%dynamic_smem_size/4⌉".to_owned())
+        );
+        assert_eq!(
+            trips("%clock"),
+            Err("latch condition depends on special register %clock".to_owned())
+        );
     }
 
     #[test]
