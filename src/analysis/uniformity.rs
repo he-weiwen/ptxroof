@@ -385,6 +385,11 @@ mod tests {
             uniform(carry, "%r3"),
             Err("comes from a statement not parsed".to_owned())
         );
+        // One after the last terminator is in no block, and never runs.
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k()\n{\nadd.cc.u32 %r0, 0, 0;\nbra L;\nL:\n\
+                   addc.u32 %r1, 0, 0;\nret;\ncall (%r2), f, ();\n}\n";
+        assert_eq!(uniform_at(src, "%r1", Some("L"), "ret"), Ok(()));
     }
 
     #[test]

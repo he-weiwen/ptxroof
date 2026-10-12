@@ -83,7 +83,11 @@ impl<'a> AffineValueTracer<'a> {
                         carry_defs.push(i);
                     }
                 }
-                Stmt::Unparsed { .. } => carry_defs.push(i),
+                Stmt::Unparsed { .. }
+                    if (cfg.blocks.iter()).any(|b| (b.start..b.end).contains(&i)) =>
+                {
+                    carry_defs.push(i)
+                }
                 _ => {}
             }
         }
