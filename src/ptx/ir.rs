@@ -124,6 +124,13 @@ named_enum! {
     }
 }
 
+impl SpecialVector {
+    /// `.x`, `.y`, `.z`: "components" in PTX ISA §10.1's syntax.
+    pub fn components(self) -> [SpecialReg; 3] {
+        [Element::X, Element::Y, Element::Z].map(|e| SpecialReg::Vector(self, Some(e)))
+    }
+}
+
 /// A vector element: "`.x`, `.y`, `.z` and `.w`, as well as the typical
 /// color fields `.r`, `.g`, `.b` and `.a`" (PTX ISA §6.4.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

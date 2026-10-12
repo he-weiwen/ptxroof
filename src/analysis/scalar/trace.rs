@@ -177,8 +177,10 @@ impl<'a> AffineValueTracer<'a> {
     /// chain's register defined before the loop.
     /// The bound block shape has one row and one plane.
     fn one_dimensional(&self) -> bool {
-        self.bindings
-            .is_some_and(|b| b.get("%ntid.y") == Some(&1) && b.get("%ntid.z") == Some(&1))
+        self.bindings.is_some_and(|b| {
+            let [_, y, z] = SpecialVector::Ntid.components();
+            b.get(&y.name()) == Some(&1) && b.get(&z.name()) == Some(&1)
+        })
     }
 
     pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<String, i64>) -> Self {

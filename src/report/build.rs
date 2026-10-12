@@ -39,7 +39,7 @@ use crate::analysis::thread_participation::{ThreadSet, ThreadSets, thread_sets};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
-use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Stmt};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::measured::{LineIndex, NcuRecord, Prediction};
@@ -122,8 +122,8 @@ pub fn analyze(
         let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings_echo)?;
         // The block shape, when it is the launch's: --launch, else .reqntid.
         if let Some([x, y, z]) = opts.launch.or(kernel.reqntid) {
-            for (name, n) in [("%ntid.x", x), ("%ntid.y", y), ("%ntid.z", z)] {
-                bind_map.insert(name.to_owned(), i64::from(n));
+            for (reg, n) in SpecialVector::Ntid.components().into_iter().zip([x, y, z]) {
+                bind_map.insert(reg.name(), i64::from(n));
             }
         }
         let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
@@ -283,8 +283,9 @@ impl KernelReportBuilder<'_> {
             }
             text
         };
-        let shape = ["%ntid.x", "%ntid.y", "%ntid.z"]
-            .map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
+        let shape = SpecialVector::Ntid
+            .components()
+            .map(|reg| bind_map.get(&reg.name()).map(|&v| v as u32).unwrap_or(0));
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
         for (bid, block) in cfg.blocks.iter_enumerated() {
             let scope = forest.block_loop[bid.0 as usize];
@@ -802,8 +803,9 @@ impl<'a> KernelReportBuilder<'a> {
             })
             .collect();
 
-        let shape = ["%ntid.x", "%ntid.y", "%ntid.z"]
-            .map(|n| bind_map.get(n).map(|&v| v as u32).unwrap_or(0));
+        let shape = SpecialVector::Ntid
+            .components()
+            .map(|reg| bind_map.get(&reg.name()).map(|&v| v as u32).unwrap_or(0));
         let mut b = KernelReportBuilder {
             module,
             kernel,
