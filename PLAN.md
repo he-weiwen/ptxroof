@@ -43,13 +43,13 @@ its shared writes and instruction counts remain counted
 
 ### Wrong output
 
-- **Register effects are incomplete.** The affine tracer records a
-  first operand that is a register, a `p|q` pair or a `{…}` vector as
+- **Register effects are incomplete.** The affine tracer records the
+  registers of the operands the register-effects decoder says an
+  instruction writes, a register, a `p|q` pair or a `{…}` vector, as
   destinations (`micro/vector_def.ptx`: a guard on a register a vector
   load overwrote is a bound, `<= 9 sectors`), refuses an element of a
   multi-element `ld.param` vector rather than reading the parameter's
-  bits, misses outputs in other
-  positions, and does not model guarded definitions: a branch
+  bits, and does not model guarded definitions: a branch
   or guard comparing such a value is checked against the uniformity
   analysis only when the comparison is free of the thread index
   (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and

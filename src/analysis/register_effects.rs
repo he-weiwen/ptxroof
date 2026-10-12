@@ -22,6 +22,22 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
                 .position(|&op| matches!(module.operand(op), Operand::Memory { .. })),
             _ => None,
         },
+        Tcgen05 => match modifiers.next()? {
+            "ld" => Some(1 + usize::from(modifiers.next() == Some("red"))),
+            "alloc"
+            | "dealloc"
+            | "relinquish_alloc_permit"
+            | "st"
+            | "wait::ld"
+            | "wait::st"
+            | "cp"
+            | "shift"
+            | "mma"
+            | "fence::before_thread_sync"
+            | "fence::after_thread_sync"
+            | "commit" => Some(0),
+            _ => None,
+        },
         Abs | Activemask | Add | Addc | Alloca | And | Atom | Bfe | Bfi | Bfind | Bmsk | Brev
         | Clmad | Clz | Cnot | Copysign | Cos | Createpolicy | Cvt | Cvta | Div | Dp2a | Dp4a
         | Elect | Ex2 | Fma | Fns | Getctarank | Isspacep | Ld | Ldmatrix | Ldu | Lg2 | Lop3
@@ -203,6 +219,22 @@ mod tests {
             ),
             ("mbarrier.test_wait.b64 %p1, %rd2;", None),
             ("mbarrier.wait.b64 %p1, [%r2];", None),
+        ] {
+            assert_eq!(written(instr).as_deref(), regs, "{instr}");
+        }
+    }
+
+    #[test]
+    fn tcgen05_writes_registers_only_when_it_loads() {
+        for (instr, regs) in [
+            (
+                "tcgen05.ld.red.sync.aligned.16x32bx2.x2.u32.max {%r1, %r2}, %r3, [%r4], 16;",
+                Some("%r1 %r2 %r3"),
+            ),
+            ("tcgen05.shift.cta_group::1.down [%r1];", Some("")),
+            ("tcgen05.fence::before_thread_sync;", Some("")),
+            ("tcgen05.fence::after_thread_sync;", Some("")),
+            ("tcgen05.wait::xx.sync.aligned;", None),
         ] {
             assert_eq!(written(instr).as_deref(), regs, "{instr}");
         }

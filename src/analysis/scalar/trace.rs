@@ -153,12 +153,16 @@ impl<'a> AffineValueTracer<'a> {
             let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
                 return None;
             };
-            self.module
-                .operand_ids(instr.operands)
-                .iter()
-                .skip(1)
-                .find_map(|&op| self.operand_obstacle(op, d, id, &mut seen))
+            (self.inputs(instr).iter()).find_map(|&op| self.operand_obstacle(op, d, id, &mut seen))
         })
+    }
+
+    /// The operands after those `instr` writes.
+    fn inputs(&self, instr: &Instr) -> &[OperandId] {
+        let ops = self.module.operand_ids(instr.operands);
+        &ops[written_operands(self.module, instr)
+            .unwrap_or(1)
+            .min(ops.len())..]
     }
 
     /// In-loop registers whose ONLY in-loop definition adds a constant
@@ -592,6 +596,7 @@ impl<'a> AffineValueTracer<'a> {
         }
         if let Some(Operand::VectorList { children }) = ops.first().map(|&o| self.module.operand(o))
             && (mnemonic != Opcode::Ld || mods.contains(&"param") && children.len() > 1)
+            && registers(self.module, ops[0]).contains(&reg)
         {
             let opcode = self.module.opcode(instr);
             return Err(format!("{name} is one of `{opcode}`'s vector destinations"));
@@ -860,9 +865,7 @@ impl<'a> AffineValueTracer<'a> {
             }
             other => {
                 let mut seen = HashSet::new();
-                let fundamental = ops
-                    .iter()
-                    .skip(1)
+                let fundamental = (self.inputs(instr).iter())
                     .find_map(|&op| self.operand_obstacle(op, def, id, &mut seen));
                 Err(match fundamental {
                     Some(reason) => format!("{reason}, behind `{}`", self.module.opcode(instr)),
@@ -914,12 +917,9 @@ impl<'a> AffineValueTracer<'a> {
                 .to_owned(),
             ),
             Opcode::Atom => Some("latch condition depends on an atomic operation".to_owned()),
-            _ => self
-                .module
-                .operand_ids(instr.operands)
-                .iter()
-                .skip(1)
-                .find_map(|&op| self.operand_obstacle(op, def, id, seen)),
+            _ => {
+                (self.inputs(instr).iter()).find_map(|&op| self.operand_obstacle(op, def, id, seen))
+            }
         }
     }
 

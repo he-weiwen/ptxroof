@@ -1,0 +1,36 @@
+//
+// HAND-WRITTEN: `tcgen05.ld.red` writes its second operand, redval, as
+// well as its first (PTX ISA §9.7.17.8.3), so the first store's address
+// comes from tensor memory, not from %tid.x; `tcgen05.dealloc` reads
+// taddr (§9.7.17.7.1), so the second store's address is the parameter's
+// (ptxas 13.4: `LDTM.STAT.x2.MAX R7, R4, tmem[UR4]`, `IMAD.WIDE.U32 R2,
+// R7, 0x4, R2`, and no `SR_TID` read; then `LDC R7, c[0x0][0x388]`,
+// `IMAD.WIDE.U32 R2, R7, 0x4, R2`).
+//
+.version 8.8
+.target sm_103f
+.address_size 64
+
+.visible .entry micro_tcgen05_outputs(
+	.param .u64 micro_tcgen05_outputs_param_0,
+	.param .u32 micro_tcgen05_outputs_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [micro_tcgen05_outputs_param_0];
+	ld.param.u32 	%r5, [micro_tcgen05_outputs_param_1];
+	mov.u32 	%r1, %tid.x;
+	tcgen05.ld.red.sync.aligned.32x32b.x2.u32.max 	{%r2, %r3}, %r1, [%r5];
+	tcgen05.wait::ld.sync.aligned;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	tcgen05.dealloc.cta_group::1.sync.aligned.b32 	%r5, 32;
+	mul.wide.u32 	%rd4, %r5, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r3;
+	ret;
+}
