@@ -48,6 +48,11 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
             "store" => Some(0),
             _ => None,
         },
+        Multimem => match modifiers.next()? {
+            "ld_reduce" => Some(1),
+            "st" | "red" | "cp" => Some(0),
+            _ => None,
+        },
         Abs | Activemask | Add | Addc | Alloca | And | Atom | Bfe | Bfi | Bfind | Bmsk | Brev
         | Clmad | Clz | Cnot | Copysign | Cos | Createpolicy | Cvt | Cvta | Div | Dp2a | Dp4a
         | Elect | Ex2 | Fma | Fns | Getctarank | Isspacep | Ld | Ldmatrix | Ldu | Lg2 | Lop3
@@ -283,6 +288,32 @@ mod tests {
                 Some(""),
             ),
             ("wmma.fill.sync.aligned %r1;", None),
+        ] {
+            assert_eq!(written(instr).as_deref(), regs, "{instr}");
+        }
+    }
+
+    #[test]
+    fn multimem_writes_only_when_it_loads() {
+        for (instr, regs) in [
+            (
+                "multimem.ld_reduce.relaxed.gpu.global.add.u32 %r1, [%rd1];",
+                Some("%r1"),
+            ),
+            ("multimem.st.relaxed.gpu.global.u32 [%rd1], %r2;", Some("")),
+            (
+                "multimem.red.relaxed.gpu.global.add.u32 [%rd1], %r2;",
+                Some(""),
+            ),
+            (
+                "multimem.red.async.release.gpu.global.add.u32 [%rd1], %r2;",
+                Some(""),
+            ),
+            (
+                "multimem.cp.async.bulk.global.shared::cta.bulk_group [%rd1], [%r2], 128;",
+                Some(""),
+            ),
+            ("multimem.ld.global.u32 %r1, [%rd1];", None),
         ] {
             assert_eq!(written(instr).as_deref(), regs, "{instr}");
         }
