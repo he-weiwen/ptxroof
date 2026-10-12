@@ -181,8 +181,12 @@ fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
 
     // Trace both operands at the setp.
     let ops = tracer.module.operand_ids(setp.operands);
-    if ops.len() < 3 {
-        return Err("setp with unexpected operand count".to_owned());
+    match ops.len() {
+        3 => {}
+        // PTX ISA §9.7.6.2: `setp.CmpOp.BoolOp.type p, a, b, c` sets
+        // `p = BoolOp(a CmpOp b, c)`.
+        4 => return Err("latch condition combines a comparison with a predicate".to_owned()),
+        _ => return Err("setp with unexpected operand count".to_owned()),
     }
     let a = tracer.trace_operand(ops[1], setp_idx, Some(id), 0)?;
     let b = tracer.trace_operand(ops[2], setp_idx, Some(id), 0)?;
@@ -397,6 +401,22 @@ mod tests {
         );
         let trips = trips_of(&src);
         assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+    }
+
+    #[test]
+    fn a_comparison_combined_with_a_predicate_is_not_a_trip_count() {
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r2, 0;\n\
+             setp.ne.s32 %p2, %r1, 7;\n\
+             $L__L:\nadd.s32 %r2, %r2, 1;\n\
+             setp.lt.and.s32 %p1, %r2, 100, %p2;\n@%p1 bra $L__L;\nret;",
+        );
+        let trips = trips_of(&src);
+        assert_eq!(
+            trips[0].1,
+            Err("latch condition combines a comparison with a predicate".to_owned())
+        );
     }
 
     #[test]

@@ -97,7 +97,9 @@ its shared writes and instruction counts remain counted
   predicate-phi two-trip loop. Not recognised, reported as
   `trips = unknown`: grid-stride loops (special registers),
   data-dependent bounds, multi-exit loops, inner loops bounded by an
-  enclosing loop's counter (`micro/triangular.ptx`), and the attention kernels'
+  enclosing loop's counter (`micro/triangular.ptx`), a latch `setp`
+  that combines its comparison with a predicate
+  (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`), and the attention kernels'
   causal loops, bounded by the CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. Bounds the
