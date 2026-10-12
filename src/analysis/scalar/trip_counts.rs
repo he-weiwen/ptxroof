@@ -179,6 +179,12 @@ fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
         .first()
         .map(|&m| tracer.module.interner.resolve(m).to_owned())
         .ok_or_else(|| "setp without comparison modifier".to_owned())?;
+    // PTX ISA §9.7.7.2: a packed `setp`'s first output compares the low halves.
+    if (tracer.module.modifiers(setp).iter())
+        .any(|&m| matches!(tracer.module.interner.resolve(m), "f16x2" | "bf16x2"))
+    {
+        return Err("latch condition compares packed halves".to_owned());
+    }
 
     // Trace both operands at the setp.
     let ops = tracer.module.operand_ids(setp.operands);
@@ -467,6 +473,22 @@ mod tests {
         assert_eq!(trips("%p1|%p2", "%p1"), Some("param_0".to_owned()));
         assert_eq!(trips("%p2|%p1", "%p1"), None);
         assert_eq!(trips("_|%p1", "%p1"), None);
+    }
+
+    /// Both low halves are 1.0 on the first iteration, so the loop runs
+    /// once, not the six times an integer comparison would give.
+    #[test]
+    fn a_packed_comparison_is_not_a_trip_count() {
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u32 %r1, 0;\nmov.u32 %r2, 0x00013c00;\n\
+             $L__L:\nadd.s32 %r1, %r1, 0x3c00;\n\
+             setp.lt.f16x2 %p1|%p2, %r1, %r2;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(
+            trips_of(&src)[0].1,
+            Err("latch condition compares packed halves".to_owned())
+        );
     }
 
     #[test]
