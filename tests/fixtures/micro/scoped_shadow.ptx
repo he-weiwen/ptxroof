@@ -1,0 +1,30 @@
+//
+// HAND-WRITTEN: a `.reg` named %laneid in a nested scope shadows the
+// special register there only, so the read after the scope is the lane
+// index and each thread stores to its own word (ptxas 13.4:
+// `S2R R2, SR_LANEID`).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_scoped_shadow(
+	.param .u64 micro_scoped_shadow_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_scoped_shadow_param_0];
+	{
+	.reg .b32 	%laneid;
+	mov.u32 	%laneid, 0;
+	mov.u32 	%r1, %laneid;
+	}
+	mov.u32 	%r2, %laneid;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

@@ -13,6 +13,11 @@ k1/k1.sm_80.ptx
 k1/k1.sm_89.ptx
 k2/k2.sm_80.ptx
 
+# Nested scopes are flattened, so a .reg that shadows a special register
+# in one scope shadows it in the whole kernel (PLAN.md, registers declared
+# without `%`).
+micro/scoped_shadow.ptx
+
 # TMA coordinates are dropped (PLAN.md, register effects), so ptxas reports
 # "Arguments mismatch for instruction 'cp.async.bulk.tensor'".
 b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ptx

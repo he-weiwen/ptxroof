@@ -76,6 +76,11 @@ its shared writes and instruction counts remain counted
   into `complete`, read by `@!complete` guards. In
   `micro/bare_registers.ptx` the packed value is taken as the same in
   every thread: a store only thread 0 runs is `warp: 4–5 sectors`.
+  Likewise a `.reg` that reuses a special register's name in a nested
+  scope takes the name in the whole kernel: in
+  `micro/scoped_shadow.ptx` the `%laneid` read after the scope, which
+  ptxas reads as `SR_LANEID`, is the scoped register's 0, so 32
+  threads' stores are `warp: 1 sector` at `[param_0]`.
 - **`cvt` is read as its last operand unchanged** (PTX ISA §9.7.9.22):
   a two-source pack (`cvt.rn.bf16x2.f32 d, a, b` puts `a` in the
   upper half; 400 in seven Gluon fixtures), the bits of an
