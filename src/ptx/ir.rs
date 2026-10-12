@@ -96,6 +96,124 @@ named_enum! {
     }
 }
 
+named_enum! {
+    /// The `.v4 .u32` special registers of PTX ISA §10.
+    pub enum SpecialVector {
+        Tid = "tid", Ntid = "ntid", Ctaid = "ctaid", Nctaid = "nctaid", Clusterid = "clusterid",
+        Nclusterid = "nclusterid", ClusterCtaid = "cluster_ctaid",
+        ClusterNctaid = "cluster_nctaid",
+    }
+}
+
+named_enum! {
+    /// The other special registers of PTX ISA §10, but for the numbered
+    /// families in [`SpecialReg`].
+    pub enum SpecialScalar {
+        Laneid = "laneid", Warpid = "warpid", Nwarpid = "nwarpid", Smid = "smid", Nsmid = "nsmid",
+        Gridid = "gridid", IsExplicitCluster = "is_explicit_cluster",
+        ClusterCtarank = "cluster_ctarank", ClusterNctarank = "cluster_nctarank",
+        LanemaskEq = "lanemask_eq", LanemaskLe = "lanemask_le", LanemaskLt = "lanemask_lt",
+        LanemaskGe = "lanemask_ge", LanemaskGt = "lanemask_gt", Clock = "clock",
+        ClockHi = "clock_hi", Clock64 = "clock64", Globaltimer = "globaltimer",
+        GlobaltimerLo = "globaltimer_lo", GlobaltimerHi = "globaltimer_hi",
+        ReservedSmemOffsetBegin = "reserved_smem_offset_begin",
+        ReservedSmemOffsetEnd = "reserved_smem_offset_end",
+        ReservedSmemOffsetCap = "reserved_smem_offset_cap", TotalSmemSize = "total_smem_size",
+        AggrSmemSize = "aggr_smem_size", DynamicSmemSize = "dynamic_smem_size",
+        CurrentGraphExec = "current_graph_exec",
+    }
+}
+
+/// A vector element: "`.x`, `.y`, `.z` and `.w`, as well as the typical
+/// color fields `.r`, `.g`, `.b` and `.a`" (PTX ISA §6.4.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Element {
+    X,
+    Y,
+    Z,
+    W,
+}
+
+impl Element {
+    pub fn name(self) -> &'static str {
+        match self {
+            Element::X => "x",
+            Element::Y => "y",
+            Element::Z => "z",
+            Element::W => "w",
+        }
+    }
+
+    pub fn from_name(text: &str) -> Option<Self> {
+        match text {
+            "x" | "r" => Some(Element::X),
+            "y" | "g" => Some(Element::Y),
+            "z" | "b" => Some(Element::Z),
+            "w" | "a" => Some(Element::W),
+            _ => None,
+        }
+    }
+}
+
+/// A special register, as listed at the head of PTX ISA §10.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpecialReg {
+    /// `None` reads the whole vector.
+    Vector(SpecialVector, Option<Element>),
+    Scalar(SpecialScalar),
+    /// `%pm0` … `%pm7`.
+    Pm(u8),
+    /// `%pm0_64` … `%pm7_64`.
+    Pm64(u8),
+    /// `%envreg0` … `%envreg31`.
+    Envreg(u8),
+    /// `%reserved_smem_offset_0`, `%reserved_smem_offset_1`.
+    ReservedSmemOffset(u8),
+}
+
+impl SpecialReg {
+    pub fn name(self) -> String {
+        match self {
+            SpecialReg::Vector(v, None) => format!("%{}", v.name()),
+            SpecialReg::Vector(v, Some(e)) => format!("%{}.{}", v.name(), e.name()),
+            SpecialReg::Scalar(s) => format!("%{}", s.name()),
+            SpecialReg::Pm(i) => format!("%pm{i}"),
+            SpecialReg::Pm64(i) => format!("%pm{i}_64"),
+            SpecialReg::Envreg(i) => format!("%envreg{i}"),
+            SpecialReg::ReservedSmemOffset(i) => format!("%reserved_smem_offset_{i}"),
+        }
+    }
+
+    pub fn from_name(text: &str) -> Option<Self> {
+        let name = text.strip_prefix('%')?;
+        if let Some((vector, element)) = name.split_once('.') {
+            let element = Element::from_name(element)?;
+            return Some(SpecialReg::Vector(
+                SpecialVector::from_name(vector)?,
+                Some(element),
+            ));
+        }
+        if let Some(v) = SpecialVector::from_name(name) {
+            return Some(SpecialReg::Vector(v, None));
+        }
+        if let Some(s) = SpecialScalar::from_name(name) {
+            return Some(SpecialReg::Scalar(s));
+        }
+        let numbered = |prefix: &str, suffix: &str, count: u8| {
+            let digits = name.strip_prefix(prefix)?.strip_suffix(suffix)?;
+            let i: u8 = digits.parse().ok()?;
+            (i < count && digits == i.to_string()).then_some(i)
+        };
+        numbered("pm", "_64", 8)
+            .map(SpecialReg::Pm64)
+            .or_else(|| numbered("pm", "", 8).map(SpecialReg::Pm))
+            .or_else(|| numbered("envreg", "", 32).map(SpecialReg::Envreg))
+            .or_else(|| {
+                numbered("reserved_smem_offset_", "", 2).map(SpecialReg::ReservedSmemOffset)
+            })
+    }
+}
+
 /// A source location from a `.loc` directive. For the extended form
 /// (`.loc f l c, function_name $sym, inlined_at f l c`) this is the
 /// `inlined_at` location: attribution wants the user's line, not the
@@ -269,5 +387,52 @@ impl Module {
     /// The last component of a `.file` index's path, if it has one.
     pub fn file_name(&self, index: u32) -> Option<&str> {
         Path::new(self.file_path(index)?).file_name()?.to_str()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn special_registers_by_their_ptx_names() {
+        for name in [
+            "%tid",
+            "%tid.x",
+            "%ntid.y",
+            "%ctaid.z",
+            "%nctaid.w",
+            "%cluster_ctaid.x",
+            "%laneid",
+            "%lanemask_lt",
+            "%clock_hi",
+            "%clock64",
+            "%pm0",
+            "%pm7_64",
+            "%envreg31",
+            "%reserved_smem_offset_1",
+            "%reserved_smem_offset_cap",
+            "%dynamic_smem_size",
+            "%current_graph_exec",
+        ] {
+            let reg = SpecialReg::from_name(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(reg.name(), name);
+        }
+        let alias = SpecialReg::from_name("%tid.r");
+        assert_eq!(alias, SpecialReg::from_name("%tid.x"));
+        // Each rejected by ptxas 13.4.
+        for name in [
+            "%pm8",
+            "%pm8_64",
+            "%envreg32",
+            "%reserved_smem_offset0",
+            "%reserved_smem_offset_2",
+            "%ctaid.q",
+            "%laneid.x",
+            "%pm07",
+            "%r1",
+        ] {
+            assert_eq!(SpecialReg::from_name(name), None, "{name}");
+        }
     }
 }
