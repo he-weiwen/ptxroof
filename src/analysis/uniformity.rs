@@ -11,6 +11,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
+use crate::analysis::register_effects::split_operands;
 use crate::analysis::scalar::trace::{
     AffineValueTracer, ReachingDefinition, SpecialRegister, special_register,
 };
@@ -44,16 +45,17 @@ impl Uniformity {
             let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
                 continue;
             };
-            let (node, ops) = (Node::Def(d), t.module.operand_ids(instr.operands));
+            let node = Node::Def(d);
             if !lane_wise(t.module, instr) {
                 let why = format!("comes from `{}`", t.module.opcode(instr));
                 reads.push((node, Read::Divergent(why)));
                 continue;
             }
-            let mut rs = operand_reads(t, &ops[1..], d);
+            let (written, inputs) = split_operands(t.module, instr);
+            let mut rs = operand_reads(t, inputs, d);
             if let Some(p) = instr.predicate {
                 rs.push(read(t, p.reg, d));
-                rs.extend(operand_reads(t, &ops[..1], d));
+                rs.extend(operand_reads(t, written, d));
             }
             reads.extend(rs.into_iter().map(|r| (node, r)));
         }

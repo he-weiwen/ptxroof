@@ -80,12 +80,22 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
     }
 }
 
-/// The registers `instr` writes: those its written operands name, or for
-/// a form not decoded every register it names.
-pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
+/// `instr`'s written operands, and the operands after them, which it
+/// reads; a form not decoded is taken to write and read all of them.
+pub(crate) fn split_operands<'m>(
+    module: &'m Module,
+    instr: &Instr,
+) -> (&'m [OperandId], &'m [OperandId]) {
     let ops = module.operand_ids(instr.operands);
-    let written = written_operands(module, instr).unwrap_or(ops.len());
-    (ops.iter().take(written))
+    match written_operands(module, instr) {
+        Some(n) => ops.split_at(n.min(ops.len())),
+        None => (ops, ops),
+    }
+}
+
+/// The registers `instr` writes.
+pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
+    (split_operands(module, instr).0.iter())
         .flat_map(|&op| registers(module, op))
         .collect()
 }

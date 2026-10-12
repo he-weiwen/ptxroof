@@ -17,7 +17,7 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::register_effects::{registers, written_operands, written_registers};
+use crate::analysis::register_effects::{registers, split_operands, written_registers};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -149,16 +149,9 @@ impl<'a> AffineValueTracer<'a> {
             let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
                 return None;
             };
-            (self.inputs(instr).iter()).find_map(|&op| self.operand_obstacle(op, d, id, &mut seen))
+            (split_operands(self.module, instr).1.iter())
+                .find_map(|&op| self.operand_obstacle(op, d, id, &mut seen))
         })
-    }
-
-    /// The operands after those `instr` writes.
-    fn inputs(&self, instr: &Instr) -> &[OperandId] {
-        let ops = self.module.operand_ids(instr.operands);
-        &ops[written_operands(self.module, instr)
-            .unwrap_or(0)
-            .min(ops.len())..]
     }
 
     /// In-loop registers whose ONLY in-loop definition adds a constant
@@ -858,7 +851,7 @@ impl<'a> AffineValueTracer<'a> {
             }
             other => {
                 let mut seen = HashSet::new();
-                let fundamental = (self.inputs(instr).iter())
+                let fundamental = (split_operands(self.module, instr).1.iter())
                     .find_map(|&op| self.operand_obstacle(op, def, id, &mut seen));
                 Err(match fundamental {
                     Some(reason) => format!("{reason}, behind `{}`", self.module.opcode(instr)),
@@ -910,9 +903,8 @@ impl<'a> AffineValueTracer<'a> {
                 .to_owned(),
             ),
             Opcode::Atom => Some("latch condition depends on an atomic operation".to_owned()),
-            _ => {
-                (self.inputs(instr).iter()).find_map(|&op| self.operand_obstacle(op, def, id, seen))
-            }
+            _ => (split_operands(self.module, instr).1.iter())
+                .find_map(|&op| self.operand_obstacle(op, def, id, seen)),
         }
     }
 
