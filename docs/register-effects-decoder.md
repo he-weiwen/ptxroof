@@ -81,9 +81,9 @@ operands by position too; they keep doing so.
 Class C, written operands. Each list is exhaustive; any other
 sub-operation is not decoded.
 
-- `bar`, `barrier`: with a `.red` modifier anywhere (`bar.red`,
-  `barrier.cta.red`) 1; `sync`, `arrive`, `warp`, `cluster`, `cta`
-  without `.red` 0.
+- `bar`, `barrier`, by the modifier after an optional `.cta`
+  (`barrier.cta.red`): `red` 1; `sync`, `arrive`, `warp`, `cluster`
+  0.
 - `mbarrier`: `init`, `inval`, `expect_tx`, `complete_tx` 0; `arrive`,
   `arrive_drop` (state, or `_`), `pending_count`, `check_layout` 1;
   `test_wait`, `try_wait`: the operands before the first `[addr]`, 1 or
@@ -172,3 +172,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 |---|---|---|---|
 | A and A-carry: the first operand (74 keywords) | 36 keywords, 184 forms, 51,527 statements | no | the snapshot; the other 38 keywords by one manual example each (`register_effects.rs`); no lit test, as no output can differ |
 | B: nothing written (22 keywords) | 11 keywords, 43 forms, 3,211 statements | for a register operand of `nanosleep` or `stackrestore`; the corpus has neither (its 12 `nanosleep`s take an immediate) | `micro/nanosleep_reads.ptx`, before: "value defined by unsupported instruction `nanosleep`"; the other 11 keywords by one manual example each; no lit test for `stackrestore`, whose operand nothing reads after it in a kernel that uses it as the manual does |
+| `bar`, `barrier`: `.red` 1, else 0 | `bar.sync` 448, `bar.warp.sync` 77, `barrier.sync` 71; no `.red` | for `.red`, which today defines nothing | `micro/barrier_red.ptx`, before: `[param_0]`, the value before the reduction; the other forms by one manual example each |

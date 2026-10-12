@@ -49,7 +49,7 @@ its shared writes and instruction counts remain counted
   load overwrote is a bound, `<= 9 sectors`), refuses an element of a
   multi-element `ld.param` vector rather than reading the parameter's
   bits, misses outputs in other
-  positions and barrier reductions, and does not model guarded definitions: a branch
+  positions, and does not model guarded definitions: a branch
   or guard comparing such a value is checked against the uniformity
   analysis only when the comparison is free of the thread index
   (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and

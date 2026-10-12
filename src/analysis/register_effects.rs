@@ -6,9 +6,15 @@ use crate::support::intern::Symbol;
 /// How many of `instr`'s leading operands it writes, `None` for a form
 /// not decoded. In every instruction's Syntax in PTX ISA 9.3 §9.7, the
 /// written operands precede the read ones.
-pub fn written_operands(_module: &Module, instr: &Instr) -> Option<usize> {
+pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
     use Opcode::*;
+    let mut modifiers = (module.modifiers(instr).iter()).map(|&m| module.interner.resolve(m));
     match instr.mnemonic {
+        Bar | Barrier => match modifiers.find(|&m| m != "cta")? {
+            "red" => Some(1),
+            "sync" | "arrive" | "warp" | "cluster" => Some(0),
+            _ => None,
+        },
         Abs | Activemask | Add | Addc | Alloca | And | Atom | Bfe | Bfi | Bfind | Bmsk | Brev
         | Clmad | Clz | Cnot | Copysign | Cos | Createpolicy | Cvt | Cvta | Div | Dp2a | Dp4a
         | Elect | Ex2 | Fma | Fns | Getctarank | Isspacep | Ld | Ldmatrix | Ldu | Lg2 | Lop3
@@ -130,6 +136,26 @@ mod tests {
             "trap;",
         ] {
             assert_eq!(written(instr).as_deref(), Some(""), "{instr}");
+        }
+    }
+
+    #[test]
+    fn a_barrier_writes_its_first_operand_when_it_reduces() {
+        for (instr, regs) in [
+            ("bar.red.popc.u32 %r1, 0, %p1;", Some("%r1")),
+            ("bar.cta.red.and.pred %p1, 0, 64, %p2;", Some("%p1")),
+            (
+                "barrier.cta.red.or.aligned.pred %p1, %r2, %p2;",
+                Some("%p1"),
+            ),
+            ("bar.arrive 1, %r1;", Some("")),
+            ("barrier.cta.sync.aligned %r1, 64;", Some("")),
+            ("barrier.cluster.arrive.release.aligned;", Some("")),
+            ("barrier.cluster.wait;", Some("")),
+            ("bar.warp.sync %r1;", Some("")),
+            ("barrier.cta;", None),
+        ] {
+            assert_eq!(written(instr).as_deref(), regs, "{instr}");
         }
     }
 }
