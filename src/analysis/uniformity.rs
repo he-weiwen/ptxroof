@@ -241,7 +241,7 @@ fn lane_wise(module: &Module, instr: &Instr) -> bool {
 fn read_special(reg: SpecialReg) -> Read {
     let name = reg.name();
     match special_register(reg) {
-        Some(SpecialRegister::PerCta) => Read::Uniform,
+        Some(SpecialRegister::PerCta | SpecialRegister::Zero) => Read::Uniform,
         Some(SpecialRegister::PerThread) => Read::Divergent(format!("depends on {name}")),
         None => Read::Divergent(format!("reads {name}, which has no definition")),
     }

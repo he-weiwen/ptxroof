@@ -1911,6 +1911,33 @@ mod tests {
         );
     }
 
+    /// PTX ISA §6.4.3: `{Ra, Rb, Rc, Rd}` take `V.x`, `V.y`, `V.z`, `V.w`;
+    /// §10.1: `%tid`'s fourth element "always returns zero".
+    #[test]
+    fn a_special_vector_is_read_by_element() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\n\
+                   mov.v4.u32 {%r1, %r2, %r3, %r4}, %tid;\nmov.u32 %r5, %tid.a;\n\
+                   mul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd3, %rd1, %rd2;\nld.global.f32 %f1, [%rd3];\n\
+                   mul.wide.u32 %rd4, %r4, 4;\nadd.s64 %rd5, %rd1, %rd4;\nld.global.f32 %f2, [%rd5];\n\
+                   mul.wide.u32 %rd6, %r5, 4;\nadd.s64 %rd7, %rd1, %rd6;\nld.global.f32 %f3, [%rd7];\n\
+                   ret;\n}\n";
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let addresses: Vec<_> = (r.kernels[0].accesses.iter())
+            .map(|a| a.address.as_deref())
+            .collect();
+        assert_eq!(
+            addresses,
+            [
+                Some("4 * %tid.x + param_0"),
+                Some("param_0"),
+                Some("param_0")
+            ]
+        );
+    }
+
     /// `ld.param.v2.u32 {%r1, %r2}` loads two words of the parameter: %r2
     /// is the second, not param_0.
     #[test]

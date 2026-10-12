@@ -21,8 +21,8 @@ use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{
-    Instr, Kernel, Module, Opcode, Operand, OperandId, SpecialReg, SpecialScalar, SpecialVector,
-    Stmt,
+    Element, Instr, Kernel, Module, Opcode, Operand, OperandId, SpecialReg, SpecialScalar,
+    SpecialVector, Stmt,
 };
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
@@ -489,6 +489,9 @@ impl<'a> AffineValueTracer<'a> {
             return Ok(Affine::var(v));
         }
         match reg {
+            _ if special_register(reg) == Some(SpecialRegister::Zero) => {
+                Ok(Affine::invariant(SymExpr::Const(0)))
+            }
             // PTX ISA §10.3: %laneid is "the thread's lane within the
             // warp", and §3.1: a warp "contains threads of consecutive,
             // increasing thread IDs with the first warp containing
@@ -578,7 +581,21 @@ impl<'a> AffineValueTracer<'a> {
             |i: usize| -> Result<Affine, String> { self.trace_operand(ops[i], def, id, depth + 1) };
         // A brace-enclosed destination's registers are the value's elements in
         // order (PTX ISA 6.4.3, "Vectors as Operands"): each is a parameter's
-        // whole value only when the load has one element.
+        // whole value only when the load has one element, and the element of
+        // the same place in a special register's vector.
+        if mnemonic == Opcode::Mov
+            && let Some(Operand::VectorList { children }) =
+                ops.first().map(|&o| self.module.operand(o))
+            && let Some(&Operand::Special(SpecialReg::Vector(vector, None))) =
+                ops.get(1).map(|&o| self.module.operand(o))
+            && let Some(place) =
+                self.module.operand_ids(*children).iter().position(
+                    |&c| matches!(self.module.operand(c), Operand::Register(r) if *r == reg),
+                )
+            && let Some(&element) = [Element::X, Element::Y, Element::Z, Element::W].get(place)
+        {
+            return self.trace_special(SpecialReg::Vector(vector, Some(element)));
+        }
         if let Some(Operand::VectorList { children }) = ops.first().map(|&o| self.module.operand(o))
             && (mnemonic != Opcode::Ld || mods.contains(&"param") && children.len() > 1)
         {
@@ -936,7 +953,7 @@ impl<'a> AffineValueTracer<'a> {
 
 fn special_obstacle(reg: SpecialReg) -> Option<String> {
     special_register(reg)
-        .is_some()
+        .is_some_and(|s| s != SpecialRegister::Zero)
         .then(|| format!("latch condition depends on special register {}", reg.name()))
 }
 
@@ -965,11 +982,15 @@ pub(crate) enum SpecialRegister {
     PerThread,
     /// PTX ISA §10.2 `%ntid`, §10.6 `%ctaid`, §10.7 `%nctaid`.
     PerCta,
+    /// A vector register's fourth element: "unused and always returns
+    /// zero" (PTX ISA §10.1, §10.2, §10.6, §10.7, §10.12–§10.15).
+    Zero,
 }
 
 pub(crate) fn special_register(reg: SpecialReg) -> Option<SpecialRegister> {
     use SpecialVector::*;
     match reg {
+        SpecialReg::Vector(_, Some(Element::W)) => Some(SpecialRegister::Zero),
         SpecialReg::Vector(Tid, _)
         | SpecialReg::Scalar(SpecialScalar::Laneid | SpecialScalar::Warpid) => {
             Some(SpecialRegister::PerThread)
