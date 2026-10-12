@@ -80,6 +80,23 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
     }
 }
 
+/// Whether `instr` writes the carry flag CC.CF, and whether it reads it:
+/// `.cc` writes it, `addc`, `subc` and `madc` read it, and "no other
+/// instructions access the condition code" (PTX ISA §9.7.2); a form not
+/// decoded may do both.
+pub(crate) fn carry(module: &Module, instr: &Instr) -> (bool, bool) {
+    use Opcode::*;
+    if written_operands(module, instr).is_none() {
+        return (true, true);
+    }
+    let cc = (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "cc");
+    match instr.mnemonic {
+        Add | Sub | Mad => (cc, false),
+        Addc | Subc | Madc => (cc, true),
+        _ => (false, false),
+    }
+}
+
 /// `instr`'s written operands, and the operands after them, which it
 /// reads; a form not decoded is taken to write and read all of them.
 pub(crate) fn split_operands<'m>(

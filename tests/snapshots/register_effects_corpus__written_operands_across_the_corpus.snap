@@ -4,6 +4,7 @@ expression: out
 ---
 abs.bf16x2	1	8
 abs.f32	1	110
+add.cc.u32	1	1
 add.f32	1	623
 add.rn.bf16	1	137
 add.rn.bf16x2	1	18
@@ -11,8 +12,9 @@ add.rn.f32	1	564
 add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
 add.s32	1	3547
-add.s64	1	2415
+add.s64	1	2416
 add.u64	1	3
+addc.u32	1	1
 and.b16	1	21
 and.b32	1	680
 and.b64	1	22
@@ -25,7 +27,7 @@ barrier.sync	0	71
 bfe.s32	1	39
 bfe.u32	1	144
 bfi.b32	1	1
-bra	0	337
+bra	0	338
 bra.uni	0	296
 brx.idx	0	2
 cp.async.bulk.commit_group	0	4
@@ -87,8 +89,8 @@ ld.param.b32	1	318
 ld.param.b64	1	248
 ld.param.f32	1	20
 ld.param.s32	1	36
-ld.param.u32	1	35
-ld.param.u64	1	60
+ld.param.u32	1	37
+ld.param.u64	1	61
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -130,7 +132,7 @@ mov.b64	1	4004
 mov.f32	1	912
 mov.pred	1	104
 mov.u16	1	293
-mov.u32	1	1011
+mov.u32	1	1012
 mov.u64	1	46
 mul.f32	1	1805
 mul.hi.s32	1	1
@@ -143,7 +145,7 @@ mul.rn.f32	1	2358
 mul.rn.f32x2	1	773
 mul.wide.s32	1	144
 mul.wide.u16	1	6
-mul.wide.u32	1	115
+mul.wide.u32	1	116
 nanosleep.u32	0	13
 neg.bf16	1	12
 neg.bf16x2	1	16
@@ -161,7 +163,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	31
 rem.s64	1	10
 rem.u32	1	8
-ret	0	85
+ret	0	86
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	800
@@ -199,7 +201,7 @@ setp.ne.b16	1	1
 setp.ne.b32	1	90
 setp.ne.b64	1	26
 setp.ne.s32	1	9
-setp.ne.u32	1	1
+setp.ne.u32	1	2
 shfl.sync.bfly.b32	1	1357
 shfl.sync.idx.b32	1	49
 shl.b16	1	30
@@ -215,7 +217,7 @@ st.global.b32	0	197
 st.global.b64	0	9
 st.global.f32	0	13
 st.global.u16	0	197
-st.global.u32	0	21
+st.global.u32	0	22
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2
 st.global.v4.b32	0	208

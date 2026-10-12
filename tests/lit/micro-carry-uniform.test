@@ -1,0 +1,7 @@
+# `addc` reads the carry flag `add.cc` wrote from two parameters, so the
+# branch on it is uniform and every lane of a warp stores; it was a
+# bound, `warp: <= 5 sectors`, while `addc` was taken to differ per
+# thread.
+RUN: %ptxroof analyze %fixtures/micro/carry_uniform.ptx | FileCheck "%s"
+CHECK: kernel micro_carry_uniform
+CHECK: <block 1>  st.global.u32  global store 4 B  warp: 4–5 sectors (ideal 4)    [4 * %tid.x + param_0]

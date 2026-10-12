@@ -17,7 +17,7 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::register_effects::{registers, split_operands, written_registers};
+use crate::analysis::register_effects::{carry, registers, split_operands, written_registers};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -50,6 +50,8 @@ pub(crate) struct AffineValueTracer<'a> {
     pub(crate) forest: &'a LoopForest,
     /// Definition sites (statement indices) per register symbol.
     pub(crate) defs: HashMap<Symbol, Vec<usize>>,
+    /// The statements that write the carry flag CC.CF.
+    pub(crate) carry_defs: Vec<usize>,
     /// param symbol -> positional index.
     pub(crate) params: HashMap<Symbol, usize>,
     /// `reach[a][b]`: a path of at least one edge from block a to b.
@@ -69,10 +71,14 @@ impl<'a> AffineValueTracer<'a> {
         forest: &'a LoopForest,
     ) -> Self {
         let mut defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
+        let mut carry_defs = Vec::new();
         for (i, stmt) in kernel.stmts.iter().enumerate() {
             let Stmt::Instr(instr) = stmt else { continue };
             for reg in written_registers(module, instr) {
                 defs.entry(reg).or_default().push(i);
+            }
+            if carry(module, instr).0 {
+                carry_defs.push(i);
             }
         }
         let params = kernel
@@ -98,6 +104,7 @@ impl<'a> AffineValueTracer<'a> {
             cfg,
             forest,
             defs,
+            carry_defs,
             params,
             reach,
             ivs: Vec::new(),

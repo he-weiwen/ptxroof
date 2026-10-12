@@ -100,42 +100,37 @@ sub-operation is not decoded.
 
 ## Data structures
 
-The decoder answers per instruction:
+Built (`src/analysis/register_effects.rs`):
 
 ```rust
 /// How many of `instr`'s leading operands it writes; None: not decoded.
 pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize>;
+/// The written operands and the read ones after them; all and all when not decoded.
+fn split_operands(module, instr) -> (&[OperandId], &[OperandId]);
+fn written_registers(module, instr) -> Vec<Symbol>;
+/// Whether it writes CC.CF, and whether it reads it; both when not decoded.
+fn carry(module, instr) -> (bool, bool);
 ```
 
-and, when the uses side lands, whether it writes or reads CC.CF and
-whether it reads its written operands (`wgmma.mma_async`). A written
-register is identified by its statement, operand index and position
-within that operand (`p|q`, `{…}`), so `_` keeps its place and
-`setp _|q`'s `q` stays the second output.
+- The tracer's definition table (`defs`, by register) is built from
+  `written_registers`, and `carry_defs` lists the statements that
+  write CC.CF; `reach_sites` answers reaching definitions over either,
+  so CC.CF needs no `Symbol`.
+- A written register is identified by its statement, operand index and
+  position within that operand (`p|q`, `{…}`), so `_` keeps its place
+  and `setp _|q`'s `q` stays the second output. The predicate reader
+  and the tracer's vector checks still read positions from the
+  operands.
+- A guarded definition keeps the old value when the guard is false:
+  the uniformity analysis reads its written operands, and CC.CF if it
+  writes it, as well as its inputs and guard.
+- A form not decoded (`call`, an unlisted sub-operation) writes and
+  reads every register it names and CC.CF (Fact 3: calls do not
+  preserve it).
 
-The per-kernel table built from it:
-
-```rust
-pub enum Def { Reg(Symbol), Carry }
-pub enum Use { Reg(Symbol), Special(SpecialReg), Carry }
-
-pub struct DefUse {
-    stmts: Vec<StmtRegs>,              // by statement index
-    defs: Vec<(Def, u8, u8)>,          // with operand index and position
-    uses: Vec<Use>,                    // with `[base]` registers and the guard
-    defs_of: HashMap<Def, Vec<usize>>, // replaces the tracer's definition table
-}
-struct StmtRegs { defs: Range<u32>, uses: Range<u32>, decoded: bool }
-```
-
-- A statement that is not decoded, unparsed statements included,
-  defines and uses every register it names, and `Carry`; `decoded`
-  lets a reason say "may be written by `tex`".
-- A guarded definition keeps the old value when the guard is false.
-  The uniformity analysis adds the old value of every guarded
-  definition, `Carry` included, as a dependency, as it does for
-  registers today (`uniformity.rs:53`).
-- An executed `call` defines `Carry` as unknown (Fact 3).
+Not built until a consumer needs it: a per-statement list of uses
+(`DefUse`), and `wgmma.mma_async`'s read of its accumulator (Fact 4),
+which no analysis reads since `wgmma` is not computed lane by lane.
 
 ## Order, one commit per case
 
@@ -147,10 +142,10 @@ struct StmtRegs { defs: Range<u32>, uses: Range<u32>, decoded: bool }
    diffs every fixture's text and JSON output against the previous one.
 2. **Induction discovery through the decoder**, then `defines_dest`
    goes and a form not decoded defines every register it names.
-3. **Uses and CC.CF**: `DefUse`; `Uniformity::new`, `operand_reads`
-   and `lane_wise`'s carry case move to it (the tracer's three
-   `skip(1)` sites skip the written operands since the `tcgen05` case),
-   keeping the guarded old-value dependencies.
+3. **Uses and CC.CF**: `Uniformity::new` and the tracer's three
+   `skip(1)` sites read the operands after the written ones; CC.CF is
+   read through `carry_defs`, keeping the guarded old-value
+   dependencies, and `lane_wise`'s carry case goes.
 4. **Output identity, then `find_setp` and `predicate_reason`**: the
    predicate reader takes `setp`'s second output as the negated
    comparison for scalar types only (`micro/setp_f16x2.ptx`), and the
@@ -185,3 +180,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 | induction discovery: the registers of the written operands, as the definition table | every loop | for a counter a `{…}` or `p|q` also writes | `micro/counter_vector_write.ptx`, before: `trips = 10`; now `trips = unknown: latch condition depends on a value loaded inside the loop` |
 | a form not decoded (`call`, unlisted sub-operations): every register it names, written and read; `defines_dest` removed | none | no | `a_form_not_decoded_writes_every_register_it_names`; no lit test: no form that ptxas accepts and the parser keeps is left undecoded (`call` with registers is `Unparsed`) |
 | uniformity: a definition reads the operands after its written ones, and with a guard also the written ones (`split_operands`, shared with the tracer's reasons) | every lane-wise definition | no: every lane-wise form writes one operand | no lit test, as no output can differ |
+| CC.CF: `.cc` writes it, `addc`, `subc`, `madc` read it; uniformity reads it instead of taking the `*c` forms to differ per thread | none (no `.cc` in the corpus) | for a carry chain on values every thread shares | `micro/carry_uniform.ptx`, before: `warp: <= 5 sectors`; the guarded case by `divergence_follows_data_from_per_thread_registers_and_loads` |

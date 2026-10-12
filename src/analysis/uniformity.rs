@@ -11,7 +11,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
-use crate::analysis::register_effects::split_operands;
+use crate::analysis::register_effects::{carry, split_operands};
 use crate::analysis::scalar::trace::{
     AffineValueTracer, ReachingDefinition, SpecialRegister, special_register,
 };
@@ -40,7 +40,9 @@ pub(crate) struct Uniformity {
 impl Uniformity {
     pub(crate) fn new(t: &AffineValueTracer) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
-        let defs: BTreeSet<usize> = t.defs.values().flatten().copied().collect();
+        let defs: BTreeSet<usize> = (t.defs.values().flatten().chain(&t.carry_defs))
+            .copied()
+            .collect();
         for d in defs {
             let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
                 continue;
@@ -52,10 +54,17 @@ impl Uniformity {
                 continue;
             }
             let (written, inputs) = split_operands(t.module, instr);
+            let (writes_carry, reads_carry) = carry(t.module, instr);
             let mut rs = operand_reads(t, inputs, d);
+            if reads_carry {
+                rs.push(read_sites(t, "CC.CF", &t.carry_defs, d));
+            }
             if let Some(p) = instr.predicate {
                 rs.push(read(t, p.reg, d));
                 rs.extend(operand_reads(t, written, d));
+                if writes_carry {
+                    rs.push(read_sites(t, "CC.CF", &t.carry_defs, d));
+                }
             }
             reads.extend(rs.into_iter().map(|r| (node, r)));
         }
@@ -221,11 +230,7 @@ fn exits<'a>(t: &'a AffineValueTracer, id: LoopId) -> impl Iterator<Item = Node>
 fn lane_wise(module: &Module, instr: &Instr) -> bool {
     let c = classify(module, instr);
     match c.category {
-        // PTX ISA §9.7.2: addc, subc and madc also read the carry flag
-        // CC.CF, which no register holds.
-        InstructionCategory::NonFlopArith { .. } => {
-            !matches!(instr.mnemonic, Opcode::Addc | Opcode::Subc | Opcode::Madc)
-        }
+        InstructionCategory::NonFlopArith { .. } => true,
         InstructionCategory::Flop => c.contributions.iter().all(|k| {
             matches!(
                 k.kind,
@@ -334,10 +339,13 @@ mod tests {
         );
         // The carry out of a per-thread sum: 1 in lanes 16 and up.
         let carry = "add.cc.u32 %r2, %r1, 0xfffffff0;\naddc.u32 %r3, 0, 0;";
-        assert_eq!(
-            uniform(carry, "%r3"),
-            Err("comes from `addc.u32`".to_owned())
-        );
+        assert_eq!(uniform(carry, "%r3"), tid());
+        let carry = "add.cc.u32 %r2, %r0, 0xfffffff0;\naddc.u32 %r3, 0, 0;";
+        assert_eq!(uniform(carry, "%r3"), Ok(()));
+        // A guarded `add.cc` leaves the per-thread carry where it is skipped.
+        let carry = "add.cc.u32 %r2, %r1, 0xfffffff0;\nsetp.eq.u32 %p1, %r0, 0;\n\
+                     mov.u32 %r4, 0;\n@%p1 add.cc.u32 %r4, %r0, 1;\naddc.u32 %r3, 0, 0;";
+        assert_eq!(uniform(carry, "%r3"), tid());
     }
 
     #[test]
