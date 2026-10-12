@@ -57,7 +57,9 @@ its shared writes and instruction counts remain counted
   treats `stackrestore` and register-valued `nanosleep` inputs as definitions.
   The parser drops TMA coordinates, leaves bare register names as symbol
   references, and merges same-named registers in sibling scopes; negated
-  source predicates and parenthesized call operands become `Unparsed`.
+  source predicates, parenthesized call operands and an address followed
+  by `.unified` (PTX ISA §9.7.9.8, `unified_address_is_unparsed`) become
+  `Unparsed`.
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a
   fixed source-read size even with a runtime ignore-source predicate.
   Source locations, reproducible parser/classifier probes, and their outputs

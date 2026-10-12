@@ -932,6 +932,12 @@ mod tests {
     }
 
     #[test]
+    fn unified_address_is_unparsed() {
+        let m = parse_body("ld.b32 %r1, [%rd1].unified;\nret;");
+        assert_eq!(unparsed_count(&m), 1);
+    }
+
+    #[test]
     fn mnemonics_outside_the_isa_are_unparsed() {
         let m = parse_body("nop;\nfuture.op %r1;\nret;");
         assert_eq!(unparsed_count(&m), 2);
