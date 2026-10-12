@@ -58,6 +58,10 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
             "try_cancel" => Some(0),
             _ => None,
         },
+        Fabric => match modifiers.next()? {
+            "try_get" | "try_put" | "try_red" | "try_pullred" | "submit" | "wait" => Some(0),
+            _ => None,
+        },
         Abs | Activemask | Add | Addc | Alloca | And | Atom | Bfe | Bfi | Bfind | Bmsk | Brev
         | Clmad | Clz | Cnot | Copysign | Cos | Createpolicy | Cvt | Cvta | Div | Dp2a | Dp4a
         | Elect | Ex2 | Fma | Fns | Getctarank | Isspacep | Ld | Ldmatrix | Ldu | Lg2 | Lop3
@@ -386,6 +390,27 @@ mod tests {
             "vset4.u32.u32.ne %r1, %r2, %r3, %r4;",
         ] {
             assert_eq!(written(instr).as_deref(), Some("%r1"), "{instr}");
+        }
+    }
+
+    #[test]
+    fn fabric_writes_nothing() {
+        for (instr, regs) in [
+            (
+                "fabric.try_get.async.shared::cta.mbarrier::complete_tx::bytes.\
+                 mbarrier::report::fabric.relaxed.sys.b128 [%r1], [%r2, %rd3], 256, [%r4];",
+                Some(""),
+            ),
+            (
+                "fabric.try_put.async.shared::cta.mbarrier::complete_tx::16B.\
+                 mbarrier::report::fabric.relaxed.sys.b128 [%r2, %rd3], [%r1], 256, [%r4];",
+                Some(""),
+            ),
+            ("fabric.submit;", Some("")),
+            ("fabric.wait.sync_restrict::reads;", Some("")),
+            ("fabric.get [%r1];", None),
+        ] {
+            assert_eq!(written(instr).as_deref(), regs, "{instr}");
         }
     }
 }

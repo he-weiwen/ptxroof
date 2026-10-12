@@ -76,7 +76,7 @@ operands by position too; they keep doing so.
 | B | keyword: no written operand | `applypriority bra brkpt brx cp discard exit fence griddepcontrol membar nanosleep pmevent prefetch prefetchu red ret setmaxnreg st stackrestore stmatrix tensormap trap` | 22 |
 | C | a sub-operation modifier | below | 8 |
 | `call` | operand shape: the leading `(…)` list; not decoded until the parser keeps it | `call` | 1 |
-| D | keyword, outside the audit: textures and surfaces 1 (`istypep suld suq tex tld4 txq`) or 0 (`sured sust`); video 1; `fabric` not decoded yet | `fabric`, textures and surfaces, video (`vabsdiff* vadd* vavrg* vmad vmax* vmin* vset* vshl vshr vsub*`) | 32 |
+| D | keyword, outside the audit: textures and surfaces 1 (`istypep suld suq tex tld4 txq`) or 0 (`sured sust`); video 1; `fabric`'s `try_get`, `try_put`, `try_red`, `try_pullred`, `submit`, `wait` 0 | `fabric`, textures and surfaces, video (`vabsdiff* vadd* vavrg* vmad vmax* vmin* vset* vshl vshr vsub*`) | 32 |
 
 Class C, written operands. Each list is exhaustive; any other
 sub-operation is not decoded.
@@ -181,3 +181,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 | `clusterlaunchcontrol`: `query_cancel` 1; `try_cancel` 0 | none | no | one manual form per sub-operation; no lit test, as no output can differ |
 | textures and surfaces: `istypep suld suq tex tld4 txq` 1, `sured sust` 0; a `{…}` inside `p\|q` is flattened | none | for `tex`/`tld4` `{…}\|p`, whose vector elements today's rule missed | `micro/texture_outputs.ptx`, before: `[4 * %tid.x + param_0]` through an element `tex` overwrote; the others by one manual example each |
 | video: the first operand (23 keywords) | none outside `micro/video_selector.ptx` | no | one manual example per family; no lit test, as no output can differ; a selected destination is still read as a register of its own (PLAN.md) |
+| `fabric`: six sub-operations 0 | none | no | one manual form per family; no lit test, as no output can differ |
