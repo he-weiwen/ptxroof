@@ -71,12 +71,8 @@ impl<'a> AffineValueTracer<'a> {
         let mut defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
         for (i, stmt) in kernel.stmts.iter().enumerate() {
             let Stmt::Instr(instr) = stmt else { continue };
-            let written = written_operands(module, instr)
-                .unwrap_or(usize::from(defines_dest(instr.mnemonic)));
-            for &op in module.operand_ids(instr.operands).iter().take(written) {
-                for reg in registers(module, op) {
-                    defs.entry(reg).or_default().push(i);
-                }
+            for reg in written_registers(module, instr) {
+                defs.entry(reg).or_default().push(i);
             }
         }
         let params = kernel
@@ -200,12 +196,9 @@ impl<'a> AffineValueTracer<'a> {
         for &b in &l.blocks {
             let blk = self.cfg.block(b);
             for (i, stmt) in self.kernel.stmts[blk.start..blk.end].iter().enumerate() {
-                if let Stmt::Instr(instr) = stmt
-                    && let Some(&first) = self.module.operand_ids(instr.operands).first()
-                    && let Operand::Register(reg) = self.module.operand(first)
-                    && defines_dest(instr.mnemonic)
-                {
-                    in_loop_defs.entry(*reg).or_default().push(blk.start + i);
+                let Stmt::Instr(instr) = stmt else { continue };
+                for reg in written_registers(self.module, instr) {
+                    in_loop_defs.entry(reg).or_default().push(blk.start + i);
                 }
             }
         }
@@ -1031,6 +1024,15 @@ pub(crate) fn special_register(reg: SpecialReg) -> Option<SpecialRegister> {
             | ReservedSmemOffsetCap,
         ) => return None,
     })
+}
+
+/// The registers of the operands `instr` writes.
+fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
+    let written =
+        written_operands(module, instr).unwrap_or(usize::from(defines_dest(instr.mnemonic)));
+    (module.operand_ids(instr.operands).iter().take(written))
+        .flat_map(|&op| registers(module, op))
+        .collect()
 }
 
 /// Mnemonics whose first operand is a register destination (for the

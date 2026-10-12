@@ -147,9 +147,9 @@ struct StmtRegs { defs: Range<u32>, uses: Range<u32>, decoded: bool }
    diffs every fixture's text and JSON output against the previous one.
 2. **Induction discovery through the decoder**, then `defines_dest`
    goes and a form not decoded defines every register it names.
-   Changes `micro/counter_vector_write.ptx` (`trips = 10` today).
-3. **Uses and CC.CF**: `DefUse`; `Uniformity::new`, `operand_reads`,
-   `lane_wise`'s carry case and the three `skip(1)` sites move to it,
+3. **Uses and CC.CF**: `DefUse`; `Uniformity::new`, `operand_reads`
+   and `lane_wise`'s carry case move to it (the tracer's three
+   `skip(1)` sites skip the written operands since the `tcgen05` case),
    keeping the guarded old-value dependencies.
 4. **Output identity, then `find_setp` and `predicate_reason`**: the
    predicate reader takes `setp`'s second output as the negated
@@ -182,3 +182,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 | textures and surfaces: `istypep suld suq tex tld4 txq` 1, `sured sust` 0; a `{…}` inside `p\|q` is flattened | none | for `tex`/`tld4` `{…}\|p`, whose vector elements today's rule missed | `micro/texture_outputs.ptx`, before: `[4 * %tid.x + param_0]` through an element `tex` overwrote; the others by one manual example each |
 | video: the first operand (23 keywords) | none outside `micro/video_selector.ptx` | no | one manual example per family; no lit test, as no output can differ; a selected destination is still read as a register of its own (PLAN.md) |
 | `fabric`: six sub-operations 0 | none | no | one manual form per family; no lit test, as no output can differ |
+| induction discovery: the registers of the written operands, as the definition table | every loop | for a counter a `{…}` or `p|q` also writes | `micro/counter_vector_write.ptx`, before: `trips = 10`; now `trips = unknown: latch condition depends on a value loaded inside the loop` |

@@ -93,11 +93,6 @@ its shared writes and instruction counts remain counted
   integer-to-float conversion and a narrowing conversion are each read
   as the source's value (`micro/cvt_reads.ptx`: the three addresses are `4 * %tid.x +
   param_0`, the last plus `17179869184`; only the last is 4·%tid.x).
-- **Induction-variable discovery reads a counter's writes by their
-  first operand alone**, a register, unlike the definition table, so a
-  counter that a `{…}` or `p|q` destination also writes is still a
-  counter (`micro/counter_vector_write.ptx`: `trips = 10` for a counter
-  a load overwrites every iteration).
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value

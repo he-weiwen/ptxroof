@@ -1,6 +1,5 @@
-# Wrong output (PLAN.md): induction-variable discovery sees only a
-# register first operand, so it misses the vector load's write of %r1
-# and takes %r1 for a counter from 0 by 1.
+# Induction-variable discovery sees the vector load's write of %r1, so
+# %r1 is not a counter and the trip count depends on memory.
 RUN: %ptxroof analyze %fixtures/micro/counter_vector_write.ptx | FileCheck "%s"
 CHECK: kernel micro_counter_vector_write
-CHECK: trips = 10
+CHECK: trips = unknown: latch condition depends on a value loaded inside the loop
