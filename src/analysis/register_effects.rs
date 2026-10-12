@@ -38,6 +38,11 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
             | "commit" => Some(0),
             _ => None,
         },
+        Wgmma => match modifiers.next()? {
+            "mma_async" => Some(1),
+            "fence" | "commit_group" | "wait_group" => Some(0),
+            _ => None,
+        },
         Abs | Activemask | Add | Addc | Alloca | And | Atom | Bfe | Bfi | Bfind | Bmsk | Brev
         | Clmad | Clz | Cnot | Copysign | Cos | Createpolicy | Cvt | Cvta | Div | Dp2a | Dp4a
         | Elect | Ex2 | Fma | Fns | Getctarank | Isspacep | Ld | Ldmatrix | Ldu | Lg2 | Lop3
@@ -235,6 +240,27 @@ mod tests {
             ("tcgen05.fence::before_thread_sync;", Some("")),
             ("tcgen05.fence::after_thread_sync;", Some("")),
             ("tcgen05.wait::xx.sync.aligned;", None),
+        ] {
+            assert_eq!(written(instr).as_deref(), regs, "{instr}");
+        }
+    }
+
+    #[test]
+    fn wgmma_writes_its_accumulator() {
+        for (instr, regs) in [
+            (
+                "wgmma.mma_async.sync.aligned.m64n8k16.f32.f16.f16 \
+                 {%f1, %f2, %f3, %f4}, %rd1, %rd2, 1, 1, 1, 0, 0;",
+                Some("%f1 %f2 %f3 %f4"),
+            ),
+            (
+                "wgmma.mma_async.sp.sync.aligned.m64n8k32.f32.f16.f16 \
+                 {%f1, %f2, %f3, %f4}, %rd1, %rd2, %r1, 0, 1, 1, 1, 0, 0;",
+                Some("%f1 %f2 %f3 %f4"),
+            ),
+            ("wgmma.commit_group.sync.aligned;", Some("")),
+            ("wgmma.wait_group.sync.aligned 0;", Some("")),
+            ("wgmma.mma.sync.aligned;", None),
         ] {
             assert_eq!(written(instr).as_deref(), regs, "{instr}");
         }
