@@ -20,7 +20,7 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Instr, Kernel, Module, Operand, Stmt};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
 use std::collections::{HashMap, HashSet};
@@ -68,7 +68,7 @@ impl<'a> AffineValueTracer<'a> {
         for (i, stmt) in kernel.stmts.iter().enumerate() {
             if let Stmt::Instr(instr) = stmt
                 && let Some(&first) = module.operand_ids(instr.operands).first()
-                && defines_dest(instr.mnemonic.name())
+                && defines_dest(instr.mnemonic)
             {
                 let written = match module.operand(first) {
                     Operand::Register(_) => std::slice::from_ref(&first),
@@ -137,7 +137,7 @@ impl<'a> AffineValueTracer<'a> {
             else {
                 return None;
             };
-            if instr.mnemonic.name() != "mov" {
+            if instr.mnemonic != Opcode::Mov {
                 return None;
             }
             let c = parse_int(self.module.interner.resolve(*text))?;
@@ -204,7 +204,7 @@ impl<'a> AffineValueTracer<'a> {
                 if let Stmt::Instr(instr) = stmt
                     && let Some(&first) = self.module.operand_ids(instr.operands).first()
                     && let Operand::Register(reg) = self.module.operand(first)
-                    && defines_dest(instr.mnemonic.name())
+                    && defines_dest(instr.mnemonic)
                 {
                     in_loop_defs.entry(*reg).or_default().push(blk.start + i);
                 }
@@ -223,22 +223,24 @@ impl<'a> AffineValueTracer<'a> {
                 return None;
             };
             let ops = self.module.operand_ids(instr.operands);
-            match (instr.mnemonic.name(), ops) {
-                ("mov", [_, src]) => match self.module.operand(*src) {
+            match (instr.mnemonic, ops) {
+                (Opcode::Mov, [_, src]) => match self.module.operand(*src) {
                     Operand::Register(r) => Some((*r, SymExpr::Const(0))),
                     _ => None,
                 },
-                ("add", [_, a, b]) => match (self.module.operand(*a), self.module.operand(*b)) {
-                    (Operand::Register(r), Operand::Immediate(c))
-                    | (Operand::Immediate(c), Operand::Register(r)) => Some((
-                        *r,
-                        SymExpr::Const(parse_int(self.module.interner.resolve(*c))?),
-                    )),
-                    (Operand::Register(r), Operand::Register(s)) => invariant_step(*s, site)
-                        .map(|step| (*r, step))
-                        .or_else(|| invariant_step(*r, site).map(|step| (*s, step))),
-                    _ => None,
-                },
+                (Opcode::Add, [_, a, b]) => {
+                    match (self.module.operand(*a), self.module.operand(*b)) {
+                        (Operand::Register(r), Operand::Immediate(c))
+                        | (Operand::Immediate(c), Operand::Register(r)) => Some((
+                            *r,
+                            SymExpr::Const(parse_int(self.module.interner.resolve(*c))?),
+                        )),
+                        (Operand::Register(r), Operand::Register(s)) => invariant_step(*s, site)
+                            .map(|step| (*r, step))
+                            .or_else(|| invariant_step(*r, site).map(|step| (*s, step))),
+                        _ => None,
+                    }
+                }
                 _ => None,
             }
         };
@@ -317,7 +319,7 @@ impl<'a> AffineValueTracer<'a> {
             .rev()
             .find_map(|(i, s)| match s {
                 Stmt::Instr(instr)
-                    if instr.mnemonic.name() == "setp"
+                    if instr.mnemonic == Opcode::Setp
                         && self
                             .module
                             .operand_ids(instr.operands)
@@ -546,7 +548,7 @@ impl<'a> AffineValueTracer<'a> {
             if let Some((step, phi)) = self.ivs[cur.0 as usize].get(&reg)
                 && self.in_loop(cur, def)
                 && let Stmt::Instr(instr) = &self.kernel.stmts[def]
-                && matches!(instr.mnemonic.name(), "add" | "mov")
+                && matches!(instr.mnemonic, Opcode::Add | Opcode::Mov)
             {
                 let init = self.iv_init(*phi, cur, depth + 1)?;
                 return Ok(Affine::term(Var::Iter(cur), step.clone()) + init);
@@ -557,7 +559,7 @@ impl<'a> AffineValueTracer<'a> {
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return Err("definition is not an instruction".to_owned());
         };
-        let mnemonic = instr.mnemonic.name().to_owned();
+        let mnemonic = instr.mnemonic;
         let mods: Vec<&str> = self
             .module
             .modifiers(instr)
@@ -571,19 +573,19 @@ impl<'a> AffineValueTracer<'a> {
         // order (PTX ISA 6.4.3, "Vectors as Operands"): each is a parameter's
         // whole value only when the load has one element.
         if let Some(Operand::VectorList { children }) = ops.first().map(|&o| self.module.operand(o))
-            && (mnemonic != "ld" || mods.contains(&"param") && children.len() > 1)
+            && (mnemonic != Opcode::Ld || mods.contains(&"param") && children.len() > 1)
         {
             let opcode = self.module.opcode(instr);
             return Err(format!("{name} is one of `{opcode}`'s vector destinations"));
         }
 
-        match mnemonic.as_str() {
-            "mov" => arg(1),
-            "cvt" | "cvta" => {
+        match mnemonic {
+            Opcode::Mov => arg(1),
+            Opcode::Cvt | Opcode::Cvta => {
                 // Width changes are value-preserving in the nonneg domain.
                 self.trace_operand(*ops.last().expect("cvt has operands"), def, id, depth + 1)
             }
-            "ld" => {
+            Opcode::Ld => {
                 if mods.contains(&"param")
                     && let Some(Operand::Memory { base, .. }) =
                         ops.get(1).map(|&i| self.module.operand(i))
@@ -598,9 +600,9 @@ impl<'a> AffineValueTracer<'a> {
                     Err("latch condition depends on a value loaded from memory".to_owned())
                 }
             }
-            "add" if ops.len() == 3 => Ok(arg(1)? + arg(2)?),
-            "sub" if ops.len() == 3 => Ok(arg(1)? - arg(2)?),
-            "and" if ops.len() == 3 => {
+            Opcode::Add if ops.len() == 3 => Ok(arg(1)? + arg(2)?),
+            Opcode::Sub if ops.len() == 3 => Ok(arg(1)? - arg(2)?),
+            Opcode::And if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
                 let (val, mask) = (arg(1)?, arg(2)?);
                 let (affine, konst) = match (self.constant(&mask), self.constant(&val)) {
@@ -640,7 +642,7 @@ impl<'a> AffineValueTracer<'a> {
                     .align_down(1i64 << low)
                     .ok_or_else(|| refuse(&hi, id, "mod"))
             }
-            "or" if ops.len() == 3 => {
+            Opcode::Or if ops.len() == 3 => {
                 // LLVM writes an add as `or` when no bits can overlap: every
                 // part of one side is a multiple of a power of two above
                 // the other side's largest value.
@@ -673,7 +675,7 @@ impl<'a> AffineValueTracer<'a> {
                     },
                 }
             }
-            "bfe" if ops.len() == 4 => {
+            Opcode::Bfe if ops.len() == 4 => {
                 // bfe d, a, pos, len: bits [pos, pos + len) of a. Signed from
                 // bit 0 is a width change, value-preserving in the nonneg
                 // domain like cvt; unsigned is (a >> pos) mod 2^len.
@@ -698,14 +700,14 @@ impl<'a> AffineValueTracer<'a> {
                     .modulo_const(1i64 << len)
                     .ok_or_else(|| refuse(&shifted, id, "bit field"))
             }
-            "shl" if ops.len() == 3 => {
+            Opcode::Shl if ops.len() == 3 => {
                 let v = arg(1)?;
                 match self.constant(&arg(2)?) {
                     Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".to_owned()),
                 }
             }
-            "shr" if ops.len() == 3 => {
+            Opcode::Shr if ops.len() == 3 => {
                 let v = arg(1)?;
                 let Some(c) = self.constant(&arg(2)?) else {
                     return Err("shift by a non-constant amount".to_owned());
@@ -737,19 +739,19 @@ impl<'a> AffineValueTracer<'a> {
                     Err(format!("shift by {c} is out of range"))
                 }
             }
-            "div" | "rem" if ops.len() == 3 => {
+            Opcode::Div | Opcode::Rem if ops.len() == 3 => {
                 let a = arg(1)?;
                 let Some(d) = self.constant(&arg(2)?).filter(|&d| d > 0) else {
-                    return Err(format!("{mnemonic} by a non-constant divisor"));
+                    return Err(format!("{} by a non-constant divisor", mnemonic.name()));
                 };
-                let result = if mnemonic == "div" {
+                let result = if mnemonic == Opcode::Div {
                     a.clone().div_const(d)
                 } else {
                     a.clone().modulo_const(d)
                 };
                 result.ok_or_else(|| refuse(&a, id, "division"))
             }
-            "shfl" if mods.contains(&"idx") && ops.len() == 5 => {
+            Opcode::Shfl if mods.contains(&"idx") && ops.len() == 5 => {
                 // shfl.sync.idx d, a, c, 31, mask: a's value in lane c of the
                 // warp. With warps of 32 consecutive %tid.x, that is a with
                 // %tid.x replaced by 32·⌊%tid.x/32⌋ + c; a warp-uniform a
@@ -800,24 +802,24 @@ impl<'a> AffineValueTracer<'a> {
                 a.map_vars(lane)
                     .ok_or_else(|| "shfl.idx of a value not a function of %tid.x".to_owned())
             }
-            "min" | "max" if ops.len() == 3 => {
+            Opcode::Min | Opcode::Max if ops.len() == 3 => {
                 // A clamp of two constants (after bindings) is a constant.
                 let (a, b) = (arg(1)?, arg(2)?);
                 match (self.constant(&a), self.constant(&b)) {
-                    (Some(x), Some(y)) => {
-                        Ok(Affine::invariant(SymExpr::Const(if mnemonic == "min" {
+                    (Some(x), Some(y)) => Ok(Affine::invariant(SymExpr::Const(
+                        if mnemonic == Opcode::Min {
                             x.min(y)
                         } else {
                             x.max(y)
-                        })))
-                    }
+                        },
+                    ))),
                     _ if a.is_invariant() && b.is_invariant() => {
-                        Err(format!("{mnemonic} of values not both constant"))
+                        Err(format!("{} of values not both constant", mnemonic.name()))
                     }
-                    _ => Err(refuse(&(a + b), id, &mnemonic)),
+                    _ => Err(refuse(&(a + b), id, mnemonic.name())),
                 }
             }
-            "mul" if ops.len() == 3 => {
+            Opcode::Mul if ops.len() == 3 => {
                 let (a, b) = (arg(1)?, arg(2)?);
                 if a.is_invariant() {
                     Ok(b.scale(a.base))
@@ -827,7 +829,7 @@ impl<'a> AffineValueTracer<'a> {
                     Err(refuse(&(a + b), id, "product"))
                 }
             }
-            "mad" if ops.len() == 4 => {
+            Opcode::Mad if ops.len() == 4 => {
                 let (a, b, c) = (arg(1)?, arg(2)?, arg(3)?);
                 let prod = if a.is_invariant() {
                     b.scale(a.base)
@@ -849,7 +851,10 @@ impl<'a> AffineValueTracer<'a> {
                         });
                 Err(match fundamental {
                     Some(reason) => format!("{reason}, behind `{}`", self.module.opcode(instr)),
-                    None => format!("value defined by unsupported instruction `{other}`"),
+                    None => format!(
+                        "value defined by unsupported instruction `{}`",
+                        other.name()
+                    ),
                 })
             }
         }
@@ -889,8 +894,8 @@ impl<'a> AffineValueTracer<'a> {
             .modifiers(instr)
             .iter()
             .any(|&m| self.module.interner.resolve(m) == "param");
-        match instr.mnemonic.name() {
-            "ld" if !is_param_load => Some(
+        match instr.mnemonic {
+            Opcode::Ld if !is_param_load => Some(
                 if id.is_some_and(|l| self.in_loop(l, def)) {
                     "latch condition depends on a value loaded inside the loop"
                 } else {
@@ -898,7 +903,7 @@ impl<'a> AffineValueTracer<'a> {
                 }
                 .to_owned(),
             ),
-            "atom" => Some("latch condition depends on an atomic operation".to_owned()),
+            Opcode::Atom => Some("latch condition depends on an atomic operation".to_owned()),
             _ => self
                 .module
                 .operand_ids(instr.operands)
@@ -956,23 +961,23 @@ pub(crate) fn special_register(name: &str) -> Option<SpecialRegister> {
 
 /// Mnemonics whose first operand is a register destination (for the
 /// def table). Memory stores, branches, and sync ops define nothing.
-fn defines_dest(mnemonic: &str) -> bool {
+fn defines_dest(mnemonic: Opcode) -> bool {
     !matches!(
         mnemonic,
-        "st" | "bra"
-            | "brx"
-            | "ret"
-            | "exit"
-            | "bar"
-            | "barrier"
-            | "membar"
-            | "fence"
-            | "red"
-            | "call"
-            | "trap"
-            | "brkpt"
-            | "nop"
-            | "prefetch"
+        Opcode::St
+            | Opcode::Bra
+            | Opcode::Brx
+            | Opcode::Ret
+            | Opcode::Exit
+            | Opcode::Bar
+            | Opcode::Barrier
+            | Opcode::Membar
+            | Opcode::Fence
+            | Opcode::Red
+            | Opcode::Call
+            | Opcode::Trap
+            | Opcode::Brkpt
+            | Opcode::Prefetch
     )
 }
 
