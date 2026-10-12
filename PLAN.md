@@ -100,7 +100,18 @@ its shared writes and instruction counts remain counted
   enclosing loop's counter (`micro/triangular.ptx`), and the attention kernels'
   causal loops, bounded by the CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
-  tile loop, which has a latch and an exit per partition.
+  tile loop, which has a latch and an exit per partition. Bounds the
+  tracer does not read, by the loop's source line: a `max` of
+  non-constants (b200 `scaled_mm_kernel`, `:100`), a division by a
+  non-constant (b200 `_chunk_scan_fwd_kernel`, `:331`), one half of a
+  `mov.b64 {…}` unpack (b200 `_w8a8_block_fp8_matmul`, `:90`), a float
+  immediate and an `and.pred` latch predicate (sol-study census
+  `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
+  (`01542.ptx` `:223`).
+  Over the census's 2,997 sm_100a loops (`missed-opt-census/art/sm100v3`,
+  inferred arguments), 749 have a trip count: 1,437 are mbarrier waits
+  and 408 read loaded values, 242 grid-stride, 50 `max`/`min`, 34
+  unpacks, 20 atomics, 19 divisions, 15 multi-exit.
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
@@ -160,6 +171,13 @@ its shared writes and instruction counts remain counted
   unique bytes times CTAs.
 
 ### Producers and validation
+
+- **The affine tracer can overflow the stack.** 14 of the census's
+  2,837 sm_100a kernels abort (`missed-opt-census/art/sm100v3/00846.ptx`:
+  `thread 'main' has overflowed its stack`): `obstacle` meets a merged
+  register and calls `obstacle_of_any_def`, which starts a new visited
+  set, so a loop-carried value recurses without end
+  (`src/analysis/scalar/trace.rs`).
 
 - **The frontend is not panic-free for arbitrary UTF-8.** An input file
   containing only `é` causes `ptxroof analyze` to exit with a panic:
@@ -236,6 +254,15 @@ its shared writes and instruction counts remain counted
   wait's result runs a timing-dependent number of times: such lines
   are marked `timing_dependent` and not checked (the attention forward
   records: 30 lines each).
+- The `.loc` per line (`measure.py`, `numbered`) goes before any line
+  ending in `;`, so in a `.branchtargets` list spread over lines it
+  lands inside the directive and ptxas rejects the file (`Parsing error
+  near '.loc'`): the seven launches of Triton's sm_100a warp-specialized
+  kernels in sol-study's reports, which dispatch partitions through
+  `brx.idx`, cannot be measured or imported.
+- Kernels that ship only SASS have no PTX to read: 18 of the 149
+  launches in sol-study's B200 reports (cuBLAS, cuDNN, CUTLASS and CuTe
+  DSL, flashinfer's trtllm-gen attention, PyTorch's elementwise).
 - `--ncu` compares no counts in a kernel with irreducible control
   flow, whose blocks' executions the tool does not know
   (`tests/lit/ncu-irreducible.test`: every block `unchecked`), nor
