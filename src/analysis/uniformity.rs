@@ -15,7 +15,7 @@ use crate::analysis::scalar::trace::{
     AffineValueTracer, ReachingDefinition, SpecialRegister, special_register,
 };
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{Instr, Module, Operand, OperandId, Stmt};
+use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Stmt};
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
@@ -59,7 +59,7 @@ impl Uniformity {
         }
         for b in (0..t.cfg.blocks.len() as u32).map(BlockId) {
             if let Some((pos, instr)) = t.last_instr(b)
-                && matches!(instr.mnemonic.name(), "bra" | "brx")
+                && matches!(instr.mnemonic, Opcode::Bra | Opcode::Brx)
             {
                 let mut regs = registers(t.module, t.module.operand_ids(instr.operands));
                 regs.extend(instr.predicate.map(|p| p.reg));
@@ -221,7 +221,7 @@ fn lane_wise(module: &Module, instr: &Instr) -> bool {
         // PTX ISA §9.7.2: addc, subc and madc also read the carry flag
         // CC.CF, which no register holds.
         InstructionCategory::NonFlopArith { .. } => {
-            !matches!(instr.mnemonic.name(), "addc" | "subc" | "madc")
+            !matches!(instr.mnemonic, Opcode::Addc | Opcode::Subc | Opcode::Madc)
         }
         InstructionCategory::Flop => c.contributions.iter().all(|k| {
             matches!(
@@ -233,7 +233,7 @@ fn lane_wise(module: &Module, instr: &Instr) -> bool {
             )
         }),
         _ => {
-            instr.mnemonic.name() == "ld"
+            instr.mnemonic == Opcode::Ld
                 && module
                     .modifiers(instr)
                     .iter()

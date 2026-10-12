@@ -39,7 +39,7 @@ use crate::analysis::thread_participation::{ThreadSet, ThreadSets, thread_sets};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
-use crate::ptx::ir::{Instr, Kernel, Module, Stmt};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::measured::{LineIndex, NcuRecord, Prediction};
@@ -388,8 +388,8 @@ impl KernelReportBuilder<'_> {
                             None,
                         ),
                     };
-                    let align = match instr.mnemonic.name() {
-                        "cp" => module.operand_ids(instr.operands).iter().find_map(|&id| {
+                    let align = match instr.mnemonic {
+                        Opcode::Cp => module.operand_ids(instr.operands).iter().find_map(|&id| {
                             match module.operand(id) {
                                 Operand::Immediate(text) => {
                                     parse_int(module.interner.resolve(*text))

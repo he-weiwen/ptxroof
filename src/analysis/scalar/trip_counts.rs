@@ -36,7 +36,7 @@ use crate::analysis::scalar::affine::Var;
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Operand, Stmt};
+use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
 
@@ -254,7 +254,7 @@ fn predicate_phi_trips(
         let Stmt::Instr(instr) = &tracer.kernel.stmts[site] else {
             return None;
         };
-        if instr.mnemonic.name() != "mov" {
+        if instr.mnemonic != Opcode::Mov {
             return None;
         }
         let [_, src] = tracer.module.operand_ids(instr.operands) else {

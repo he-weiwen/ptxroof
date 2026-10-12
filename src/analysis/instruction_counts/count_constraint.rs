@@ -1,4 +1,4 @@
-use crate::ptx::ir::{Instr, Module};
+use crate::ptx::ir::{Instr, Module, Opcode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CountConstraint {
@@ -8,7 +8,8 @@ pub enum CountConstraint {
 }
 
 pub fn count_constraint(module: &Module, instr: &Instr) -> CountConstraint {
-    let mnemonic = instr.mnemonic.name();
+    use Opcode::*;
+    let mnemonic = instr.mnemonic;
     let mods: Vec<&str> = module
         .modifiers(instr)
         .iter()
@@ -26,18 +27,16 @@ pub fn count_constraint(module: &Module, instr: &Instr) -> CountConstraint {
     // fence.sc (§9.7.14.4), except their .proxy forms; mbarrier.arrive and
     // arrive_drop default to .release, test_wait and try_wait to .acquire
     // (§9.7.14.16.16, §9.7.14.16.17, §9.7.14.16.19).
-    let fence = matches!(mnemonic, "fence" | "membar") && !has(&["proxy"]);
-    let mbarrier =
-        mnemonic == "mbarrier" && has(&["arrive", "arrive_drop", "test_wait", "try_wait"]);
+    let fence = matches!(mnemonic, Fence | Membar) && !has(&["proxy"]);
+    let mbarrier = mnemonic == Mbarrier && has(&["arrive", "arrive_drop", "test_wait", "try_wait"]);
     let strong = has(&["relaxed", "acquire", "release", "acq_rel"])
-        || matches!(mnemonic, "atom" | "red" | "bar" | "barrier")
+        || matches!(mnemonic, Atom | Red | Bar | Barrier)
         || fence
         || mbarrier;
     // §9.7.3.3–§9.7.5.2: add, sub and mul "with an explicit rounding
     // modifier [are] treated conservatively by the code optimizer";
     // §9.7.3.6, §9.7.3.7: fma and mad round once, by .rnd.
-    let rounded =
-        matches!(mnemonic, "add" | "sub" | "mul" | "fma" | "mad") && has(&["rn", "rz", "rm", "rp"]);
+    let rounded = matches!(mnemonic, Add | Sub | Mul | Fma | Mad) && has(&["rn", "rz", "rm", "rp"]);
     if strong || rounded {
         CountConstraint::Constrained
     } else {

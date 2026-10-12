@@ -538,9 +538,9 @@ impl PredicateReader<'_> {
             .is_some_and(
                 |&id| matches!(self.module.operand(id), Operand::Register(r) if *r == reg),
             );
-        let p = match (instr.mnemonic.name(), second) {
-            ("setp", true) => !p,
-            ("elect", false) => Pred::Unknown,
+        let p = match (instr.mnemonic, second) {
+            (Opcode::Setp, true) => !p,
+            (Opcode::Elect, false) => Pred::Unknown,
             (_, true) if !matches!(p, Pred::Elect(_)) => Pred::Unknown,
             _ => p,
         };
@@ -562,32 +562,32 @@ impl PredicateReader<'_> {
             Operand::Register(r) => Some(*r),
             _ => None,
         };
-        match (instr.mnemonic.name(), mods.as_slice(), ops) {
-            ("setp", _, _) => (
+        match (instr.mnemonic, mods.as_slice(), ops) {
+            (Opcode::Setp, _, _) => (
                 condition(self.module, self.kernel, self.tracer, self.uniformity, def)
                     .unwrap_or(Pred::Unknown),
                 false,
             ),
-            ("and" | "or", ["pred"], [_, a, b]) => {
+            (Opcode::And | Opcode::Or, ["pred"], [_, a, b]) => {
                 let (Some(a), Some(b)) = (reg(*a), reg(*b)) else {
                     return (Pred::Unknown, false);
                 };
                 let ((a, ca), (b, cb)) = (self.read(a, def, depth), self.read(b, def, depth));
-                let p = if instr.mnemonic.name() == "and" {
+                let p = if instr.mnemonic == Opcode::And {
                     a.and(b)
                 } else {
                     a.or(b)
                 };
                 (p, ca || cb)
             }
-            ("not", ["pred"], [_, a]) => match reg(*a) {
+            (Opcode::Not, ["pred"], [_, a]) => match reg(*a) {
                 Some(a) => {
                     let (p, cut) = self.read(a, def, depth);
                     (!p, cut)
                 }
                 None => (Pred::Unknown, false),
             },
-            ("elect", _, _) => {
+            (Opcode::Elect, _, _) => {
                 let here = self
                     .cfg
                     .blocks
