@@ -1,4 +1,13 @@
 # The sol-study reports regen.sh imports, relative to the checkout, each
-# optionally limited to one kernel: every profiled case of the
-# b200_ncu_triton run.
+# optionally limited to one kernel. Every profiled case of the b200_ncu_triton
+# run; then, from the root-cause runs, the kernels that add the most to the
+# corpus (warp specialization, TMA, tensor-memory forms, refusals).
 results/b200_ncu_triton/ncu/*.ncu-rep
+results/rca_ssm/run3/ncu/scan_tma_ws_best.ncu-rep _chunk_scan_fwd_tma
+results/rca_attn/ncu/tut_ll_BM128_BN128_w4_s2_wsTrue.ncu-rep attn_fwd
+results/rca_attn/ncu/sg_decode_BN32_w4_s2.ncu-rep _fwd_grouped_kernel_stage1
+results/rca_gemm/ncu/blk_mx_128x256_s4w4.ncu-rep mx_block_scaled
+results/rca_attn/ncu/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.ncu-rep attn_fwd
+results/rca_ssm/run2/ncu/ssd_pass_tlrange.ncu-rep _state_passing_fwd_kernel
+results/rca_small_r4/ncu/rca_small__ropec.ncu-rep rope_cache_tile_flip
+results/rca_mla_run2/ncu/tma_best_Q64N64w8s3.ncu-rep _stage1_tma

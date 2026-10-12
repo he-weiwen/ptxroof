@@ -55,7 +55,8 @@ its shared writes and instruction counts remain counted
   (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and
   an address through one is read as the last write. Its blacklist
   treats `stackrestore` and register-valued `nanosleep` inputs as definitions.
-  The parser drops TMA coordinates, leaves bare register names as symbol
+  The parser drops TMA coordinates (five B200 fixtures do not round-trip:
+  `Arguments mismatch for instruction 'cp.async.bulk.tensor'`), leaves bare register names as symbol
   references, and merges same-named registers in sibling scopes; negated
   source predicates, parenthesized call operands and an address followed
   by `.unified` (PTX ISA §9.7.9.8, `unified_address_is_unparsed`) become
@@ -118,7 +119,8 @@ its shared writes and instruction counts remain counted
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
   textures and surfaces; `multimem`; video instructions. `tcgen05`
-  is in seven of the B200 fixtures (`tests/fixtures/b200`).
+  is in 12 of the B200 fixtures (`tests/fixtures/b200`), bulk tensor
+  copies (`cp.async.bulk*`) in five.
 - **Instruction keywords after PTX ISA 9.3.** The parser knows the
   pinned manual's Table 2 and `fabric`; a keyword a later ISA adds
   leaves its statement unparsed (`mnemonics_outside_the_isa_are_unparsed`;
@@ -196,16 +198,20 @@ its shared writes and instruction counts remain counted
   GEMM, the cross-entropy chunk and the warp-specialized attention
   forward at two shapes each, the attention backward's three kernels;
   every instruction classifies), Triton 3.9.0 output for the 26 kernel
-  launches of 20 production-shaped serving and training cases
-  (`tests/fixtures/b200`, sm_100a, from sol-study's B200 Nsight
-  Compute reports), and hand-written micro kernels. clang is untested.
+  launches of 20 production-shaped serving and training cases and eight
+  kernels of its root-cause runs (`tests/fixtures/b200`, sm_100a, from
+  sol-study's B200 Nsight Compute reports: among them Triton's
+  warp-specialized SSD scan and tutorial attention, TMA attention and
+  MLA, a block-scaled GEMM), and hand-written micro kernels. clang is
+  untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 58 of the 62 fixtures. k14's is
+  identical to the original's for 61 of the 70 fixtures. k14's is
   rejected because the in-kernel `.local` depot declaration is
   discarded; assembler diagnostics can vary (the current round trip reports
   `Arguments mismatch for instruction 'mov'`). k1's and k2's assemble to
   different SASS because `.pragma "nounroll";` is discarded, so ptxas
-  unrolls the loop it annotated. These are allowlisted in
+  unrolls the loop it annotated. Five B200 TMA kernels lose their
+  tensor coordinates (above). These are allowlisted in
   `tests/roundtrip-allowlist.txt`. One lit test per fixture
   (`tests/lit/roundtrip`), unsupported without the toolkit or when
   ptxas rejects the fixture's `.version` as newer than its own.

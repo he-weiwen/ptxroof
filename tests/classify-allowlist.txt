@@ -10,3 +10,8 @@ wgmma
 # sm_100 family (PLAN.md, missing features): Triton's B200 GEMM, MoE and
 # attention kernels in tests/fixtures/b200 use tensor memory.
 tcgen05
+
+# Bulk and tensor copies, cp.async.bulk* (PLAN.md, instruction families):
+# the B200 TMA kernels in tests/fixtures/b200. cp.async's classified forms
+# are pinned by tests/instruction_contributions.rs.
+cp
