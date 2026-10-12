@@ -11,7 +11,7 @@ add.rn.f32	1	564
 add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
 add.s32	1	3547
-add.s64	1	2414
+add.s64	1	2415
 add.u64	1	3
 and.b16	1	21
 and.b32	1	680
@@ -88,7 +88,7 @@ ld.param.b64	1	248
 ld.param.f32	1	20
 ld.param.s32	1	36
 ld.param.u32	1	35
-ld.param.u64	1	59
+ld.param.u64	1	60
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -130,7 +130,7 @@ mov.b64	1	4004
 mov.f32	1	912
 mov.pred	1	104
 mov.u16	1	293
-mov.u32	1	1010
+mov.u32	1	1011
 mov.u64	1	46
 mul.f32	1	1805
 mul.hi.s32	1	1
@@ -143,7 +143,7 @@ mul.rn.f32	1	2358
 mul.rn.f32x2	1	773
 mul.wide.s32	1	144
 mul.wide.u16	1	6
-mul.wide.u32	1	114
+mul.wide.u32	1	115
 nanosleep.u32	0	13
 neg.bf16	1	12
 neg.bf16x2	1	16
@@ -161,7 +161,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	31
 rem.s64	1	10
 rem.u32	1	8
-ret	0	84
+ret	0	85
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	800
@@ -215,7 +215,7 @@ st.global.b32	0	197
 st.global.b64	0	9
 st.global.f32	0	13
 st.global.u16	0	197
-st.global.u32	0	20
+st.global.u32	0	21
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2
 st.global.v4.b32	0	208
@@ -262,6 +262,7 @@ tcgen05.st.sync.aligned.32x32b.x32.b32	0	11
 tcgen05.st.sync.aligned.32x32b.x64.b32	0	20
 tcgen05.wait::ld.sync.aligned	0	36
 tcgen05.wait::st.sync.aligned	0	28
+tex.1d.v4.s32.s32	1	1
 vadd.u32.u32.u32	-	1
 wgmma.fence.sync.aligned	0	1
 wmma.load.a.sync.aligned.row.m16n16k16.global.f16	1	1

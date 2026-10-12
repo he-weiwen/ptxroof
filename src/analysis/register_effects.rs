@@ -65,28 +65,26 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
         | Neg | Not | Or | Popc | Prmt | Rcp | Redux | Rem | Rsqrt | Sad | Selp | Set | Setp
         | Shf | Shfl | Shl | Shr | Sin | Slct | Sqrt | Stacksave | Sub | Subc | Szext | Tanh
         | Testp | Vote | Xor => Some(1),
+        Istypep | Suld | Suq | Tex | Tld4 | Txq => Some(1),
         Applypriority | Bra | Brkpt | Brx | Cp | Discard | Exit | Fence | Griddepcontrol
         | Membar | Nanosleep | Pmevent | Prefetch | Prefetchu | Red | Ret | Setmaxnreg | St
-        | Stackrestore | Stmatrix | Tensormap | Trap => Some(0),
+        | Stackrestore | Stmatrix | Sured | Sust | Tensormap | Trap => Some(0),
         _ => None,
     }
 }
 
 /// The registers operand `op` names: itself, or the elements of a `{…}`
-/// or `p|q`.
+/// or `p|q`, as in `tex`'s `{…}|p`.
 pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
-    let ops = match module.operand(op) {
+    match module.operand(op) {
+        Operand::Register(r) => vec![*r],
         Operand::MultipleDestinations { children } | Operand::VectorList { children } => {
-            module.operand_ids(*children)
+            (module.operand_ids(*children).iter())
+                .flat_map(|&c| registers(module, c))
+                .collect()
         }
-        _ => std::slice::from_ref(&op),
-    };
-    (ops.iter())
-        .filter_map(|&id| match module.operand(id) {
-            Operand::Register(r) => Some(*r),
-            _ => None,
-        })
-        .collect()
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -344,6 +342,31 @@ mod tests {
             ("clusterlaunchcontrol.cancel.b128 [%r1];", None),
         ] {
             assert_eq!(written(instr).as_deref(), regs, "{instr}");
+        }
+    }
+
+    #[test]
+    fn textures_and_surfaces_write_their_first_operand_unless_they_store() {
+        for (instr, regs) in [
+            (
+                "tex.2d.v4.f32.f32 {%f1, %f2, %f3, %f4}|%p1, [tex1, {%f5, %f6}];",
+                "%f1 %f2 %f3 %f4 %p1",
+            ),
+            (
+                "tld4.r.2d.v4.f32.f32 {%f1, %f2, %f3, %f4}, [tex1, {%f5, %f6}];",
+                "%f1 %f2 %f3 %f4",
+            ),
+            ("txq.level.width.b32 %r1, [tex1], %r2;", "%r1"),
+            ("istypep.texref %p1, %rd2;", "%p1"),
+            (
+                "suld.b.1d.v2.b32.trap {%r1, %r2}, [surf1, {%r3}];",
+                "%r1 %r2",
+            ),
+            ("suq.width.b32 %r1, [surf1];", "%r1"),
+            ("sust.b.1d.v2.b32.trap [surf1, {%r3}], {%r1, %r2};", ""),
+            ("sured.b.add.2d.u32.trap [surf1, {%r3, %r4}], %r1;", ""),
+        ] {
+            assert_eq!(written(instr).as_deref(), Some(regs), "{instr}");
         }
     }
 }

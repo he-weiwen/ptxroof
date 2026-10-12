@@ -58,7 +58,9 @@ its shared writes and instruction counts remain counted
   (`tests/register_effects_corpus.rs`), fall back to a blacklist that
   takes the first operand of all but 14 keywords as written. The parser drops TMA coordinates (five B200 fixtures
   do not round-trip: `Arguments mismatch for instruction
-  'cp.async.bulk.tensor'`); negated source predicates, parenthesized
+  'cp.async.bulk.tensor'`) and a texture's coordinates and its
+  module's `.texref` (`micro/texture_outputs.ptx`: `Arguments mismatch
+  for instruction 'tex'`); negated source predicates, parenthesized
   call operands and an address followed by `.unified` (PTX ISA
   §9.7.9.8, `unified_address_is_unparsed`) become `Unparsed`.
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a

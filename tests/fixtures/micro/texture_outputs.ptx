@@ -1,0 +1,29 @@
+//
+// HAND-WRITTEN: `tex.1d.v4.s32.s32 d|p, [a, c]` writes the four
+// elements of d as well as p (PTX ISA §9.7.11.3), so the store's address
+// comes from the texture, not from %tid.x (ptxas 13.4: `TLD.SCR.LZ P0,
+// RZ, R4, R4, ...` over the thread index in R4, then `IMAD.WIDE.U32 R2,
+// R4, R3, c[0x0][0x160]`).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+.global .texref micro_texture_outputs_tex;
+
+.visible .entry micro_texture_outputs(
+	.param .u64 micro_texture_outputs_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_texture_outputs_param_0];
+	mov.u32 	%r1, %tid.x;
+	tex.1d.v4.s32.s32 	{%r1, %r2, %r3, %r4}|%p1, [micro_texture_outputs_tex, {%r1}];
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r2;
+	ret;
+}

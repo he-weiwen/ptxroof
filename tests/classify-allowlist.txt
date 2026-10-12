@@ -19,3 +19,7 @@ cp
 # Video instructions (PLAN.md, instruction families): micro/video_selector.ptx
 # records how the parser names a selected operand of `vadd`.
 vadd
+
+# Textures (PLAN.md, instruction families): micro/texture_outputs.ptx
+# pins the registers `tex` writes.
+tex

@@ -25,3 +25,8 @@ b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ptx
 b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx
 b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx
 b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx
+
+# A texture's coordinates and the module's .texref are dropped (PLAN.md,
+# register effects), so ptxas reports "Arguments mismatch for instruction
+# 'tex'".
+micro/texture_outputs.ptx
