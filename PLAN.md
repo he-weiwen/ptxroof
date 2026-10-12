@@ -79,7 +79,12 @@ its shared writes and instruction counts remain counted
   scope takes the name in the whole kernel: in
   `micro/scoped_shadow.ptx` the `%laneid` read after the scope, which
   ptxas reads as `SR_LANEID`, is the scoped register's 0, so 32
-  threads' stores are `warp: 1 sector` at `[param_0]`.
+  threads' stores are `warp: 1 sector` at `[param_0]`. And a video
+  instruction's operand selector (`%r1.h0`, PTX ISA §9.7.19.1) is read
+  as part of the name: in `micro/video_selector.ptx` the `vadd` that
+  writes all of %r1 writes `%r1.h0` instead, so the address stays
+  `[4 * %tid.x + param_0]`, where ptxas stores to param_0 from all 32
+  threads.
 - **`cvt` is read as its last operand unchanged** (PTX ISA §9.7.9.22):
   a two-source pack (`cvt.rn.bf16x2.f32 d, a, b` puts `a` in the
   upper half; 400 in seven Gluon fixtures), the bits of an

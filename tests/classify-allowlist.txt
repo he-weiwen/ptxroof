@@ -15,3 +15,7 @@ tcgen05
 # the B200 TMA kernels in tests/fixtures/b200. cp.async's classified forms
 # are pinned by tests/instruction_contributions.rs.
 cp
+
+# Video instructions (PLAN.md, instruction families): micro/video_selector.ptx
+# records how the parser names a selected operand of `vadd`.
+vadd

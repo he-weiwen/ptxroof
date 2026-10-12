@@ -1,0 +1,28 @@
+//
+// HAND-WRITTEN: `vadd.u32.u32.u32 d.h0, a, b, c` writes all of d, its
+// low half a + b and its high half c's (PTX ISA §9.7.19.1, `optMerge`),
+// so %r1 is 0 for every thread and all 32 store to param_0 (ptxas 13.4:
+// `PRMT R5, R0, 0x7610, R5`, then `IMAD.WIDE.U32 R2, R5, R2,
+// c[0x0][0x160]`).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_video_selector(
+	.param .u64 micro_video_selector_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_video_selector_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, 0;
+	vadd.u32.u32.u32 	%r1.h0, %r2, %r2, %r1;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
