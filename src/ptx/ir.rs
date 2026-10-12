@@ -234,8 +234,11 @@ pub struct Predicate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operand {
-    /// `%rd5`, `%tid.x` — register or special-register reference.
+    /// `%rd5` — a register.
     Register(Symbol),
+    /// `%tid.x` — a special register the kernel does not shadow with a
+    /// `.reg` of the same name, which ptxas 13.4 accepts.
+    Special(SpecialReg),
     /// Numeric immediate, original text preserved (`-7`, `0f3F800000`).
     Immediate(Symbol),
     /// Bare identifier: branch-target label, global symbol, `WARP_SZ`.

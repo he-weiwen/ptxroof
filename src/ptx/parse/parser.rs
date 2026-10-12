@@ -20,11 +20,11 @@
 
 use crate::ptx::ir::{
     FileDirective, FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, Param,
-    Predicate, RegDecl, SharedDecl, SourceLoc, Stmt,
+    Predicate, RegDecl, SharedDecl, SourceLoc, SpecialReg, Stmt,
 };
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::lexer::{Token, TokenKind, tokenize};
-use crate::support::index::{IdxRange, IndexVec};
+use crate::support::index::{Idx, IdxRange, IndexVec};
 use crate::support::intern::{Interner, Symbol};
 use std::collections::HashMap;
 
@@ -312,7 +312,17 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(TokenKind::LBrace, "'{' starting kernel body")?;
+        let first = self.operands.len();
         self.parse_body(&mut kernel)?;
+        for id in (first..self.operands.len()).map(OperandId::from_usize) {
+            if let Operand::Register(sym) = self.operands[id]
+                && let name = self.interner.resolve(sym)
+                && let Some(reg) = SpecialReg::from_name(name)
+                && !declares(&self.interner, &kernel.reg_decls, name)
+            {
+                self.operands[id] = Operand::Special(reg);
+            }
+        }
         Ok(kernel)
     }
 
@@ -870,6 +880,19 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn declares(interner: &Interner, decls: &[RegDecl], name: &str) -> bool {
+    decls.iter().any(|d| {
+        let prefix = interner.resolve(d.prefix);
+        match d.count {
+            None => prefix == name,
+            Some(n) => name
+                .strip_prefix(prefix)
+                .and_then(|i| i.parse::<u32>().ok())
+                .is_some_and(|i| i < n),
+        }
+    })
+}
+
 fn parse_version(text: &str) -> Option<(u32, u32)> {
     let (major, minor) = text.split_once('.')?;
     Some((major.parse().ok()?, minor.parse().ok()?))
@@ -929,6 +952,27 @@ mod tests {
         let m = parse(src).expect("nvcc's .func declaration and definition parse");
         assert_eq!(m.kernels.len(), 1);
         assert_eq!(m.interner.resolve(m.kernels[0].name), "k");
+    }
+
+    #[test]
+    fn special_registers_unless_a_reg_reuses_the_name() {
+        use crate::ptx::ir::{Element, SpecialScalar, SpecialVector};
+        let m = parse_body(
+            ".reg .b32 %tid;\n.reg .b32 %pm<8>;\nmov.u32 %r1, %laneid;\n\
+             mov.u32 %r2, %ctaid.r;\nmov.u32 %tid, %pm3;\nret;",
+        );
+        let source = |i: usize| m.operand(m.operand_ids(instrs(&m)[i].operands)[1]).clone();
+        assert_eq!(
+            source(0),
+            Operand::Special(SpecialReg::Scalar(SpecialScalar::Laneid))
+        );
+        assert_eq!(
+            source(1),
+            Operand::Special(SpecialReg::Vector(SpecialVector::Ctaid, Some(Element::X)))
+        );
+        let dest = m.operand(m.operand_ids(instrs(&m)[2].operands)[0]);
+        assert!(matches!(dest, Operand::Register(r) if m.interner.resolve(*r) == "%tid"));
+        assert!(matches!(source(2), Operand::Register(r) if m.interner.resolve(r) == "%pm3"));
     }
 
     #[test]

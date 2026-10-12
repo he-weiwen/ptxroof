@@ -50,20 +50,20 @@ impl Uniformity {
                 reads.push((node, Read::Divergent(why)));
                 continue;
             }
-            let mut regs = registers(t.module, &ops[1..]);
+            let mut rs = operand_reads(t, &ops[1..], d);
             if let Some(p) = instr.predicate {
-                regs.push(p.reg);
-                regs.extend(registers(t.module, &ops[..1]));
+                rs.push(read(t, p.reg, d));
+                rs.extend(operand_reads(t, &ops[..1], d));
             }
-            reads.extend(regs.into_iter().map(|r| (node, read(t, r, d))));
+            reads.extend(rs.into_iter().map(|r| (node, r)));
         }
         for b in (0..t.cfg.blocks.len() as u32).map(BlockId) {
             if let Some((pos, instr)) = t.last_instr(b)
                 && matches!(instr.mnemonic, Opcode::Bra | Opcode::Brx)
             {
-                let mut regs = registers(t.module, t.module.operand_ids(instr.operands));
-                regs.extend(instr.predicate.map(|p| p.reg));
-                reads.extend(regs.into_iter().map(|r| (Node::Branch(b), read(t, r, pos))));
+                let mut rs = operand_reads(t, t.module.operand_ids(instr.operands), pos);
+                rs.extend(instr.predicate.map(|p| read(t, p.reg, pos)));
+                reads.extend(rs.into_iter().map(|r| (Node::Branch(b), r)));
             }
         }
         let mut users: HashMap<Node, Vec<Node>> = HashMap::new();
@@ -163,13 +163,7 @@ fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
                     || t.reach[t.block_of(d).0 as usize][here.0 as usize]
             })
             .collect(),
-        ReachingDefinition::None => {
-            return match special_register(name) {
-                Some(SpecialRegister::PerCta) => Read::Uniform,
-                Some(SpecialRegister::PerThread) => Read::Divergent(format!("depends on {name}")),
-                None => Read::Divergent(format!("reads {name}, which has no definition")),
-            };
-        }
+        ReachingDefinition::None => return read_unwritten(name),
     };
     let mut sources: Vec<Node> = defs.iter().map(|&d| Node::Def(d)).collect();
     // An η's gating predicates: the exits of every loop holding a
@@ -242,13 +236,22 @@ fn lane_wise(module: &Module, instr: &Instr) -> bool {
     }
 }
 
-fn registers(module: &Module, ops: &[OperandId]) -> Vec<Symbol> {
+fn read_unwritten(name: &str) -> Read {
+    match special_register(name) {
+        Some(SpecialRegister::PerCta) => Read::Uniform,
+        Some(SpecialRegister::PerThread) => Read::Divergent(format!("depends on {name}")),
+        None => Read::Divergent(format!("reads {name}, which has no definition")),
+    }
+}
+
+fn operand_reads(t: &AffineValueTracer, ops: &[OperandId], pos: usize) -> Vec<Read> {
     ops.iter()
-        .flat_map(|&op| match module.operand(op) {
-            Operand::Register(r) => vec![*r],
-            Operand::Memory { base, .. } => registers(module, &[*base]),
+        .flat_map(|&op| match t.module.operand(op) {
+            Operand::Register(r) => vec![read(t, *r, pos)],
+            Operand::Special(reg) => vec![read_unwritten(&reg.name())],
+            Operand::Memory { base, .. } => operand_reads(t, &[*base], pos),
             Operand::VectorList { children } | Operand::MultipleDestinations { children } => {
-                registers(module, module.operand_ids(*children))
+                operand_reads(t, t.module.operand_ids(*children), pos)
             }
             Operand::Immediate(_) | Operand::SymbolRef(_) => Vec::new(),
         })

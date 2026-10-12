@@ -20,7 +20,7 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, Stmt};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
 use std::collections::{HashMap, HashSet};
@@ -161,10 +161,7 @@ impl<'a> AffineValueTracer<'a> {
                 .operand_ids(instr.operands)
                 .iter()
                 .skip(1)
-                .find_map(|&op| match self.module.operand(op) {
-                    Operand::Register(r) => self.obstacle(*r, d, id, &mut seen),
-                    _ => None,
-                })
+                .find_map(|&op| self.operand_obstacle(op, d, id, &mut seen))
         })
     }
 
@@ -458,13 +455,15 @@ impl<'a> AffineValueTracer<'a> {
 
     pub(crate) fn trace_operand(
         &self,
-        op: crate::ptx::ir::OperandId,
+        op: OperandId,
         pos: usize,
         id: Option<LoopId>,
         depth: u32,
     ) -> Result<Affine, String> {
         match self.module.operand(op) {
             Operand::Register(reg) => self.trace_reg(*reg, pos, id, depth, None),
+            Operand::Special(_) if depth > 32 => Err("value trace exceeds depth limit".to_owned()),
+            Operand::Special(reg) => self.trace_unwritten(&reg.name()),
             Operand::Immediate(text) => {
                 let text = self.module.interner.resolve(*text);
                 parse_int(text)
@@ -479,6 +478,28 @@ impl<'a> AffineValueTracer<'a> {
             other => Err(format!(
                 "unsupported operand form in latch trace: {other:?}"
             )),
+        }
+    }
+
+    /// A register no instruction writes: a special register, or none.
+    fn trace_unwritten(&self, name: &str) -> Result<Affine, String> {
+        match Var::special(name) {
+            Some(v) => Ok(Affine::var(v)),
+            // PTX ISA §10.3: %laneid is "the thread's lane within the
+            // warp", and §3.1: a warp "contains threads of consecutive,
+            // increasing thread IDs with the first warp containing
+            // thread 0"; in a one-dimensional block that is %tid.x mod 32.
+            None if name == "%laneid" && self.one_dimensional() => {
+                Ok(Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
+            }
+            // The launch shape is uniform: a symbol, bound when known.
+            None if name.starts_with("%ntid") || name.starts_with("%nctaid") => {
+                Ok(Affine::invariant(SymExpr::sym(name)))
+            }
+            None if special_register(name).is_some() => Err(format!(
+                "latch condition depends on special register {name}"
+            )),
+            None => Err(format!("no definition found for {name}")),
         }
     }
 
@@ -519,26 +540,7 @@ impl<'a> AffineValueTracer<'a> {
                     .obstacle_of_any_def(reg, id)
                     .unwrap_or_else(|| format!("{name} has more than one reaching definition")));
             }
-            ReachingDefinition::None => {
-                return match Var::special(name) {
-                    Some(v) => Ok(Affine::var(v)),
-                    // PTX ISA §10.3: %laneid is "the thread's lane within the
-                    // warp", and §3.1: a warp "contains threads of consecutive,
-                    // increasing thread IDs with the first warp containing
-                    // thread 0"; in a one-dimensional block that is %tid.x mod 32.
-                    None if name == "%laneid" && self.one_dimensional() => {
-                        Ok(Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
-                    }
-                    // The launch shape is uniform: a symbol, bound when known.
-                    None if name.starts_with("%ntid") || name.starts_with("%nctaid") => {
-                        Ok(Affine::invariant(SymExpr::sym(name)))
-                    }
-                    None if special_register(name).is_some() => Err(format!(
-                        "latch condition depends on special register {name}"
-                    )),
-                    None => Err(format!("no definition found for {name}")),
-                };
-            }
+            ReachingDefinition::None => return self.trace_unwritten(name),
         };
 
         // The counter of this loop or an enclosing one, read at or after
@@ -842,13 +844,10 @@ impl<'a> AffineValueTracer<'a> {
             }
             other => {
                 let mut seen = HashSet::new();
-                let fundamental =
-                    ops.iter()
-                        .skip(1)
-                        .find_map(|&op| match self.module.operand(op) {
-                            Operand::Register(r) => self.obstacle(*r, def, id, &mut seen),
-                            _ => None,
-                        });
+                let fundamental = ops
+                    .iter()
+                    .skip(1)
+                    .find_map(|&op| self.operand_obstacle(op, def, id, &mut seen));
                 Err(match fundamental {
                     Some(reason) => format!("{reason}, behind `{}`", self.module.opcode(instr)),
                     None => format!(
@@ -877,10 +876,7 @@ impl<'a> AffineValueTracer<'a> {
         let def = match self.reach_def(reg, pos, None) {
             ReachingDefinition::Def(d) => d,
             ReachingDefinition::None => {
-                let name = self.module.interner.resolve(reg);
-                return special_register(name)
-                    .is_some()
-                    .then(|| format!("latch condition depends on special register {name}"));
+                return unwritten_obstacle(self.module.interner.resolve(reg));
             }
             ReachingDefinition::Carried(_) | ReachingDefinition::Merged(_) => {
                 return self.obstacle_of_any_def(reg, id);
@@ -909,10 +905,21 @@ impl<'a> AffineValueTracer<'a> {
                 .operand_ids(instr.operands)
                 .iter()
                 .skip(1)
-                .find_map(|&op| match self.module.operand(op) {
-                    Operand::Register(r) => self.obstacle(*r, def, id, seen),
-                    _ => None,
-                }),
+                .find_map(|&op| self.operand_obstacle(op, def, id, seen)),
+        }
+    }
+
+    fn operand_obstacle(
+        &self,
+        op: OperandId,
+        pos: usize,
+        id: Option<LoopId>,
+        seen: &mut HashSet<Symbol>,
+    ) -> Option<String> {
+        match self.module.operand(op) {
+            Operand::Register(r) => self.obstacle(*r, pos, id, seen),
+            Operand::Special(reg) => unwritten_obstacle(&reg.name()),
+            _ => None,
         }
     }
 
@@ -922,6 +929,12 @@ impl<'a> AffineValueTracer<'a> {
             blk.start <= stmt && stmt < blk.end
         })
     }
+}
+
+fn unwritten_obstacle(name: &str) -> Option<String> {
+    special_register(name)
+        .is_some()
+        .then(|| format!("latch condition depends on special register {name}"))
 }
 
 /// Why an arithmetic form is refused: a special register or an enclosing

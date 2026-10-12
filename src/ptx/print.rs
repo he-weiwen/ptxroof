@@ -142,6 +142,7 @@ fn dump_operand(m: &Module, id: OperandId) -> String {
         Operand::Register(sym) | Operand::Immediate(sym) | Operand::SymbolRef(sym) => {
             m.interner.resolve(*sym).to_owned()
         }
+        Operand::Special(reg) => reg.name(),
         Operand::Memory { base, offset } => {
             let base = dump_operand(m, *base);
             if *offset == 0 {
