@@ -623,14 +623,6 @@ fn bytes_of(mods: &[&str]) -> Option<u32> {
     width.map(|w| w * vec)
 }
 
-/// Byte width of a single PTX fundamental type token (`b8`, `f32`,
-/// `b128`, …) — the per-element size used to size `.shared` array
-/// declarations. Thin wrapper over [`bytes_of`]; array element types
-/// never carry the vector multipliers `bytes_of` also handles.
-pub(crate) fn type_width(ty: &str) -> Option<u32> {
-    bytes_of(&[ty])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

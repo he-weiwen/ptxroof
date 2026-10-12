@@ -19,8 +19,8 @@
 //! PTX validation, and lexer panics on arbitrary UTF-8 are not caught.
 
 use crate::ptx::ir::{
-    FileDirective, Instr, Kernel, Module, Operand, OperandId, Param, Predicate, RegDecl,
-    SharedDecl, SourceLoc, Stmt,
+    FileDirective, FundamentalType, Instr, Kernel, Module, Operand, OperandId, Param, Predicate,
+    RegDecl, SharedDecl, SourceLoc, Stmt,
 };
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::lexer::{Token, TokenKind, tokenize};
@@ -330,8 +330,9 @@ impl<'a> Parser<'a> {
                 "align" => {
                     self.expect_u32(".align value")?;
                 }
-                _ => {
-                    ty = attr;
+                other => {
+                    ty = FundamentalType::from_name(other)
+                        .ok_or_else(|| self.err(format!("unknown param type .{other}")))?;
                     break;
                 }
             }
@@ -598,12 +599,10 @@ impl<'a> Parser<'a> {
         if !self.eat(TokenKind::Dot) {
             return None;
         }
-        let class = if self.at(TokenKind::Identifier) {
-            let t = self.bump();
-            self.interner.intern(t.text)
-        } else {
+        if !self.at(TokenKind::Identifier) {
             return None;
-        };
+        }
+        let class = FundamentalType::from_name(self.bump().text)?;
         let mut decls = Vec::new();
         loop {
             let prefix = match self.peek().kind {
@@ -653,7 +652,7 @@ impl<'a> Parser<'a> {
                 }
                 align = parse_int(self.bump().text).and_then(|v| u32::try_from(v).ok());
             } else {
-                ty = Some(self.interner.intern(attr));
+                ty = Some(FundamentalType::from_name(attr)?);
                 break;
             }
         }
@@ -932,6 +931,17 @@ mod tests {
     }
 
     #[test]
+    fn opaque_params_are_a_parse_error() {
+        let src =
+            ".version 8.7\n.target sm_80\n.visible .entry k(\n.param .texref t\n)\n{\nret;\n}\n";
+        let err = parse(src).expect_err(".texref is not a fundamental type");
+        assert!(
+            err.to_string().contains("unknown param type .texref"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn file_with_timestamp_and_size() {
         let src = wrap_body("ret;") + ".file 1 \"kernel.cu\", 1339013327, 64118\n";
         let m = parse(&src).expect("PTX ISA §11.5.3 example parses");
@@ -1095,7 +1105,7 @@ mod tests {
             .map(|d| m.interner.resolve(d.prefix))
             .collect();
         assert_eq!(names, ["lo", "hi"]);
-        assert_eq!(m.interner.resolve(k.reg_decls[1].class), "b16");
+        assert_eq!(k.reg_decls[1].class, FundamentalType::B16);
         assert!(!k.stmts.iter().any(|s| matches!(s, Stmt::Unparsed { .. })));
         assert_eq!(instrs(&m).len(), 3);
     }
@@ -1193,7 +1203,7 @@ mod tests {
                    .param .u64 k_param_2\n)\n{\nret;\n}\n";
         let m = parse(src).expect("parses");
         let k = &m.kernels[0];
-        let tys: Vec<_> = k.params.iter().map(|p| m.interner.resolve(p.ty)).collect();
+        let tys: Vec<_> = k.params.iter().map(|p| p.ty.name()).collect();
         assert_eq!(tys, ["u32", "f32", "u64"]);
         assert_eq!(m.interner.resolve(k.params[2].name), "k_param_2");
     }

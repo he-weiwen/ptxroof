@@ -44,7 +44,7 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
         let _ = writeln!(
             out,
             ".param .{} {}{comma}",
-            m.interner.resolve(p.ty),
+            p.ty.name(),
             m.interner.resolve(p.name)
         );
     }
@@ -63,7 +63,7 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
             continue;
         }
         let prefix = m.interner.resolve(decl.prefix);
-        let class = m.interner.resolve(decl.class);
+        let class = decl.class.name();
         match decl.count {
             Some(n) => {
                 let _ = writeln!(out, ".reg .{class} {prefix}<{n}>;");
@@ -126,7 +126,7 @@ fn dump_shared_decl(m: &Module, decl: &SharedDecl, out: &mut String) {
         .map(|a| format!(".align {a} "))
         .unwrap_or_default();
     let name = m.interner.resolve(decl.name);
-    let ty = m.interner.resolve(decl.ty);
+    let ty = decl.ty.name();
     match decl.size {
         Some(n) => {
             let _ = writeln!(out, ".shared {align}.{ty} {name}[{n}];");

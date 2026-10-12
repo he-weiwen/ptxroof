@@ -17,6 +17,51 @@ newtype_idx! {
     pub struct OperandId;
 }
 
+macro_rules! named_enum {
+    ($(#[$m:meta])* $vis:vis enum $name:ident { $($variant:ident = $text:literal),* $(,)? }) => {
+        $(#[$m])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        $vis enum $name { $($variant),* }
+
+        impl $name {
+            pub fn name(self) -> &'static str {
+                match self { $(Self::$variant => $text),* }
+            }
+
+            pub fn from_name(text: &str) -> Option<Self> {
+                match text { $($text => Some(Self::$variant),)* _ => None }
+            }
+        }
+    };
+}
+
+named_enum! {
+    /// PTX ISA §5.2.1, Table 8.
+    pub enum FundamentalType {
+        S8 = "s8", S16 = "s16", S32 = "s32", S64 = "s64",
+        U8 = "u8", U16 = "u16", U32 = "u32", U64 = "u64",
+        F16 = "f16", F16x2 = "f16x2", F32 = "f32", F64 = "f64",
+        B8 = "b8", B16 = "b16", B32 = "b32", B64 = "b64", B128 = "b128",
+        Pred = "pred",
+    }
+}
+
+impl FundamentalType {
+    /// `None` for `.pred`: "Predicate variables may only be declared in
+    /// the register state space" (PTX ISA §5.4.1).
+    pub fn bytes(self) -> Option<u32> {
+        use FundamentalType::*;
+        match self {
+            S8 | U8 | B8 => Some(1),
+            S16 | U16 | F16 | B16 => Some(2),
+            S32 | U32 | F32 | F16x2 | B32 => Some(4),
+            S64 | U64 | F64 | B64 => Some(8),
+            B128 => Some(16),
+            Pred => None,
+        }
+    }
+}
+
 /// A source location from a `.loc` directive. For the extended form
 /// (`.loc f l c, function_name $sym, inlined_at f l c`) this is the
 /// `inlined_at` location: attribution wants the user's line, not the
@@ -86,7 +131,7 @@ pub enum Stmt {
 /// `.param .u32 name` in a kernel signature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Param {
-    pub ty: Symbol,
+    pub ty: FundamentalType,
     pub name: Symbol,
 }
 
@@ -94,7 +139,7 @@ pub struct Param {
 /// declared `<N>`), or a singular declaration (`.reg .pred p;`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegDecl {
-    pub class: Symbol,
+    pub class: FundamentalType,
     pub prefix: Symbol,
     pub count: Option<u32>,
 }
@@ -105,7 +150,7 @@ pub struct RegDecl {
 pub struct SharedDecl {
     pub name: Symbol,
     pub align: Option<u32>,
-    pub ty: Symbol,
+    pub ty: FundamentalType,
     pub size: Option<u64>,
 }
 

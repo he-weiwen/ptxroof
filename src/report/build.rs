@@ -1485,9 +1485,7 @@ impl<'a> KernelReportBuilder<'a> {
     /// Shared memory the kernel reserves per CTA: the sum over its
     /// `.shared` array declarations of `element_count × element_width`,
     /// plus whether it declares a launch-sized `.extern .shared` array.
-    /// See [`SharedMemory`]. Element width reuses the classifier's PTX
-    /// type table; an unrecognized type falls back to byte sizing, the
-    /// `.b8` form nvcc emits for shared tiles.
+    /// See [`SharedMemory`].
     fn shared_memory(&self) -> SharedMemory {
         let mut static_bytes = 0u64;
         let mut dynamic = false;
@@ -1498,12 +1496,7 @@ impl<'a> KernelReportBuilder<'a> {
             .chain(&self.module.shared_decls)
         {
             match decl.size {
-                Some(count) => {
-                    let ty = self.module.interner.resolve(decl.ty);
-                    let width = crate::analysis::instruction_counts::classify::type_width(ty)
-                        .unwrap_or(1) as u64;
-                    static_bytes += count * width;
-                }
+                Some(count) => static_bytes += count * decl.ty.bytes().map_or(0, u64::from),
                 None => dynamic = true,
             }
         }
@@ -1611,7 +1604,7 @@ impl<'a> KernelReportBuilder<'a> {
                 .enumerate()
                 .map(|(i, p)| ParamInfo {
                     index: i,
-                    ty: self.module.interner.resolve(p.ty).to_owned(),
+                    ty: p.ty.name().to_owned(),
                     name: self.module.interner.resolve(p.name).to_owned(),
                 })
                 .collect(),

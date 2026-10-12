@@ -160,6 +160,9 @@ its shared writes and instruction counts remain counted
   `end byte index 1 is not a char boundary`. The byte-oriented lexer
   slices an unexpected multibyte character after advancing one byte
   (`src/ptx/parse/lexer.rs`, `make` and `next_token`).
+- **Opaque kernel parameters are a parse error.** `.texref`,
+  `.samplerref` and `.surfref` parameters (PTX ISA §11.2.1) are not
+  fundamental types (`opaque_params_are_a_parse_error`).
 
 - Fixture corpus: nvcc output for one CUDA header ladder (k1, k2, k5,
   k11, k12, k14, mma_demo), Triton 3.8.0 (Gluon) output for five

@@ -111,7 +111,7 @@ fn k2_and_k5_param_tables_match_nvcc_signatures() {
             .params
             .iter()
             .enumerate()
-            .map(|(i, p)| (m.interner.resolve(p.ty), i))
+            .map(|(i, p)| (p.ty.name(), i))
             .collect();
         let want: Vec<(&str, usize)> = expected.to_vec();
         assert_eq!(got, want, "{fixture} param table");
