@@ -53,6 +53,11 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
             "st" | "red" | "cp" => Some(0),
             _ => None,
         },
+        Clusterlaunchcontrol => match modifiers.next()? {
+            "query_cancel" => Some(1),
+            "try_cancel" => Some(0),
+            _ => None,
+        },
         Abs | Activemask | Add | Addc | Alloca | And | Atom | Bfe | Bfi | Bfind | Bmsk | Brev
         | Clmad | Clz | Cnot | Copysign | Cos | Createpolicy | Cvt | Cvta | Div | Dp2a | Dp4a
         | Elect | Ex2 | Fma | Fns | Getctarank | Isspacep | Ld | Ldmatrix | Ldu | Lg2 | Lop3
@@ -314,6 +319,29 @@ mod tests {
                 Some(""),
             ),
             ("multimem.ld.global.u32 %r1, [%rd1];", None),
+        ] {
+            assert_eq!(written(instr).as_deref(), regs, "{instr}");
+        }
+    }
+
+    #[test]
+    fn a_cluster_launch_query_writes_its_first_operand() {
+        for (instr, regs) in [
+            (
+                "clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 %p1, %rq1;",
+                Some("%p1"),
+            ),
+            (
+                "clusterlaunchcontrol.query_cancel.get_first_ctaid.v4.b32.b128 \
+                 {%r1, %r2, %r3, _}, %rq1;",
+                Some("%r1 %r2 %r3"),
+            ),
+            (
+                "clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.b128 \
+                 [%r1], [%r2];",
+                Some(""),
+            ),
+            ("clusterlaunchcontrol.cancel.b128 [%r1];", None),
         ] {
             assert_eq!(written(instr).as_deref(), regs, "{instr}");
         }

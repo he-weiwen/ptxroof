@@ -178,3 +178,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 | `wgmma`: `mma_async` 1; `fence`, `commit_group`, `wait_group` 0; `mma_async`'s read of its accumulator comes with the uses | `fence` 1 | no | one manual form per sub-operation; no lit test, as no output can differ |
 | `wmma`: `load`, `mma` 1; `store` 0 | `load` 74, `mma` 33, `store` 65 | no | the snapshot; no lit test, as no output can differ |
 | `multimem`: `ld_reduce` 1; `st`, `red`, `cp` 0 | none | no | one manual form per sub-operation; no lit test, as no output can differ |
+| `clusterlaunchcontrol`: `query_cancel` 1; `try_cancel` 0 | none | no | one manual form per sub-operation; no lit test, as no output can differ |
