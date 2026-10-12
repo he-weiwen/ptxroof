@@ -27,7 +27,7 @@
 
 use super::measurement::{Contribution, MeasureKind};
 
-use crate::ptx::ir::{Instr, Module, Operand};
+use crate::ptx::ir::{Instr, Module, Opcode, Operand};
 use crate::ptx::literal::parse_int;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -218,8 +218,8 @@ impl ClassifiedInstruction {
 }
 
 pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
+    use Opcode::*;
     let interner = &module.interner;
-    let mnemonic = instr.mnemonic.name();
     let mods: Vec<&str> = module
         .modifiers(instr)
         .iter()
@@ -228,41 +228,40 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
 
     let fp = fp_precision_and_lanes(&mods);
 
-    let mut result = match mnemonic {
+    let mut result = match instr.mnemonic {
         // -- cuda-core flops (FP type modifier required) -----------------
-        "fma" | "mad" => match fp {
+        Fma | Mad => match fp {
             Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::CudaCore, p, 2 * lanes),
             // mad.lo.s32 and friends are address arithmetic, not flops
             // (divergence from v1, which counted 2 "Other" flops here).
             None => ClassifiedInstruction::non_flop(ArithKind::Integer),
         },
-        "add" | "sub" | "mul" | "min" | "max" | "abs" | "neg" | "copysign" => match fp {
+        Add | Sub | Mul | Min | Max | Abs | Neg | Copysign => match fp {
             Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::CudaCore, p, lanes),
             None => ClassifiedInstruction::non_flop(ArithKind::Integer),
         },
 
         // -- special function unit (PTX ISA §9.7.3.8, .13–.22; §9.7.4.9–10) --
-        "rcp" | "sqrt" | "rsqrt" | "sin" | "cos" | "lg2" | "ex2" | "tanh" => match fp {
+        Rcp | Sqrt | Rsqrt | Sin | Cos | Lg2 | Ex2 | Tanh => match fp {
             Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::Sfu, p, lanes),
             None => ClassifiedInstruction::simple(InstructionCategory::Unknown),
         },
-        "div" => match fp {
+        Div => match fp {
             Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::Sfu, p, lanes),
             None => ClassifiedInstruction::non_flop(ArithKind::Integer),
         },
 
         // -- non-flop arithmetic ------------------------------------------
-        "cvt" => ClassifiedInstruction::non_flop(ArithKind::Conversion),
-        "mov" | "cvta" | "mapa" | "stacksave" | "stackrestore" | "alloca" => {
+        Cvt => ClassifiedInstruction::non_flop(ArithKind::Conversion),
+        Mov | Cvta | Mapa | Stacksave | Stackrestore | Alloca => {
             ClassifiedInstruction::non_flop(ArithKind::Move)
         }
-        "setp" | "selp" | "set" | "slct" | "testp" | "isspacep" | "istypep" => {
+        Setp | Selp | Set | Slct | Testp | Isspacep | Istypep => {
             ClassifiedInstruction::non_flop(ArithKind::Predicate)
         }
-        "and" | "or" | "xor" | "not" | "shl" | "shr" | "shf" | "lop3" | "bfe" | "bfi" | "brev"
-        | "popc" | "clz" | "bfind" | "bmsk" | "szext" | "prmt" | "rem" | "sad" | "dp4a"
-        | "dp2a" | "mul24" | "mad24" | "addc" | "subc" | "madc" | "cnot" | "fns" | "clmad"
-        | "getctarank" => {
+        And | Or | Xor | Not | Shl | Shr | Shf | Lop3 | Bfe | Bfi | Brev | Popc | Clz | Bfind
+        | Bmsk | Szext | Prmt | Rem | Sad | Dp4a | Dp2a | Mul24 | Mad24 | Addc | Subc | Madc
+        | Cnot | Fns | Clmad | Getctarank => {
             if mods.contains(&"pred") {
                 ClassifiedInstruction::non_flop(ArithKind::Predicate)
             } else {
@@ -271,8 +270,8 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
         }
 
         // -- memory -----------------------------------------------------------
-        "ld" | "st" => {
-            let direction = if mnemonic == "ld" {
+        Ld | St => {
+            let direction = if instr.mnemonic == Ld {
                 Direction::Load
             } else {
                 Direction::Store
@@ -280,37 +279,37 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
             ClassifiedInstruction::memory(space_of(&mods), direction, bytes_of(&mods))
         }
         // Uniform global loads (PTX ISA §9.7.9.9).
-        "ldu" => ClassifiedInstruction::memory(Space::Global, Direction::Load, bytes_of(&mods)),
+        Ldu => ClassifiedInstruction::memory(Space::Global, Direction::Load, bytes_of(&mods)),
 
         // -- tensor cores (warp-collective; counts are per lane) ----------
-        "wmma" => wmma(&mods),
-        "mma" => mma(&mods),
-        "ldmatrix" => matrix_fragments(&mods, Direction::Load),
-        "stmatrix" => matrix_fragments(&mods, Direction::Store),
+        Wmma => wmma(&mods),
+        Mma => mma(&mods),
+        Ldmatrix => matrix_fragments(&mods, Direction::Load),
+        Stmatrix => matrix_fragments(&mods, Direction::Store),
 
         // -- asynchronous copies -----------------------------------------------
-        "cp" => cp(module, instr, &mods),
+        Cp => cp(module, instr, &mods),
 
         // Atom returns the old value (read + write); red retains the
         // requested-byte convention of write only. Both contribute FP work.
-        "atom" | "red" => atomic(&mods, mnemonic == "atom"),
+        Atom | Red => atomic(&mods, instr.mnemonic == Atom),
 
         // -- sync / warp collectives ---------------------------------------
-        "bar" | "barrier" | "mbarrier" | "membar" | "fence" => {
+        Bar | Barrier | Mbarrier | Membar | Fence => {
             ClassifiedInstruction::simple(InstructionCategory::Sync)
         }
-        "shfl" | "vote" | "match" | "activemask" | "redux" | "elect" => {
+        Shfl | Vote | Match | Activemask | Redux | Elect => {
             ClassifiedInstruction::simple(InstructionCategory::Communication)
         }
 
         // -- control -----------------------------------------------------------
-        "bra" | "brx" | "ret" | "exit" | "call" | "trap" | "brkpt" => {
+        Bra | Brx | Ret | Exit | Call | Trap | Brkpt => {
             ClassifiedInstruction::simple(InstructionCategory::Control)
         }
 
         // -- correctly ignored -------------------------------------------------
-        "nop" | "prefetch" | "prefetchu" | "discard" | "applypriority" | "griddepcontrol"
-        | "createpolicy" | "nanosleep" | "pmevent" | "setmaxnreg" => {
+        Prefetch | Prefetchu | Discard | Applypriority | Griddepcontrol | Createpolicy
+        | Nanosleep | Pmevent | Setmaxnreg => {
             ClassifiedInstruction::simple(InstructionCategory::Ignore)
         }
 
