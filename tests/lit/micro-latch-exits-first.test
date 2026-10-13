@@ -1,0 +1,16 @@
+# Wrong output (PLAN.md): a do-while loop whose latch is false at its
+# first evaluation runs once (ptxas, and on an RTX 4090), but its trip
+# count solves to 5 - 10 = -5, so its counts are negative. With the
+# parameter unbound the second loop reads `trips = param_1 - 10`.
+RUN: %ptxroof analyze %fixtures/micro/latch_exits_first.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/latch_exits_first.ptx --bind 1:n=5 | FileCheck "%s"
+CHECK-LABEL: kernel micro_latch_exits_first
+CHECK: trips = -5
+CHECK: totals [static]:
+CHECK: global bytes: load 0 B, store -40 B
+CHECK-LABEL: kernel micro_latch_exits_first_param
+CHECK: trips = -5
+CHECK: totals [static]:
+CHECK: global bytes: load 0 B, store -40 B
+FREE-LABEL: kernel micro_latch_exits_first_param
+FREE: trips = param_1 - 10

@@ -84,6 +84,15 @@ its shared writes and instruction counts remain counted
   the load at offset 0, so comparing two fields of a by-value
   aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
   threads in 2 warps`, `store 256 B` per CTA).
+- **A loop whose latch is false at its first evaluation gets a trip
+  count below one.** In `micro/latch_exits_first.ptx` a counter from
+  10 is compared below 5 (`setp.lt.s32`): the body runs once (ptxas
+  13.4, and on an RTX 4090), read as `trips = -5` and `store -40 B`;
+  the same loop against a parameter reads `trips = param_1 - 10`, -5
+  with `--bind 1:n=5`. The count is 1 when the loop is entered and 0
+  when a guard skips it, as for nvcc's remainder loop at K = 4096
+  (`k2-bind.test`: `trips = 0`); the trip matcher does not read the
+  guard.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
