@@ -64,6 +64,45 @@ impl<'a> RegisterSsa<'a> {
         self.lookup(reg, block_of(self.cfg, stmt), stmt)
     }
 
+    /// What φ `arg` takes on each edge into its block: the value at each
+    /// reachable predecessor's end, and `Undef` from the kernel's start
+    /// (`None`), an edge into the entry block. Empty for a value that is
+    /// not a φ.
+    pub fn incoming(&self, arg: Value) -> Vec<(Option<BlockId>, Value)> {
+        let Value::Argument { block, reg } = arg else {
+            return Vec::new();
+        };
+        let start = (block == ControlFlowGraph::ENTRY).then_some((None, Value::Undef(reg)));
+        let preds = (self.cfg.block(block).preds.iter()).filter_map(|&p| {
+            let end = self.cfg.block(p).end;
+            self.lookup(reg, p, end).map(|v| (Some(p), v))
+        });
+        start.into_iter().chain(preds).collect()
+    }
+
+    /// The `Result`s `v` may be, through φs, in statement order, then
+    /// `Undef` if some path writes nothing; each once. A guarded
+    /// `Result` is not looked through.
+    pub fn sources(&self, v: Value) -> Vec<Value> {
+        let mut seen = HashSet::new();
+        let mut work = vec![v];
+        let mut out = Vec::new();
+        while let Some(v) = work.pop() {
+            if !seen.insert(v) {
+                continue;
+            }
+            match v {
+                Value::Argument { .. } => work.extend(self.incoming(v).into_iter().map(|(_, w)| w)),
+                _ => out.push(v),
+            }
+        }
+        out.sort_by_key(|v| match *v {
+            Value::Result { op, .. } => op,
+            _ => usize::MAX,
+        });
+        out
+    }
+
     /// The value of `reg` before statement `end` of block `b`, or after
     /// the block when `end` is its end.
     fn lookup(&self, reg: Register, mut b: BlockId, mut end: usize) -> Option<Value> {
@@ -112,10 +151,12 @@ mod tests {
     }
     use At::{End, L};
 
-    /// The values `reads` see in kernel `body`, one statement per line;
-    /// `%cc` is CC. Each value prints as `wN` (written at line N),
-    /// `phiB`, `undef` or `none`.
-    fn values(body: &str, reads: &[(&str, At)]) -> Vec<String> {
+    /// Kernel `body`'s register SSA, one statement per line, handed to
+    /// `f` with a lookup of registers by name, `%cc` for CC.
+    fn with_ssa<R>(
+        body: &str,
+        f: impl FnOnce(&dyn Fn(&str) -> Register, &ControlFlowGraph, &RegisterSsa) -> R,
+    ) -> R {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
              .visible .entry k()\n{{\n{body}\n}}\n"
@@ -131,25 +172,52 @@ mod tests {
                 table.entry(reg).or_default().push(i);
             }
         }
-        let ssa = RegisterSsa::new(&cfg, &doms, table);
-        (reads.iter())
-            .map(|&(name, at)| {
-                let reg = match name {
-                    "%cc" => Register::Cc,
-                    _ => Register::Named(module.interner.get(name).expect("register")),
-                };
-                let value = match at {
-                    L(line) => ssa.value_before(line, reg),
-                    End(b) => ssa.lookup(reg, BlockId(b), cfg.block(BlockId(b)).end),
-                };
-                match value {
-                    Some(Value::Result { op, .. }) => format!("w{op}"),
-                    Some(Value::Argument { block, .. }) => format!("phi{}", block.0),
-                    Some(Value::Undef(_)) => "undef".to_owned(),
-                    None => "none".to_owned(),
-                }
-            })
-            .collect()
+        let reg = |name: &str| match name {
+            "%cc" => Register::Cc,
+            _ => Register::Named(module.interner.get(name).expect("register")),
+        };
+        f(&reg, &cfg, &RegisterSsa::new(&cfg, &doms, table))
+    }
+
+    /// `wN` (written at line N), `phiB`, `undef` or `none`.
+    fn show(value: Option<Value>) -> String {
+        match value {
+            Some(Value::Result { op, .. }) => format!("w{op}"),
+            Some(Value::Argument { block, .. }) => format!("phi{}", block.0),
+            Some(Value::Undef(_)) => "undef".to_owned(),
+            None => "none".to_owned(),
+        }
+    }
+
+    /// The values `reads` see in kernel `body`.
+    fn values(body: &str, reads: &[(&str, At)]) -> Vec<String> {
+        with_ssa(body, |reg, cfg, ssa| {
+            (reads.iter())
+                .map(|&(name, at)| {
+                    show(match at {
+                        L(line) => ssa.value_before(line, reg(name)),
+                        End(b) => ssa.lookup(reg(name), BlockId(b), cfg.block(BlockId(b)).end),
+                    })
+                })
+                .collect()
+        })
+    }
+
+    /// The `incoming` (`bN:` from block N, `start:` from the kernel's
+    /// start) and, after `->`, the `sources` of the value `name` has
+    /// before line `line`.
+    fn merged(body: &str, name: &str, line: usize) -> String {
+        with_ssa(body, |reg, _, ssa| {
+            let v = ssa.value_before(line, reg(name)).expect("a reachable line");
+            let incoming = (ssa.incoming(v).into_iter()).map(|(p, w)| match p {
+                Some(p) => format!("b{}:{}", p.0, show(Some(w))),
+                None => format!("start:{}", show(Some(w))),
+            });
+            let sources = (ssa.sources(v).into_iter()).map(|w| show(Some(w)));
+            let incoming: Vec<String> = incoming.collect();
+            let sources: Vec<String> = sources.collect();
+            format!("{} -> {}", incoming.join(" "), sources.join(" "))
+        })
     }
 
     #[test]
@@ -172,6 +240,7 @@ mod tests {
             ("%r1", End(0)),
         ];
         assert_eq!(values(body, &reads), ["phi2", "w1", "w3", "w0"]);
+        assert_eq!(merged(body, "%r1", 5), "b0:w0 b1:w3 -> w0 w3");
     }
 
     #[test]
@@ -188,6 +257,7 @@ mod tests {
             ("%r1", End(1)),
         ];
         assert_eq!(values(body, &reads), ["phi1", "w2", "w2", "undef", "w2"]);
+        assert_eq!(merged(body, "%r1", 2), "b0:w0 b1:w2 -> w0 w2");
     }
 
     #[test]
@@ -198,6 +268,10 @@ mod tests {
                     add.s32 %r1, %r1, 1;\nsetp.lt.s32 %p2, %r1, %r2;\n@%p2 bra $L__O;\nret;";
         let reads = [("%r3", L(4)), ("%r1", L(5)), ("%r1", L(7)), ("%r3", L(2))];
         assert_eq!(values(body, &reads), ["phi2", "phi1", "phi1", "phi1"]);
+        assert_eq!(merged(body, "%r1", 5), "b0:w0 b3:w7 -> w0 w7");
+        // %r3's φ at the outer header holds nothing a read sees; its
+        // value on entry was never written.
+        assert_eq!(merged(body, "%r3", 2), "b0:undef b3:w4 -> w4 undef");
     }
 
     #[test]
@@ -209,6 +283,8 @@ mod tests {
                     setp.lt.s32 %p2, %r3, %r1;\n@%p2 bra $L__A;\nret;";
         let reads = [("%r3", L(3)), ("%r3", L(5)), ("%r3", L(6)), ("%r3", L(8))];
         assert_eq!(values(body, &reads), ["phi1", "phi2", "w5", "w5"]);
+        assert_eq!(merged(body, "%r3", 3), "b0:undef b2:w5 -> w5 undef");
+        assert_eq!(merged(body, "%r3", 5), "b0:undef b1:w3 -> w3 undef");
     }
 
     #[test]
@@ -217,6 +293,7 @@ mod tests {
                     @%p1 bra $L__E;\nret;";
         let reads = [("%r1", L(1)), ("%r2", L(2)), ("%r1", L(4))];
         assert_eq!(values(body, &reads), ["phi0", "undef", "w1"]);
+        assert_eq!(merged(body, "%r1", 1), "start:undef b0:w1 -> w1 undef");
     }
 
     #[test]
@@ -227,6 +304,27 @@ mod tests {
                     $L__END:\nst.global.u32 [%rd9], %r1;\nret;";
         let reads = [("%r1", L(3)), ("%r1", End(1)), ("%r1", L(5))];
         assert_eq!(values(body, &reads), ["none", "none", "w0"]);
+    }
+
+    #[test]
+    fn sources_follow_a_cycle_of_phis_once() {
+        // blocks: 0 line 0, 1 lines 1-3 (header), 2 line 4, 3 lines 5-7
+        // (join and latch), 4 line 8
+        let body = "mov.u32 %r1, 0;\n$L__H:\nsetp.lt.s32 %p1, %r2, 3;\n@%p1 bra $L__S;\n\
+                    mov.u32 %r1, 7;\n\
+                    $L__S:\nsetp.lt.s32 %p2, %r1, %r2;\n@%p2 bra $L__H;\nret;";
+        assert_eq!(merged(body, "%r1", 6), "b1:phi1 b2:w4 -> w0 w4");
+        assert_eq!(merged(body, "%r1", 2), "b0:w0 b3:phi3 -> w0 w4");
+    }
+
+    #[test]
+    fn a_phi_takes_nothing_from_an_unreachable_predecessor() {
+        // blocks: 0 lines 0-1, 1 line 2 (unreachable), 2 lines 3-6, 3 line 7
+        let body = "mov.u32 %r1, 0;\nbra $L__H;\n\
+                    mov.u32 %r1, 5;\n\
+                    $L__H:\nadd.s32 %r1, %r1, 1;\nsetp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__H;\n\
+                    ret;";
+        assert_eq!(merged(body, "%r1", 4), "b0:w0 b2:w4 -> w0 w4");
     }
 
     #[test]

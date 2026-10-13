@@ -214,7 +214,7 @@ loop's counter) is its own commit with a test pinning the new answer.
     `writes` and `reads_cc` share; the induction chains, the SSA's test
     helper and the corpus test use `writes`, the SSA's test helper
     gaining the CC write of an unparsed statement it omitted. Done.
-11. `incoming` and `sources`; tests through nested φs and a cycle.
+11. `incoming` and `sources`; tests through nested φs and a cycle. Done.
 12. The tracer builds `RegisterSsa`. A temporary corpus snapshot of, for
     every explicit and implicit (CC) read and every header query
     excluding its loop: today's `ReachingDefinition`, the new `Value`,
