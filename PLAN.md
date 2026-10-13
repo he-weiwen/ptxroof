@@ -251,13 +251,15 @@ its shared writes and instruction counts remain counted
   MLA, a block-scaled GEMM), and hand-written micro kernels. clang is
   untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 61 of the 70 fixtures. k14's is
-  rejected because the in-kernel `.local` depot declaration is
-  discarded; assembler diagnostics can vary (the current round trip reports
-  `Arguments mismatch for instruction 'mov'`). k1's and k2's assemble to
-  different SASS because `.pragma "nounroll";` is discarded, so ptxas
-  unrolls the loop it annotated. Five B200 TMA kernels lose their
-  tensor coordinates (above). These are allowlisted in
+  identical to the original's for 87 of the 96 fixtures
+  (`tests/lit.sh -v tests/lit/roundtrip`, ptxas 13.4). k14's and
+  `micro/address_operands.ptx`'s are rejected because the in-kernel
+  `.local` declaration is discarded (`Unknown symbol
+  '__local_depot0'`, `'lbuf'`). k1's and k2's assemble to different
+  SASS because `.pragma "nounroll";` is discarded, so ptxas unrolls
+  the loop it annotated. `micro/texture_outputs.ptx`,
+  `call_returns.ptx`, `unparsed_writes.ptx` and `vector_register.ptx`
+  lose what the parser drops (above). These are allowlisted in
   `tests/roundtrip-allowlist.txt`. One lit test per fixture
   (`tests/lit/roundtrip`), unsupported without the toolkit or when
   ptxas rejects the fixture's `.version` as newer than its own.
