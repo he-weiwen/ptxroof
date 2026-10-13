@@ -1,0 +1,9 @@
+# A loop of 4 trips requesting 4 + 8 + 4 B a trip, 64 B (ptxas unrolls
+# it into four STG, LDG.E.64, STG), one store through a loaded pointer:
+# the loop's footprint leaves that store out, 48 B, and is not marked as
+# a bound.
+RUN: %ptxroof analyze %fixtures/micro/footprint_unknown.ptx | FileCheck "%s"
+CHECK: kernel micro_footprint_unknown
+CHECK: global bytes: load 8 B, store 8 B
+CHECK: st.global.u32  global store 4 B                            unknown: depends on a value loaded inside the loop
+CHECK-NEXT: global bytes per CTA over the loop's own blocks: requested 48 B, unique 24 B, in sectors 256 B

@@ -179,6 +179,13 @@ its shared writes and instruction counts remain counted
   shape, and constant lane and counter coefficients. k5's K loop at
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
   k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B.
+- **A loop's footprint leaves out the accesses whose address is
+  unknown**, and is not marked as a bound. In
+  `micro/footprint_unknown.ptx` a store through a pointer the loop
+  loads is an `unknown` row, and the footprint is `requested 48 B`,
+  where the loop requests 64 B, 4 + 8 + 4 B on each of 4 trips (its
+  own per-iteration `global bytes: load 8 B, store 8 B`; ptxas 13.4
+  unrolls it into four `STG`, `LDG.E.64`, `STG`).
 
 ### Reported as unknowns
 
