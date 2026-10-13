@@ -140,7 +140,10 @@ its shared writes and instruction counts remain counted
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B
-  unique for the 131,072 B requested; aliasing would halve it), count
+  unique for the 131,072 B requested; aliasing would halve it), and
+  so bases on one pointer that differ by an unbound parameter
+  (`micro/one_pointer_two_bases.ptx`: a[k] and a[k + n] count 32 B
+  unique, 16 B with `--bind 1:n=0`), count
   the loop's own blocks only, and need a numeric trip count, the block
   shape, constant lane and counter coefficients, and every access's
   address (else `unique unknown`, `micro/footprint_unknown.ptx`). k5's K loop at

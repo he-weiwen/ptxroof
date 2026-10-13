@@ -1,0 +1,8 @@
+# a[k] and a[k + n] over 4 trips: 8 distinct words when n is 4 or more,
+# 4 when n is 0. Unbound, the two bases on one pointer are summed as
+# disjoint (PLAN.md, "Unique bytes per loop assume ..."); bound to 0,
+# they are one base.
+RUN: %ptxroof analyze %fixtures/micro/one_pointer_two_bases.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/one_pointer_two_bases.ptx --bind 1:n=0 | FileCheck --check-prefix=ZERO "%s"
+FREE: global bytes per CTA over the loop's own blocks: requested 32 B, unique 32 B, in sectors 256 B
+ZERO: global bytes per CTA over the loop's own blocks: requested 32 B, unique 16 B, in sectors 256 B

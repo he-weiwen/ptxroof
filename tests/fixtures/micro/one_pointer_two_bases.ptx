@@ -1,0 +1,42 @@
+//
+// HAND-WRITTEN: one thread loads a[k] and a[k + n] for k = 0 to 3, n a
+// parameter: 8 distinct words for n of 4 or more, 4 for n = 0 (ptxas
+// 13.4, sm_89, unrolls it into `LDG.E [R4.64]` to `[R4.64+0xc]` and four
+// `LDG.E` at `IMAD.WIDE.U32 ..., c[0x0][0x160]` of k + n). The loop
+// footprint sums the two bases, a[0] and a[n], as different pointers.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_one_pointer_two_bases(
+	.param .u64 micro_one_pointer_two_bases_param_0,
+	.param .u32 micro_one_pointer_two_bases_param_1
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .f32 	%f<4>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [micro_one_pointer_two_bases_param_0];
+	ld.param.u32 	%r1, [micro_one_pointer_two_bases_param_1];
+	mov.u32 	%r2, 0;
+	mov.f32 	%f3, 0f00000000;
+$L__BB0_1:
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	ld.global.f32 	%f1, [%rd3];
+	add.s32 	%r3, %r2, %r1;
+	mul.wide.u32 	%rd4, %r3, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	ld.global.f32 	%f2, [%rd5];
+	add.f32 	%f3, %f3, %f1;
+	add.f32 	%f3, %f3, %f2;
+	add.s32 	%r2, %r2, 1;
+	setp.lt.u32 	%p1, %r2, 4;
+	@%p1 bra 	$L__BB0_1;
+	st.global.f32 	[%rd1], %f3;
+	ret;
+}
