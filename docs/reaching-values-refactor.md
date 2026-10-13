@@ -321,7 +321,8 @@ loop's counter) is its own commit with a test pinning the new answer.
     definition.
 13. The tracer holds `RegisterSsa`, and `uniformity::read_sites` reads
     `sources`. Done; no fixture output changed.
-14. `uniformity::read_sites` refuses `Undef`.
+14. `uniformity::read_sites` refuses `Undef`. Done; no fixture output
+    changed.
 15. `trace_reg` reads values: `value_before`, then a `Result` as
     today's `Def`, a header `Argument` whose register `ivs` holds as
     today's `Carried`, another `Argument` as today's `Merged` with

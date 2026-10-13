@@ -192,14 +192,18 @@ fn read(t: &AffineValueTracer, reg: Register, pos: usize) -> Read {
     let Some(v) = t.ssa.value_before(pos, reg) else {
         return Read::Divergent(format!("reads {name} in a block no path reaches"));
     };
-    let defs: Vec<usize> = (t.ssa.sources(v).into_iter())
-        .filter_map(|s| match s {
+    let sources = t.ssa.sources(v);
+    let defs: Vec<usize> = (sources.iter())
+        .filter_map(|s| match *s {
             Value::Result { op, .. } => Some(op),
             _ => None,
         })
         .collect();
     if defs.is_empty() {
         return Read::Divergent(format!("reads {name}, which has no definition"));
+    }
+    if sources.iter().any(|s| matches!(s, Value::Undef(_))) {
+        return Read::Divergent(format!("reads {name}, which a path leaves unwritten"));
     }
     read_sites(t, name, &defs, pos, node)
 }
@@ -446,6 +450,13 @@ mod tests {
         };
         assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
         assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+    }
+
+    #[test]
+    fn a_value_one_path_leaves_unwritten_is_divergent() {
+        let body = "setp.lt.u32 %p1, %r0, 4;\n@%p1 bra $L__J;\nmov.u32 %r2, 7;\n$L__J:";
+        let why = "reads %r2, which a path leaves unwritten".to_owned();
+        assert_eq!(uniform(body, "%r2"), Err(why));
     }
 
     #[test]
