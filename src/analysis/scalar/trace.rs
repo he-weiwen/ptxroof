@@ -19,6 +19,7 @@ use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::recurrences::{Recurrence, Step, recurrences};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trip_counts::loop_trips;
+use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{
     Element, Instr, Kernel, Module, Opcode, Operand, OperandId, Register, SpecialReg,
@@ -27,7 +28,7 @@ use crate::ptx::ir::{
 use crate::ptx::literal::parse_int;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 pub(crate) struct AffineValueTracer<'a> {
@@ -53,6 +54,7 @@ pub(crate) struct AffineValueTracer<'a> {
     trips: RefCell<HashMap<LoopId, Option<i64>>>,
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<String, i64>>,
+    uniformity: OnceCell<Uniformity>,
 }
 
 impl<'a> AffineValueTracer<'a> {
@@ -118,6 +120,7 @@ impl<'a> AffineValueTracer<'a> {
             strict: Cell::new(0),
             trips: RefCell::new(HashMap::new()),
             bindings: None,
+            uniformity: OnceCell::new(),
         }
     }
 
@@ -459,6 +462,12 @@ impl<'a> AffineValueTracer<'a> {
             sum = SymExpr::add(sum, SymExpr::mul(SymExpr::Const(n), s));
         }
         Ok(sum)
+    }
+
+    /// Which reads every lane executing them sees alike, built on first
+    /// use.
+    pub(crate) fn uniformity(&self) -> &Uniformity {
+        self.uniformity.get_or_init(|| Uniformity::new(self))
     }
 
     /// `f`, refusing every guarded write it reads.

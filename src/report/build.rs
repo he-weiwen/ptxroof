@@ -844,9 +844,9 @@ impl<'a> KernelReportBuilder<'a> {
         };
         let tracer =
             AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
-        let uniformity = Uniformity::new(&tracer);
-        b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer, &uniformity);
-        let (accesses, access_forms) = b.accesses_by_scope(&tracer, &uniformity);
+        let uniformity = tracer.uniformity();
+        b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer, uniformity);
+        let (accesses, access_forms) = b.accesses_by_scope(&tracer, uniformity);
         b.accesses = accesses;
         b.access_forms = access_forms;
         b

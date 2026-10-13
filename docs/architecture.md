@@ -84,6 +84,7 @@ trip_counts <-> trace -> affine -> symexpr
      +-> loop_names --------> control_flow
 
 thread_participation -> trace
+uniformity <-> trace
 thread_participation -> lane_eval -> affine
 memory_footprint -----> lane_eval
 memory_footprint -----------------> affine
