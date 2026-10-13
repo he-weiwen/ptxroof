@@ -1,0 +1,36 @@
+//
+// HAND-WRITTEN: a loop of 4 trips counted by %r5, and a register %r1
+// whose only write in it, `@%p2 add.u32 %r1, %r1, 1`, is guarded on
+// %p2 = %r5 != %r5, false. %r1 stays 0, so the store writes a[0] on
+// every trip: ptxas 13.4 (sm_89) folds the loop into one
+//   STG.E [R2.64], RZ
+// at param_0. The induction search takes the guarded add as a step of
+// 1 on every trip.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_guarded_step(
+	.param .u64 micro_guarded_step_param_0
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_guarded_step_param_0];
+	mov.u32 	%r1, 0;
+	mov.u32 	%r5, 0;
+	setp.ne.u32 	%p2, %r5, %r5;
+$L__BB0_1:
+	@%p2 add.u32 	%r1, %r1, 1;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], 0;
+	add.u32 	%r5, %r5, 1;
+	setp.lt.u32 	%p1, %r5, 4;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}

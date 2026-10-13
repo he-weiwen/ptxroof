@@ -125,6 +125,12 @@ its shared writes and instruction counts remain counted
   is read as `trips = -96`, the store as `[4 * k[$L__BB0_1] + param_0
   + 400]`, and the totals as `instructions = -668`, where ptxas 13.4
   unrolls it into 4 stores at param_0 + 4 to + 16.
+- **A guarded write is taken as a counter step on every trip**: the
+  induction search does not read an increment's guard. In
+  `micro/guarded_step.ptx` the only write of `%r1` in the loop is
+  `@%p2 add.u32 %r1, %r1, 1`, with `%p2` false; the store to `a[%r1]`
+  is read as `[4 * k[$L__BB0_1] + param_0]`, `unique 16 B`, where
+  ptxas 13.4 stores once, at param_0, 4 B.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
