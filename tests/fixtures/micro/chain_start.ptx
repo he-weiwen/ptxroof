@@ -1,0 +1,39 @@
+//
+// HAND-WRITTEN: a counter carried through two registers, %r2 = %r1 + 1
+// then %r1 = %r2, where %r2 also has a value before the loop, 100,
+// that the loop overwrites before reading it. From %r1 = 0 the loop
+// runs 4 trips, while %r2 < 4, and stores a[%r2], k on trip k: ptxas
+// 13.4 (sm_89) unrolls it into
+//   STG.E [R2.64+0x4], RZ
+//   STG.E [R2.64+0x8], RZ
+//   STG.E [R2.64+0xc], RZ
+//   STG.E [R2.64+0x10], RZ
+// The induction search starts the chain at %r2's 100, not %r1's 0, so
+// the trip count is 4 - 100.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_chain_start(
+	.param .u64 micro_chain_start_param_0
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_chain_start_param_0];
+	mov.u32 	%r1, 0;
+	mov.u32 	%r2, 100;
+$L__BB0_1:
+	add.u32 	%r2, %r1, 1;
+	mov.u32 	%r1, %r2;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], 0;
+	setp.lt.u32 	%p1, %r2, 4;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}

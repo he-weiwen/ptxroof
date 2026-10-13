@@ -117,6 +117,14 @@ its shared writes and instruction counts remain counted
   `micro/chain_offset.ptx`, `%r2 = %r1 + 2` then `%r1 = %r2 - 1`, the
   store to `a[%r2]` is read as `[4 * k[$L__BB0_1] + param_0]`, where
   ptxas 13.4 stores at param_0 + 4k + 4, 8 to 20.
+- **A counter's chain can start from a value the loop never reads**:
+  the induction search takes the first register of the chain, walking
+  back from the counter, that is written before the loop, whether or
+  not the loop reads that write. In `micro/chain_start.ptx`, `%r2 =
+  %r1 + 1` then `%r1 = %r2`, from `%r1 = 0` and `%r2 = 100`, the loop
+  is read as `trips = -96`, the store as `[4 * k[$L__BB0_1] + param_0
+  + 400]`, and the totals as `instructions = -668`, where ptxas 13.4
+  unrolls it into 4 stores at param_0 + 4 to + 16.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
