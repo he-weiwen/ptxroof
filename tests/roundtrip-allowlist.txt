@@ -13,14 +13,10 @@ k1/k1.sm_80.ptx
 k1/k1.sm_89.ptx
 k2/k2.sm_80.ptx
 
-# A parameter's .align and [size] are dropped (PLAN.md, a parameter load at
-# an offset), so the dump lays out the parameter space differently and
-# ptxas reads the tensor maps at other constant-bank offsets.
-b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ptx
+# The kernel's `.maxnreg 168` is dropped, so ptxas cannot honour
+# `setmaxnreg` ("unable to determine register count at entry").
 b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ptx
-b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx
 b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx
-b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx
 
 # The module's .texref declaration is dropped (PLAN.md, register effects),
 # so ptxas reports "Unknown symbol 'micro_texture_outputs_tex'".

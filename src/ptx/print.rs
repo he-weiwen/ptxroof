@@ -41,9 +41,11 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
     let _ = writeln!(out, ".visible .entry {}(", m.interner.resolve(k.name));
     for (i, p) in k.params.iter().enumerate() {
         let comma = if i + 1 < k.params.len() { "," } else { "" };
+        let align = p.align.map(|a| format!(".align {a} ")).unwrap_or_default();
+        let size = p.size.map(|n| format!("[{n}]")).unwrap_or_default();
         let _ = writeln!(
             out,
-            ".param .{} {}{comma}",
+            ".param {align}.{} {}{size}{comma}",
             p.ty.name(),
             m.interner.resolve(p.name)
         );

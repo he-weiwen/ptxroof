@@ -298,11 +298,14 @@ pub enum Stmt {
     },
 }
 
-/// `.param .u32 name` in a kernel signature.
+/// `.param .u32 name` in a kernel signature, or a byte array passed by
+/// value, `.param .align 64 .b8 name[128]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Param {
     pub ty: FundamentalType,
     pub name: Symbol,
+    pub align: Option<u32>,
+    pub size: Option<u32>,
 }
 
 /// `.reg .f32 %f<789>;` — a counted register family (count is the

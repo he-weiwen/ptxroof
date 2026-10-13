@@ -363,12 +363,13 @@ impl<'a> Parser<'a> {
             return Err(self.err("expected .param in signature"));
         }
         let ty;
+        let mut align = None;
         loop {
             self.expect(TokenKind::Dot, "param type")?;
             let attr = self.expect_ident("param attribute")?;
             match self.interner.resolve(attr) {
                 "align" => {
-                    self.expect_u32(".align value")?;
+                    align = Some(self.expect_u32(".align value")?);
                 }
                 other => {
                     ty = FundamentalType::from_name(other)
@@ -393,13 +394,19 @@ impl<'a> Parser<'a> {
             }
         }
         let name = self.expect_ident("param name")?;
+        let mut size = None;
         if self.eat(TokenKind::LBracket) {
             if self.at(TokenKind::Number) {
-                self.bump();
+                size = Some(self.expect_u32("param array size")?);
             }
             self.expect(TokenKind::RBracket, "']' after param array size")?;
         }
-        Ok(Param { ty, name })
+        Ok(Param {
+            ty,
+            name,
+            align,
+            size,
+        })
     }
 
     fn parse_dim3(&mut self) -> Result<[u32; 3], ParseError> {
@@ -1525,12 +1532,15 @@ mod tests {
     fn params_with_types() {
         let src = ".version 8.7\n.target sm_80\n.visible .entry k(\n\
                    .param .u32 k_param_0,\n.param .f32 k_param_1,\n\
-                   .param .u64 k_param_2\n)\n{\nret;\n}\n";
+                   .param .u64 k_param_2,\n.param .align 64 .b8 k_param_3[128]\n)\n\
+                   {\nret;\n}\n";
         let m = parse(src).expect("parses");
         let k = &m.kernels[0];
         let tys: Vec<_> = k.params.iter().map(|p| p.ty.name()).collect();
-        assert_eq!(tys, ["u32", "f32", "u64"]);
+        assert_eq!(tys, ["u32", "f32", "u64", "b8"]);
         assert_eq!(m.interner.resolve(k.params[2].name), "k_param_2");
+        assert_eq!((k.params[3].align, k.params[3].size), (Some(64), Some(128)));
+        assert_eq!((k.params[0].align, k.params[0].size), (None, None));
     }
 
     #[test]

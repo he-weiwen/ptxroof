@@ -76,8 +76,7 @@ its shared writes and instruction counts remain counted
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
   aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
-  threads in 2 warps`, `store 256 B` per CTA). The parser also drops
-  the parameter's `.align` and `[size]`.
+  threads in 2 warps`, `store 256 B` per CTA).
 - **A `setp` that selects threads is read as a signed comparison of
   its operands' values whatever its type, and its second output as the
   first's negation** (PTX ISA §9.7.6.2, §9.7.7.2). In
