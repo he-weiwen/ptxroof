@@ -247,6 +247,12 @@ its shared writes and instruction counts remain counted
   of the block table says which threads run each block (`128
   (⌊%tid.x/32⌋ < 4)`), and the per-CTA totals count each block on its
   own threads, but there is no per-role view of the per-thread numbers.
+- A kernel's `unknowns:` line lists what leaves a count incomplete
+  (unparsed statements, unclassified instructions, unknown trip
+  counts, calls), not unknown addresses, which are only on their access
+  rows: `micro/footprint_unknown.ptx` reads `unknowns: none` beside a
+  store whose address is `unknown`
+  (`tests/lit/micro-footprint-unknown.test`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
