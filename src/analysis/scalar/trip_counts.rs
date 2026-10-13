@@ -224,28 +224,21 @@ fn predicate_reason(
     before: usize,
     pred: Symbol,
 ) -> String {
-    let blk = tracer.cfg.block(latch);
-    let definer = tracer.kernel.stmts[blk.start..before]
-        .iter()
-        .rev()
-        .find_map(|s| match s {
-            Stmt::Instr(i)
-                if tracer
-                    .module
-                    .operand_ids(i.operands)
-                    .first()
-                    .is_some_and(|&id| {
-                        matches!(tracer.module.operand(id),
-                             Operand::Register(r) | Operand::SymbolRef(r) if *r == pred)
-                    }) =>
-            {
-                Some(tracer.module.opcode(i))
-            }
-            _ => None,
-        });
+    let definer = tracer
+        .last_write_in(latch, before, pred)
+        .map(|d| &tracer.kernel.stmts[d]);
     match definer {
-        Some(op) => format!("latch predicate is defined by `{op}`, not a comparison"),
-        None => "latch predicate is not defined in the latch block".to_owned(),
+        Some(Stmt::Instr(i)) if i.mnemonic == Opcode::Setp => {
+            format!(
+                "latch predicate is not `{}`'s first output",
+                tracer.module.opcode(i)
+            )
+        }
+        Some(Stmt::Instr(i)) => format!(
+            "latch predicate is defined by `{}`, not a comparison",
+            tracer.module.opcode(i)
+        ),
+        _ => "latch predicate is not defined in the latch block".to_owned(),
     }
 }
 
@@ -468,11 +461,16 @@ mod tests {
                      setp.lt.s32 {dests}, %r2, %r1;\n@{pred} bra $L__L;\nret;"
                 ),
             );
-            trips_of(&src)[0].1.as_ref().map(ToString::to_string).ok()
+            trips_of(&src)[0]
+                .1
+                .as_ref()
+                .map(ToString::to_string)
+                .map_err(Clone::clone)
         };
-        assert_eq!(trips("%p1|%p2", "%p1"), Some("param_0".to_owned()));
-        assert_eq!(trips("%p2|%p1", "%p1"), None);
-        assert_eq!(trips("_|%p1", "%p1"), None);
+        let second = Err("latch predicate is not `setp.lt.s32`'s first output".to_owned());
+        assert_eq!(trips("%p1|%p2", "%p1"), Ok("param_0".to_owned()));
+        assert_eq!(trips("%p2|%p1", "%p1"), second);
+        assert_eq!(trips("_|%p1", "%p1"), second);
     }
 
     /// Both low halves are 1.0 on the first iteration, so the loop runs

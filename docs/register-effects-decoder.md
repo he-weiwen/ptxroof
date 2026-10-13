@@ -149,10 +149,10 @@ which no analysis reads since `wgmma` is not computed lane by lane.
    dependencies, and `lane_wise`'s carry case goes.
 4. **`find_setp`, then `predicate_reason`**: the latch's last write of
    the predicate decides, and only a `setp` whose first output it is.
-   `predicate_reason` moves after step 5: it still recognises the
-   attention kernels' bare `complete` by its symbol. What `setp`'s
-   second output means for packed types (`micro/setp_f16x2.ptx`) is
-   the predicate reader's reading of `setp`, not a register effect.
+   `predicate_reason` followed once registers declared without `%`
+   are registers (step 5). What `setp`'s second output means for
+   packed types (`micro/setp_f16x2.ptx`) is the predicate reader's
+   reading of `setp`, not a register effect.
 5. **Parser recovery**: scoped names for every declaration kind,
    guards and bracket bases included (`micro/bare_registers.ptx`,
    `micro/scoped_shadow.ptx`); coordinates after a bracket's base;
@@ -193,3 +193,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 | a `.reg` in a `{ }` block is renamed `name$scopeN` (a counted family's members `prefix$scopeN$i`), and every register, guard and bracket base is resolved against the open blocks | 177 scoped declarations, all singular (`complete` 135, `lo, hi` 41, `%laneid` 1) | where a scoped name shadows an outer register or a special register | `micro/scoped_shadow.ptx`, before: `[param_0]`; `micro/scoped_family.ptx`, before: `[4 * %tid.x + param_0]` where ptxas stores to `param_0 + 28`; `a_scoped_register_shadows_only_in_its_block` |
 | a symbol a `.reg` declares, `%` or not, is a register: an operand, guard or bracket base | the scoped `complete` (135) and `lo, hi` (41); no other output changes, as those values reach no address or guard the report reads | where a register declared without `%` is written or read | `micro/bare_registers.ptx`, before: `warp: 4–5 sectors` for a store thread 0 alone runs, now a bound; `registers_declared_without_percent_are_registers`; `register_effects_corpus.rs` now admits only `_` as a written symbol |
 | a `.shared`, `.local`, `.const`, `.global` or `.param` declared in a block is renamed too, so it hides a register of the same name | none | where a block's variable shares an outer register's name | `micro/scoped_variable.ptx`, before: `[4 * %tid.x + param_0]` where ptxas stores to `param_0`; `a_scoped_variable_of_any_space_hides_a_register` |
+| `predicate_reason`: the latch's last write of the predicate, from the definition table, not the last statement whose first operand is the predicate or a symbol of its name | every latch without a usable `setp`; the spin-waits' reasons are unchanged | where a `setp` writes the predicate as its second output | `a_latch_on_setps_first_output_is_a_trip_count` |

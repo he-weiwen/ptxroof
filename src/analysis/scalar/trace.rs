@@ -308,6 +308,15 @@ impl<'a> AffineValueTracer<'a> {
             })
     }
 
+    /// The last write of `reg` in block `b` before statement `before`.
+    pub(crate) fn last_write_in(&self, b: BlockId, before: usize, reg: Symbol) -> Option<usize> {
+        let blk = self.cfg.block(b);
+        let defs = self.defs.get(&reg)?;
+        (defs.iter().rev())
+            .copied()
+            .find(|&d| blk.start <= d && d < before)
+    }
+
     /// The last write of `pred` in block `b` before statement `before`,
     /// if it is a `setp` whose first output is `pred`.
     pub(crate) fn find_setp(
@@ -316,9 +325,7 @@ impl<'a> AffineValueTracer<'a> {
         before: usize,
         pred: Symbol,
     ) -> Option<(usize, &Instr)> {
-        let blk = self.cfg.block(b);
-        let defs = self.defs.get(&pred)?;
-        let &d = (defs.iter().rev()).find(|&&d| blk.start <= d && d < before)?;
+        let d = self.last_write_in(b, before, pred)?;
         let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
             return None;
         };
