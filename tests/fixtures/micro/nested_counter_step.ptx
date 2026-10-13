@@ -4,8 +4,8 @@
 // %r1 is 4k, so the store writes param_0 + 16k: ptxas 13.4 (sm_89)
 // unrolls both loops into `STG.E [R2.64+0x10]` to `[R2.64+0x80]`, 16 B
 // apart. The old induction search took the inner loop's `add` as one
-// step per outer trip, 4 B; a write in a nested loop is no recurrence's
-// step, and the address is unknown until exit values.
+// step per outer trip, 4 B; the outer counter now steps by the inner
+// loop's exit, 4 trips of 1.
 //
 .version 8.7
 .target sm_89

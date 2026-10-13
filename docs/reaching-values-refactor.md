@@ -372,7 +372,10 @@ loop's counter) is its own commit with a test pinning the new answer.
     (`micro/counter_floor_mod.ptx`: 12 B and 8 B). Done; that fixture's
     output alone changed, its reuse note now "varies".
 25. Exit values, as in "Recurrences" (`micro/nested_counter_step.ptx`,
-    `micro/carried_counter.ptx` addresses exact).
+    `micro/carried_counter.ptx` addresses exact). Done: a nested
+    loop's constant trip count of at least 1 comes from `loop_trips`,
+    which the tracer now calls; only those two fixtures' outputs
+    changed.
 26. `mul.hi` and `mad.hi` are refused (`micro/mul_hi.ptx`: both stores
     unknown).
 27. Register widths: a value read through a 32-bit operation, a

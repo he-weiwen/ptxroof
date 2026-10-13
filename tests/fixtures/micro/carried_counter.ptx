@@ -6,7 +6,7 @@
 // The old tracer took %r1's value on entry to the inner loop as the
 // `mov` before the outer loop, 0, every time, so the address did not
 // depend on the outer loop. The inner recurrence starts from the outer
-// loop's φ, which is no recurrence until exit values: unknown.
+// loop's φ, a recurrence stepped by the inner loop's exit.
 //
 .version 8.7
 .target sm_89

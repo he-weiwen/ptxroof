@@ -164,18 +164,11 @@ its shared writes and instruction counts remain counted
   and 408 read loaded values, 242 grid-stride, 50 `max`/`min`, 34
   unpacks, 20 atomics, 19 divisions, 15 multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
-  edge feeds back plus one unguarded step in the loop's own blocks,
+  edge feeds back plus one unguarded step in the loop's own blocks, or
+  a directly nested loop's exit after a constant trip count,
   `src/analysis/scalar/recurrences.rs`): a register stepped by a guarded
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
-  param_0), one stepped in a nested loop and read after it
-  (`micro/nested_counter_step.ptx`, 16 B apart), and an inner counter
-  the outer loop does not reset, started from the outer loop's φ
-  (`micro/carried_counter.ptx`, 32 distinct words; Gluon's
-  `attn_fwd_ws_kernel` has such counters, `%r1986` and `%r1875`, and
-  its w768 variant `%r2082`). Their addresses read `unknown: %r1 is
-  written under a guard on some path` and, for the last two, `depends
-  on %r1, carried around an enclosing loop`; those need exit values
-  (`docs/reaching-values-refactor.md`, step 25).
+  param_0) reads `unknown: %r1 is written under a guard on some path`.
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;

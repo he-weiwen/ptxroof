@@ -11,7 +11,7 @@ use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId, Register
 use crate::ptx::literal::parse_int;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 /// A counter of a loop: `phi`, the header φ, is `start` on entry and
 /// `phi + step` on every back edge.
@@ -23,14 +23,17 @@ pub struct Recurrence {
 }
 
 /// A sum of constants and of registers, each read at the statement
-/// that adds it, with its sign.
+/// that adds it, with its sign, and of nested loops' recurrences, each
+/// adding its step once per trip of its loop.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Step {
     pub constant: i64,
     pub registers: Vec<(Symbol, usize, i64)>,
+    pub exits: Vec<(LoopId, Step)>,
 }
 
-/// The recurrences of loop `l`.
+/// The recurrences of loop `l`; `inner` holds those of the loops nested
+/// in it, by the value each feeds back on its back edge.
 pub fn recurrences(
     module: &Module,
     kernel: &Kernel,
@@ -38,6 +41,7 @@ pub fn recurrences(
     forest: &LoopForest,
     ssa: &RegisterSsa,
     l: LoopId,
+    inner: &HashMap<Value, (LoopId, Recurrence)>,
 ) -> Vec<Recurrence> {
     let lp = forest.get(l);
     let start = cfg.block(lp.header).start;
@@ -57,6 +61,7 @@ pub fn recurrences(
         forest,
         ssa,
         l,
+        inner,
     };
     let mut out = Vec::new();
     for reg in regs {
@@ -87,6 +92,7 @@ pub fn recurrences(
         };
         let same = |s: &Step| {
             s.constant == step.constant
+                && s.exits == step.exits
                 && s.registers
                     .iter()
                     .map(read)
@@ -113,11 +119,13 @@ struct Walk<'a> {
     forest: &'a LoopForest,
     ssa: &'a RegisterSsa<'a>,
     l: LoopId,
+    inner: &'a HashMap<Value, (LoopId, Recurrence)>,
 }
 
 impl Walk<'_> {
     /// The step from `phi` to `v` through unguarded `mov`, integer `add`
-    /// and `sub` in the loop's own blocks, or `None`.
+    /// and `sub` in the loop's own blocks, and through a directly nested
+    /// loop's recurrence from its start to its exit, or `None`.
     fn offset(&self, v: Value, phi: Value, depth: u32) -> Option<Step> {
         if v == phi {
             return Some(Step::default());
@@ -131,7 +139,19 @@ impl Walk<'_> {
         let own = (self.cfg.blocks.iter_enumerated())
             .find(|(_, b)| b.start <= op && op < b.end)
             .is_some_and(|(b, _)| self.forest.block_loop[b.0 as usize] == Some(self.l));
-        if depth == 0 || instr.predicate.is_some() || !own {
+        if depth == 0 {
+            return None;
+        }
+        if !own {
+            let (c, r) = self.inner.get(&v)?;
+            if self.forest.get(*c).parent != Some(self.l) {
+                return None;
+            }
+            let mut s = self.offset(r.start, phi, depth - 1)?;
+            s.exits.push((*c, r.step.clone()));
+            return Some(s);
+        }
+        if instr.predicate.is_some() {
             return None;
         }
         let ops = self.module.operand_ids(instr.operands);
@@ -143,11 +163,11 @@ impl Walk<'_> {
             match self.module.operand(o) {
                 Operand::Immediate(t) => Some(Step {
                     constant: sign * parse_int(self.module.interner.resolve(*t))?,
-                    registers: Vec::new(),
+                    ..Step::default()
                 }),
                 Operand::Register(r) => Some(Step {
-                    constant: 0,
                     registers: vec![(*r, op, sign)],
+                    ..Step::default()
                 }),
                 _ => None,
             }
@@ -157,6 +177,7 @@ impl Walk<'_> {
             let plus = plus?;
             s.constant = s.constant.checked_add(plus.constant)?;
             s.registers.extend(plus.registers);
+            s.exits.extend(plus.exits);
             Some(s)
         };
         match (instr.mnemonic, ops) {
@@ -187,7 +208,6 @@ mod tests {
     use crate::analysis::control_flow::loop_forest;
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
-    use std::collections::HashMap;
 
     /// The recurrences of loop `loop_index` (by header order) in kernel
     /// `body`, one statement per line, as `reg: start → step`, the start
@@ -211,13 +231,40 @@ mod tests {
         }
         let ssa = RegisterSsa::new(&cfg, &forest.doms, table);
         let mut loops: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
+        loops.sort_by_key(|&l| std::cmp::Reverse(forest.get(l).depth));
+        let mut found: HashMap<LoopId, Vec<Recurrence>> = HashMap::new();
+        let mut inner = HashMap::new();
+        for &l in &loops {
+            let rs = recurrences(&module, kernel, &cfg, &forest, &ssa, l, &inner);
+            for r in &rs {
+                for (_, v) in ssa.incoming(r.phi).into_iter().filter(|(p, _)| {
+                    p.is_some_and(|p| forest.get(l).blocks.binary_search(&p).is_ok())
+                }) {
+                    inner.insert(v, (l, r.clone()));
+                }
+            }
+            found.insert(l, rs);
+        }
         loops.sort_by_key(|&l| forest.get(l).header);
         let show = |v: Value| match v {
             Value::Result { op, .. } => format!("w{op}"),
             Value::Argument { block, .. } => format!("phi{}", block.0),
             Value::Undef(_) => "undef".to_owned(),
         };
-        recurrences(&module, kernel, &cfg, &forest, &ssa, loops[loop_index])
+        let show_step = |s: &Step| {
+            let mut out = format!("{:+}", s.constant);
+            for (r, at, sign) in &s.registers {
+                let sign = if *sign > 0 { "+" } else { "-" };
+                out += &format!(" {sign}{}@{at}", module.interner.resolve(*r));
+            }
+            for (c, cs) in &s.exits {
+                let at = cfg.block(forest.get(*c).header).start;
+                out += &format!(" exit@{at}({:+})", cs.constant);
+            }
+            out
+        };
+        found[&loops[loop_index]]
+            .clone()
             .into_iter()
             .map(|r| {
                 let Value::Argument {
@@ -227,11 +274,7 @@ mod tests {
                 else {
                     unreachable!("a recurrence is a named register's header φ")
                 };
-                let mut step = format!("{:+}", r.step.constant);
-                for (s, at, sign) in &r.step.registers {
-                    let sign = if *sign > 0 { "+" } else { "-" };
-                    step += &format!(" {sign}{}@{at}", module.interner.resolve(*s));
-                }
+                let step = show_step(&r.step);
                 format!(
                     "{}: {} → {step}",
                     module.interner.resolve(reg),
@@ -308,13 +351,17 @@ mod tests {
     }
 
     #[test]
-    fn an_inner_loops_write_is_no_step_of_the_outer_loop() {
+    fn an_inner_loops_counter_steps_the_outer_loop_by_its_exit() {
         // blocks: 0 lines 0-1, 1 line 2-3 (outer header), 2 lines 4-7
         // (inner), 3 lines 8-10 (outer latch), 4 line 11
         let body = "mov.u32 %r1, 0;\nmov.u32 %r5, 0;\n$L__O:\nmov.u32 %r6, 0;\n\
                     $L__I:\nadd.s32 %r1, %r1, 1;\nadd.s32 %r6, %r6, 1;\n@%p1 bra $L__I;\n\
                     add.s32 %r5, %r5, 1;\nsetp.lt.u32 %p2, %r5, 8;\n@%p2 bra $L__O;\nret;";
-        assert_eq!(recurrences_of(body, 0), ["%r5: w1 → +1"]);
+        // %r1 steps by the inner loop's exit: its step once per inner trip.
+        assert_eq!(
+            recurrences_of(body, 0),
+            ["%r1: w0 → +0 exit@4(+1)", "%r5: w1 → +1"]
+        );
         assert_eq!(recurrences_of(body, 1), ["%r1: phi1 → +1", "%r6: w3 → +1"]);
     }
 

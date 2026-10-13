@@ -130,7 +130,7 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
     (has_x && has_neg_mod).then_some(*c)
 }
 
-fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
+pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     let l = tracer.forest.get(id);
 
     // Structural requirements: one latch, one exit edge, at the latch.

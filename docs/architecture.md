@@ -77,7 +77,7 @@ analysis/control_flow/loops -> analysis/control_flow/dominators -> ptx/cfg -> pt
 Within analysis, the main dependencies are:
 
 ```text
-trip_counts -> trace -> affine -> symexpr
+trip_counts <-> trace -> affine -> symexpr
      |           |        |
      |           |        +-> control_flow::LoopId
      |           +----------> control_flow

@@ -16,8 +16,9 @@
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::register_effects::{self, registers, split_operands};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
-use crate::analysis::scalar::recurrences::{Recurrence, recurrences};
+use crate::analysis::scalar::recurrences::{Recurrence, Step, recurrences};
 use crate::analysis::scalar::symexpr::SymExpr;
+use crate::analysis::scalar::trip_counts::loop_trips;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{
     Element, Instr, Kernel, Module, Opcode, Operand, OperandId, Register, SpecialReg,
@@ -26,7 +27,7 @@ use crate::ptx::ir::{
 use crate::ptx::literal::parse_int;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 pub(crate) struct AffineValueTracer<'a> {
@@ -47,6 +48,9 @@ pub(crate) struct AffineValueTracer<'a> {
     /// Inside a counter's start or register step: a guarded write there
     /// is refused, not read as its new value.
     strict: Cell<u32>,
+    /// Nested loops' constant trip counts, for counters stepped by their
+    /// exits; `None` while one is being solved, or when it is not one.
+    trips: RefCell<HashMap<LoopId, Option<i64>>>,
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<String, i64>>,
 }
@@ -86,14 +90,21 @@ impl<'a> AffineValueTracer<'a> {
             }
         }
         let ssa = RegisterSsa::new(cfg, &forest.doms, writes.clone());
-        let recurrences = (0..forest.loops.len() as u32)
-            .map(LoopId)
-            .flat_map(|l| {
-                recurrences(module, kernel, cfg, forest, &ssa, l)
-                    .into_iter()
-                    .map(move |r| (r.phi, (l, r)))
-            })
-            .collect();
+        // Inner loops first: an outer counter may step by an inner exit.
+        let mut order: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
+        order.sort_by_key(|&l| std::cmp::Reverse(forest.get(l).depth));
+        let (mut recurrences_by_phi, mut by_update) = (HashMap::new(), HashMap::new());
+        for l in order {
+            let lp = forest.get(l);
+            for r in recurrences(module, kernel, cfg, forest, &ssa, l, &by_update) {
+                for (p, v) in ssa.incoming(r.phi) {
+                    if p.is_some_and(|p| lp.blocks.binary_search(&p).is_ok()) {
+                        by_update.insert(v, (l, r.clone()));
+                    }
+                }
+                recurrences_by_phi.insert(r.phi, (l, r));
+            }
+        }
         AffineValueTracer {
             module,
             kernel,
@@ -103,8 +114,9 @@ impl<'a> AffineValueTracer<'a> {
             ssa,
             params,
             reach,
-            recurrences,
+            recurrences: recurrences_by_phi,
             strict: Cell::new(0),
+            trips: RefCell::new(HashMap::new()),
             bindings: None,
         }
     }
@@ -317,7 +329,34 @@ impl<'a> AffineValueTracer<'a> {
             let name = self.module.interner.resolve(reg);
             return Err(format!("{name} is read in a block no path reaches"));
         };
-        self.trace_value(v, id, depth)
+        Ok(self.after_exits(self.trace_value(v, id, depth)?, pos))
+    }
+
+    /// `a` read at `pos`: the counter of a loop `pos` is outside, whose
+    /// one latch exit comes after a constant number of trips, is that
+    /// number.
+    fn after_exits(&self, mut a: Affine, pos: usize) -> Affine {
+        fn at(v: &Var, n: i64) -> Option<(LoopId, i64)> {
+            match v {
+                Var::Iter(l) => Some((*l, n)),
+                Var::Div(inner, d) => at(inner, n).map(|(l, x)| (l, x.div_euclid(*d))),
+                Var::Mod(inner, m) => at(inner, n).map(|(l, x)| (l, x.rem_euclid(*m))),
+                _ => None,
+            }
+        }
+        let escaped: Vec<Var> = (a.terms.keys())
+            .filter(|v| at(v, 0).is_some_and(|(l, _)| !self.in_loop(l, pos)))
+            .cloned()
+            .collect();
+        for v in escaped {
+            let Some((l, _)) = at(&v, 0) else { continue };
+            let Some((_, x)) = self.constant_trips(l).and_then(|n| at(&v, n)) else {
+                continue;
+            };
+            let c = a.terms.remove(&v).expect("an escaped term");
+            a.base = SymExpr::add(a.base, SymExpr::mul(c, SymExpr::Const(x)));
+        }
+        a
     }
 
     /// A φ: a counter's `start + (k − 1)·step`, else one immediate every
@@ -380,17 +419,7 @@ impl<'a> AffineValueTracer<'a> {
         self.strict.set(self.strict.get() + 1);
         let read = || -> Result<(Affine, SymExpr), Option<String>> {
             let start = self.trace_value(r.start, id, depth + 1)?;
-            let mut step = SymExpr::Const(r.step.constant);
-            for &(reg, at, sign) in &r.step.registers {
-                let s = self
-                    .trace_reg(reg, at, Some(l), depth + 1)
-                    .map_err(|_| None)?;
-                if !s.is_invariant() {
-                    return Err(None);
-                }
-                step = SymExpr::add(step, SymExpr::mul(SymExpr::Const(sign), s.base));
-            }
-            Ok((start, step))
+            Ok((start, self.step(l, &r.step, depth)?))
         };
         let read = read();
         self.strict.set(self.strict.get() - 1);
@@ -400,6 +429,40 @@ impl<'a> AffineValueTracer<'a> {
         }
         let back = SymExpr::mul(SymExpr::Const(-1), step.clone());
         Ok(Affine::term(Var::Iter(l), step) + start + Affine::invariant(back))
+    }
+
+    /// A counter's step in loop `l`: its constant, its registers, each
+    /// free of every variable, and each nested loop's step times that
+    /// loop's constant trip count of at least 1; `None` otherwise.
+    fn step(&self, l: LoopId, step: &Step, depth: u32) -> Result<SymExpr, Option<String>> {
+        let mut sum = SymExpr::Const(step.constant);
+        for &(reg, at, sign) in &step.registers {
+            let s = (self.trace_reg(reg, at, Some(l), depth + 1)).map_err(|_| None)?;
+            if !s.is_invariant() {
+                return Err(None);
+            }
+            sum = SymExpr::add(sum, SymExpr::mul(SymExpr::Const(sign), s.base));
+        }
+        for (c, inner) in &step.exits {
+            let n = self.constant_trips(*c).ok_or(None)?;
+            let s = self.step(*c, inner, depth)?;
+            sum = SymExpr::add(sum, SymExpr::mul(SymExpr::Const(n), s));
+        }
+        Ok(sum)
+    }
+
+    /// Loop `l`'s trip count when it is a constant of at least 1, which
+    /// makes its latch, and so its exit, the same for every lane.
+    fn constant_trips(&self, l: LoopId) -> Option<i64> {
+        if let Some(&n) = self.trips.borrow().get(&l) {
+            return n;
+        }
+        self.trips.borrow_mut().insert(l, None);
+        let n = (loop_trips(self, l).ok())
+            .and_then(|t| t.as_const())
+            .filter(|&n| n >= 1);
+        self.trips.borrow_mut().insert(l, n);
+        n
     }
 
     fn trace_value(&self, v: Value, id: Option<LoopId>, depth: u32) -> Result<Affine, String> {
