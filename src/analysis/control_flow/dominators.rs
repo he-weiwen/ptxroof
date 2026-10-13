@@ -38,6 +38,27 @@ impl DominanceInfo {
             }
         }
     }
+
+    /// Each block's dominance frontier: the blocks where its dominance
+    /// ends (Cooper, Harvey and Kennedy, §4, Figure 5).
+    pub fn frontiers(&self, cfg: &ControlFlowGraph) -> Vec<Vec<BlockId>> {
+        let mut df: Vec<Vec<BlockId>> = vec![Vec::new(); cfg.blocks.len()];
+        for &b in &self.rpo {
+            let stop = self.idom[b.0 as usize];
+            for &p in &cfg.block(b).preds {
+                let mut runner = Some(p).filter(|&p| self.is_reachable(p));
+                while let Some(r) = runner
+                    && Some(r) != stop
+                {
+                    if df[r.0 as usize].last() != Some(&b) {
+                        df[r.0 as usize].push(b);
+                    }
+                    runner = self.idom[r.0 as usize];
+                }
+            }
+        }
+        df
+    }
 }
 
 pub fn dominators(cfg: &ControlFlowGraph) -> DominanceInfo {
@@ -180,5 +201,69 @@ mod tests {
         assert!(!d.dominates(BlockId(2), BlockId(1)));
         assert_eq!(d.idom[1], Some(BlockId(0))); // join of two paths is entry
         assert_eq!(d.idom[2], Some(BlockId(0)));
+    }
+
+    fn frontiers_of(body: &str) -> Vec<Vec<u32>> {
+        let (cfg, d) = doms_of(body);
+        (d.frontiers(&cfg).into_iter())
+            .map(|f| f.into_iter().map(|b| b.0).collect())
+            .collect()
+    }
+
+    #[test]
+    fn diamond_arms_have_the_join_as_frontier() {
+        let df = frontiers_of(
+            "setp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__T;\n\
+             add.f32 %f1, %f1, %f1;\nbra $L__J;\n\
+             $L__T:\nmul.f32 %f1, %f1, %f1;\n\
+             $L__J:\nret;",
+        );
+        assert_eq!(df, [vec![], vec![3], vec![3], vec![]]);
+    }
+
+    #[test]
+    fn loop_blocks_have_the_header_as_frontier() {
+        // blocks: 0 preheader, 1 header, 2 body ending in the latch, 3 exit
+        let df = frontiers_of(
+            "mov.u32 %r1, 0;\n$L__H:\nsetp.ge.s32 %p1, %r1, %r2;\n@%p1 bra $L__X;\n\
+             add.s32 %r1, %r1, 1;\nbra $L__H;\n$L__X:\nret;",
+        );
+        assert_eq!(df, [vec![], vec![1], vec![1], vec![]]);
+    }
+
+    #[test]
+    fn nested_loop_body_has_both_headers_as_frontier() {
+        // blocks: 0 preheader, 1 outer header, 2 inner loop, 3 outer latch, 4 exit
+        let df = frontiers_of(
+            "mov.u32 %r1, 0;\n$L__O:\nmov.u32 %r3, 0;\n\
+             $L__I:\nadd.s32 %r3, %r3, 1;\nsetp.lt.s32 %p1, %r3, %r2;\n@%p1 bra $L__I;\n\
+             add.s32 %r1, %r1, 1;\nsetp.lt.s32 %p2, %r1, %r2;\n@%p2 bra $L__O;\nret;",
+        );
+        assert_eq!(df, [vec![], vec![1], vec![1, 2], vec![1], vec![]]);
+    }
+
+    #[test]
+    fn two_entry_cycle_members_have_each_other_as_frontier() {
+        let df = frontiers_of(
+            "setp.gt.s32 %p1, %r1, %r2;\n@%p1 bra $L__B;\n\
+             $L__A:\nadd.s32 %r3, %r3, 1;\n\
+             $L__B:\nadd.s32 %r3, %r3, 2;\n\
+             setp.lt.s32 %p2, %r3, %r1;\n@%p2 bra $L__A;\nret;",
+        );
+        assert_eq!(df, [vec![], vec![2], vec![1], vec![]]);
+    }
+
+    #[test]
+    fn entry_targeted_by_a_branch_is_its_own_frontier() {
+        let df = frontiers_of(
+            "$L__E:\nadd.s32 %r1, %r1, 1;\nsetp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__E;\nret;",
+        );
+        assert_eq!(df, [vec![0], vec![]]);
+    }
+
+    #[test]
+    fn unreachable_block_has_no_frontier_and_is_in_none() {
+        let df = frontiers_of("bra $L__END;\nadd.f32 %f1, %f1, %f1;\n$L__END:\nret;");
+        assert_eq!(df, [vec![], vec![], vec![]]);
     }
 }
