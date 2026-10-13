@@ -84,11 +84,6 @@ its shared writes and instruction counts remain counted
   the load at offset 0, so comparing two fields of a by-value
   aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
   threads in 2 warps`, `store 256 B` per CTA).
-- **A `setp` that selects threads is read as a signed comparison of
-  its operands' values whatever its type** (PTX ISA §9.7.6.2). In
-  `micro/setp_unsigned.ptx`, `setp.lt.u32` of `%tid.x - 16` against 32
-  runs the store on threads 16 to 47 (ptxas: `ISETP.GE.U32`), read as
-  `on 48 threads in 2 warps (%tid.x < 48)`.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
@@ -165,10 +160,12 @@ its shared writes and instruction counts remain counted
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare
   (`a_value_from_a_cycle_with_two_entries_is_divergent_after_it`).
-- **A packed `setp` as a thread selector.** `setp.f16x2` and
-  `.bf16x2` compare each half on its own (PTX ISA §9.7.7.2); neither
-  output is read, so what it guards is a bound
-  (`micro/setp_f16x2.ptx`: `(predicated)`, `store <= 256 B`).
+- **`setp`s not read as thread selectors.** `setp.f16x2` and
+  `.bf16x2` compare each half on its own (PTX ISA §9.7.7.2); an
+  unsigned `lt`, `le`, `gt` or `ge` is read only when both operands
+  lie in [0, 2^width) for every `%tid` below 1024 (§10.2). Otherwise
+  what it guards is a bound (`micro/setp_f16x2.ptx`,
+  `micro/setp_unsigned.ptx`: `(predicated)`, `store <= 256 B`).
 
 ### Presentation
 

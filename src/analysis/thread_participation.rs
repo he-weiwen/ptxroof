@@ -10,7 +10,7 @@
 //! same for every thread empties or keeps whole warps.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::scalar::affine::{Affine, Var};
+use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval_lane};
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
 use crate::analysis::uniformity::Uniformity;
@@ -305,6 +305,28 @@ fn on_lane_only(a: &Affine) -> bool {
                 && matches!(v, Var::Tid(_) | Var::Div(..) | Var::Mod(..))
                 && depends_on_lane(v)
         })
+}
+
+/// The least and the greatest value of a form over the thread index
+/// alone, on any block.
+fn range(a: &Affine) -> Option<(i64, i64)> {
+    let base = a.base.as_const()?;
+    a.terms.iter().try_fold((base, base), |(lo, hi), (v, c)| {
+        let top = c.as_const()?.checked_mul(largest(v)?)?;
+        Some((lo.checked_add(top.min(0))?, hi.checked_add(top.max(0))?))
+    })
+}
+
+/// PTX ISA §10.1, §10.2: `%tid.x` and `%tid.y` are below 1024 and
+/// `%tid.z` below 64 on every target.
+fn largest(v: &Var) -> Option<i64> {
+    match v {
+        Var::Tid(Axis::Z) => Some(63),
+        Var::Tid(_) => Some(1023),
+        Var::Div(inner, d) => Some(largest(inner)? / d),
+        Var::Mod(inner, m) => Some(largest(inner)?.min(m - 1)),
+        Var::Ctaid(_) | Var::Iter(_) => None,
+    }
 }
 
 impl Constraint {
@@ -665,9 +687,10 @@ pub(crate) fn thread_sets(
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, when it
-/// compares two such forms. A form free of the thread index whose
-/// comparison the uniformity analysis finds divergent was read wrong
-/// (through a guarded write), and is none.
+/// compares two such forms; an unsigned `lt`, `le`, `gt` or `ge` only
+/// when both lie in [0, 2^width) on every thread. A form free of the
+/// thread index whose comparison the uniformity analysis finds
+/// divergent was read wrong (through a guarded write), and is none.
 fn condition(
     module: &Module,
     kernel: &Kernel,
@@ -698,11 +721,21 @@ fn condition(
     }
     let a = tracer.trace_operand(ops[1], def, None, 0).ok()?;
     let b = tracer.trace_operand(ops[2], def, None, 0).ok()?;
+    let width = mods
+        .last()?
+        .strip_prefix('u')
+        .and_then(|w| w.parse::<u32>().ok());
+    let comparable = !matches!(cmp.as_str(), "lt" | "le" | "gt" | "ge")
+        || width.is_none_or(|w| {
+            [&a, &b]
+                .into_iter()
+                .all(|x| range(x).is_some_and(|(lo, hi)| lo >= 0 && i128::from(hi) < 1 << w))
+        });
     let form = a - b;
     let lanes = form.terms.keys().any(depends_on_lane);
     if !lanes && !uniformity.is_uniform_def(def) {
         None
-    } else if on_lane_only(&form) {
+    } else if on_lane_only(&form) && comparable {
         Some(Pred::Cmp(Constraint { form, cmp }))
     } else if !lanes {
         Some(Pred::Uniform)
