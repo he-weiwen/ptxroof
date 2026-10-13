@@ -1,0 +1,52 @@
+//
+// HAND-WRITTEN: two loops of 4 trips, each counter stepping by 1 from 0
+// before its store. The first stores a[%r1 >> 1], indices 0, 1, 1, 2,
+// three words, 12 B; the second b[%r2 & 1], indices 1, 0, 1, 0, two
+// words, 8 B. ptxas 13.4 (sm_89) unrolls both, to three stores to a
+// (the second store to a[1] removed) and four to b:
+//   STG.E [R2.64], RZ
+//   STG.E [R2.64+0x4], RZ
+//   STG.E [R2.64+0x8], RZ
+//   STG.E [R4.64+0x4], RZ
+//   STG.E [R4.64], RZ
+//   STG.E [R4.64+0x4], RZ
+//   STG.E [R4.64], RZ
+// with R2 = param_0 and R4 = param_1. The addresses are read right,
+// `⌊k/2⌋` and `k mod 2`, but as invariant in their loops, one word each.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_counter_floor_mod(
+	.param .u64 micro_counter_floor_mod_param_0,
+	.param .u64 micro_counter_floor_mod_param_1
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<7>;
+
+	ld.param.u64 	%rd1, [micro_counter_floor_mod_param_0];
+	ld.param.u64 	%rd4, [micro_counter_floor_mod_param_1];
+	mov.u32 	%r1, 0;
+$L__BB0_1:
+	add.u32 	%r1, %r1, 1;
+	shr.u32 	%r3, %r1, 1;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], 0;
+	setp.lt.u32 	%p1, %r1, 4;
+	@%p1 bra 	$L__BB0_1;
+	mov.u32 	%r2, 0;
+$L__BB0_3:
+	add.u32 	%r2, %r2, 1;
+	and.b32 	%r4, %r2, 1;
+	mul.wide.u32 	%rd5, %r4, 4;
+	add.s64 	%rd6, %rd4, %rd5;
+	st.global.u32 	[%rd6], 0;
+	setp.lt.u32 	%p2, %r2, 4;
+	@%p2 bra 	$L__BB0_3;
+	ret;
+}

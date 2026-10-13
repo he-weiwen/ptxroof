@@ -131,6 +131,13 @@ its shared writes and instruction counts remain counted
   `@%p2 add.u32 %r1, %r1, 1`, with `%p2` false; the store to `a[%r1]`
   is read as `[4 * k[$L__BB0_1] + param_0]`, `unique 16 B`, where
   ptxas 13.4 stores once, at param_0, 4 B.
+- **An address through a floor or a mod of a loop counter is read as
+  invariant in the loop**: the per-iteration step and the loop's unique
+  bytes read the counter's own coefficient only. In
+  `micro/counter_floor_mod.ptx` the stores are read as `[4 *
+  ⌊k[$L__BB0_1]/2⌋ + param_0]` and `[4 * (k[$L__BB0_3] mod 2) +
+  param_1]`, each `invariant` in its loop, `unique 4 B`, where ptxas
+  13.4 stores to three words of param_0, 12 B, and two of param_1, 8 B.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
