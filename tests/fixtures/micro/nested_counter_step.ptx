@@ -1,0 +1,39 @@
+//
+// HAND-WRITTEN: a counter %r1 the inner loop steps by 1 on each of its 4
+// trips, read after it in the outer loop. On the outer loop's k-th trip
+// %r1 is 4k, so the store writes param_0 + 16k: ptxas 13.4 (sm_89)
+// unrolls both loops into `STG.E [R2.64+0x10]` to `[R2.64+0x80]`, 16 B
+// apart. The outer loop takes the inner loop's `add` as one step per
+// outer trip, 4 B.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_nested_counter_step(
+	.param .u64 micro_nested_counter_step_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_nested_counter_step_param_0];
+	mov.u32 	%r1, 0;
+	mov.u32 	%r5, 0;
+$L__BB0_1:
+	mov.u32 	%r6, 0;
+$L__BB0_2:
+	add.s32 	%r1, %r1, 1;
+	add.s32 	%r6, %r6, 1;
+	setp.lt.u32 	%p1, %r6, 4;
+	@%p1 bra 	$L__BB0_2;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r5;
+	add.s32 	%r5, %r5, 1;
+	setp.lt.u32 	%p2, %r5, 8;
+	@%p2 bra 	$L__BB0_1;
+	ret;
+}

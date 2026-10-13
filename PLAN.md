@@ -102,6 +102,12 @@ its shared writes and instruction counts remain counted
   distinct words, 128 B. Gluon's `attn_fwd_ws_kernel` has such
   counters (`%r1986` in `$L__BB0_43`, `%r1875` in `$L__BB0_14`), and
   its w768 variant one (`%r2082`).
+- **A write in a nested loop is taken as one step of the enclosing
+  loop's counter**: the induction search counts every write in a
+  loop's blocks, an inner loop's included, as running once per trip.
+  In `micro/nested_counter_step.ptx` the store after the inner loop
+  is read as `[4 * k[$L__BB0_1] + param_0]`, 4 B per outer trip,
+  where ptxas 13.4 stores 16 B apart.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
