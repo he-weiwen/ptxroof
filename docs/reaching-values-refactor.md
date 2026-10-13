@@ -440,11 +440,13 @@ Steps, one commit each:
 
 27a. `range` over affine forms in `affine.rs`, with launch-known bounds
      and the rules above, and unit tests; not yet called. Independent of
-     the setp branch, whose comparison check later reads it.
+     the setp branch, whose comparison check later reads it. Done.
 27b. The tracer checks each 16- and 32-bit `add`, `sub`, `mul.lo`,
      `mad.lo`, `shl` and `bfe` result where it interprets the
      instruction (`micro/mul_wrap.ptx`: unknown); every changed fixture
-     output explained, none expected without a launch binding.
+     output explained, none expected without a launch binding. Done;
+     only `micro/mul_wrap.ptx`'s output changed, though most fixtures
+     bind their block shape with `.reqntid`.
 27c. Integer `cvt` checks both types, a float or packing `cvt` is
      refused (`micro/cvt_reads.ptx`: three unknowns).
 27d. Counter updates checked as above.

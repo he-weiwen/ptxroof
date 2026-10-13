@@ -530,7 +530,7 @@ impl<'a> AffineValueTracer<'a> {
             return Err(format!("{name} is one of `{opcode}`'s vector destinations"));
         }
 
-        match mnemonic {
+        let value = match mnemonic {
             Opcode::Mov => arg(1),
             Opcode::Cvt | Opcode::Cvta => {
                 // Width changes are value-preserving in the nonneg domain.
@@ -637,7 +637,13 @@ impl<'a> AffineValueTracer<'a> {
                 };
                 let signed = mods.iter().any(|m| m.starts_with('s'));
                 if signed && pos == 0 {
-                    return Ok(a);
+                    let half = 1i128 << (len.clamp(1, 64) - 1);
+                    return match a.range(&|v| self.bound(v)) {
+                        Some((lo, hi)) if lo < -half || hi >= half => {
+                            Err(format!("bfe of {len} bits leaves them"))
+                        }
+                        _ => Ok(a),
+                    };
                 }
                 if signed || !(0..63).contains(&pos) || !(1..63).contains(&len) {
                     return Err(format!("bfe at {pos} of {len} bits"));
@@ -653,7 +659,16 @@ impl<'a> AffineValueTracer<'a> {
             }
             Opcode::Shl if ops.len() == 3 => {
                 let v = arg(1)?;
+                // PTX ISA §9.7.8.8: a count past the width is clamped to
+                // it, which shifts every bit out.
+                let width = mods
+                    .iter()
+                    .rev()
+                    .find_map(|m| m.get(1..)?.parse::<i64>().ok());
                 match self.constant(&arg(2)?) {
+                    Some(c) if width.is_some_and(|w| c >= w) => {
+                        Ok(Affine::invariant(SymExpr::Const(0)))
+                    }
                     Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".to_owned()),
                 }
@@ -795,7 +810,7 @@ impl<'a> AffineValueTracer<'a> {
                 } else {
                     return Err(refuse(&(a + b), id, "product"));
                 };
-                Ok(prod + c)
+                Ok(self.fits(prod, instr, &mods)? + c)
             }
             other => {
                 let mut seen = HashSet::new();
@@ -809,6 +824,54 @@ impl<'a> AffineValueTracer<'a> {
                     ),
                 })
             }
+        }?;
+        self.fits(value, instr, &mods)
+    }
+
+    /// A 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl` or `bfe`
+    /// result, which wraps (PTX ISA §9.7.1), whose range over the known
+    /// launch and constant trip counts leaves its type is refused.
+    fn fits(&self, value: Affine, instr: &Instr, mods: &[&str]) -> Result<Affine, String> {
+        let checked = match instr.mnemonic {
+            Opcode::Add | Opcode::Sub | Opcode::Shl | Opcode::Bfe => true,
+            Opcode::Mul | Opcode::Mad => mods.contains(&"lo"),
+            _ => false,
+        };
+        let Some((width, lo, hi)) = mods.iter().rev().find_map(|m| type_range(m)) else {
+            return Ok(value);
+        };
+        let bound = |v: &Var| self.bound(v);
+        let bound_value = match self.bindings {
+            Some(b) => value.bind(b),
+            None => value.clone(),
+        };
+        match bound_value.range(&bound) {
+            Some((a, b)) if checked && (a < lo || b >= hi) => Err(format!(
+                "`{}` leaves {width} bits",
+                self.module.opcode(instr)
+            )),
+            _ => Ok(value),
+        }
+    }
+
+    /// A variable's least and greatest value when the launch or a
+    /// constant trip count fixes it: `%tid` below the bound block shape,
+    /// `%ctaid` below a bound grid, a counter in [1, n].
+    fn bound(&self, v: &Var) -> Option<(i64, i64)> {
+        let shape = |vector: SpecialVector, axis: &Axis| {
+            let i = match axis {
+                Axis::X => 0,
+                Axis::Y => 1,
+                Axis::Z => 2,
+            };
+            let n = *self.bindings?.get(&vector.components()[i].name())?;
+            (n >= 1).then_some((0, n - 1))
+        };
+        match v {
+            Var::Tid(axis) => shape(SpecialVector::Ntid, axis),
+            Var::Ctaid(axis) => shape(SpecialVector::Nctaid, axis),
+            Var::Iter(l) => self.constant_trips(*l).map(|n| (1, n)),
+            Var::Div(..) | Var::Mod(..) => None,
         }
     }
 
@@ -873,6 +936,20 @@ impl<'a> AffineValueTracer<'a> {
             let blk = self.cfg.block(b);
             blk.start <= stmt && stmt < blk.end
         })
+    }
+}
+
+/// A 16- or 32-bit integer type's width and the values it reads, a `b`
+/// bit pattern either way.
+fn type_range(m: &str) -> Option<(u32, i128, i128)> {
+    let (kind, width) = m.split_at(1);
+    let width: u32 = width.parse().ok().filter(|w| matches!(w, 16 | 32))?;
+    let (lo, hi) = (-(1i128 << (width - 1)), 1i128 << width);
+    match kind {
+        "u" => Some((width, 0, hi)),
+        "s" => Some((width, lo, 1i128 << (width - 1))),
+        "b" => Some((width, lo, hi)),
+        _ => None,
     }
 }
 

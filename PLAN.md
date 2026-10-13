@@ -79,12 +79,14 @@ its shared writes and instruction counts remain counted
   integer-to-float conversion and a narrowing conversion are each read
   as the source's value (`micro/cvt_reads.ptx`: the three addresses are `4 * %tid.x +
   param_0`, the last plus `17179869184`; only the last is 4·%tid.x).
-- **Integer arithmetic is read without wrapping**: the tracer's domain
-  is documented as nonnegative and non-overflowing
-  (`src/analysis/scalar/trace.rs`, module doc), and nothing checks
-  that a value stays in it. In `micro/mul_wrap.ptx`, `mul.lo.s32` of
-  2^30 and 4 is 0 (PTX ISA §9.7.1.3), and the store is read as
-  `[param_0 + 17179869184]`, where ptxas 13.4 stores at param_0.
+- **Integer arithmetic is taken not to wrap where its range is
+  unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
+  or `bfe` result is refused when its range, over constants, the block
+  shape `.reqntid` or `--launch` gives, and constant trip counts,
+  leaves its type (`micro/mul_wrap.ptx`: `mul.lo.s32` of 2^30 and 4,
+  unknown); one through a parameter, `%ctaid` (no grid is bound) or a
+  symbolic trip count keeps the tracer's documented assumption
+  (`src/analysis/scalar/trace.rs`, module doc).
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value

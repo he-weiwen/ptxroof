@@ -454,6 +454,29 @@ mod tests {
         assert_eq!(trips_of(&src)[0].1.as_ref().unwrap_err(), why);
     }
 
+    /// A 32-bit bound computed past its width: a shift by more than 32
+    /// leaves 0 (PTX ISA §9.7.8.8), a product past 2^32 is refused.
+    #[test]
+    fn a_bound_past_its_register_width_wraps_or_is_refused() {
+        let bound = |compute: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "mov.u32 %r3, 4;\n{compute}\nadd.s32 %r5, %r4, 5;\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p1, %r2, %r5;\n\
+                     @%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        assert_eq!(bound("shl.b32 %r4, %r3, 40;"), Ok("5".to_owned()));
+        assert_eq!(bound("mul.lo.u32 %r4, %r3, 2;"), Ok("13".to_owned()));
+        assert_eq!(
+            bound("mul.lo.u32 %r4, %r3, 1073741824;"),
+            Err("`mul.lo.u32` leaves 32 bits".to_owned())
+        );
+    }
+
     /// A bound two paths set to 7, one after a 3 it overwrites: the 3
     /// does not reach the loop.
     #[test]
