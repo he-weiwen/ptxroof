@@ -322,6 +322,15 @@ One line each, with the trigger that would start it.
 - Local memory per thread from the `.local` depot declaration (k14:
   `__local_depot0[512]`), where spills go; keeping the declaration
   also lets k14's dump reassemble. Trigger: the same hunt.
+- Array element operands, `a[i]` (PTX ISA §6.4.2), deliberately not
+  parsed: none in the corpus (`tests/parse-allowlist.txt`) or in the
+  missed-opt census's 13,209 PTX files, and the manual's own examples
+  are their only source seen. A statement with one is unparsed,
+  uncounted, and taken to write every register it names
+  (`micro/unparsed_writes.ptx`). ptxas scales a constant index by the
+  element size (there, `lbuf[1]` of a `.u32` array reads byte 4), while
+  the manual's §4.3 example scales its register index itself. Trigger:
+  the first fixture from a producer that emits them.
 - Access patterns: done 2026-09-15 (the `accesses` rows: every
   fixture's global and shared operands except those listed above,
   including 2D tiles' `⌊%tid.x/8⌋` and `(%tid.x mod 8)` and counters
