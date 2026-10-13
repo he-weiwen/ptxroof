@@ -197,6 +197,13 @@ fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     }
     let a = tracer.trace_operand(ops[1], setp_idx, Some(id), 0)?;
     let b = tracer.trace_operand(ops[2], setp_idx, Some(id), 0)?;
+    // PTX ISA §9.7.6.2: a floating-point `setp` compares floats, not the traced integers.
+    if (tracer.module.modifiers(setp).last()).is_some_and(|&m| {
+        let ty = tracer.module.interner.resolve(m);
+        ty.starts_with('f') || ty.starts_with("bf")
+    }) {
+        return Err("latch condition compares floating-point values".to_owned());
+    }
     let d = a - b; // D = A − B; condition is `D cmp 0`
 
     // D(k) = A1·k + A0 in this loop's iteration number alone.
@@ -486,6 +493,22 @@ mod tests {
         assert_eq!(
             trips_of(&src)[0].1,
             Err("latch condition compares packed halves".to_owned())
+        );
+    }
+
+    /// The bits of k and of 10 are subnormal, flushed to zero by `.ftz`:
+    /// the loop runs once, not the ten times an integer comparison gives.
+    #[test]
+    fn a_floating_point_comparison_is_not_a_trip_count() {
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u32 %r1, 0;\nmov.b32 %f2, 10;\n\
+             $L__L:\nadd.s32 %r1, %r1, 1;\nmov.b32 %f1, %r1;\n\
+             setp.lt.ftz.f32 %p1, %f1, %f2;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(
+            trips_of(&src)[0].1,
+            Err("latch condition compares floating-point values".to_owned())
         );
     }
 

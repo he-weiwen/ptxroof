@@ -84,11 +84,6 @@ its shared writes and instruction counts remain counted
   the load at offset 0, so comparing two fields of a by-value
   aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
   threads in 2 warps`, `store 256 B` per CTA).
-- **A floating-point latch `setp` is read as an integer comparison**
-  of the traced forms (PTX ISA §9.7.6.2). In `micro/latch_float.ptx`
-  the latch compares the bits of the counter and of 10 with
-  `setp.lt.ftz.f32`, which flushes them to zero, so ptxas's loop
-  (`FSETP.GEU.FTZ`) runs once; read as `trips = 10`, `store 40 B`.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
@@ -124,7 +119,9 @@ its shared writes and instruction counts remain counted
   data-dependent bounds, multi-exit loops, inner loops bounded by an
   enclosing loop's counter (`micro/triangular.ptx`), a latch `setp`
   that combines its comparison with a predicate
-  (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`), and the attention kernels'
+  (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
+  compares floats (`micro/latch_float.ptx`: "latch condition compares
+  floating-point values"), and the attention kernels'
   causal loops, bounded by the CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. Bounds the
