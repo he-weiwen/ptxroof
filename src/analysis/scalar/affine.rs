@@ -309,20 +309,19 @@ impl Affine {
 
     /// The least and the greatest value of the form when its base and
     /// coefficients are constants and `bound` gives every variable's
-    /// least and greatest value; `None` when one is unbounded.
+    /// least and greatest value; `None` when one is unbounded, the whole
+    /// `i128` line when a partial sum leaves it.
     pub fn range(&self, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
         let base = i128::from(self.base.as_const()?);
-        let mut range = (base, base);
+        let mut range = Some((base, base));
         for (v, c) in &self.terms {
             let c = i128::from(c.as_const()?);
             let (lo, hi) = var_range(v, bound)?;
             let (a, b) = (c * i128::from(lo), c * i128::from(hi));
-            range = (
-                range.0.saturating_add(a.min(b)),
-                range.1.saturating_add(a.max(b)),
-            );
+            range =
+                range.and_then(|(x, y)| Some((x.checked_add(a.min(b))?, y.checked_add(a.max(b))?)));
         }
-        Some(range)
+        Some(range.unwrap_or((i128::MIN, i128::MAX)))
     }
 }
 
@@ -372,6 +371,20 @@ mod tests {
         assert_eq!(ctaid.range(&bound), None);
         let param = Affine::invariant(SymExpr::sym("param_0"));
         assert_eq!(param.range(&bound), None);
+    }
+
+    #[test]
+    fn a_range_whose_partial_sum_overflows_spans_everything() {
+        // Three M·M overflow i128 before two -M·M bring the sum back.
+        let m = i64::MAX;
+        let a = [m, m, m, -m, -m]
+            .into_iter()
+            .zip(0..)
+            .fold(Affine::invariant(SymExpr::Const(0)), |a, (c, l)| {
+                a + Affine::var(Var::Iter(LoopId(l))).scale(SymExpr::Const(c))
+            });
+        let bound = |_: &Var| Some((m, m));
+        assert_eq!(a.range(&bound), Some((i128::MIN, i128::MAX)));
     }
 
     fn tid() -> Affine {
