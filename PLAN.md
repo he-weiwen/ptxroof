@@ -111,6 +111,12 @@ its shared writes and instruction counts remain counted
   In `micro/nested_counter_step.ptx` the store after the inner loop
   is read as `[4 * k[$L__BB0_1] + param_0]`, 4 B per outer trip,
   where ptxas 13.4 stores 16 B apart.
+- **A register of a counter's chain is read as the counter**: the
+  induction search gives every register of a chain of writes the
+  counter's start and step, without the offset between them. In
+  `micro/chain_offset.ptx`, `%r2 = %r1 + 2` then `%r1 = %r2 - 1`, the
+  store to `a[%r2]` is read as `[4 * k[$L__BB0_1] + param_0]`, where
+  ptxas 13.4 stores at param_0 + 4k + 4, 8 to 20.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
