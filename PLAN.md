@@ -98,8 +98,11 @@ its shared writes and instruction counts remain counted
   so a value an enclosing loop carries back into it, a counter the
   outer loop does not reset, is lost. In `micro/carried_counter.ptx`
   the store is read as `[4 * k[$L__BB0_2] + param_0 - 4]`, invariant
-  in the outer `$L__BB0_1`, 16 B unique, where ptxas 13.4 stores 32
-  distinct words, 128 B. Gluon's `attn_fwd_ws_kernel` has such
+  in the outer `$L__BB0_1`, where its base advances 16 B per outer
+  trip: ptxas 13.4 stores 32 distinct words, 128 B. The inner loop's
+  `unique 16 B` is one execution of its own blocks, which is right;
+  no row is the union over the eight, 128 B (below, "count the loop's
+  own blocks only"). Gluon's `attn_fwd_ws_kernel` has such
   counters (`%r1986` in `$L__BB0_43`, `%r1875` in `$L__BB0_14`), and
   its w768 variant one (`%r2082`).
 - **A write in a nested loop is taken as one step of the enclosing
