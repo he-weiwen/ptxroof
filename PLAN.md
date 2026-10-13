@@ -79,6 +79,10 @@ its shared writes and instruction counts remain counted
   integer-to-float conversion and a narrowing conversion are each read
   as the source's value (`micro/cvt_reads.ptx`: the three addresses are `4 * %tid.x +
   param_0`, the last plus `17179869184`; only the last is 4·%tid.x).
+- **`mul.hi` is read as the full product** (PTX ISA §9.7.1.3: `.hi`
+  keeps the upper half): in `micro/mul_hi.ptx`, `mul.hi.u32` of 2 and
+  3 is read as 6 and the store as `[param_0 + 24]`, where ptxas 13.4
+  stores at param_0.
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value

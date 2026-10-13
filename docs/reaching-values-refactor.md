@@ -219,7 +219,7 @@ loop's counter) is its own commit with a test pinning the new answer.
     of every explicit and implicit (CC) read and every header query
     excluding its loop where today's `ReachingDefinition` and the new
     `Value` and `sources` disagree, by class
-    (`src/analysis/scalar/snapshots/`). Done. Of 99,553 reads, 2,342
+    (`src/analysis/scalar/snapshots/`). Done. Of 99,558 reads, 2,342
     `Carried` reads are a φ at a join inside the loop, none of them a
     counter of that loop, and 1,128 `Merged` reads keep a definition a
     later write kills; no read's `Merged` misses a path writing
