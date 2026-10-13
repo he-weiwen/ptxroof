@@ -903,6 +903,11 @@ impl<'a> KernelReportBuilder<'a> {
                     stepped.push((v, c.as_const()?));
                 }
             }
+            // One sector pattern per warp and trip: within the budget the
+            // intervals keep below.
+            if !stepped.is_empty() && trips.saturating_mul((threads + 31) / 32) > 1 << 22 {
+                return None;
+            }
             let shift = |k: i64| -> i64 {
                 stride * k
                     + (stepped.iter())
@@ -1876,6 +1881,19 @@ mod tests {
         assert_eq!((b.requested, b.unique), (3072, Some(1028)));
         let src = src.replace(".reqntid 32, 1, 1\n", "");
         let r = analyze(&src, "t", &opts).expect("analyzes");
+        assert_eq!(r.kernels[0].loops[0].global_bytes_per_cta, None);
+    }
+
+    #[test]
+    fn a_floor_of_the_counter_over_too_many_trips_has_no_footprint() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, 0;\n\
+                   $L__LOOP:\nadd.u32 %r1, %r1, 1;\nshr.u32 %r3, %r1, 1;\n\
+                   mul.wide.u32 %rd2, %r3, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                   st.global.u32 [%rd3], 0;\nsetp.lt.u32 %p1, %r1, 1000000000;\n\
+                   @%p1 bra $L__LOOP;\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
         assert_eq!(r.kernels[0].loops[0].global_bytes_per_cta, None);
     }
 
