@@ -1,0 +1,42 @@
+---
+source: src/analysis/scalar/reaching_values_snapshot.rs
+expression: out
+---
+## reads: 99492, agreeing 96022
+carried where the φ is at a join: 2342
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:L359 %rd258: carried($L__BB0_2) / phi($L__BB0_21) [L355 L399]
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:L361 %rd257: carried($L__BB0_2) / phi($L__BB0_18) [L147 L361 L465]
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:L412 %rd242: carried($L__BB0_2) / phi($L__BB0_5) [L391 L407]
+merged keeps a definition the φ does not: 1128
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage2.sm_100a.ptx:L254 %rd54: merged(L155 L176 L218) / phi($L__BB0_6) [L155 L218]
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage2.sm_100a.ptx:L255 %rd55: merged(L156 L180 L217) / phi($L__BB0_6) [L156 L217]
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage2.sm_100a.ptx:L259 %r47: merged(L154 L175 L212) / phi($L__BB0_6) [L154 L212]
+## header queries excluding the loop: 29867, agreeing 21100
+counter: one definition, SSA a φ: 5
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1986 on entry to $L__BB0_43: L351 / phi($L__BB0_39) [L351 L758]
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1875 on entry to $L__BB0_14: L2865 / phi($L__BB0_10) [L2865 L3280]
+    tests/fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx: %r2082 on entry to $L__BB0_43: L359 / phi($L__BB0_39) [L359 L760]
+other: carried names another loop than the φ's: 10
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1869 on entry to $L__BB0_14: carried($L__BB0_2) / phi($L__BB0_10) [L2866 L2881 L2915 L4256 L4288]
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1870 on entry to $L__BB0_14: carried($L__BB0_2) / phi($L__BB0_10) [L2867 L2876 L4251]
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1871 on entry to $L__BB0_14: carried($L__BB0_2) / phi($L__BB0_10) [L2868 L2882 L2904 L4277]
+other: carried where the φ is at a join: 12
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1773 on entry to $L__BB0_10: carried($L__BB0_2) / phi($L__BB0_9) [L2798 L2880]
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1869 on entry to $L__BB0_10: carried($L__BB0_2) / phi($L__BB0_9) [L2866 L2881 L2915]
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1870 on entry to $L__BB0_10: carried($L__BB0_2) / phi($L__BB0_9) [L2867 L2876]
+other: merged keeps a definition the φ does not: 10
+    tests/fixtures/b200/attn_sglang__llama3-8b__extend._fwd_kernel.sm_100a.ptx: %r802 on entry to $L__BB0_11: merged(L284 L402 L423) / phi($L__BB0_10) [L284 L423]
+    tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx: %rs83 on entry to $L__BB0_11: merged(L134 L201 L202 L464 L688) / phi($L__BB0_10) [L134 L202 L464 L688]
+    tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx: %rs84 on entry to $L__BB0_11: merged(L134 L207 L208 L465 L689) / phi($L__BB0_10) [L134 L208 L465 L689]
+other: merged misses a definition the φ has: 10
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1980 on entry to $L__BB0_43: merged(L352 L367 L401) / phi($L__BB0_39) [L352 L367 L401 L1734 L1766]
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1981 on entry to $L__BB0_43: merged(L353 L362) / phi($L__BB0_39) [L353 L362 L1729]
+    tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx: %r1982 on entry to $L__BB0_43: merged(L354 L368 L390) / phi($L__BB0_39) [L354 L368 L390 L1755]
+other: no definition, SSA a φ that may be undef: 8567
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx: %p37 on entry to $L__BB0_7: none / phi($L__BB0_2) [L446 undef]
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx: %p38 on entry to $L__BB0_7: none / phi($L__BB0_2) [L447 undef]
+    tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx: %p39 on entry to $L__BB0_7: none / phi($L__BB0_2) [L449 undef]
+other: one definition, SSA a φ: 153
+    tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage1.sm_100a.ptx: %rd88 on entry to $L__BB0_4: L277 / phi($L__BB0_2) [L277 L564]
+    tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage1.sm_100a.ptx: %r398 on entry to $L__BB0_4: L278 / phi($L__BB0_2) [L278 L622]
+    tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage1.sm_100a.ptx: %r399 on entry to $L__BB0_4: L279 / phi($L__BB0_2) [L279 L622]

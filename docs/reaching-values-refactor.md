@@ -215,11 +215,22 @@ loop's counter) is its own commit with a test pinning the new answer.
     helper and the corpus test use `writes`, the SSA's test helper
     gaining the CC write of an unparsed statement it omitted. Done.
 11. `incoming` and `sources`; tests through nested φs and a cycle. Done.
-12. The tracer builds `RegisterSsa`. A temporary corpus snapshot of, for
-    every explicit and implicit (CC) read and every header query
-    excluding its loop: today's `ReachingDefinition`, the new `Value`,
-    its `sources`. Each class of difference explained.
-13. `uniformity::read_sites` reads `sources`.
+12. A temporary corpus snapshot, built from the tracer's write table,
+    of every explicit and implicit (CC) read and every header query
+    excluding its loop where today's `ReachingDefinition` and the new
+    `Value` and `sources` disagree, by class
+    (`src/analysis/scalar/snapshots/`). Done. Of 99,492 reads, 2,342
+    `Carried` reads are a φ at a join inside the loop, none of them a
+    counter of that loop, and 1,128 `Merged` reads keep a definition a
+    later write kills; no read's `Merged` misses a path writing
+    nothing. Of 29,867 header queries, 8,567 `None`s are a φ of an
+    enclosing loop that may be `Undef`; 158 single definitions and 10
+    `Merged`s miss a write an enclosing loop carries back in, 5 of
+    them counters (PLAN, "A loop counter's value on entry");
+    the rest name a φ nearer than `Carried`'s loop or drop a killed
+    definition.
+13. The tracer holds `RegisterSsa`, and `uniformity::read_sites` reads
+    `sources`.
 14. `uniformity::read_sites` refuses `Undef`.
 15. `trace_reg`'s `Merged` branch reads `Argument`s, `Undef` refused.
 16. `trace_reg`'s `Carried` branch reads header `Argument`s.
