@@ -79,10 +79,11 @@ its shared writes and instruction counts remain counted
   integer-to-float conversion and a narrowing conversion are each read
   as the source's value (`micro/cvt_reads.ptx`: the three addresses are `4 * %tid.x +
   param_0`, the last plus `17179869184`; only the last is 4·%tid.x).
-- **`mul.hi` is read as the full product** (PTX ISA §9.7.1.3: `.hi`
-  keeps the upper half): in `micro/mul_hi.ptx`, `mul.hi.u32` of 2 and
-  3 is read as 6 and the store as `[param_0 + 24]`, where ptxas 13.4
-  stores at param_0.
+- **`mul.hi` and `mad.hi` are read as the full product** (PTX ISA
+  §9.7.1.3, §9.7.1.4: `.hi` keeps the upper half): in
+  `micro/mul_hi.ptx`, `mul.hi.u32` of 2 and 3 is read as 6 and the
+  store as `[param_0 + 24]`, where ptxas 13.4 stores at param_0; and
+  `mad.hi.u32` of 2, 3 and 1, which is 1, as 7, `[param_0 + 28]`.
 - **Integer arithmetic is read without wrapping**: the tracer's domain
   is documented as nonnegative and non-overflowing
   (`src/analysis/scalar/trace.rs`, module doc), and nothing checks
