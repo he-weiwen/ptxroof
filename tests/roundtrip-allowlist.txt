@@ -6,6 +6,7 @@
 # The in-kernel .local depot declaration is discarded (PLAN.md, missing
 # features: local memory per thread).
 k14/k14.sm_80.ptx
+micro/address_operands.ptx
 
 # `.pragma "nounroll";` is discarded, so ptxas unrolls the loop it
 # annotated (PLAN.md, producers and validation).

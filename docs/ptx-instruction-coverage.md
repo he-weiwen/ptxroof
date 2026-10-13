@@ -251,7 +251,7 @@ requested.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.9.3 | `mov` | `NonFlopArith::Move` | OK — includes special-register reads (`mov.u32 %r, %tid.x`). |
+| 9.7.9.3 | `mov` | `NonFlopArith::Move` | OK — includes special-register reads (`mov.u32 %r, %tid.x`) and a variable's address plus an offset, `avar+imm` (`Operand::Offset`, `micro/address_operands.ptx`), which `cvta`, `mapa` and `getctarank` also take; an immediate address `[immAddr]` parses too. |
 | 9.7.9.4 | `mov` (vector pack/unpack form) | `Move` (same arm) | OK. |
 | 9.7.9.5 | `shfl` (deprecated) | `Communication` | OK — same arm as `shfl.sync`; zero DRAM bytes is the correct accounting for intra-warp exchange. |
 | 9.7.9.6 | `shfl.sync` | `Communication` | OK. |

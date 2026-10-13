@@ -1,0 +1,38 @@
+//
+// HAND-WRITTEN: `mov.u32 %r2, buf+8` moves the shared array's address
+// plus 8 (PTX ISA §9.7.9.3, `mov d, avar+imm`), so the first store is at
+// param_0 + 32 in every thread (ptxas 13.4: `STG.E [R4.64+0x20], R7`
+// with R4 = c[0x0][0x160]); `ld.local.u32 %r3, [0]` loads from an
+// immediate address (§6.4.1), here lbuf, which holds the thread index,
+// so the second store's address comes from local memory (ptxas:
+// `STG.E [R2.64], R7`, R2 = 4 · tid + param_0).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_address_operands(
+	.param .u64 micro_address_operands_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<6>;
+	.shared .align 4 .b8 buf[64];
+	.local .align 4 .b8 lbuf[16];
+
+	ld.param.u64 	%rd1, [micro_address_operands_param_0];
+	mov.u32 	%r1, %tid.x;
+	st.local.u32 	[lbuf], %r1;
+	mov.u32 	%r2, %r1;
+	mov.u32 	%r2, buf+8;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	mov.u32 	%r3, %r1;
+	ld.local.u32 	%r3, [0];
+	mul.wide.u32 	%rd4, %r3, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r1;
+	ret;
+}

@@ -302,9 +302,9 @@ fn operand_reads(t: &AffineValueTracer, ops: &[OperandId], pos: usize) -> Vec<Re
                 rs.extend(operand_reads(t, t.module.operand_ids(*rest), pos));
                 rs
             }
-            Operand::Selected { base, .. } | Operand::Negated { inner: base } => {
-                operand_reads(t, &[*base], pos)
-            }
+            Operand::Selected { base, .. }
+            | Operand::Negated { inner: base }
+            | Operand::Offset { base, .. } => operand_reads(t, &[*base], pos),
             Operand::VectorList { children }
             | Operand::MultipleDestinations { children }
             | Operand::ParamList { children } => {

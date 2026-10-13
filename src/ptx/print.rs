@@ -179,6 +179,7 @@ fn dump_operand(m: &Module, id: OperandId) -> String {
             inner.join("|")
         }
         Operand::Negated { inner } => format!("!{}", dump_operand(m, *inner)),
+        Operand::Offset { base, offset } => format!("{}+{offset}", dump_operand(m, *base)),
         Operand::ParamList { children } => {
             let inner: Vec<String> = m
                 .operand_ids(*children)

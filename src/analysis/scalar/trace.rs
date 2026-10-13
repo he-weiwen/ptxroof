@@ -493,6 +493,8 @@ impl<'a> AffineValueTracer<'a> {
             Operand::SymbolRef(s) => Ok(Affine::invariant(SymExpr::sym(
                 self.module.interner.resolve(*s),
             ))),
+            Operand::Offset { base, offset } => Ok(self.trace_operand(*base, pos, id, depth)?
+                + Affine::invariant(SymExpr::Const(*offset))),
             other => Err(format!(
                 "unsupported operand form in latch trace: {other:?}"
             )),

@@ -140,9 +140,9 @@ pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
             .chain(module.operand_ids(*rest))
             .flat_map(|&op| registers(module, op))
             .collect(),
-        Operand::Selected { base, .. } | Operand::Negated { inner: base } => {
-            registers(module, *base)
-        }
+        Operand::Selected { base, .. }
+        | Operand::Negated { inner: base }
+        | Operand::Offset { base, .. } => registers(module, *base),
         _ => Vec::new(),
     }
 }

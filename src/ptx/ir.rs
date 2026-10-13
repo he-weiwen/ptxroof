@@ -272,6 +272,9 @@ pub enum Operand {
     Negated { inner: OperandId },
     /// `(a, b)` — a call's return or argument list (PTX ISA §9.7.13.5).
     ParamList { children: IdxRange<OperandId> },
+    /// `buf+8` — a variable's address plus a byte offset, outside
+    /// brackets (PTX ISA §9.7.9.3, `mov d, avar+imm`).
+    Offset { base: OperandId, offset: i64 },
 }
 
 /// One executable instruction.

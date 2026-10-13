@@ -926,7 +926,13 @@ impl<'a> Parser<'a> {
                 let t = self.bump();
                 let sym = self.interner.intern(t.text);
                 let sym = self.scoped(sym);
-                Some(self.push_operand(Operand::SymbolRef(sym)))
+                let base = self.push_operand(Operand::SymbolRef(sym));
+                if !(self.at(TokenKind::Plus) && self.peek_at(1).kind == TokenKind::Number) {
+                    return Some(base);
+                }
+                self.bump();
+                let offset = parse_int(self.bump().text)?;
+                Some(self.push_operand(Operand::Offset { base, offset }))
             }
             TokenKind::LBracket => {
                 self.bump();
@@ -940,6 +946,11 @@ impl<'a> Parser<'a> {
                         let t = self.bump();
                         let sym = self.interner.intern(t.text);
                         Operand::SymbolRef(self.scoped(sym))
+                    }
+                    // `[immAddr]` (PTX ISA §6.4.1).
+                    TokenKind::Number => {
+                        let t = self.bump();
+                        Operand::Immediate(self.interner.intern(t.text))
                     }
                     _ => return None,
                 };
@@ -1177,6 +1188,25 @@ mod tests {
         let ops = m.operand_ids(i.operands);
         assert!(matches!(m.operand(ops[0]), Operand::SymbolRef(s)
             if m.interner.resolve(*s) == "$L__BB0_4"));
+    }
+
+    #[test]
+    fn address_expressions() {
+        let m = parse_body(
+            "mov.u64 %rd1, buf+8;\nmapa.shared::cluster.u32 %r1, buf+-4, %r2;\n\
+             ld.local.u32 %r3, [16];\nret;",
+        );
+        assert_eq!(unparsed_count(&m), 0);
+        let is = instrs(&m);
+        let offset = |i: &Instr| match m.operand(m.operand_ids(i.operands)[1]) {
+            Operand::Offset { offset, .. } => *offset,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((offset(is[0]), offset(is[1])), (8, -4));
+        let Operand::Memory { base, .. } = m.operand(m.operand_ids(is[2].operands)[1]) else {
+            panic!("not an address");
+        };
+        assert!(matches!(m.operand(*base), Operand::Immediate(_)));
     }
 
     #[test]
