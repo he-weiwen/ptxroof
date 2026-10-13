@@ -1,4 +1,5 @@
-//! Which registers an instruction writes.
+//! Which registers, CC included, a statement writes, and whether an
+//! instruction reads CC.
 
 use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Register, Stmt};
 use crate::support::intern::Symbol;
@@ -90,7 +91,7 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
 /// instructions access the condition code" (PTX ISA §9.7.2); a call
 /// leaves it unknown, as one "is not preserved across calls"; a form not
 /// decoded may do both.
-pub(crate) fn carry(module: &Module, instr: &Instr) -> (bool, bool) {
+fn carry(module: &Module, instr: &Instr) -> (bool, bool) {
     use Opcode::*;
     if written_operands(module, instr).is_none() {
         return (true, true);
@@ -121,26 +122,16 @@ pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
         .collect()
 }
 
-/// The registers statement `stmt` writes: an instruction's, or every one
-/// an unparsed statement names.
-pub fn stmt_written_registers(module: &Module, stmt: &Stmt) -> Vec<Symbol> {
-    match stmt {
-        Stmt::Instr(instr) => written_registers(module, instr),
-        Stmt::Unparsed { registers, .. } => registers.clone(),
-        _ => Vec::new(),
-    }
-}
-
 /// The registers statement `stmt` writes, CC included: an instruction's
 /// written registers and CC by [`carry`], or every register an unparsed
 /// statement names and CC.
 pub fn writes(module: &Module, stmt: &Stmt) -> Vec<Register> {
-    let cc = match stmt {
-        Stmt::Instr(instr) => carry(module, instr).0,
-        Stmt::Unparsed { .. } => true,
-        _ => false,
+    let (named, cc) = match stmt {
+        Stmt::Instr(instr) => (written_registers(module, instr), carry(module, instr).0),
+        Stmt::Unparsed { registers, .. } => (registers.clone(), true),
+        _ => (Vec::new(), false),
     };
-    (stmt_written_registers(module, stmt).into_iter())
+    (named.into_iter())
         .map(Register::Named)
         .chain(cc.then_some(Register::Cc))
         .collect()

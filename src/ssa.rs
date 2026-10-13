@@ -100,9 +100,8 @@ fn block_of(cfg: &ControlFlowGraph, stmt: usize) -> BlockId {
 mod tests {
     use super::*;
     use crate::analysis::control_flow::dominators;
-    use crate::analysis::register_effects::{carry, stmt_written_registers};
+    use crate::analysis::register_effects::writes;
     use crate::ptx::cfg::build_cfg;
-    use crate::ptx::ir::Stmt;
     use crate::ptx::parse::parser::parse;
 
     /// Where a test reads: before a line of the body, or at a block's end.
@@ -126,18 +125,13 @@ mod tests {
         assert_eq!(kernel.stmts.len(), body.lines().count());
         let cfg = build_cfg(&module, kernel);
         let doms = dominators(&cfg);
-        let mut writes: HashMap<Register, Vec<usize>> = HashMap::new();
+        let mut table: HashMap<Register, Vec<usize>> = HashMap::new();
         for (i, stmt) in kernel.stmts.iter().enumerate() {
-            for r in stmt_written_registers(&module, stmt) {
-                writes.entry(Register::Named(r)).or_default().push(i);
-            }
-            if let Stmt::Instr(instr) = stmt
-                && carry(&module, instr).0
-            {
-                writes.entry(Register::Cc).or_default().push(i);
+            for reg in writes(&module, stmt) {
+                table.entry(reg).or_default().push(i);
             }
         }
-        let ssa = RegisterSsa::new(&cfg, &doms, writes);
+        let ssa = RegisterSsa::new(&cfg, &doms, table);
         (reads.iter())
             .map(|&(name, at)| {
                 let reg = match name {

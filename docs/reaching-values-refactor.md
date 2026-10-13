@@ -199,18 +199,21 @@ loop's counter) is its own commit with a test pinning the new answer.
    `Site`; tests: straight line, diamond, one-sided write, loop
    counter, nested loops, two-entry cycle, entry with predecessors,
    unreachable block, CC.CF across a call. Done (`f1cec24`).
-4. `Location` becomes `Register` in `src/ptx/ir.rs`.
+4. `Location` becomes `Register` in `src/ptx/ir.rs`. Done (`c4542c0`).
 5. `Value` and `Site` become one `Value::{Result, Argument, Undef}`.
+   Done (`8e25519`).
 6. `Values` becomes `RegisterSsa` and `at` `value_before`; `at_end`
    goes, as nothing outside the tests reads it before `incoming`.
+   Done (`361e32a`).
 7. The decoder's `writes` and `reads_cc`, beside `stmt_written_registers`
-   and `carry`.
+   and `carry`. Done (`a375173`).
 8. The tracer's one write table, read through `Named` and `Cc` as
-   above, split further if the diff passes 50 lines.
-9. The uniformity analysis's one `read`.
-10. `stmt_written_registers` and `carry` go; the decoder's, the SSA's
-    and the corpus tests use `writes`, the SSA's test helper gaining
-    the CC write of an unparsed statement it now omits.
+   above. Done (`5435374`).
+9. The uniformity analysis's one `read`. Done (`9b82e6e`).
+10. `stmt_written_registers` goes and `carry` becomes private, the rule
+    `writes` and `reads_cc` share; the induction chains, the SSA's test
+    helper and the corpus test use `writes`, the SSA's test helper
+    gaining the CC write of an unparsed statement it omitted. Done.
 11. `incoming` and `sources`; tests through nested φs and a cycle.
 12. The tracer builds `RegisterSsa`. A temporary corpus snapshot of, for
     every explicit and implicit (CC) read and every header query
@@ -228,7 +231,7 @@ loop's counter) is its own commit with a test pinning the new answer.
 22. `reach_def`, `reach_sites` and `path_avoiding` go, and the snapshot
     of step 12 with them; the focused tests stay.
 
-Steps 4–10 change no output.
+Steps 4–10 changed no output.
 
 ## The uniform variable: what its plan must settle
 

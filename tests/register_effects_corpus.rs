@@ -5,10 +5,8 @@
 //! writes. Each written operand is a register, a selected register
 //! (`%r1.h0`), a `{…}`, a `p|q`, a call's `(…)` or `_`.
 
-use ptxroof::analysis::register_effects::{
-    registers, split_operands, stmt_written_registers, written_operands,
-};
-use ptxroof::ptx::ir::{Operand, Stmt};
+use ptxroof::analysis::register_effects::{registers, split_operands, writes, written_operands};
+use ptxroof::ptx::ir::{Operand, Register, Stmt};
 use ptxroof::ptx::parse::parser::parse;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write;
@@ -85,14 +83,15 @@ fn every_register_read_is_written_in_its_kernel() {
         let m = parse(&src).expect("fixture parses");
         let rel = path.strip_prefix(&root).expect("under the repo").display();
         for k in &m.kernels {
-            let written: HashSet<_> = (k.stmts.iter())
-                .flat_map(|s| stmt_written_registers(&m, s))
-                .collect();
+            let written: HashSet<_> = (k.stmts.iter()).flat_map(|s| writes(&m, s)).collect();
             for stmt in &k.stmts {
                 let Stmt::Instr(i) = stmt else { continue };
                 let guard = i.predicate.map(|p| p.reg);
                 let reads = (split_operands(&m, i).1.iter()).flat_map(|&op| registers(&m, op));
-                for r in reads.chain(guard).filter(|r| !written.contains(r)) {
+                for r in reads
+                    .chain(guard)
+                    .filter(|&r| !written.contains(&Register::Named(r)))
+                {
                     unwritten.insert(format!("{rel}: {}", m.interner.resolve(r)));
                 }
             }

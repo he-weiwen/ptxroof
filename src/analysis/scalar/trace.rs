@@ -17,7 +17,7 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::register_effects::{self, registers, split_operands, stmt_written_registers};
+use crate::analysis::register_effects::{self, registers, split_operands};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -195,8 +195,10 @@ impl<'a> AffineValueTracer<'a> {
         for &b in &l.blocks {
             let blk = self.cfg.block(b);
             for (i, stmt) in self.kernel.stmts[blk.start..blk.end].iter().enumerate() {
-                for reg in stmt_written_registers(self.module, stmt) {
-                    in_loop_defs.entry(reg).or_default().push(blk.start + i);
+                for reg in register_effects::writes(self.module, stmt) {
+                    if let Register::Named(reg) = reg {
+                        in_loop_defs.entry(reg).or_default().push(blk.start + i);
+                    }
                 }
             }
         }
