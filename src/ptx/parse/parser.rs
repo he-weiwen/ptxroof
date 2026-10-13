@@ -9,8 +9,8 @@
 //! `function_name/inlined_at` forms — both appear in k2), `.pragma` in
 //! body position, `.section .debug_*` data sections (parsed and
 //! skipped), `{ ... }` statement blocks (inline-asm expansions —
-//! flattened, with the labels and registers they declare renamed per
-//! scope), and `.branchtargets`.
+//! flattened, with the labels, registers and variables they declare
+//! renamed per scope), and `.branchtargets`.
 //!
 //! Malformed instructions in kernel bodies become `Stmt::Unparsed`; recovery
 //! skips to a semicolon, closing brace, or EOF. Unsupported top-level
@@ -514,24 +514,25 @@ impl<'a> Parser<'a> {
         renamed.map_or(sym, |r| self.interner.intern(&r))
     }
 
-    /// A `.reg` in an open block takes a name of its own there.
-    fn declare_scoped(&mut self, decl: &mut RegDecl) {
+    /// A name declared in an open block, a register family's prefix with
+    /// its count, takes a name of its own there.
+    fn declare_scoped(&mut self, name: Symbol, count: Option<u32>) -> Symbol {
         let Some(scope) = self.scopes.last_mut() else {
-            return;
+            return name;
         };
-        let name = self.interner.resolve(decl.prefix);
-        let renamed = match decl.count {
-            None => format!("{name}$scope{}", scope.id),
-            Some(_) => format!("{name}$scope{}$", scope.id),
+        let text = self.interner.resolve(name);
+        let renamed = match count {
+            None => format!("{text}$scope{}", scope.id),
+            Some(_) => format!("{text}$scope{}$", scope.id),
         };
         let renamed = self.interner.intern(&renamed);
-        match decl.count {
+        match count {
             None => {
-                scope.names.insert(decl.prefix, renamed);
+                scope.names.insert(name, renamed);
             }
-            Some(n) => scope.families.push((decl.prefix, n)),
+            Some(n) => scope.families.push((name, n)),
         }
-        decl.prefix = renamed;
+        renamed
     }
 
     fn parse_body_directive(
@@ -550,7 +551,9 @@ impl<'a> Parser<'a> {
             "loc" => self.parse_loc(cur_loc),
             "reg" => {
                 if let Some(mut decls) = self.parse_reg_decl() {
-                    decls.iter_mut().for_each(|d| self.declare_scoped(d));
+                    for d in &mut decls {
+                        d.prefix = self.declare_scoped(d.prefix, d.count);
+                    }
                     kernel.reg_decls.extend(decls);
                 } else {
                     kernel.stmts.push(Stmt::Unparsed { offset });
@@ -558,7 +561,8 @@ impl<'a> Parser<'a> {
                 }
             }
             "shared" => {
-                if let Some(decl) = self.parse_shared_decl() {
+                if let Some(mut decl) = self.parse_shared_decl() {
+                    decl.name = self.declare_scoped(decl.name, None);
                     kernel.shared_decls.push(decl);
                 } else {
                     kernel.stmts.push(Stmt::Unparsed { offset });
@@ -572,7 +576,8 @@ impl<'a> Parser<'a> {
                     && self.peek().text == "shared"
                 {
                     self.bump();
-                    if let Some(decl) = self.parse_shared_decl() {
+                    if let Some(mut decl) = self.parse_shared_decl() {
+                        decl.name = self.declare_scoped(decl.name, None);
                         kernel.shared_decls.push(decl);
                         return Ok(());
                     }
@@ -597,9 +602,25 @@ impl<'a> Parser<'a> {
                 self.resync_to_semicolon();
                 kernel.stmts.push(Stmt::BranchTargets(targets));
             }
-            "local" | "const" | "global" | "align" => {
+            "local" | "const" | "global" | "param" | "align" => {
                 // In-body variable declarations we don't model; the
-                // instructions touching them are still counted.
+                // instructions touching them are still counted, and in
+                // a block their names hide the kernel's.
+                let mut after_dot = true;
+                while !matches!(
+                    self.peek().kind,
+                    TokenKind::Semicolon
+                        | TokenKind::Equals
+                        | TokenKind::RBrace
+                        | TokenKind::EndOfFile
+                ) {
+                    let t = self.bump();
+                    if !after_dot && matches!(t.kind, TokenKind::Identifier | TokenKind::Register) {
+                        let name = self.interner.intern(t.text);
+                        self.declare_scoped(name, None);
+                    }
+                    after_dot = t.kind == TokenKind::Dot;
+                }
                 self.resync_to_semicolon();
             }
             _ => {
@@ -1251,6 +1272,36 @@ mod tests {
         assert_eq!(packed, ["lo$scope1", "hi$scope1"]);
         let guard = is[2].predicate.expect("guarded");
         assert_eq!(m.interner.resolve(guard.reg), "done$scope2");
+    }
+
+    #[test]
+    fn a_scoped_variable_of_any_space_hides_a_register() {
+        let m = parse_body(
+            ".reg .b64 a;\n.reg .b64 b;\n.reg .b64 c;\n\
+             { .shared .align 4 .b8 a[16]; .local .b32 b; .param .align 8 .b8 c[8]; \
+             mov.u64 %rd1, a; mov.u64 %rd2, b; mov.u64 %rd3, c; }\nmov.u64 %rd4, a;\nret;",
+        );
+        let sources: Vec<String> = instrs(&m)[..4]
+            .iter()
+            .map(|i| match m.operand(m.operand_ids(i.operands)[1]) {
+                Operand::SymbolRef(s) => format!("symbol {}", m.interner.resolve(*s)),
+                Operand::Register(r) => format!("register {}", m.interner.resolve(*r)),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            sources,
+            [
+                "symbol a$scope1",
+                "symbol b$scope1",
+                "symbol c$scope1",
+                "register a"
+            ]
+        );
+        assert_eq!(
+            m.interner.resolve(m.kernels[0].shared_decls[0].name),
+            "a$scope1"
+        );
     }
 
     #[test]
