@@ -239,6 +239,15 @@ pub struct Predicate {
     pub negated: bool,
 }
 
+/// What a statement writes and a later one reads: a `.reg` register, or
+/// the condition code register CC, whose one bit is CC.CF and which no
+/// operand names (PTX ISA §9.7.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Register {
+    Named(Symbol),
+    Cc,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operand {
     /// `%rd5` — a register.

@@ -1,63 +1,56 @@
 //! Register SSA over the PTX control-flow graph: the value a read of a
-//! register or of the carry flag CC.CF sees. Minimal SSA (Cytron et al.,
-//! TOPLAS 1991): a φ for a location at each block in the iterated
-//! dominance frontier of the blocks writing it. Values name PTX
-//! statements and blocks; the CFG is not changed.
+//! register, CC included, sees. Minimal SSA (Cytron et al., TOPLAS
+//! 1991): a φ for a register at each block in the iterated dominance
+//! frontier of the blocks writing it. Values name PTX statements and
+//! blocks; the CFG is not changed.
 
 use crate::analysis::control_flow::DominanceInfo;
 use crate::analysis::control_flow::dominators::iterated_frontier;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::support::intern::Symbol;
+use crate::ptx::ir::Register;
 use std::collections::{HashMap, HashSet};
 
-/// A register, or the carry flag CC.CF.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Location {
-    Reg(Symbol),
-    Carry,
-}
-
-/// A value of one location.
+/// A value of one register.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Value {
-    pub loc: Location,
+    pub reg: Register,
     pub site: Site,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Site {
-    /// The statement writes the location. Where a guarded write's guard
-    /// is false, the location keeps the value a read at the statement
+    /// The statement writes the register. Where a guarded write's guard
+    /// is false, the register keeps the value a read at the statement
     /// sees.
     Write(usize),
     /// A φ at the start of the block.
     Phi(BlockId),
-    /// The location as the kernel starts: no write on some path.
+    /// The register as the kernel starts: no write on some path.
     Entry,
 }
 
 pub struct Values<'a> {
     cfg: &'a ControlFlowGraph,
     doms: &'a DominanceInfo,
-    writes: HashMap<Location, Vec<usize>>,
-    phis: HashSet<(Location, BlockId)>,
+    writes: HashMap<Register, Vec<usize>>,
+    phis: HashSet<(Register, BlockId)>,
 }
 
 impl<'a> Values<'a> {
-    /// `writes`: the statements writing each location, in order, each
+    /// `writes`: the statements writing each register, in order, each
     /// in a block of `cfg`.
     pub fn new(
         cfg: &'a ControlFlowGraph,
         doms: &'a DominanceInfo,
-        writes: HashMap<Location, Vec<usize>>,
+        writes: HashMap<Register, Vec<usize>>,
     ) -> Self {
         let df = doms.frontiers(cfg);
         let phis = (writes.iter())
-            .flat_map(|(&loc, ws)| {
+            .flat_map(|(&reg, ws)| {
                 let blocks: Vec<BlockId> = ws.iter().map(|&w| block_of(cfg, w)).collect();
                 iterated_frontier(&df, &blocks)
                     .into_iter()
-                    .map(move |b| (loc, b))
+                    .map(move |b| (reg, b))
             })
             .collect();
         Values {
@@ -68,30 +61,30 @@ impl<'a> Values<'a> {
         }
     }
 
-    /// The value of `loc` a read at statement `pos` sees; `None` in an
+    /// The value of `reg` a read at statement `pos` sees; `None` in an
     /// unreachable block.
-    pub fn at(&self, loc: Location, pos: usize) -> Option<Value> {
-        self.before(loc, block_of(self.cfg, pos), pos)
+    pub fn at(&self, reg: Register, pos: usize) -> Option<Value> {
+        self.before(reg, block_of(self.cfg, pos), pos)
     }
 
-    /// The value of `loc` after block `b`'s last statement.
-    pub fn at_end(&self, loc: Location, b: BlockId) -> Option<Value> {
-        self.before(loc, b, self.cfg.block(b).end)
+    /// The value of `reg` after block `b`'s last statement.
+    pub fn at_end(&self, reg: Register, b: BlockId) -> Option<Value> {
+        self.before(reg, b, self.cfg.block(b).end)
     }
 
-    /// The value of `loc` before statement `end` of block `b`, or after
+    /// The value of `reg` before statement `end` of block `b`, or after
     /// it when `end` is the block's end.
-    fn before(&self, loc: Location, mut b: BlockId, mut end: usize) -> Option<Value> {
+    fn before(&self, reg: Register, mut b: BlockId, mut end: usize) -> Option<Value> {
         if !self.doms.is_reachable(b) {
             return None;
         }
-        let ws = self.writes.get(&loc).map_or(&[][..], Vec::as_slice);
+        let ws = self.writes.get(&reg).map_or(&[][..], Vec::as_slice);
         let site = loop {
             let i = ws.partition_point(|&w| w < end);
             if i > 0 && ws[i - 1] >= self.cfg.block(b).start {
                 break Site::Write(ws[i - 1]);
             }
-            if self.phis.contains(&(loc, b)) {
+            if self.phis.contains(&(reg, b)) {
                 break Site::Phi(b);
             }
             // A block without a φ starts with what its immediate
@@ -101,7 +94,7 @@ impl<'a> Values<'a> {
                 None => break Site::Entry,
             }
         };
-        Some(Value { loc, site })
+        Some(Value { reg, site })
     }
 }
 
@@ -130,7 +123,7 @@ mod tests {
     use At::{End, L};
 
     /// The values `reads` see in kernel `body`, one statement per line;
-    /// `%cc` is CC.CF. Each value prints as `wN` (written at line N),
+    /// `%cc` is CC. Each value prints as `wN` (written at line N),
     /// `phiB`, `entry` or `none`.
     fn values(body: &str, reads: &[(&str, At)]) -> Vec<String> {
         let src = format!(
@@ -142,27 +135,27 @@ mod tests {
         assert_eq!(kernel.stmts.len(), body.lines().count());
         let cfg = build_cfg(&module, kernel);
         let doms = dominators(&cfg);
-        let mut writes: HashMap<Location, Vec<usize>> = HashMap::new();
+        let mut writes: HashMap<Register, Vec<usize>> = HashMap::new();
         for (i, stmt) in kernel.stmts.iter().enumerate() {
             for r in stmt_written_registers(&module, stmt) {
-                writes.entry(Location::Reg(r)).or_default().push(i);
+                writes.entry(Register::Named(r)).or_default().push(i);
             }
             if let Stmt::Instr(instr) = stmt
                 && carry(&module, instr).0
             {
-                writes.entry(Location::Carry).or_default().push(i);
+                writes.entry(Register::Cc).or_default().push(i);
             }
         }
         let v = Values::new(&cfg, &doms, writes);
         (reads.iter())
             .map(|&(name, at)| {
-                let loc = match name {
-                    "%cc" => Location::Carry,
-                    _ => Location::Reg(module.interner.get(name).expect("register")),
+                let reg = match name {
+                    "%cc" => Register::Cc,
+                    _ => Register::Named(module.interner.get(name).expect("register")),
                 };
                 let value = match at {
-                    L(line) => v.at(loc, line),
-                    End(b) => v.at_end(loc, BlockId(b)),
+                    L(line) => v.at(reg, line),
+                    End(b) => v.at_end(reg, BlockId(b)),
                 };
                 match value.map(|v| v.site) {
                     Some(Site::Write(s)) => format!("w{s}"),
