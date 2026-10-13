@@ -30,7 +30,9 @@ use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQuali
 use crate::analysis::instruction_counts::count_constraint::count_constraint;
 use crate::analysis::instruction_counts::measurement::{Contribution, MeasureKind};
 use crate::analysis::loop_names::{LoopName, loop_names};
-use crate::analysis::memory_footprint::{CountRange, SECTOR, SectorPattern, warp_footprint};
+use crate::analysis::memory_footprint::{
+    CountRange, SECTOR, SectorPattern, in_block, offsets_fit, warp_footprint,
+};
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
@@ -887,7 +889,15 @@ impl<'a> KernelReportBuilder<'a> {
                 .count() as u64;
             requested += f.bytes as u64 * trips as u64 * lanes;
             at_most |= !f.guard_exact || f.conditional;
-            let Some(form) = &f.form else {
+            let varies = |v: &Var| {
+                crate::analysis::scalar::lane_eval::depends_on_lane(v)
+                    || at_trip(v, id, 0).is_some()
+            };
+            let bound = |v: &Var| match v {
+                Var::Iter(l) if *l == id => Some((0, trips)),
+                _ => in_block(self.shape)(v),
+            };
+            let Some(form) = (f.form.as_ref()).filter(|a| offsets_fit(a, varies, &bound)) else {
                 complete &= f.bytes == 0 || lanes == 0;
                 continue;
             };

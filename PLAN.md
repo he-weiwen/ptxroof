@@ -122,6 +122,11 @@ its shared writes and instruction counts remain counted
   side can set (rope_norm's `or.b32 %r106, %r104, 16` on
   `64·%ctaid.x + (⌊%tid.x/8⌋ mod 16)`: "or with a value below 0x20";
   k14's C stores: "or of two values neither of known range").
+- **Offsets past 2^62 bytes are not counted**: an access whose lane
+  offsets over the block, or whose loop's shifts over its trips, reach
+  2^62 bytes has unknown sectors per warp or unknown unique loop bytes
+  (`micro/offsets_wide.ptx`: `warp: ? (lane offsets reach 2^62
+  bytes)`; `requested 32 B, unique unknown` for 8 distinct stores).
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B

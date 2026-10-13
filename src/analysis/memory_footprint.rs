@@ -6,14 +6,48 @@
 //! set, so every alignment of it under which the lanes' accesses are
 //! aligned is tried and the count is reported as a range.
 
-#[cfg(test)]
-use crate::analysis::scalar::affine::Axis;
-use crate::analysis::scalar::affine::{Affine, Var};
+use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
+use crate::analysis::scalar::symexpr::SymExpr;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
 pub const SECTOR: i64 = 32;
+
+/// Offsets within 2^62 bytes leave room to add an access size, a
+/// sector and an alignment in i64.
+const OFFSET_LIMIT: i128 = 1 << 62;
+
+/// Whether the terms of `a` that `varies` picks sum within
+/// `OFFSET_LIMIT` bytes of 0 at every value `bound` gives them; each
+/// bound holds 0, so every partial sum does too.
+pub fn offsets_fit(
+    a: &Affine,
+    varies: impl Fn(&Var) -> bool,
+    bound: &dyn Fn(&Var) -> Option<(i64, i64)>,
+) -> bool {
+    let part = Affine {
+        terms: (a.terms.iter())
+            .filter(|(v, _)| varies(v))
+            .map(|(v, c)| (v.clone(), c.clone()))
+            .collect(),
+        base: SymExpr::Const(0),
+    };
+    (part.range(bound)).is_some_and(|(lo, hi)| -OFFSET_LIMIT <= lo && hi <= OFFSET_LIMIT)
+}
+
+/// A thread index's values in a block of `shape`.
+pub fn in_block(shape: [u32; 3]) -> impl Fn(&Var) -> Option<(i64, i64)> {
+    move |v| {
+        let n = match v {
+            Var::Tid(Axis::X) => shape[0],
+            Var::Tid(Axis::Y) => shape[1],
+            Var::Tid(Axis::Z) => shape[2],
+            _ => return None,
+        };
+        Some((0, i64::from(n) - 1))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct CountRange {
@@ -62,6 +96,9 @@ pub fn warp_footprint(
     let threads = nx * ny * nz;
     if threads == 0 {
         return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
+    }
+    if !offsets_fit(a, depends_on_lane, &in_block(shape)) {
+        return Err("lane offsets reach 2^62 bytes".to_owned());
     }
     let bytes = i64::from(bytes);
     let align = i64::from(align.max(1));

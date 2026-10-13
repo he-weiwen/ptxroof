@@ -1,0 +1,50 @@
+//
+// HAND-WRITTEN: addresses whose offsets pass 2^63 bytes. In the first
+// kernel thread t stores at param_0 + t * 2^54, every lane in its own
+// sector (ptxas 13.4 adds %tid.x << 22 to the high word, `LEA.X R3,
+// R5, c[0x0][0x164], 0x16, P0`, `STG.E [R2.64], R5`). In the second
+// one thread stores at param_0 + k * 2^60 on trips k = 1 to 8 (ptxas
+// 13.4 unrolls it, the high word stepping by 0x10000000). Lane offsets
+// and trip shifts were summed in i64, which overflows: a debug build
+// panicked.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_offsets_wide_lanes(
+	.param .u64 micro_offsets_wide_lanes_param_0
+)
+.reqntid 1024, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_offsets_wide_lanes_param_0];
+	mov.u32 	%r1, %tid.x;
+	cvt.u64.u32 	%rd2, %r1;
+	shl.b64 	%rd3, %rd2, 54;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	ret;
+}
+
+.visible .entry micro_offsets_wide_trips(
+	.param .u64 micro_offsets_wide_trips_param_0
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [micro_offsets_wide_trips_param_0];
+	mov.u32 	%r1, 0;
+$L__BB1_1:
+	add.s64 	%rd1, %rd1, 1152921504606846976;
+	st.global.u32 	[%rd1], %r1;
+	add.u32 	%r1, %r1, 1;
+	setp.lt.u32 	%p1, %r1, 8;
+	@%p1 bra 	$L__BB1_1;
+	ret;
+}

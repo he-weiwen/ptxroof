@@ -1,0 +1,11 @@
+# Addresses whose lane offsets or trip shifts pass 2^63 bytes: summed in
+# i64 they overflowed and a debug build panicked. A lane or loop part
+# past 2^62 bytes is now left uncounted: the warp's sectors are unknown,
+# and the loop's unique bytes, though ptxas stores 4 B on each of 8
+# distinct addresses.
+RUN: %ptxroof analyze %fixtures/micro/offsets_wide.ptx | FileCheck "%s"
+CHECK-LABEL: kernel micro_offsets_wide_lanes
+CHECK: st.global.u32  global store 4 B  warp: ? (lane offsets reach 2^62 bytes)  [18014398509481984 * %tid.x + param_0]
+CHECK-LABEL: kernel micro_offsets_wide_trips
+CHECK: trips = 8
+CHECK: global bytes per CTA over the loop's own blocks: requested 32 B, unique unknown
