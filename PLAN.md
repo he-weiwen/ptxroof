@@ -356,11 +356,9 @@ its shared writes and instruction counts remain counted
 
 - A value the tracer cannot read but every thread of the CTA shares as
   an affine variable, `uniform(v)`, keyed by its register SSA value:
-  planned once `docs/reaching-values-refactor.md`'s steps land; its
-  plan must first settle a value that varies between a loop's
-  iterations and the tracer's construction order (that document's last
-  section). Register SSA itself (`src/ssa.rs`) is what the tracer, the
-  uniformity analysis, trip counting and the predicate reader read.
+  planned in `docs/uniform-variables.md`, for review. Register SSA
+  itself (`src/ssa.rs`) is what the tracer, the uniformity analysis,
+  trip counting and the predicate reader read.
 
 One line each, with the trigger that would start it.
 
