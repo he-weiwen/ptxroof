@@ -157,7 +157,11 @@ which no analysis reads since `wgmma` is not computed lane by lane.
    guards and bracket bases included (`micro/bare_registers.ptx`,
    `micro/scoped_shadow.ptx`); coordinates after a bracket's base;
    `!` operands and `call` lists; `Unparsed` keeps its registers. Then
-   the corpus check that every `Use::Reg` has a definition.
+   the corpus check that every register read is written. Done, with
+   video selectors, `.unified`, `avar+imm` and `[immAddr]` besides.
+   Not read yet: array element operands `a[i]` (§6.4.2), unparsed and
+   so taken to write every register they name, and vector registers
+   (§6.4.3, PLAN.md).
 
 `docs/reaching-values-refactor.md` then builds on `DefUse`.
 
