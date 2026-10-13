@@ -1,0 +1,27 @@
+# Addresses through a division by a parameter. One every thread of the
+# CTA computes alike is the variable uniform(%r@line), and the warp's
+# sectors are counted as for a parameter base; a quotient that differs
+# by lane, read after a loop lanes leave at different trips, copied
+# there, minus lane 0's shuffle of it, or copied under a guard on the
+# thread index, stays unknown. A quotient computed in a loop varies
+# with it, so the loop's unique bytes are unknown.
+RUN: %ptxroof analyze %fixtures/micro/uniform_address.ptx | FileCheck "%s"
+CHECK-LABEL: kernel micro_uniform_div
+CHECK: warp: 4–5 sectors (ideal 4)
+CHECK-SAME: [4 * %tid.x + 256 * uniform(%r3@38) + param_0]
+CHECK-LABEL: kernel micro_uniform_div_lanes
+CHECK: unknown: div by a non-constant divisor
+CHECK-LABEL: kernel micro_uniform_in_loop
+CHECK: [4 * %tid.x + 256 * uniform(%r4@81) + param_0]
+CHECK-SAME: k[$L__BB2_1]: varies
+CHECK: [4 * %tid.x + 256 * ⌊uniform(%r4@81)/8⌋ + param_0]
+CHECK-SAME: k[$L__BB2_1]: varies
+CHECK: global bytes per CTA over the loop's own blocks: requested 2048 B, unique unknown
+CHECK-LABEL: kernel micro_uniform_after_divergent_exit
+CHECK: unknown: div by a non-constant divisor
+CHECK-LABEL: kernel micro_uniform_copied_after_divergent_exit
+CHECK: unknown: uniform(%r4@138) differs between lanes: depends on %tid.x
+CHECK-LABEL: kernel micro_uniform_shfl_after_divergent_exit
+CHECK: unknown: div by a non-constant divisor
+CHECK-LABEL: kernel micro_uniform_guarded_copy
+CHECK: unknown: div by a non-constant divisor

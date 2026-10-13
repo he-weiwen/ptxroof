@@ -18,7 +18,7 @@ analysis framework is introduced.
 | `analysis/control_flow` | Dominators and loop discovery | `cfg/dominators`, `cfg/loops` |
 | `analysis/loop_names` | Source-derived loop identities and display names | loop portion of `cfg/naming` |
 | `analysis/scalar/symexpr` | Symbolic count expressions | `core/symexpr` |
-| `analysis/scalar/affine` | Affine values over thread, CTA, and loop variables | `affine` |
+| `analysis/scalar/affine` | Affine values over thread, CTA, loop and uniform variables | `affine` |
 | `analysis/scalar/lane_eval` | Lane-dependent evaluation of affine values | helpers in `footprint` |
 | `analysis/scalar/trace` | Affine interpretation of register SSA values | `tracer` |
 | `analysis/scalar/recurrences` | Loop counters as recurrences on register SSA values | new |
@@ -85,6 +85,7 @@ trip_counts <-> trace -> affine -> symexpr
 
 thread_participation -> trace
 uniformity <-> trace
+affine -> ssa (`Var::Uniform` names a register SSA value)
 thread_participation -> lane_eval -> affine
 memory_footprint -----> lane_eval
 memory_footprint -----------------> affine

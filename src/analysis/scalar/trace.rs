@@ -55,6 +55,9 @@ pub(crate) struct AffineValueTracer<'a> {
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<String, i64>>,
     uniformity: OnceCell<Uniformity>,
+    /// Tracing an address that does not read otherwise: a uniform read
+    /// the trace cannot interpret is a `Var::Uniform`.
+    fallback: Cell<bool>,
 }
 
 impl<'a> AffineValueTracer<'a> {
@@ -121,6 +124,7 @@ impl<'a> AffineValueTracer<'a> {
             trips: RefCell::new(HashMap::new()),
             bindings: None,
             uniformity: OnceCell::new(),
+            fallback: Cell::new(false),
         }
     }
 
@@ -328,7 +332,17 @@ impl<'a> AffineValueTracer<'a> {
             let name = self.module.interner.resolve(reg);
             return Err(format!("{name} is read in a block no path reaches"));
         };
-        Ok(self.after_exits(self.trace_value(v, id, depth)?, pos))
+        match self.trace_value(v, id, depth) {
+            Ok(a) => Ok(self.after_exits(a, pos)),
+            Err(_)
+                if self.fallback.get()
+                    && !matches!(v, Value::Undef(_))
+                    && self.uniformity().is_uniform(self, reg, pos).is_ok() =>
+            {
+                Ok(Affine::var(Var::Uniform(v)))
+            }
+            Err(why) => Err(why),
+        }
     }
 
     /// `a` read at `pos`: the counter of a loop `pos` is outside, whose
@@ -450,7 +464,8 @@ impl<'a> AffineValueTracer<'a> {
     fn step(&self, l: LoopId, step: &Step, depth: u32) -> Result<SymExpr, Option<String>> {
         let mut sum = SymExpr::Const(step.constant);
         for &(reg, at, sign) in &step.registers {
-            let s = (self.trace_reg(reg, at, Some(l), depth + 1)).map_err(|_| None)?;
+            let s = self.without_fallback(|| self.trace_reg(reg, at, Some(l), depth + 1));
+            let s = s.map_err(|_| None)?;
             if !s.is_invariant() {
                 return Err(None);
             }
@@ -468,6 +483,31 @@ impl<'a> AffineValueTracer<'a> {
     /// use.
     pub(crate) fn uniformity(&self) -> &Uniformity {
         self.uniformity.get_or_init(|| Uniformity::new(self))
+    }
+
+    /// Memory operand `op`'s address at `pos`; one that does not read is
+    /// read again strictly, each uniform read it cannot interpret a
+    /// variable.
+    pub(crate) fn trace_address(
+        &self,
+        op: OperandId,
+        pos: usize,
+        id: Option<LoopId>,
+    ) -> Result<Affine, String> {
+        self.trace_operand(op, pos, id, 0).or_else(|why| {
+            self.fallback.set(true);
+            let a = self.strictly(|| self.trace_operand(op, pos, id, 0));
+            self.fallback.set(false);
+            a.map_err(|_| why)
+        })
+    }
+
+    /// `f` with no uniform variable.
+    pub(crate) fn without_fallback<T>(&self, f: impl FnOnce() -> T) -> T {
+        let on = self.fallback.replace(false);
+        let t = f();
+        self.fallback.set(on);
+        t
     }
 
     /// `f`, refusing every guarded write it reads.
@@ -830,6 +870,13 @@ impl<'a> AffineValueTracer<'a> {
                         ));
                     }
                 }
+                for u in (a.terms.keys()).filter_map(Var::uniform) {
+                    if let Err(why) = self.uniformity().value_uniform_at(self, u, def) {
+                        return Err(format!(
+                            "shfl.idx of a value that differs between lanes: {why}"
+                        ));
+                    }
+                }
                 a.map_vars(lane)
                     .ok_or_else(|| "shfl.idx of a value not a function of %tid.x".to_owned())
             }
@@ -936,7 +983,7 @@ impl<'a> AffineValueTracer<'a> {
             Var::Tid(axis) => shape(SpecialVector::Ntid, axis),
             Var::Ctaid(axis) => shape(SpecialVector::Nctaid, axis),
             Var::Iter(l) => self.constant_trips(*l).map(|n| (1, n)),
-            Var::Div(..) | Var::Mod(..) => None,
+            Var::Div(..) | Var::Mod(..) | Var::Uniform(_) => None,
         }
     }
 

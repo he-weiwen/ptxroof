@@ -78,7 +78,8 @@ its shared writes and instruction counts remain counted
   or `bfe` result, and an integer `cvt`'s source and destination, are
   refused when the value's range, over constants, the block shape
   `.reqntid` or `--launch` gives, and constant trip counts, leaves the
-  type (`micro/mul_wrap.ptx`: `mul.lo.s32` of 2^30 and 4;
+  type (`micro/mul_wrap.ptx`: `mul.lo.s32` of 2^30 and 4, the same for
+  every thread, so its address reads `uniform(%r2@24)`;
   `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` + 2^32); one through
   a parameter, `%ctaid` (no grid is bound) or a symbolic trip count
   keeps the tracer's documented assumption
@@ -107,14 +108,17 @@ its shared writes and instruction counts remain counted
   (`k2-bind.test`: `trips = 0`); the trip matcher does not read the
   guard.
 - **Addresses the tracer cannot read are unknown rows**, with the
-  reason. Not read: xor swizzles of shared addresses (every ldmatrix
-  and cp.async destination in the Gluon GEMM and attention kernels,
-  "behind `xor.b32`"); divisions by a runtime value, such as the
-  grouped tile schedule's `pid / num_pid_n` (the GEMM's global copies,
-  a `min` of non-constants even with `--bind`); masks that are not
-  one run of bits (the attention backward's dQ stores, `0xdc`); a
-  counter's value after its loop (k1's remainder loop reads the main
-  loop's final k: "more than one reaching definition"); values loaded
+  reason, unless every thread of the CTA computes the part it cannot
+  read alike: that part is then a variable, `uniform(%r54@90)`
+  (`docs/uniform-variables.md`; the grouped tile schedule's
+  `pid / num_pid_n` in the Gluon fp8 GEMM's global copies, k1's
+  remainder loop reading the main loop's final k;
+  `micro/uniform_address.ptx`). Not read: xor swizzles of shared
+  addresses (every ldmatrix and cp.async destination in the Gluon GEMM
+  and attention kernels, "behind `xor.b32`"); divisions of the thread
+  index by a runtime value (`micro/uniform_address.ptx`'s
+  `micro_uniform_div_lanes`); masks that are not
+  one run of bits (the attention backward's dQ stores, `0xdc`); values loaded
   from memory (the cross-entropy's target gather: "depends on a value
   loaded from memory, behind `selp.b64`"); an
   `or` read as an add only when one side's largest value is below a
@@ -127,6 +131,12 @@ its shared writes and instruction counts remain counted
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
   (`micro/offsets_wide.ptx`: `warp: ? (lane offsets reach 2^62
   bytes)`; `requested 32 B, unique unknown` for 8 distinct stores).
+- **A loop footprint takes an address holding a uniform variable as
+  unread**: requested bytes only, unique and sector bytes unknown, also
+  for a variable the loop does not change (`micro/uniform_counter.ptx`,
+  `micro_uniform_start_copy`: requested 1024 B, unique unknown).
+  Reading it needs a rule for bases that may overlap
+  (`docs/uniform-variables.md`, "Open").
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B
@@ -169,7 +179,8 @@ its shared writes and instruction counts remain counted
   a directly nested loop's exit after a constant trip count,
   `src/analysis/scalar/recurrences.rs`): a register stepped by a guarded
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
-  param_0) reads `unknown: %r1 is written under a guard on some path`.
+  param_0) is no counter; its guard the same for every thread, it reads
+  `[4 * uniform(%r1@29) + param_0]`, varying with the loop.
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
@@ -356,9 +367,11 @@ its shared writes and instruction counts remain counted
 
 - A value the tracer cannot read but every thread of the CTA shares as
   an affine variable, `uniform(v)`, keyed by its register SSA value:
-  planned in `docs/uniform-variables.md`, for review. Register SSA
-  itself (`src/ssa.rs`) is what the tracer, the uniformity analysis,
-  trip counting and the predicate reader read.
+  addresses read it (`docs/uniform-variables.md`, steps U1–U3); loop
+  footprints, trip counts and thread selectors do not, the first
+  pending the owner's rule for overlapping bases. Register SSA itself
+  (`src/ssa.rs`) is what the tracer, the uniformity analysis, trip
+  counting and the predicate reader read.
 
 One line each, with the trigger that would start it.
 

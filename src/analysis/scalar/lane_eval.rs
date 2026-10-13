@@ -5,7 +5,7 @@ use super::affine::{Affine, Axis, Var};
 pub fn depends_on_lane(v: &Var) -> bool {
     match v {
         Var::Tid(_) => true,
-        Var::Ctaid(_) | Var::Iter(_) => false,
+        Var::Ctaid(_) | Var::Iter(_) | Var::Uniform(_) => false,
         Var::Div(inner, _) | Var::Mod(inner, _) => depends_on_lane(inner),
     }
 }
@@ -26,7 +26,7 @@ pub(in crate::analysis) fn eval(v: &Var, tid: [i64; 3]) -> i64 {
         Var::Tid(Axis::X) => tid[0],
         Var::Tid(Axis::Y) => tid[1],
         Var::Tid(Axis::Z) => tid[2],
-        Var::Ctaid(_) | Var::Iter(_) => 0,
+        Var::Ctaid(_) | Var::Iter(_) | Var::Uniform(_) => 0,
         Var::Div(inner, d) => eval(inner, tid).div_euclid(*d),
         Var::Mod(inner, m) => eval(inner, tid).rem_euclid(*m),
     }

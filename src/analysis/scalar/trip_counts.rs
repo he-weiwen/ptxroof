@@ -132,7 +132,7 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
 
 /// Loop `id`'s trip count, refusing a guarded write its latch reads.
 pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
-    tracer.strictly(|| latch_trips(tracer, id))
+    tracer.without_fallback(|| tracer.strictly(|| latch_trips(tracer, id)))
 }
 
 fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {

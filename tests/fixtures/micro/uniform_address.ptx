@@ -1,0 +1,202 @@
+//
+// HAND-WRITTEN: addresses through a `div` by a parameter, which the
+// tracer does not read (a non-constant divisor):
+// - micro_uniform_div: %ctaid.x / param_1, the same for every thread of
+//   the CTA, times 64 plus %tid.x: thread t stores at
+//   param_0 + 256·q + 4t (ptxas 13.4, sm_89, computes q once, then
+//   `IMAD R2, R2, 0x40, R5` and `IMAD.WIDE.U32 R2, R2, R3,
+//   c[0x0][0x160]`);
+// - micro_uniform_div_lanes: %tid.x / param_1, different per thread;
+// - micro_uniform_in_loop: the counter / param_1 in a loop of 4 trips,
+//   q_k for trip k, the same for every thread in one trip, and its floor
+//   by 8 (`shr.u32`); which rows the loop touches depends on param_1;
+// - micro_uniform_after_divergent_exit: that quotient read after a loop
+//   thread t leaves after t + 1 trips, so each thread has its own;
+// - micro_uniform_copied_after_divergent_exit: the same through a copy
+//   made in the loop;
+// - micro_uniform_shfl_after_divergent_exit: the copy minus lane 0's
+//   `shfl.sync.idx` of it, a different value per lane;
+// - micro_uniform_guarded_copy: %ctaid.x / param_1 copied under a guard
+//   on %tid.x < 32, 0 for the other threads.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_uniform_div(
+	.param .u64 micro_uniform_div_param_0,
+	.param .u32 micro_uniform_div_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_uniform_div_param_0];
+	ld.param.u32 	%r1, [micro_uniform_div_param_1];
+	mov.u32 	%r2, %ctaid.x;
+	div.u32 	%r3, %r2, %r1;
+	mov.u32 	%r4, %tid.x;
+	mad.lo.s32 	%r5, %r3, 64, %r4;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r4;
+	ret;
+}
+
+.visible .entry micro_uniform_div_lanes(
+	.param .u64 micro_uniform_div_lanes_param_0,
+	.param .u32 micro_uniform_div_lanes_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_uniform_div_lanes_param_0];
+	ld.param.u32 	%r1, [micro_uniform_div_lanes_param_1];
+	mov.u32 	%r2, %tid.x;
+	div.u32 	%r3, %r2, %r1;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_uniform_in_loop(
+	.param .u64 micro_uniform_in_loop_param_0,
+	.param .u32 micro_uniform_in_loop_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<9>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [micro_uniform_in_loop_param_0];
+	ld.param.u32 	%r1, [micro_uniform_in_loop_param_1];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r3, 0;
+$L__BB2_1:
+	div.u32 	%r4, %r3, %r1;
+	mad.lo.s32 	%r5, %r4, 64, %r2;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r3;
+	shr.u32 	%r6, %r4, 3;
+	mad.lo.s32 	%r7, %r6, 64, %r2;
+	mul.wide.u32 	%rd4, %r7, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r3;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB2_1;
+	ret;
+}
+
+.visible .entry micro_uniform_after_divergent_exit(
+	.param .u64 micro_uniform_after_divergent_exit_param_0,
+	.param .u32 micro_uniform_after_divergent_exit_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_uniform_after_divergent_exit_param_0];
+	ld.param.u32 	%r1, [micro_uniform_after_divergent_exit_param_1];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r3, 0;
+$L__BB3_1:
+	div.u32 	%r4, %r3, %r1;
+	add.s32 	%r3, %r3, 1;
+	setp.le.u32 	%p1, %r3, %r2;
+	@%p1 bra 	$L__BB3_1;
+	mad.lo.s32 	%r5, %r4, 64, %r2;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_uniform_copied_after_divergent_exit(
+	.param .u64 micro_uniform_copied_after_divergent_exit_param_0,
+	.param .u32 micro_uniform_copied_after_divergent_exit_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_uniform_copied_after_divergent_exit_param_0];
+	ld.param.u32 	%r1, [micro_uniform_copied_after_divergent_exit_param_1];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r3, 0;
+$L__BB4_1:
+	div.u32 	%r4, %r3, %r1;
+	mov.u32 	%r6, %r4;
+	add.s32 	%r3, %r3, 1;
+	setp.le.u32 	%p1, %r3, %r2;
+	@%p1 bra 	$L__BB4_1;
+	mad.lo.s32 	%r5, %r6, 64, %r2;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_uniform_shfl_after_divergent_exit(
+	.param .u64 micro_uniform_shfl_after_divergent_exit_param_0,
+	.param .u32 micro_uniform_shfl_after_divergent_exit_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<9>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_uniform_shfl_after_divergent_exit_param_0];
+	ld.param.u32 	%r1, [micro_uniform_shfl_after_divergent_exit_param_1];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r3, 0;
+$L__BB5_1:
+	div.u32 	%r4, %r3, %r1;
+	mov.u32 	%r6, %r4;
+	add.s32 	%r3, %r3, 1;
+	setp.le.u32 	%p1, %r3, %r2;
+	@%p1 bra 	$L__BB5_1;
+	shfl.sync.idx.b32 	%r7, %r6, 0, 31, -1;
+	sub.s32 	%r8, %r6, %r7;
+	mad.lo.s32 	%r5, %r8, 64, %r2;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_uniform_guarded_copy(
+	.param .u64 micro_uniform_guarded_copy_param_0,
+	.param .u32 micro_uniform_guarded_copy_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_uniform_guarded_copy_param_0];
+	ld.param.u32 	%r1, [micro_uniform_guarded_copy_param_1];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r3, %ctaid.x;
+	div.u32 	%r4, %r3, %r1;
+	mov.u32 	%r6, 0;
+	setp.lt.u32 	%p1, %r2, 32;
+	@%p1 mov.u32 	%r6, %r4;
+	mad.lo.s32 	%r5, %r6, 64, %r2;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}

@@ -143,7 +143,23 @@ impl Uniformity {
         reg: Symbol,
         pos: usize,
     ) -> Result<(), String> {
-        match read(t, Register::Named(reg), pos) {
+        self.answer(read(t, Register::Named(reg), pos))
+    }
+
+    /// Whether every lane executing `pos` sees value `v` alike, wherever
+    /// it was read: its definitions, and the loop exits and branches
+    /// between them and `pos`.
+    pub(crate) fn value_uniform_at(
+        &self,
+        t: &AffineValueTracer,
+        v: Value,
+        pos: usize,
+    ) -> Result<(), String> {
+        self.answer(read_value(t, v, pos))
+    }
+
+    fn answer(&self, r: Read) -> Result<(), String> {
+        match r {
             Read::Uniform => Ok(()),
             Read::Divergent(why) => Err(why),
             Read::On(sources) => sources
@@ -185,13 +201,29 @@ fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool) -> Vec<Read> {
 }
 
 fn read(t: &AffineValueTracer, reg: Register, pos: usize) -> Read {
-    let (name, node): (&str, fn(usize) -> Node) = match reg {
-        Register::Named(r) => (t.module.interner.resolve(r), Node::Def),
-        Register::Cc => ("CC.CF", Node::Carry),
+    match t.ssa.value_before(pos, reg) {
+        Some(v) => read_value(t, v, pos),
+        None => Read::Divergent(format!("reads {} in a block no path reaches", name(t, reg))),
+    }
+}
+
+fn name<'a>(t: &'a AffineValueTracer, reg: Register) -> &'a str {
+    match reg {
+        Register::Named(r) => t.module.interner.resolve(r),
+        Register::Cc => "CC.CF",
+    }
+}
+
+/// A read at `pos` of value `v`.
+fn read_value(t: &AffineValueTracer, v: Value, pos: usize) -> Read {
+    let reg = match v {
+        Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg) => reg,
     };
-    let Some(v) = t.ssa.value_before(pos, reg) else {
-        return Read::Divergent(format!("reads {name} in a block no path reaches"));
+    let node: fn(usize) -> Node = match reg {
+        Register::Named(_) => Node::Def,
+        Register::Cc => Node::Carry,
     };
+    let name = name(t, reg);
     let sources = t.ssa.sources(v);
     let defs: Vec<usize> = (sources.iter())
         .filter_map(|s| match *s {

@@ -1,0 +1,33 @@
+# Counters and sums around u = %ctaid.x / param_1, a uniform variable.
+# A counter starting at u itself is no counter: its header φ is the
+# variable, varying in the loop. One starting at a copy of u reads
+# u + k − 1, 256 B a trip; after its 4 trips u + 4, and after a loop
+# lanes leave at different trips, unknown. In an outer loop that
+# recomputes u, the address varies with the outer counter. An inner
+# loop running u trips has no trip count, so the counter it steps is a
+# variable of the outer loop. u − u is 0; u − w keeps both; two values
+# on one PTX line are told apart by their place on it.
+RUN: %ptxroof analyze %fixtures/micro/uniform_counter.ptx | FileCheck "%s"
+CHECK-LABEL: kernel micro_uniform_start_div
+CHECK: [4 * %tid.x + 256 * uniform(%r4@$L__BB0_1) + param_0]
+CHECK-SAME: k[$L__BB0_1]: varies
+CHECK-LABEL: kernel micro_uniform_start_copy
+CHECK: [4 * %tid.x + 256 * k[$L__BB1_1] + 256 * uniform(%r4@64) + param_0 - 256]
+CHECK-SAME: k[$L__BB1_1]: +256 B/iter
+CHECK: global bytes per CTA over the loop's own blocks: requested 1024 B, unique unknown
+CHECK: <block 2>
+CHECK-SAME: [4 * %tid.x + 256 * uniform(%r4@64) + param_0 + 1024]
+CHECK: <block 4>
+CHECK-SAME: unknown: k[$L__BB1_3] differs between lanes after its loop, whose exit depends on %tid.x
+CHECK-LABEL: kernel micro_uniform_start_outer
+CHECK: [4 * %tid.x + 256 * k[$L__BB2_2] + 256 * uniform(%r4@110) + param_0 - 256]
+CHECK-SAME: k[$L__BB2_2]: +256 B/iter, k[$L__BB2_1]: varies
+CHECK-LABEL: kernel micro_uniform_inner_bound
+CHECK: [4 * %tid.x + 256 * uniform(%r6@$L__BB3_1) + param_0]
+CHECK-SAME: k[$L__BB3_1]: varies
+CHECK: trips = unknown: div by a non-constant divisor
+CHECK-LABEL: kernel micro_uniform_differences
+CHECK: [4 * %tid.x + param_0]
+CHECK: [4 * %tid.x + 256 * uniform(%r4@175) - 256 * uniform(%r6@177) + param_0]
+CHECK-LABEL: kernel micro_uniform_one_line
+CHECK: [4 * %tid.x + 256 * uniform(%r4@205.1) + 256 * uniform(%r6@205.2) + param_0]

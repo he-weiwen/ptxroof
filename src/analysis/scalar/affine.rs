@@ -9,6 +9,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::ir::{Element, SpecialReg, SpecialVector};
+use crate::ssa::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -29,6 +30,9 @@ pub enum Var {
     Div(Box<Var>, i64),
     /// `v mod m`, m > 0: its thread column, `tid.x % 8`.
     Mod(Box<Var>, i64),
+    /// A register value the tracer cannot interpret that every lane
+    /// executing its read sees alike.
+    Uniform(Value),
 }
 
 impl Var {
@@ -58,7 +62,16 @@ impl Var {
         match self {
             Var::Iter(l) => Some(*l),
             Var::Div(inner, _) | Var::Mod(inner, _) => inner.counter(),
-            Var::Tid(_) | Var::Ctaid(_) => None,
+            Var::Tid(_) | Var::Ctaid(_) | Var::Uniform(_) => None,
+        }
+    }
+
+    /// The uniform value this is, or a floor or mod of.
+    pub fn uniform(&self) -> Option<Value> {
+        match self {
+            Var::Uniform(v) => Some(*v),
+            Var::Div(inner, _) | Var::Mod(inner, _) => inner.uniform(),
+            Var::Tid(_) | Var::Ctaid(_) | Var::Iter(_) => None,
         }
     }
 
@@ -85,6 +98,7 @@ impl fmt::Display for Var {
             Var::Iter(l) => write!(f, "k[loop {}]", l.0),
             Var::Div(v, d) => write!(f, "⌊{v}/{d}⌋"),
             Var::Mod(v, m) => write!(f, "({v} mod {m})"),
+            Var::Uniform(v) => write!(f, "uniform({v:?})"),
         }
     }
 }

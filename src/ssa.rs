@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 /// A value of a register: what a statement wrote, what a block merged,
 /// or nothing (MLIR's `OpResult` and `BlockArgument`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Value {
     /// Statement `op`'s write of `reg`. Where a guarded write's guard is
     /// false, `reg` keeps the value a read of it at `op` sees.

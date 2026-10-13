@@ -41,12 +41,13 @@ use crate::analysis::thread_participation::{ThreadSet, ThreadSets, thread_sets};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
-use crate::ptx::ir::{Instr, Kernel, Module, Opcode, SpecialVector, Stmt};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::measured::{LineIndex, NcuRecord, Prediction};
 use crate::report::names::demangle;
 use crate::report::schema::*;
+use crate::ssa::Value;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, thiserror::Error)]
@@ -129,7 +130,8 @@ pub fn analyze(
             }
         }
         let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
-        let k = KernelReportBuilder::new(&module, kernel, &bind_map).build(opts.launch, ncu);
+        let k =
+            KernelReportBuilder::new(&module, kernel, &bind_map, &lines).build(opts.launch, ncu);
         classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
         classified.den += k.instruction_classes.total;
         let mut count_loops = |nodes: &[LoopNode]| {
@@ -209,14 +211,10 @@ fn resolve_bindings(
     Ok(map)
 }
 
-/// Every memory operand of every memory instruction, traced to an
-/// affine address at its own position, grouped by the innermost loop
-/// of its block. `cp.async` gives a store row for its shared
-/// destination and a load row for its global source; an atomic gives
-/// one `load+store` row. Parameter loads are not accesses.
 /// `a`, unless it counts the iterations of a loop that does not hold
-/// `pos` and that lanes leave at different iterations: then each lane
-/// reads its own count.
+/// `pos` and that lanes leave at different iterations, or holds a
+/// uniform value the lanes executing `pos` do not see alike: then each
+/// lane reads its own.
 fn per_lane(
     a: Affine,
     tracer: &AffineValueTracer,
@@ -234,11 +232,22 @@ fn per_lane(
                 ));
             }
         }
+        if let Some(u) = v.uniform()
+            && let Err(why) = uniformity.value_uniform_at(tracer, u, pos)
+        {
+            let u = name(&Var::Uniform(u));
+            return Err(format!("{u} differs between lanes: {why}"));
+        }
     }
     Ok(a)
 }
 
 impl KernelReportBuilder<'_> {
+    /// Every memory operand of every memory instruction, traced to an
+    /// affine address at its own position, grouped by the innermost loop
+    /// of its block. `cp.async` gives a store row for its shared
+    /// destination and a load row for its global source; an atomic gives
+    /// one `load+store` row. Parameter loads are not accesses.
     fn accesses_by_scope(
         &self,
         tracer: &AffineValueTracer,
@@ -255,7 +264,17 @@ impl KernelReportBuilder<'_> {
         let mut forms: ByScope<AccessForm> = HashMap::new();
         let name = |v: &Var| match v {
             Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
+            Var::Uniform(u) => format!("uniform({})", self.value_name(*u)),
             other => other.to_string(),
+        };
+        // A uniform value defined in loop `l` may differ between its trips.
+        let defined_in = |u: Value, l: LoopId| {
+            let b = match u {
+                Value::Result { op, .. } => tracer.block_of(op),
+                Value::Argument { block, .. } => block,
+                Value::Undef(_) => return false,
+            };
+            forest.get(l).blocks.binary_search(&b).is_ok()
         };
         // A shared array's mangled name reads as its source name.
         let arrays: Vec<(String, String)> = kernel
@@ -360,7 +379,7 @@ impl KernelReportBuilder<'_> {
                             };
                             (Some(addr), None, None)
                         }
-                        Operand::Register(_) => match (tracer.trace_operand(*base, pos, scope, 0))
+                        Operand::Register(_) => match (tracer.trace_address(*base, pos, scope))
                             .map(|a| {
                                 (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map)
                             })
@@ -432,8 +451,10 @@ impl KernelReportBuilder<'_> {
                     if let Some(a) = &form {
                         let mut cur = scope;
                         while let Some(l) = cur {
-                            let stepped = (a.terms.keys())
-                                .any(|v| *v != Var::Iter(l) && at_trip(v, l, 0).is_some());
+                            let stepped = (a.terms.keys()).any(|v| {
+                                (*v != Var::Iter(l) && at_trip(v, l, 0).is_some())
+                                    || v.uniform().is_some_and(|u| defined_in(u, l))
+                            });
                             reuse.push(Reuse {
                                 r#loop: display[l.0 as usize].clone(),
                                 stride: match stepped {
@@ -774,10 +795,17 @@ struct KernelReportBuilder<'a> {
     sets: ThreadSets,
     /// The block shape when known (`--launch` or `.reqntid`), else zeros.
     shape: [u32; 3],
+    /// The PTX file's lines, naming a uniform value by its statement's.
+    lines: &'a LineIndex,
 }
 
 impl<'a> KernelReportBuilder<'a> {
-    fn new(module: &'a Module, kernel: &'a Kernel, bind_map: &'a HashMap<String, i64>) -> Self {
+    fn new(
+        module: &'a Module,
+        kernel: &'a Kernel,
+        bind_map: &'a HashMap<String, i64>,
+        lines: &'a LineIndex,
+    ) -> Self {
         let cfg = build_cfg(module, kernel);
         let forest = loop_forest(&cfg);
         let names = loop_names(module, kernel, &cfg, &forest);
@@ -834,6 +862,7 @@ impl<'a> KernelReportBuilder<'a> {
             access_forms: HashMap::new(),
             sets: ThreadSets::default(),
             shape,
+            lines,
         };
         let tracer =
             AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
@@ -843,6 +872,39 @@ impl<'a> KernelReportBuilder<'a> {
         b.accesses = accesses;
         b.access_forms = access_forms;
         b
+    }
+
+    /// `%r83@106`: a value's register and the PTX line of its statement,
+    /// with the statement's index on the line when it shares it;
+    /// `%r34@$L__BB0_5` for a φ, its block.
+    fn value_name(&self, v: Value) -> String {
+        let reg = |r: Register| match r {
+            Register::Named(s) => self.module.interner.resolve(s).to_owned(),
+            Register::Cc => "CC.CF".to_owned(),
+        };
+        let line = |i: usize| match &self.kernel.stmts[i] {
+            Stmt::Instr(instr) => Some(self.lines.line(instr.offset)),
+            Stmt::Unparsed { offset, .. } => Some(self.lines.line(*offset)),
+            _ => None,
+        };
+        match v {
+            Value::Result { op, reg: r } => {
+                let Some(at) = line(op) else {
+                    return reg(r);
+                };
+                let on: Vec<usize> = (0..self.kernel.stmts.len())
+                    .filter(|&i| line(i) == Some(at))
+                    .collect();
+                match on.iter().position(|&i| i == op) {
+                    Some(i) if on.len() > 1 => format!("{}@{at}.{}", reg(r), i + 1),
+                    _ => format!("{}@{at}", reg(r)),
+                }
+            }
+            Value::Argument { block, reg: r } => {
+                format!("{}@{}", reg(r), self.cfg.block_name(self.module, block))
+            }
+            Value::Undef(r) => reg(r),
+        }
     }
 
     /// Global bytes one CTA requests over one execution of loop `id`'s
@@ -890,7 +952,10 @@ impl<'a> KernelReportBuilder<'a> {
                 Var::Iter(l) if *l == id => Some((0, trips)),
                 _ => in_block(self.shape)(v),
             };
-            let Some(form) = (f.form.as_ref()).filter(|a| offsets_fit(a, varies, &bound)) else {
+            let read = |a: &&Affine| {
+                offsets_fit(a, varies, &bound) && !a.terms.keys().any(|v| v.uniform().is_some())
+            };
+            let Some(form) = (f.form.as_ref()).filter(read) else {
                 complete &= f.bytes == 0 || lanes == 0;
                 continue;
             };
@@ -1901,9 +1966,10 @@ mod tests {
     }
 
     #[test]
-    fn a_counter_whose_update_leaves_its_type_is_refused() {
+    fn a_counter_whose_update_leaves_its_type_is_no_counter() {
         // %r1 steps by 2^30 for 8 trips: its update reaches 2^33, past
-        // 32 bits, though the store reads it before the update.
+        // 32 bits, though the store reads it before the update. It is no
+        // counter, but one value for every thread on each trip.
         let src = |step: &str| {
             format!(
                 ".version 8.7\n.target sm_80\n.address_size 64\n\
@@ -1914,14 +1980,17 @@ mod tests {
                  add.u32 %r5, %r5, 1;\nsetp.lt.u32 %p1, %r5, 8;\n@%p1 bra $L__LOOP;\nret;\n}}\n"
             )
         };
-        let unknown = |step: &str| {
+        let address = |step: &str| {
             let r = analyze(&src(step), "t", &AnalyzeOptions::default()).expect("analyzes");
-            r.kernels[0].loops[0].accesses[0].unknown.clone()
+            r.kernels[0].loops[0].accesses[0].address.clone()
         };
-        assert_eq!(unknown("1"), None);
         assert_eq!(
-            unknown("1073741824"),
-            Some("`add.u32` leaves 32 bits".to_owned())
+            address("1"),
+            Some("4 * k[$L__LOOP] + param_0 - 4".to_owned())
+        );
+        assert_eq!(
+            address("1073741824"),
+            Some("4 * uniform(%r1@$L__LOOP) + param_0".to_owned())
         );
     }
 
@@ -2031,7 +2100,7 @@ mod tests {
     }
 
     /// `mov.b64 {%r2, %r3}, %rd1` writes %r2 as half of %rd1, not %rd1:
-    /// an address through it is unknown, not param_0.
+    /// an address through it is a uniform variable, not param_0.
     #[test]
     fn a_vector_destination_is_not_the_whole_source() {
         let opts = AnalyzeOptions::default();
@@ -2041,8 +2110,8 @@ mod tests {
                    cvt.u64.u32 %rd2, %r2;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
         let r = analyze(src, "t", &opts).expect("analyzes");
         assert_eq!(
-            r.kernels[0].accesses[0].unknown.as_deref(),
-            Some("%r2 is one of `mov.b64`'s vector destinations")
+            r.kernels[0].accesses[0].address.as_deref(),
+            Some("uniform(%r2@9)")
         );
     }
 
@@ -2096,7 +2165,7 @@ mod tests {
     }
 
     /// `ld.param.v2.u32 {%r1, %r2}` loads two words of the parameter: %r2
-    /// is the second, not param_0.
+    /// is the second, a uniform variable, not param_0.
     #[test]
     fn a_vector_parameter_load_element_is_not_the_parameter() {
         let opts = AnalyzeOptions::default();
@@ -2106,13 +2175,13 @@ mod tests {
                    cvt.u64.u32 %rd2, %r2;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
         let r = analyze(src, "t", &opts).expect("analyzes");
         assert_eq!(
-            r.kernels[0].accesses[0].unknown.as_deref(),
-            Some("%r2 is one of `ld.param.v2.u32`'s vector destinations")
+            r.kernels[0].accesses[0].address.as_deref(),
+            Some("uniform(%r2@8)")
         );
     }
 
     /// Both paths write `{%r2, %r3}` from one 64-bit immediate: %r3 is its
-    /// upper half, not the immediate.
+    /// upper half, not the immediate, the same for every thread.
     #[test]
     fn merged_vector_writes_of_one_immediate_are_not_that_immediate() {
         let opts = AnalyzeOptions::default();
@@ -2126,7 +2195,7 @@ mod tests {
         let access = &r.kernels[0].accesses[0];
         assert_eq!(
             (access.address.as_deref(), access.unknown.as_deref()),
-            (None, Some("%r3 has more than one reaching definition"))
+            (Some("uniform(%r3@$L2)"), None)
         );
     }
 

@@ -192,7 +192,12 @@ U3. `Var::Uniform` in addresses: `trace_address` and its strict second
     addresses as unread. Expected: the 316 accesses read, no footprint
     changed (their loops' unique bytes were unknown already), and k1's
     remainder loop out of PLAN's "Addresses the tracer cannot read".
-    Fixture `micro/uniform_address.ptx`, ptxas's SASS for each kernel:
+    Done: in the 55 kernels the 316 accesses read and nothing else
+    changed but three `warp sectors: ?` lines (k1's and k2's remainder
+    loops, whose block shape is not bound); `micro/mul_wrap.ptx`,
+    `micro/mul_hi.ptx` and `micro/guarded_step.ptx`, unknown before,
+    read their constant or guarded values as uniform variables.
+    Fixtures `micro/uniform_address.ptx` and `micro/uniform_counter.ptx`:
     - `%ctaid.x / param_1` times 64 plus `%tid.x`: read, sectors per
       warp as for a parameter base;
     - the same `div` of `%tid.x`: unknown, its reason unchanged;

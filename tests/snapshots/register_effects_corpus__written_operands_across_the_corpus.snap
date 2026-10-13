@@ -11,8 +11,8 @@ add.rn.bf16x2	1	18
 add.rn.f32	1	564
 add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
-add.s32	1	3564
-add.s64	1	2448
+add.s32	1	3584
+add.s64	1	2465
 add.u32	1	13
 add.u64	1	3
 addc.u32	1	1
@@ -28,7 +28,7 @@ barrier.sync	0	71
 bfe.s32	1	39
 bfe.u32	1	144
 bfi.b32	1	1
-bra	0	359
+bra	0	370
 bra.uni	0	296
 brx.idx	0	2
 call	1	1
@@ -63,7 +63,7 @@ div.approx.f32	1	2
 div.full.f32	1	837
 div.s32	1	94
 div.s64	1	7
-div.u32	1	7
+div.u32	1	22
 elect.sync	1	342
 ex2.approx.f32	1	271
 ex2.approx.ftz.f32	1	675
@@ -93,8 +93,8 @@ ld.param.b32	1	318
 ld.param.b64	1	248
 ld.param.f32	1	20
 ld.param.s32	1	36
-ld.param.u32	1	39
-ld.param.u64	1	97
+ld.param.u32	1	52
+ld.param.u64	1	110
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -111,7 +111,7 @@ ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16	1	11
 ldmatrix.sync.aligned.m8n8.x4.shared.b16	1	434
 ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16	1	200
 mad.hi.u32	1	1
-mad.lo.s32	1	207
+mad.lo.s32	1	223
 mad.lo.s64	1	14
 mad.wide.s32	1	612
 mad.wide.u16	1	2
@@ -138,7 +138,7 @@ mov.b64	1	4004
 mov.f32	1	912
 mov.pred	1	107
 mov.u16	1	293
-mov.u32	1	1071
+mov.u32	1	1110
 mov.u64	1	47
 mul.f32	1	1805
 mul.hi.s32	1	1
@@ -149,9 +149,9 @@ mul.rn.bf16	1	532
 mul.rn.bf16x2	1	40
 mul.rn.f32	1	2358
 mul.rn.f32x2	1	773
-mul.wide.s32	1	145
+mul.wide.s32	1	147
 mul.wide.u16	1	6
-mul.wide.u32	1	145
+mul.wide.u32	1	160
 nanosleep.u32	0	13
 neg.bf16	1	12
 neg.bf16x2	1	16
@@ -169,7 +169,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	31
 rem.s64	1	10
 rem.u32	1	8
-ret	0	120
+ret	0	133
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	800
@@ -195,7 +195,7 @@ setp.gt.u32	1	9
 setp.gt.u64	1	6
 setp.le.s32	1	70
 setp.le.s64	1	9
-setp.le.u32	1	1
+setp.le.u32	1	5
 setp.le.u64	1	16
 setp.leu.f32	1	154
 setp.lt.and.s32	1	1
@@ -204,7 +204,7 @@ setp.lt.f32	1	62
 setp.lt.ftz.f32	1	1
 setp.lt.s32	1	414
 setp.lt.s64	1	118
-setp.lt.u32	1	253
+setp.lt.u32	1	261
 setp.lt.u64	1	8
 setp.ne.b16	1	1
 setp.ne.b32	1	90
@@ -212,13 +212,13 @@ setp.ne.b64	1	26
 setp.ne.s32	1	10
 setp.ne.u32	1	6
 shfl.sync.bfly.b32	1	1357
-shfl.sync.idx.b32	1	50
+shfl.sync.idx.b32	1	51
 shl.b16	1	30
 shl.b32	1	826
 shl.b64	1	449
 shr.s32	1	104
 shr.s64	1	6
-shr.u32	1	216
+shr.u32	1	217
 shr.u64	1	5
 sqrt.approx.ftz.f32	1	1
 st.global.b16	0	286
@@ -226,7 +226,7 @@ st.global.b32	0	197
 st.global.b64	0	9
 st.global.f32	0	13
 st.global.u16	0	197
-st.global.u32	0	62
+st.global.u32	0	79
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2
 st.global.v4.b32	0	208
@@ -247,7 +247,7 @@ sub.f32	1	84
 sub.rn.bf16	1	129
 sub.rn.f32	1	542
 sub.rn.f32x2	1	71
-sub.s32	1	244
+sub.s32	1	247
 sub.s64	1	13
 tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32	0	12
 tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.b64	0	61
