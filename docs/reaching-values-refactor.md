@@ -1,7 +1,9 @@
-# Reaching values: refactor plan (temporary, for review)
+# Reaching values: plan (temporary, for review)
 
 Temporary design note, to be deleted when the refactor lands or is
-dropped. Line references are to `main` at `1c5d988`.
+dropped. Rewritten 2026-10-13 after the register-effects decoder
+landed; the first version and codex's review of it are in git
+(`b5cdcbf`, `4edba75`).
 
 ## Goal
 
@@ -10,199 +12,141 @@ place and shaped like an SSA value, so that
 
 - the tracer, the uniformity analysis, trip counting and the predicate
   reader stop re-deriving it each in their own way;
-- the next feature (a uniform value the tracer cannot read becomes an
-  affine variable, `uniform(%r58@93)`, instead of an unknown address)
-  can key that variable by value rather than by register name;
-- moving to SSA later (`docs/architecture.md`: "migrate the tracer's
-  definition lookup first") replaces one implementation, not its users.
+- the next feature (a value the tracer cannot read but every thread of
+  the CTA shares becomes an affine variable, `uniform(%r58@93)`, instead
+  of an unknown address) can key that variable by value;
+- the SSA addition of `docs/architecture.md` ("migrate the tracer's
+  definition lookup first") starts here rather than replacing it.
 
-A value identity needs complete write discovery (review finding 1
-below): the register-effects decoder (`src/analysis/register_effects.rs`)
-now provides it.
+## Why not a wrapper over `reach_def`
 
-## What exists
+`AffineValueTracer::reach_sites` answers `Def`, `Carried(loop)`,
+`Merged(defs)` or `None` by walking the dominator chain and searching
+for paths that avoid the dominating definition. codex's review of the
+first version found that this cannot be an identity:
 
-`AffineValueTracer::reach_def(reg, pos, exclude) -> ReachingDefinition`
-(`src/analysis/scalar/trace.rs:370`):
+- `Merged` keeps definitions a later one kills, and omits a path on
+  which the register is not written, so `Merged([d])` reads like a
+  plain definition;
+- `Carried` names the innermost loop holding the read that also holds
+  an interfering definition, not where the values meet;
+- a guarded definition is taken to kill the previous value.
+
+Its first finding, that a value identity needs complete write
+discovery, is now met: the decoder gives every statement's written
+registers and CC.CF, and an unparsed statement writes every register
+it names. So the plan builds register SSA instead.
+
+## Values
+
+Minimal SSA as in Cytron et al., "Efficiently Computing Static Single
+Assignment Form and the Control Dependence Graph" (TOPLAS 1991): a φ
+for a location at every block in the iterated dominance frontier of
+the blocks writing it, the entry block counted as writing every
+location.
 
 ```rust
-enum ReachingDefinition {
-    Def(usize),          // one definition, and no other can reach pos
-    Carried(LoopId),     // redefined in a loop holding pos: innermost such loop
-    Merged(Vec<usize>),  // the dominating definition plus those reaching pos around it
-    None,                // no definition: a special register, or undefined
+/// A register, or the carry flag CC.CF.
+pub(crate) enum Location { Reg(Symbol), Carry }
+
+/// A value of one location; `Copy + Eq + Hash`, an identity.
+pub(crate) struct Value { pub loc: Location, pub site: Site }
+
+pub(crate) enum Site {
+    /// Statement `stmt` writes the location. When `stmt` is guarded the
+    /// value is a ψ (Stoutchinin and de Ferrière, "Efficient Static
+    /// Single Assignment Form for Predication", MICRO 2001): the new
+    /// value where the guard holds, `before(v)` elsewhere.
+    Write(usize),
+    /// A φ at the entry of block `b`, one operand per predecessor.
+    Phi(BlockId),
+    /// The location as the kernel starts: never written on the path.
+    Entry,
+}
+
+impl Values {
+    fn at(&self, loc: Location, pos: usize) -> Value; // the value a read at `pos` sees
+    fn phi_operands(&self, v: Value) -> Vec<(BlockId, Value)>; // per predecessor
+    fn before(&self, v: Value) -> Value; // a guarded write's old value
+    fn writes(&self, v: Value) -> Vec<usize>; // the writes behind `v`, through φs and ψs
 }
 ```
 
-- Same block before `pos`, else the dominator chain; a definition that
-  can reach `pos` on a path avoiding the dominating one makes the
-  answer `Carried` (if it lies in a loop holding `pos`) or `Merged`.
-- `exclude: Some(l)` ignores definitions inside loop `l`: the value on
-  entry to `l`.
-- `Carried` names the loop, not the definitions. `Merged` names the
-  definitions, not where they meet.
-- A guarded definition is returned like any other.
-- Nothing is cached; every call walks the dominator chain and runs
-  `path_avoiding` searches.
+- `at(loc, pos)`: the last write of `loc` in `pos`'s block before
+  `pos`; else the φ at that block, if one is placed; else the entry
+  block's `Entry`; else the value at the end of the immediate
+  dominator. In minimal SSA a block without a φ for a location sees
+  what its immediate dominator ends with.
+- `phi_operands`: the value at the end of each predecessor, the same
+  walk from the predecessor's last statement. The entry block has
+  predecessors when a branch targets a label at the kernel's start;
+  its φ has `Entry` as one more operand, for the kernel's start.
+- The dominance frontiers come from the dominator tree the loop forest
+  already holds (Cooper, Harvey and Kennedy, "A Simple, Fast Dominance
+  Algorithm", §4). Frontiers and φ placement need no loop structure, so
+  a cycle with two entries needs nothing special.
+- Unreachable blocks have no immediate dominator and are outside the
+  analysis, as for `DominanceInfo`.
 
-### Its users
+`Values` is built in `AffineValueTracer::new` from its definition
+table and `carry_defs`; bindings do not change it. `at` and
+`phi_operands` are walks up the dominator tree, not cached.
 
-| User | Variants used | What it does with them |
+## Answers to `docs/architecture.md`'s five questions
+
+1. Predicated writes: a guarded `Write` is a ψ; `before` gives the old
+   value.
+2. Loop merges: a φ at the header, whose back-edge operands are the
+   values at the end of the latches.
+3. Undefined inputs: `Entry`. Unsupported operations: the decoder's
+   fallback writes, opaque `Write`s.
+4. The CFG is unchanged; values name PTX statements and blocks.
+5. Registers and CC.CF only; no memory.
+
+## Users
+
+| User | Today | With `Values` |
 |---|---|---|
-| `trace_reg` (`trace.rs:492`) | all, with `exclude` | `Def`: interpret the instruction; an enclosing loop's counter increment is `init + k·step`. `Carried(l)`: `init + (k−1)·step` if `reg` is `l`'s counter, else refuse. `Merged`: only one shared immediate. `None`: special registers. Guards ignored (PLAN, Wrong output). |
-| `obstacle` (`trace.rs:860`) | all | `Def`: keep walking operands. `Carried`/`Merged`: `obstacle_of_any_def`, which walks **every** definition of `reg` (`trace.rs:150`), not those reaching `pos`. |
-| `induction_vars` (`trace.rs:264`) | `Def`/`Merged` vs others | With `exclude = l` at the header: the chain register with a definition from outside the loop is the counter's entry value. |
-| Two-trip predicate loop (`trip_counts.rs:265–288`) | `Def` only | `mov p, phi` reaching the branch; then a hand scan of `defs[phi]` for its one in-loop definition in the latch; then `reach_def(phi, header, Some(l))` for the entry definition; both immediates. This reconstructs a loop-header φ(entry, latch) by hand. |
-| `find_setp` (`trip_counts.rs:171`, `trace.rs:304`) | none | Scans the latch block backwards for the `setp` writing the predicate: a second definition lookup. |
-| `PredicateReader::read_definition` (`thread_participation.rs:501`) | `Def` only | Unguarded definition, branches between it and the read uniform (`gates_uniform`); memo keyed by definition. |
-| `uniformity::read` (`uniformity.rs:151`) | all | `Def`/`Merged`: the definitions plus gating branches. `Carried`: re-derives the definitions from `defs[reg]` by reachability. Exits of loops holding a definition but not the read (η), branches selecting among definitions (γ). |
-| `per_lane` (`report/build.rs:218`) | none directly | A counter `k` of a loop not holding the access is one value per warp only if the loop's exits are uniform (`exits_uniform`). |
+| `trace_reg` | `Def` interpreted; `Carried(l)`: `l`'s counter, `init + (k−1)·step`; `Merged`: one shared immediate | `Write`: same; φ at the header of a loop holding the read: the counter rule; other φ: one shared immediate |
+| `iv_init` | `reach_def` excluding the loop's own definitions | the header φ's operands from outside the loop, if they agree |
+| `obstacle`, `obstacle_of_any_def` | every definition of the register | `writes(v)` |
+| `induction_vars` | the loop's own definitions of a register, chained by hand; the chain's φ is a register with a definition reaching the header from outside | the same chain, ending at a header φ |
+| two-trip predicate loop (`trip_counts.rs`) | a hand scan for the φ register's one definition in the loop and `reach_def` excluding the loop | the header φ's operands |
+| `uniformity::read_sites` | `reach_sites`; for `Carried`, every definition that can reach the read | `writes(v)`; gating predicates as today |
+| predicate reader | `reach_def` must be `Def`, and unguarded | `at` must be an unguarded `Write` |
+| `find_setp`, `predicate_reason` | the definition table, latch block only | unchanged; they ask which statement writes last in the latch, not which value |
 
-Separately, which operands an instruction reads or writes is decided in
-three places: the tracer's definition table and `defines_dest`
-(`trace.rs:67`, `trace.rs:947`), `uniformity::registers`
-(`uniformity.rs:246`), and the predicate reader's per-mnemonic decoding
-(`thread_participation.rs:528–600`).
+Guarded writes stay as the users treat them today (PLAN, "an address
+through one is read as the last write"); `before` is there for the
+fix, which is its own commit.
 
-## What the users need
+## Steps, one commit each
 
-1. The definitions a read can see (uniformity, `obstacle`, the planned
-   uniform variable). `Carried` does not give them.
-2. Whether they meet at a loop header or at a join (the tracer's counter
-   rule; uniformity's η versus γ).
-3. The value on entry to a loop (counter initial values, the two-trip
-   predicate loop).
+Every step diffs every fixture's text and JSON output against the
+previous commit and explains each change.
 
-These are a φ's operands, its block (a loop header — a μ in Gated SSA —
-or a join — a γ), and a header φ's entry operand.
+1. Dominance frontiers, with unit tests against hand-computed ones
+   (diamond, loop, nested loops, a cycle with two entries).
+2. `Values`, with unit tests: straight line, diamond, one-sided write,
+   loop counter, nested loops, guarded write, a cycle with two entries,
+   CC.CF across a call.
+3. A corpus snapshot of every register read in the fixtures where
+   `writes(at)` and `reach_def`'s definitions differ; each class of
+   difference explained before any user switches.
+4. `uniformity::read_sites` reads `Values`.
+5. `trace_reg` and `iv_init` read `Values`.
+6. `induction_vars` and the two-trip predicate loop read `Values`.
+7. The predicate reader and the obstacle reasons read `Values`.
+8. `reach_def` and `reach_sites` go, with the snapshot of step 3.
 
-## Proposed form
-
-```rust
-/// The value a register read sees: one definition, or the merge of
-/// several (an SSA φ).
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub(crate) struct Value {
-    pub reg: Symbol,
-    pub defs: Vec<usize>,          // sorted; one element: a plain definition
-    pub header_of: Option<LoopId>, // the merge is at this loop's header (today's Carried)
-}
-
-pub(crate) struct ReachingDefinitions<'a> {
-    module, kernel, cfg, forest,
-    defs: HashMap<Symbol, Vec<usize>>,   // moved from the tracer, same heuristic
-    reach: Vec<Vec<bool>>,               // moved from the tracer
-    cache: RefCell<HashMap<(Symbol, usize, Option<LoopId>), Option<Value>>>,
-}
-
-impl ReachingDefinitions<'_> {
-    fn value_at(&self, reg: Symbol, pos: usize) -> Option<Value>;      // None: no definition
-    fn value_on_entry(&self, reg: Symbol, l: LoopId) -> Option<Value>; // today's exclude
-    fn block_of, in_loop, path_avoiding, last_instr                    // moved, unchanged
-}
-```
-
-`value_at` is today's `reach_def` with `Carried` filled in with its
-definitions (the reachability filter `uniformity::read` does now). The
-tracer holds `&ReachingDefinitions`; `Uniformity::new` takes
-`&ReachingDefinitions`, not the tracer (it uses only `defs`, `reach`,
-`reach_def`, `block_of`, `in_loop`, `last_instr`, `cfg`, `forest`, and
-no bindings, so one instance serves both tracers of a kernel).
-
-Construction order per kernel (`report/build.rs:767–828`):
-`ReachingDefinitions` → `Uniformity` → trip-count tracer and report
-tracer → `thread_sets` → accesses.
-
-## Migration, one commit each
-
-| Step | Change | Output |
-|---|---|---|
-| 1 | Introduce `ReachingDefinitions` and `Value`; `reach_def` becomes a thin wrapper over `value_at`; tracer and uniformity take it | unchanged |
-| 2 | `uniformity::read` uses `Value.defs`/`header_of`; drop its re-derivation | unchanged |
-| 3 | `trace_reg` matches on `Value` (`defs.len()`, `header_of`) | unchanged |
-| 4 | Two-trip predicate loop reads `value_at(phi, header)` = `{entry, latch}`, drop the hand scan | expected unchanged; checked by fixture diff |
-| 5 | `induction_vars` filters the shared table by loop instead of rescanning blocks | unchanged |
-| 6 | `obstacle` walks `Value.defs`, not every definition | reasons may change |
-| 7 | `find_setp` becomes `value_at(pred, branch)` | can find a `setp` in a dominating block: trip counts may change |
-| 8 | Uniform variable `Var::Uniform(Value)` in the tracer (separate plan) | new |
-
-Each step diffs every fixture's text output against the previous
-commit; steps 1–5 must show none.
-
-## SSA correspondence
-
-| Now | With SSA |
-|---|---|
-| `value_at` via `reach_def` | the SSA value a use refers to |
-| `Value { defs, header_of }` | a definition, or a φ at a join / loop header |
-| `value_on_entry` | a header φ's preheader operand |
-| uniformity's γ via the `reach` matrix | Gated SSA γ predicates |
-| uniformity's η via loop exits | LCSSA exit φs |
-| destination heuristic | the register-effects decoder (audit) |
+The uniform variable is a separate plan on top of step 8.
 
 ## Open questions for review
 
-1. Is `Merged`'s list every definition that can reach `pos`, or can a
-   definition reaching only through another merge be missed? `Value`
-   would use it as the identity of a φ.
-2. `Carried` reports the innermost loop holding `pos` with an
-   interfering definition. For a register redefined in an outer loop
-   and read in an inner one, is `header_of` the right loop?
-3. Guarded definitions: should `value_at` return the guarded definition
-   together with the value before it (a select of old and new), fixing
-   part of PLAN's guarded-definition entry, or keep returning the
-   guarded definition alone and leave each user to check the guard as
-   today? The first changes tracer output.
-4. Cache key `(reg, pos, exclude)`: any user that would see a stale
-   answer (all inputs are immutable after construction)?
-5. Should the destination heuristic move now (step 1) or wait for the
-   decoder?
-
-## Review findings (codex, 2026-10-11)
-
-Not yet folded into the plan above.
-
-1. `(reg, defs)` is a value identity only with complete write
-   discovery: a write the definition table misses lets two reads of
-   one register in one thread see different values under one key.
-   The table now records `{…}` destinations, but not registers
-   declared without `%`, guarded writes as merges, or the outputs the
-   audit lists (PLAN, Wrong output).
-2. `Value` loses distinctions users rely on. `Merged([d])` (only one
-   branch defines the register) would become a plain definition, so
-   `trace_reg`, the predicate reader and the trip matchers could
-   accept what they refuse today. `Carried` names the innermost loop
-   holding `pos` with an interfering definition, not where values
-   merge, so `header_of` claims more than the code knows.
-3. Steps 1–5 are not output-preserving: the singleton-merge
-   conflation (1, 3); filling `Carried` by reachability keeps
-   overwritten entry definitions the two-trip matcher excludes (4);
-   induction discovery reads only a register first operand while the
-   table reads `p|q` and `{…}` (5; `micro/counter_vector_write.ptx`).
-4. Corrections to "What exists": `Merged` need not hold a dominating
-   definition, several sites, or sorted ones, and can keep killed
-   definitions; `None` means no candidate found; `reach_def` returns
-   early for a missing register or a same-block definition. Missed
-   users: `predicate_reason` (`trip_counts.rs`), which scans the latch
-   with its own first-operand rule, and `Uniformity::new`, which
-   enumerates every definition site. `find_setp` skips intervening
-   non-`setp` writes, so step 7 can change trip counts within a latch.
-5. Open questions: (1) `Merged` over-approximates and omits undefined
-   incoming paths; it is not a φ. (2) An outer-only interfering write
-   selects the outer loop; a dominating write can return `Def`.
-   (3) A guarded result needs guard, new value and old value; keep
-   today's behaviour in the refactor and fix guards separately.
-   (4) No staleness within one kernel's immutable CFG and forest.
-   (5) Move the destination rule now only with its exact behaviour;
-   do not unify induction discovery's rule in a step claimed to
-   preserve output.
-6. Keep the interface explicitly approximate until operand roles are
-   decoded (audit, "A small implementation plan"); prefer an opaque
-   value identity with queries over exposing site sets.
-
-Also: each kernel builds two tracers (`trip_counts.rs` and
-`report/build.rs`), each scanning for definitions. Which operands an
-instruction reads or writes is decided in six places: the definition
-table, induction discovery, `find_setp`, `predicate_reason`,
-`uniformity::registers`, and the predicate reader's per-mnemonic
-decoding.
+1. Should an `Entry` operand of a φ be dropped for the tracer (PTX does
+   not define a read of an unwritten register), or kept, as for the
+   uniformity analysis?
+2. Does any user rely on today's `Merged` keeping killed definitions,
+   or on `Carried` naming the innermost interfering loop?
+3. `iv_init` for a header with several predecessors outside the loop:
+   take the value when they agree, or refuse as today's matcher does?
