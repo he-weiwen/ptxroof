@@ -1,6 +1,6 @@
 //! Which registers an instruction writes.
 
-use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Stmt};
+use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Register, Stmt};
 use crate::support::intern::Symbol;
 
 /// How many of `instr`'s leading operands it writes, `None` for a form
@@ -131,6 +131,26 @@ pub fn stmt_written_registers(module: &Module, stmt: &Stmt) -> Vec<Symbol> {
     }
 }
 
+/// The registers statement `stmt` writes, CC included: an instruction's
+/// written registers and CC by [`carry`], or every register an unparsed
+/// statement names and CC.
+pub fn writes(module: &Module, stmt: &Stmt) -> Vec<Register> {
+    let cc = match stmt {
+        Stmt::Instr(instr) => carry(module, instr).0,
+        Stmt::Unparsed { .. } => true,
+        _ => false,
+    };
+    (stmt_written_registers(module, stmt).into_iter())
+        .map(Register::Named)
+        .chain(cc.then_some(Register::Cc))
+        .collect()
+}
+
+/// Whether `instr` reads CC.
+pub fn reads_cc(module: &Module, instr: &Instr) -> bool {
+    carry(module, instr).1
+}
+
 /// The registers operand `op` names: itself, the elements of a `{…}` or
 /// `p|q`, as in `tex`'s `{…}|p`, an address's base and coordinates, a
 /// selection's base, or a negated predicate.
@@ -179,6 +199,48 @@ mod tests {
     fn written(instr: &str) -> Option<String> {
         let (decoded, regs) = written_by(instr);
         decoded.then_some(regs)
+    }
+
+    /// What statement `stmt` writes, by name and CC as `CC`, and whether
+    /// it reads CC (`None` for a statement not parsed).
+    fn cc_effects(stmt: &str) -> (String, Option<bool>) {
+        let src = format!(
+            ".version 8.7\n.target sm_90\n.address_size 64\n\
+             .visible .entry k()\n{{\n.reg .b32 %r<4>;\n.local .u32 lbuf[4];\n\
+             {stmt}\nret;\n}}\n"
+        );
+        let m = parse(&src).expect("test source parses");
+        let s = &m.kernels[0].stmts[0];
+        let names = (writes(&m, s).into_iter())
+            .map(|r| match r {
+                Register::Named(r) => m.interner.resolve(r).to_owned(),
+                Register::Cc => "CC".to_owned(),
+            })
+            .collect::<Vec<_>>();
+        let reads = match s {
+            Stmt::Instr(i) => Some(reads_cc(&m, i)),
+            _ => None,
+        };
+        (names.join(" "), reads)
+    }
+
+    #[test]
+    fn cc_is_written_by_carry_outs_calls_and_what_is_not_read() {
+        for (stmt, effects) in [
+            ("add.cc.u32 %r1, %r2, 1;", ("%r1 CC", Some(false))),
+            ("addc.u32 %r1, %r2, 1;", ("%r1", Some(true))),
+            ("addc.cc.u32 %r1, %r2, 1;", ("%r1 CC", Some(true))),
+            ("call (%r1), f, (%r2);", ("%r1 CC", Some(false))),
+            (
+                "mbarrier.wait.b64 %r1, [%r2], %r3;",
+                ("%r1 %r2 %r3 CC", Some(true)),
+            ),
+            ("ld.local.u32 %r2, lbuf[1];", ("%r2 CC", None)),
+            ("mov.u32 %r1, %r2;", ("%r1", Some(false))),
+        ] {
+            let (names, reads) = cc_effects(stmt);
+            assert_eq!((names.as_str(), reads), effects, "{stmt}");
+        }
     }
 
     #[test]
