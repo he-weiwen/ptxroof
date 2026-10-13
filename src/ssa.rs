@@ -10,23 +10,17 @@ use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::Register;
 use std::collections::{HashMap, HashSet};
 
-/// A value of one register.
+/// A value of a register: what a statement wrote, what a block merged,
+/// or nothing (MLIR's `OpResult` and `BlockArgument`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Value {
-    pub reg: Register,
-    pub site: Site,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Site {
-    /// The statement writes the register. Where a guarded write's guard
-    /// is false, the register keeps the value a read at the statement
-    /// sees.
-    Write(usize),
-    /// A φ at the start of the block.
-    Phi(BlockId),
-    /// The register as the kernel starts: no write on some path.
-    Entry,
+pub enum Value {
+    /// Statement `op`'s write of `reg`. Where a guarded write's guard is
+    /// false, `reg` keeps the value a read of it at `op` sees.
+    Result { op: usize, reg: Register },
+    /// A φ of `reg` at the start of `block`.
+    Argument { block: BlockId, reg: Register },
+    /// No write of `reg` on some path from the kernel's start.
+    Undef(Register),
 }
 
 pub struct Values<'a> {
@@ -79,22 +73,21 @@ impl<'a> Values<'a> {
             return None;
         }
         let ws = self.writes.get(&reg).map_or(&[][..], Vec::as_slice);
-        let site = loop {
+        loop {
             let i = ws.partition_point(|&w| w < end);
             if i > 0 && ws[i - 1] >= self.cfg.block(b).start {
-                break Site::Write(ws[i - 1]);
+                return Some(Value::Result { op: ws[i - 1], reg });
             }
             if self.phis.contains(&(reg, b)) {
-                break Site::Phi(b);
+                return Some(Value::Argument { block: b, reg });
             }
             // A block without a φ starts with what its immediate
             // dominator ends with.
             match self.doms.idom[b.0 as usize] {
                 Some(d) => (b, end) = (d, self.cfg.block(d).end),
-                None => break Site::Entry,
+                None => return Some(Value::Undef(reg)),
             }
-        };
-        Some(Value { reg, site })
+        }
     }
 }
 
@@ -124,7 +117,7 @@ mod tests {
 
     /// The values `reads` see in kernel `body`, one statement per line;
     /// `%cc` is CC. Each value prints as `wN` (written at line N),
-    /// `phiB`, `entry` or `none`.
+    /// `phiB`, `undef` or `none`.
     fn values(body: &str, reads: &[(&str, At)]) -> Vec<String> {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
@@ -157,10 +150,10 @@ mod tests {
                     L(line) => v.at(reg, line),
                     End(b) => v.at_end(reg, BlockId(b)),
                 };
-                match value.map(|v| v.site) {
-                    Some(Site::Write(s)) => format!("w{s}"),
-                    Some(Site::Phi(b)) => format!("phi{}", b.0),
-                    Some(Site::Entry) => "entry".to_owned(),
+                match value {
+                    Some(Value::Result { op, .. }) => format!("w{op}"),
+                    Some(Value::Argument { block, .. }) => format!("phi{}", block.0),
+                    Some(Value::Undef(_)) => "undef".to_owned(),
                     None => "none".to_owned(),
                 }
             })
@@ -171,7 +164,7 @@ mod tests {
     fn a_read_sees_the_last_write_before_it() {
         let body = "mov.u32 %r1, 1;\nadd.u32 %r1, %r1, 2;\nst.global.u32 [%rd9], %r1;\nret;";
         let reads = [("%r1", L(1)), ("%r1", L(2)), ("%r1", L(0)), ("%rd9", L(2))];
-        assert_eq!(values(body, &reads), ["w0", "w1", "entry", "entry"]);
+        assert_eq!(values(body, &reads), ["w0", "w1", "undef", "undef"]);
     }
 
     #[test]
@@ -202,7 +195,7 @@ mod tests {
             ("%r2", L(3)),
             ("%r1", End(1)),
         ];
-        assert_eq!(values(body, &reads), ["phi1", "w2", "w2", "entry", "w2"]);
+        assert_eq!(values(body, &reads), ["phi1", "w2", "w2", "undef", "w2"]);
     }
 
     #[test]
@@ -231,7 +224,7 @@ mod tests {
         let body = "$L__E:\nadd.s32 %r1, %r1, 1;\nsetp.lt.s32 %p1, %r1, %r2;\n\
                     @%p1 bra $L__E;\nret;";
         let reads = [("%r1", L(1)), ("%r2", L(2)), ("%r1", L(4))];
-        assert_eq!(values(body, &reads), ["phi0", "entry", "w1"]);
+        assert_eq!(values(body, &reads), ["phi0", "undef", "w1"]);
     }
 
     #[test]
@@ -248,6 +241,6 @@ mod tests {
     fn a_call_writes_the_carry_flag() {
         let body = "add.cc.u32 %r2, %r0, 1;\ncall (%r5), f, (%r0);\naddc.u32 %r3, 0, 0;\nret;";
         let reads = [("%cc", L(1)), ("%cc", L(2)), ("%cc", L(0))];
-        assert_eq!(values(body, &reads), ["w0", "w1", "entry"]);
+        assert_eq!(values(body, &reads), ["w0", "w1", "undef"]);
     }
 }
