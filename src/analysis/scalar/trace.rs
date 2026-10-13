@@ -26,6 +26,7 @@ use crate::ptx::ir::{
     SpecialScalar, SpecialVector, Stmt,
 };
 use crate::ptx::literal::parse_int;
+use crate::ssa::RegisterSsa;
 use crate::support::intern::Symbol;
 use std::collections::{HashMap, HashSet};
 
@@ -50,6 +51,8 @@ pub(crate) struct AffineValueTracer<'a> {
     pub(crate) forest: &'a LoopForest,
     /// The statements writing each register, CC included, in order.
     pub(crate) writes: HashMap<Register, Vec<usize>>,
+    /// The value each read of a register sees.
+    pub(crate) ssa: RegisterSsa<'a>,
     /// param symbol -> positional index.
     pub(crate) params: HashMap<Symbol, usize>,
     /// `reach[a][b]`: a path of at least one edge from block a to b.
@@ -95,12 +98,14 @@ impl<'a> AffineValueTracer<'a> {
                 }
             }
         }
+        let ssa = RegisterSsa::new(cfg, &forest.doms, writes.clone());
         let mut t = AffineValueTracer {
             module,
             kernel,
             cfg,
             forest,
             writes,
+            ssa,
             params,
             reach,
             ivs: Vec::new(),

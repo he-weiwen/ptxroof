@@ -320,7 +320,7 @@ loop's counter) is its own commit with a test pinning the new answer.
     the rest name a φ nearer than `Carried`'s loop or drop a killed
     definition.
 13. The tracer holds `RegisterSsa`, and `uniformity::read_sites` reads
-    `sources`.
+    `sources`. Done; no fixture output changed.
 14. `uniformity::read_sites` refuses `Undef`.
 15. `trace_reg` reads values: `value_before`, then a `Result` as
     today's `Def`, a header `Argument` whose register `ivs` holds as

@@ -12,11 +12,10 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
 use crate::analysis::register_effects::{reads_cc, split_operands};
-use crate::analysis::scalar::trace::{
-    AffineValueTracer, ReachingDefinition, SpecialRegister, special_register,
-};
+use crate::analysis::scalar::trace::{AffineValueTracer, SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
+use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
@@ -186,44 +185,41 @@ fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool) -> Vec<Read> {
 }
 
 fn read(t: &AffineValueTracer, reg: Register, pos: usize) -> Read {
-    let sites = t.writes.get(&reg).map_or(&[][..], Vec::as_slice);
-    match reg {
-        Register::Named(r) => read_sites(t, t.module.interner.resolve(r), sites, pos, Node::Def),
-        Register::Cc => read_sites(t, "CC.CF", sites, pos, Node::Carry),
+    let (name, node): (&str, fn(usize) -> Node) = match reg {
+        Register::Named(r) => (t.module.interner.resolve(r), Node::Def),
+        Register::Cc => ("CC.CF", Node::Carry),
+    };
+    let Some(v) = t.ssa.value_before(pos, reg) else {
+        return Read::Divergent(format!("reads {name} in a block no path reaches"));
+    };
+    let defs: Vec<usize> = (t.ssa.sources(v).into_iter())
+        .filter_map(|s| match s {
+            Value::Result { op, .. } => Some(op),
+            _ => None,
+        })
+        .collect();
+    if defs.is_empty() {
+        return Read::Divergent(format!("reads {name}, which has no definition"));
     }
+    read_sites(t, name, &defs, pos, node)
 }
 
-/// A read at `pos` of `name`, which the statements `sites` define, each
-/// the source `node` names.
+/// A read at `pos` of `name`, whose value the statements `defs` may
+/// have written, each the source `node` names.
 fn read_sites(
     t: &AffineValueTracer,
     name: &str,
-    sites: &[usize],
+    defs: &[usize],
     pos: usize,
     node: fn(usize) -> Node,
 ) -> Read {
     let here = t.block_of(pos);
     let reaches = |a: BlockId, b: BlockId| a == b || t.reach[a.0 as usize][b.0 as usize];
-    let defs = match t.reach_sites(sites, pos, None) {
-        ReachingDefinition::Def(d) => vec![d],
-        ReachingDefinition::Merged(defs) => defs,
-        ReachingDefinition::Carried(_) => sites
-            .iter()
-            .copied()
-            .filter(|&d| {
-                (d < pos && t.block_of(d) == here)
-                    || t.reach[t.block_of(d).0 as usize][here.0 as usize]
-            })
-            .collect(),
-        ReachingDefinition::None => {
-            return Read::Divergent(format!("reads {name}, which has no definition"));
-        }
-    };
     let mut sources: Vec<Node> = defs.iter().map(|&d| node(d)).collect();
     // An η's gating predicates: the exits of every loop holding a
     // definition but not the read. A cycle with more than one entry is
     // no loop of the forest, and its exits are not known.
-    for &d in &defs {
+    for &d in defs {
         let at = t.block_of(d);
         if !t.forest.irreducible_edges.is_empty()
             && t.reach[at.0 as usize][at.0 as usize]
