@@ -341,7 +341,8 @@ loop's counter) is its own commit with a test pinning the new answer.
     the table's five fixtures, one output changed: the B200 fp8 GEMM's
     two scale loads, unknown before and after, now say "div by a
     non-constant divisor" where they said "depends on special register".
-18. The two-trip predicate loop reads `RegisterSsa`.
+18. The two-trip predicate loop reads `RegisterSsa`. Done; no fixture
+    output changed.
 19. The predicate reader reads `RegisterSsa`.
 20. `obstacle` reads `RegisterSsa`.
 21. `reach_def` and `reach_sites` go, and the snapshot of step 12 with

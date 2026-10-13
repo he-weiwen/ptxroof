@@ -35,10 +35,11 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::loop_names::LoopName;
 use crate::analysis::scalar::affine::Var;
 use crate::analysis::scalar::symexpr::SymExpr;
-use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
+use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
+use crate::ssa::Value;
 use crate::support::intern::Symbol;
 
 /// Trip count of one loop: an expression, or a named reason there
@@ -266,7 +267,9 @@ fn predicate_phi_trips(
         };
         Some(tracer.module.operand(*src))
     };
-    let ReachingDefinition::Def(copy) = tracer.reach_def(pred, branch_idx, None) else {
+    let Some(Value::Result { op: copy, .. }) =
+        tracer.ssa.value_before(branch_idx, Register::Named(pred))
+    else {
         return None;
     };
     let Operand::Register(phi) = mov_src(copy)? else {
@@ -287,12 +290,20 @@ fn predicate_phi_trips(
     if latch_def < latch_blk.start || latch_def >= latch_blk.end {
         return None;
     }
-    let header = tracer.forest.get(id).header;
-    let ReachingDefinition::Def(init_def) =
-        tracer.reach_def(*phi, tracer.cfg.block(header).start, Some(id))
-    else {
+    let lp = tracer.forest.get(id);
+    let entry = tracer
+        .ssa
+        .value_before(tracer.cfg.block(lp.header).start, Register::Named(*phi))?;
+    let outside: Vec<Value> = (tracer.ssa.incoming(entry).into_iter())
+        .filter(|(p, _)| p.is_none_or(|p| lp.blocks.binary_search(&p).is_err()))
+        .map(|(_, v)| v)
+        .collect();
+    let [Value::Result { op: init_def, .. }, ..] = outside[..] else {
         return None;
     };
+    if outside.iter().any(|&v| v != outside[0]) {
+        return None;
+    }
     let (Operand::Immediate(latch_val), Operand::Immediate(init_val)) =
         (mov_src(latch_def)?, mov_src(init_def)?)
     else {
