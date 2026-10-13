@@ -1,0 +1,40 @@
+//
+// HAND-WRITTEN: an inner loop's counter %r1 that the outer loop does not
+// reset. %r1 counts every inner iteration, 0 to 31 over the 8 outer and
+// 4 inner trips, and the store writes a[%r1], 128 B: ptxas 13.4
+// (sm_89) unrolls both loops into 32 `STG.E [R2.64+4i]`, i = 0..31.
+// The tracer takes %r1's value on entry to the inner loop as the `mov`
+// before the outer loop, 0, every time, so the address does not depend
+// on the outer loop.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_carried_counter(
+	.param .u64 micro_carried_counter_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_carried_counter_param_0];
+	mov.u32 	%r1, 0;
+	mov.u32 	%r5, 0;
+$L__BB0_1:
+	mov.u32 	%r6, 0;
+$L__BB0_2:
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	add.s32 	%r1, %r1, 1;
+	add.s32 	%r6, %r6, 1;
+	setp.lt.u32 	%p1, %r6, 4;
+	@%p1 bra 	$L__BB0_2;
+	add.s32 	%r5, %r5, 1;
+	setp.lt.u32 	%p2, %r5, 8;
+	@%p2 bra 	$L__BB0_1;
+	ret;
+}

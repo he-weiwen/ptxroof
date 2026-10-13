@@ -93,6 +93,15 @@ its shared writes and instruction counts remain counted
   the second output of `setp.lt.f16x2` compares the upper halves, 0 <
   0, so the store never runs; read as `on 64 threads in 2 warps
   (%tid.x >= 0)`.
+- **A loop counter's value on entry is taken from before every
+  enclosing loop**: it is traced with the loop's own writes left out,
+  so a value an enclosing loop carries back into it, a counter the
+  outer loop does not reset, is lost. In `micro/carried_counter.ptx`
+  the store is read as `[4 * k[$L__BB0_2] + param_0 - 4]`, invariant
+  in the outer `$L__BB0_1`, 16 B unique, where ptxas 13.4 stores 32
+  distinct words, 128 B. Gluon's `attn_fwd_ws_kernel` has such
+  counters (`%r1986` in `$L__BB0_43`, `%r1875` in `$L__BB0_14`), and
+  its w768 variant one (`%r2082`).
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
