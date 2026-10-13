@@ -377,7 +377,7 @@ loop's counter) is its own commit with a test pinning the new answer.
     which the tracer now calls; only those two fixtures' outputs
     changed.
 26. `mul.hi` and `mad.hi` are refused (`micro/mul_hi.ptx`: both stores
-    unknown).
+    unknown). Done; only that fixture's output changed.
 27. Register widths: a value read through a 32-bit operation, a
     conversion or a recurrence's update is kept only when its range
     fits the type (`micro/mul_wrap.ptx`: unknown), as the setp

@@ -770,6 +770,12 @@ impl<'a> AffineValueTracer<'a> {
                     _ => Err(refuse(&(a + b), id, mnemonic.name())),
                 }
             }
+            // PTX ISA §9.7.1.3, §9.7.1.4: `.hi` keeps the product's upper
+            // half, which the affine form does not hold.
+            Opcode::Mul | Opcode::Mad if mods.contains(&"hi") => Err(format!(
+                "`{}` keeps a product's upper half",
+                self.module.opcode(instr)
+            )),
             Opcode::Mul if ops.len() == 3 => {
                 let (a, b) = (arg(1)?, arg(2)?);
                 if a.is_invariant() {
