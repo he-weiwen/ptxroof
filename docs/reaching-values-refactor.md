@@ -16,9 +16,9 @@ place and shaped like an SSA value, so that
 - moving to SSA later (`docs/architecture.md`: "migrate the tracer's
   definition lookup first") replaces one implementation, not its users.
 
-Out of scope: the register-effects decoder
-(`docs/register-effects-decoder.md`), which comes first: a value
-identity needs complete write discovery (review finding 1 below).
+A value identity needs complete write discovery (review finding 1
+below): the register-effects decoder (`src/analysis/register_effects.rs`)
+now provides it.
 
 ## What exists
 
