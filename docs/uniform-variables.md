@@ -2,8 +2,8 @@
 
 Temporary design note, to be deleted when its steps land or it is
 dropped. It settles what `docs/reaching-values-refactor.md`'s last
-section left open. Revised after codex's reviews of `5edd553` and
-`ba152c8`.
+section left open. Revised after codex's reviews of `5edd553`,
+`ba152c8` and `5afd97e`.
 
 ## Goal
 
@@ -52,8 +52,8 @@ below, run over the 55 kernels outside `tests/fixtures/micro/`:
   after an exit that depends on `%tid.x`, and a uniform value copied
   under a `%tid.x` guard, stay unknown; neither shape occurs in the 55.
   Its third, the copy minus lane 0's `shfl.sync.idx` of it, cancels
-  before any check; the same cancellation passes a counter today
-  (`micro/escaped_shfl.ptx`, PLAN "Wrong output"), which step U2 fixes.
+  before any check; the same cancellation passed a counter
+  (`micro/escaped_shfl.ptx`), fixed by step U2.
 
 ## Design
 
@@ -95,18 +95,21 @@ only when the loop's exits are (`uniformity.rs`, `def_reads`,
 Between the read and the address the value flows through statements
 the tracer reads (unguarded, in the strict pass) and φs it reads, which
 take one immediate or are recurrences; what remains is leaving a loop
-or a cycle. A check on the address alone misses a term that cancels
-first (`u − shfl.idx(u, 0)`), so every read in an address trace checks
-the terms its trace returns, through `Div` and `Mod`, where they cross
-out:
+or a cycle. Within one lane, a term that cancels or is multiplied by
+zero is gone from that lane's address, so checking the address is
+enough, except where the tracer reads another lane's value as this
+lane's: `shfl.idx` keeps every term but `%tid.x`. So a term is checked
+where it would be uniform across lanes, through `Div` and `Mod`:
 
-- a counter of a loop not holding the read: the loop's exits are
-  uniform (what `per_lane` checks of the whole address today, which
-  goes);
-- `uniform(v)`: `Uniformity::value_uniform_at(v, pos)`, `read_sites`
-  over `v`'s defining statements (its own, or its φ's sources): the
-  exits of every loop holding one but not the read, and the refusal of
-  a read after a cycle with more than one entry (`uniformity.rs`).
+- a counter of a loop not holding the point: the loop's exits are
+  uniform (`per_lane` at the address, and, since step U2, the
+  `shfl.idx` rule at the shuffle);
+- `uniform(v)`, at the same two points:
+  `Uniformity::value_uniform_at(v, pos)`, `read_sites` over `v`'s
+  defining statements (its own, or its φ's sources), every dependency
+  it returns uniform: the exits of every loop holding one but not the
+  point, γ branches among several sources, and the refusal of a read
+  after a cycle with more than one entry (`uniformity.rs`).
 
 Otherwise the address is unknown, "… differs between lanes after its
 loop, whose exit …".
@@ -179,12 +182,12 @@ previous commit and explains each change.
 
 U1. `AffineValueTracer::uniformity`, the lazily built answer; its users
     read it from the tracer. No output changes.
-U2. `trace_address`: each read in an address checks the counters it
-    returns that cross out of their loop, and `per_lane` goes.
-    `micro/escaped_shfl.ptx` reads unknown; its PLAN entry goes; any
-    other changed output explained.
-U3. `Var::Uniform` in addresses: the strict second pass, the fallback
-    and where it is off, `value_uniform_at` in the per-read check, the
+U2. `shfl.idx` keeps a counter of a loop not holding the shuffle only
+    when the loop's exits are uniform. Done: only
+    `micro/escaped_shfl.ptx`'s output changed, to unknown.
+U3. `Var::Uniform` in addresses: `trace_address` and its strict second
+    pass, the fallback and where it is off, `value_uniform_at` at the
+    address and at `shfl.idx`, the
     rendering, the "varies" note, and loop footprints counting such
     addresses as unread. Expected: the 316 accesses read, no footprint
     changed (their loops' unique bytes were unknown already), and k1's

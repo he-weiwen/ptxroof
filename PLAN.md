@@ -97,13 +97,6 @@ its shared writes and instruction counts remain counted
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
   stepping by 2 from 0 while `!= 5`, reads `trips = unknown`, where the
   loop does not exit.
-- **A counter read after a loop with divergent exits is checked in the
-  address only**: `report::per_lane` refuses a counter term of a loop
-  whose exit depends on the thread index once the address is traced, so
-  two reads of it that cancel pass. In `micro/escaped_shfl.ptx` the
-  counter minus lane 0's copy from `shfl.sync.idx` is thread t's
-  `t + 1 − 1`, and ptxas stores at param_0 + 4t; the store reads
-  `[param_0]` for every lane.
 - **A loop whose latch is false at its first evaluation gets a trip
   count below one.** In `micro/latch_exits_first.ptx` a counter from
   10 is compared below 5 (`setp.lt.s32`): the body runs once (ptxas

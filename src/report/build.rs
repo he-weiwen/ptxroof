@@ -224,15 +224,8 @@ fn per_lane(
     pos: usize,
     name: &dyn Fn(&Var) -> String,
 ) -> Result<Affine, String> {
-    fn iter_of(v: &Var) -> Option<LoopId> {
-        match v {
-            Var::Iter(l) => Some(*l),
-            Var::Div(inner, _) | Var::Mod(inner, _) => iter_of(inner),
-            Var::Tid(_) | Var::Ctaid(_) => None,
-        }
-    }
     for v in a.terms.keys() {
-        if let Some(l) = iter_of(v).filter(|&l| !tracer.in_loop(l, pos)) {
+        if let Some(l) = v.counter().filter(|&l| !tracer.in_loop(l, pos)) {
             let why = uniformity.exits_uniform(tracer, l).err();
             if let Some(why) = why {
                 let k = name(&Var::Iter(l));

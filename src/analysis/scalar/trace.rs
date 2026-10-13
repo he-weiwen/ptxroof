@@ -819,6 +819,17 @@ impl<'a> AffineValueTracer<'a> {
                         other => Some(Affine::var(other.clone())),
                     }
                 };
+                // Lane c's counter is this lane's only where lanes leave its
+                // loop together.
+                for l in (a.terms.keys()).filter_map(Var::counter) {
+                    if !self.in_loop(l, def)
+                        && let Err(why) = self.uniformity().exits_uniform(self, l)
+                    {
+                        return Err(format!(
+                            "shfl.idx of a counter that differs between lanes after its loop, whose exit {why}"
+                        ));
+                    }
+                }
                 a.map_vars(lane)
                     .ok_or_else(|| "shfl.idx of a value not a function of %tid.x".to_owned())
             }

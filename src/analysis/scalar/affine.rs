@@ -53,6 +53,15 @@ impl Var {
 }
 
 impl Var {
+    /// The loop whose counter this is, or a floor or mod of.
+    pub fn counter(&self) -> Option<LoopId> {
+        match self {
+            Var::Iter(l) => Some(*l),
+            Var::Div(inner, _) | Var::Mod(inner, _) => inner.counter(),
+            Var::Tid(_) | Var::Ctaid(_) => None,
+        }
+    }
+
     /// The variable with the leaf indices printed by `name`.
     pub fn render(&self, name: &impl Fn(&Var) -> String) -> String {
         match self {
