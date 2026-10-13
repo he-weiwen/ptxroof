@@ -61,6 +61,33 @@ impl DominanceInfo {
     }
 }
 
+/// The iterated dominance frontier of `blocks`, in block order: where
+/// a value written in them meets another (Cytron, Ferrante, Rosen,
+/// Wegman and Zadeck, "Efficiently Computing Static Single Assignment
+/// Form and the Control Dependence Graph", TOPLAS 1991).
+pub fn iterated_frontier(df: &[Vec<BlockId>], blocks: &[BlockId]) -> Vec<BlockId> {
+    let mut queued = vec![false; df.len()];
+    let mut placed = vec![false; df.len()];
+    let mut work: Vec<BlockId> = Vec::new();
+    for &b in blocks {
+        if !std::mem::replace(&mut queued[b.0 as usize], true) {
+            work.push(b);
+        }
+    }
+    while let Some(x) = work.pop() {
+        for &y in &df[x.0 as usize] {
+            placed[y.0 as usize] = true;
+            if !std::mem::replace(&mut queued[y.0 as usize], true) {
+                work.push(y);
+            }
+        }
+    }
+    (0..df.len() as u32)
+        .map(BlockId)
+        .filter(|b| placed[b.0 as usize])
+        .collect()
+}
+
 pub fn dominators(cfg: &ControlFlowGraph) -> DominanceInfo {
     let n = cfg.blocks.len();
 
@@ -259,6 +286,51 @@ mod tests {
             "$L__E:\nadd.s32 %r1, %r1, 1;\nsetp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__E;\nret;",
         );
         assert_eq!(df, [vec![0], vec![]]);
+    }
+
+    fn iterated_of(body: &str, blocks: &[u32]) -> Vec<u32> {
+        let (cfg, d) = doms_of(body);
+        let blocks: Vec<BlockId> = blocks.iter().map(|&b| BlockId(b)).collect();
+        (iterated_frontier(&d.frontiers(&cfg), &blocks).into_iter())
+            .map(|b| b.0)
+            .collect()
+    }
+
+    #[test]
+    fn iterated_frontier_of_a_diamond_arm_is_the_join() {
+        let diamond = "setp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__T;\n\
+                       add.f32 %f1, %f1, %f1;\nbra $L__J;\n\
+                       $L__T:\nmul.f32 %f1, %f1, %f1;\n\
+                       $L__J:\nret;";
+        assert_eq!(iterated_of(diamond, &[1]), [3]);
+        assert_eq!(iterated_of(diamond, &[1, 2]), [3]);
+        assert_eq!(iterated_of(diamond, &[0]), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn iterated_frontier_of_an_inner_loop_holds_both_headers() {
+        // blocks: 0 preheader, 1 outer header, 2 inner loop, 3 outer latch, 4 exit
+        let nested = "mov.u32 %r1, 0;\n$L__O:\nmov.u32 %r3, 0;\n\
+                      $L__I:\nadd.s32 %r3, %r3, 1;\nsetp.lt.s32 %p1, %r3, %r2;\n@%p1 bra $L__I;\n\
+                      add.s32 %r1, %r1, 1;\nsetp.lt.s32 %p2, %r1, %r2;\n@%p2 bra $L__O;\nret;";
+        assert_eq!(iterated_of(nested, &[2]), [1, 2]);
+        assert_eq!(iterated_of(nested, &[3]), [1]);
+    }
+
+    #[test]
+    fn iterated_frontier_closes_over_a_two_entry_cycle() {
+        let cycle = "setp.gt.s32 %p1, %r1, %r2;\n@%p1 bra $L__B;\n\
+                     $L__A:\nadd.s32 %r3, %r3, 1;\n\
+                     $L__B:\nadd.s32 %r3, %r3, 2;\n\
+                     setp.lt.s32 %p2, %r3, %r1;\n@%p2 bra $L__A;\nret;";
+        assert_eq!(iterated_of(cycle, &[1]), [1, 2]);
+    }
+
+    #[test]
+    fn iterated_frontier_of_an_entry_targeted_by_a_branch_is_the_entry() {
+        let looped =
+            "$L__E:\nadd.s32 %r1, %r1, 1;\nsetp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__E;\nret;";
+        assert_eq!(iterated_of(looped, &[0]), [0]);
     }
 
     #[test]

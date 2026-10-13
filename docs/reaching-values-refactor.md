@@ -141,11 +141,11 @@ answer (a killed definition dropped, `Entry` refused, a different
 loop's counter) is its own commit with a test pinning the new answer.
 
 1. Dominance frontiers. Done (`33792a0`).
-2. `Location`, `Value`, `Site`, φ placement; tests of which blocks get
-   which φs.
-3. `at` and `at_end`; tests: straight line, diamond, one-sided write,
-   loop counter, nested loops, two-entry cycle, entry with
-   predecessors, unreachable block, CC.CF across a call.
+2. Iterated dominance frontiers; tests of which blocks get φs.
+3. `Location`, `Value`, `Site`, `Values::new`, `at` and `at_end`;
+   tests: straight line, diamond, one-sided write, loop counter, nested
+   loops, two-entry cycle, entry with predecessors, unreachable block,
+   CC.CF across a call.
 4. `phi_operands` and `reaching`; tests through nested φs and a cycle.
 5. The tracer builds `Values`. A temporary corpus snapshot of, for
    every explicit and implicit (CC.CF) read and every header query
