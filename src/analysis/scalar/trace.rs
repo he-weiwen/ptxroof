@@ -230,11 +230,7 @@ impl<'a> AffineValueTracer<'a> {
         (instr.mnemonic == Opcode::Setp && *first == Operand::Register(pred)).then_some((d, instr))
     }
 
-    /// Reaching definition of `reg` strictly before statement `pos`:
-    /// the latest def in the same block, else the latest def walking up
-    /// the dominator chain. (Defs on non-dominating paths are shadowed
-    /// by construction in the nvcc shapes; anything that depends on a
-    /// merge degrades to unknown through the def-form rules below.)
+    /// The block holding statement `stmt`.
     pub(crate) fn block_of(&self, stmt: usize) -> BlockId {
         (0..self.cfg.blocks.len() as u32)
             .map(BlockId)
