@@ -363,6 +363,10 @@ loop's counter) is its own commit with a test pinning the new answer.
     is known, its address read or not; its unique bytes and sectors are
     unknown when an address is not read
     (`micro/footprint_unknown.ptx`: requested 64 B, unique unknown).
+    Done. A loop whose global accesses all have unknown addresses now
+    has a row (Gluon's `ce_chunk_kernel.v8192`: requested 32768 B), and
+    those of `micro/guarded_step.ptx`, `nested_counter_step.ptx` and
+    `carried_counter.ptx` come back with their requested bytes.
 24. A loop footprint reads `⌊k/d⌋` and `k mod m` of its own `k` per
     trip: unique-byte intervals, sector patterns and the reuse note
     (`micro/counter_floor_mod.ptx`: 12 B and 8 B).

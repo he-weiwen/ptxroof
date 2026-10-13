@@ -273,7 +273,7 @@ L:
         if launch.is_some() {
             let bytes = loop_node.global_bytes_per_cta.as_ref().unwrap();
             assert_eq!(bytes.requested, 0);
-            assert_eq!(bytes.unique, 0);
+            assert_eq!(bytes.unique, Some(0));
             let sectors = bytes.sector_bytes.as_ref().unwrap();
             assert_eq!((sectors.min, sectors.max), (0, 0));
             let cta = kernel.totals_per_cta.as_ref().unwrap();

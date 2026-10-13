@@ -422,9 +422,9 @@ impl KernelReportBuilder<'_> {
                         Some(Err(why)) => (None, None, Some(why)),
                         None => (None, None, None),
                     };
-                    if let (Some(a), Some(b)) = (&form, bytes) {
+                    if let Some(b) = bytes {
                         forms.entry(scope).or_default().push(AccessForm {
-                            form: a.clone(),
+                            form: form.clone(),
                             bytes: b,
                             align: align.unwrap_or(b),
                             space,
@@ -480,7 +480,8 @@ type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
 
 /// A memory operand's bound affine address, for the per-loop footprint.
 struct AccessForm {
-    form: Affine,
+    /// `None` when the address is not read.
+    form: Option<Affine>,
     bytes: u32,
     /// The access size the address is aligned to.
     align: u32,
@@ -858,33 +859,42 @@ impl<'a> KernelReportBuilder<'a> {
             return None;
         }
         let mut requested = 0u64;
+        let mut complete = true;
         let mut at_most = false;
         let mut per_base: HashMap<Affine, Vec<(i64, i64)>> = HashMap::new();
         let mut patterns: HashMap<Affine, Vec<SectorPattern>> = HashMap::new();
         for f in global {
-            let stride = match f.form.terms.get(&Var::Iter(id)) {
+            let set = &f.set;
+            let lanes = (0..threads)
+                .filter(|&t| set.contains([t % nx, (t / nx) % ny, t / (nx * ny)], self.shape))
+                .count() as u64;
+            requested += f.bytes as u64 * trips as u64 * lanes;
+            at_most |= !f.guard_exact || f.conditional;
+            let Some(form) = &f.form else {
+                complete = false;
+                continue;
+            };
+            let stride = match form.terms.get(&Var::Iter(id)) {
                 Some(c) => c.as_const()?,
                 None => 0,
             };
-            if f.form.terms.iter().any(|(v, c)| {
+            if form.terms.iter().any(|(v, c)| {
                 crate::analysis::scalar::lane_eval::depends_on_lane(v) && c.as_const().is_none()
             }) {
                 return None;
             }
-            let set = &f.set;
             let bytes = i64::from(f.bytes);
-            at_most |= !f.guard_exact || f.conditional;
             // Which lane an election picks is unspecified: a lane-dependent
             // address touched by the elected lane is a bound.
             if f.set.pred.elect_active().is_some()
-                && f.form
+                && form
                     .terms
                     .keys()
                     .any(crate::analysis::scalar::lane_eval::depends_on_lane)
             {
                 at_most = true;
             }
-            let mut key = f.form.clone();
+            let mut key = form.clone();
             key.terms.retain(|v, _| {
                 !crate::analysis::scalar::lane_eval::depends_on_lane(v) && *v != Var::Iter(id)
             });
@@ -894,7 +904,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let offsets: Vec<i64> = (warp * 32..((warp + 1) * 32).min(threads))
                     .map(|t| [t % nx, (t / nx) % ny, t / (nx * ny)])
                     .filter(|&tid| set.contains(tid, self.shape))
-                    .map(|tid| crate::analysis::scalar::lane_eval::eval_lane(&f.form, tid))
+                    .map(|tid| crate::analysis::scalar::lane_eval::eval_lane(form, tid))
                     .collect();
                 if !offsets.is_empty() {
                     patterns
@@ -913,8 +923,7 @@ impl<'a> KernelReportBuilder<'a> {
                 if !set.contains(tid, self.shape) {
                     continue;
                 }
-                requested += f.bytes as u64 * trips as u64;
-                let base = crate::analysis::scalar::lane_eval::eval_lane(&f.form, tid);
+                let base = crate::analysis::scalar::lane_eval::eval_lane(form, tid);
                 if intervals.len() as i64 + trips > 1 << 22 {
                     return None;
                 }
@@ -958,8 +967,8 @@ impl<'a> KernelReportBuilder<'a> {
         }
         Some(LoopBytes {
             requested,
-            unique: unique as u64,
-            sector_bytes,
+            unique: complete.then_some(unique as u64),
+            sector_bytes: sector_bytes.filter(|_| complete),
             at_most,
         })
     }
@@ -1784,7 +1793,7 @@ mod tests {
             r.kernels[0].loops[0].global_bytes_per_cta,
             Some(LoopBytes {
                 requested: 2048,
-                unique: 1028,
+                unique: Some(1028),
                 sector_bytes: Some(ByteRange {
                     min: 1280,
                     max: 1536
@@ -1799,7 +1808,7 @@ mod tests {
             r.kernels[0].loops[0].global_bytes_per_cta,
             Some(LoopBytes {
                 requested: 2016,
-                unique: 1028,
+                unique: Some(1028),
                 sector_bytes: Some(ByteRange {
                     min: 1280,
                     max: 1536
@@ -1818,7 +1827,7 @@ mod tests {
             .clone()
             .expect("still enumerable");
         assert!(b.at_most);
-        assert_eq!((b.requested, b.unique), (2048, 1028));
+        assert_eq!((b.requested, b.unique), (2048, Some(1028)));
         // The second load in a block a loaded value skips: a bound even
         // though it is not guarded.
         let branched = src.replace(
@@ -1832,7 +1841,7 @@ mod tests {
             .clone()
             .expect("still enumerable");
         assert!(b.at_most);
-        assert_eq!((b.requested, b.unique), (3072, 1028));
+        assert_eq!((b.requested, b.unique), (3072, Some(1028)));
         let src = src.replace(".reqntid 32, 1, 1\n", "");
         let r = analyze(&src, "t", &opts).expect("analyzes");
         assert_eq!(r.kernels[0].loops[0].global_bytes_per_cta, None);

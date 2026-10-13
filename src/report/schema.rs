@@ -250,7 +250,9 @@ pub struct LoopNode {
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct LoopBytes {
     pub requested: u64,
-    pub unique: u64,
+    /// `None` when an access's address is not read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique: Option<u64>,
     /// The bytes of the 32-byte sectors those requests touch, over the
     /// alignments of each base pointer, when every access on it is
     /// aligned under one of them.

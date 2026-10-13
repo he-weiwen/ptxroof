@@ -325,10 +325,14 @@ fn render_loop(w: &mut String, l: &LoopNode, depth: usize) {
             Some(s) => format!(", in sectors {bound}{}–{} B", s.min, s.max),
             None => String::new(),
         };
+        let unique = match b.unique {
+            Some(u) => format!("{bound}{u} B"),
+            None => "unknown".to_owned(),
+        };
         let _ = writeln!(
             w,
-            "{pad}  global bytes per CTA over the loop's own blocks: requested {bound}{} B, unique {bound}{} B{sectors}",
-            b.requested, b.unique
+            "{pad}  global bytes per CTA over the loop's own blocks: requested {bound}{} B, unique {unique}{sectors}",
+            b.requested
         );
     }
     for child in &l.loops {
