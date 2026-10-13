@@ -258,6 +258,9 @@ pub enum Operand {
     /// `p|q` — an instruction writing several destination registers
     /// (PTX ISA §9.7, "Instructions": `setp.lt.s32 p|q, a, b`).
     MultipleDestinations { children: IdxRange<OperandId> },
+    /// `%r1.h0` — a video instruction's byte or half of a register
+    /// (PTX ISA §9.7.19.1, `.asel`, `.bsel`, `.dsel`).
+    Selected { base: OperandId, selector: Symbol },
 }
 
 /// One executable instruction.

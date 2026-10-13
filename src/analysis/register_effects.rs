@@ -118,7 +118,8 @@ pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
 }
 
 /// The registers operand `op` names: itself, the elements of a `{…}` or
-/// `p|q`, as in `tex`'s `{…}|p`, or an address's base.
+/// `p|q`, as in `tex`'s `{…}|p`, or an address's or a selection's base.
+/// A selected destination writes its whole register (PTX ISA §9.7.19.1).
 pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
     match module.operand(op) {
         Operand::Register(r) => vec![*r],
@@ -127,7 +128,7 @@ pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
                 .flat_map(|&c| registers(module, c))
                 .collect()
         }
-        Operand::Memory { base, .. } => registers(module, *base),
+        Operand::Memory { base, .. } | Operand::Selected { base, .. } => registers(module, *base),
         _ => Vec::new(),
     }
 }
@@ -439,6 +440,7 @@ mod tests {
             "vadd2.s32.s32.u32 %r1, %r2, %r3, %r4;",
             "vavrg4.u32.u32.u32 %r1, %r2, %r3, %r4;",
             "vset4.u32.u32.ne %r1, %r2, %r3, %r4;",
+            "vadd.u32.u32.u32 %r1.h0, %r2.b0, %r3, %r1;",
         ] {
             assert_eq!(written(instr).as_deref(), Some("%r1"), "{instr}");
         }

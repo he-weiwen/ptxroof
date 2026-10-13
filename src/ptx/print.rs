@@ -167,6 +167,13 @@ fn dump_operand(m: &Module, id: OperandId) -> String {
                 .collect();
             inner.join("|")
         }
+        Operand::Selected { base, selector } => {
+            format!(
+                "{}.{}",
+                dump_operand(m, *base),
+                m.interner.resolve(*selector)
+            )
+        }
     }
 }
 

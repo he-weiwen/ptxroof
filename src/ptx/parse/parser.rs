@@ -40,8 +40,8 @@ pub fn parse(source: &str) -> Result<Module, ParseError> {
 }
 
 /// An open `{ }` block: "any variable declared within a scope is not
-/// available outside the scope" (PTX ISA §9.7.13.1). Its labels and
-/// registers are renamed `name$scopeN`, a counted register family's
+/// available outside the scope" (PTX ISA §9.7.13.1). The names it
+/// declares are renamed `name$scopeN`, a counted register family's
 /// members `prefix$scopeN$i`.
 struct Scope {
     id: u32,
@@ -882,9 +882,22 @@ impl<'a> Parser<'a> {
         match self.peek().kind {
             TokenKind::Register => {
                 let t = self.bump();
-                let sym = self.interner.intern(t.text);
+                let (name, selector) = match t.text.split_once('.') {
+                    Some((name, sel @ ("b0" | "b1" | "b2" | "b3" | "h0" | "h1"))) => {
+                        (name, Some(sel))
+                    }
+                    _ => (t.text, None),
+                };
+                let sym = self.interner.intern(name);
                 let sym = self.scoped(sym);
-                Some(self.push_operand(Operand::Register(sym)))
+                let base = self.push_operand(Operand::Register(sym));
+                Some(match selector {
+                    Some(sel) => {
+                        let selector = self.interner.intern(sel);
+                        self.push_operand(Operand::Selected { base, selector })
+                    }
+                    None => base,
+                })
             }
             TokenKind::Number => {
                 let t = self.bump();
@@ -1302,6 +1315,28 @@ mod tests {
             m.interner.resolve(m.kernels[0].shared_decls[0].name),
             "a$scope1"
         );
+    }
+
+    #[test]
+    fn a_video_selector_is_not_part_of_the_name() {
+        let m = parse_body("vadd.u32.u32.u32 %r1.h0, %r2.b3, %r3, %r1;\nret;");
+        let ops = m.operand_ids(instrs(&m)[0].operands);
+        let selected = |id: OperandId| match m.operand(id) {
+            Operand::Selected { base, selector } => match m.operand(*base) {
+                Operand::Register(r) => {
+                    format!(
+                        "{}.{}",
+                        m.interner.resolve(*r),
+                        m.interner.resolve(*selector)
+                    )
+                }
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(selected(ops[0]), "%r1.h0");
+        assert_eq!(selected(ops[1]), "%r2.b3");
+        assert!(matches!(m.operand(ops[2]), Operand::Register(_)));
     }
 
     #[test]

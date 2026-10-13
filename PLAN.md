@@ -68,11 +68,6 @@ its shared writes and instruction counts remain counted
   fixed source-read size even with a runtime ignore-source predicate.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
-- **A video instruction's operand selector is read as part of the
-  register's name** (`%r1.h0`, PTX ISA §9.7.19.1): in `micro/video_selector.ptx` the `vadd` that
-  writes all of %r1 writes `%r1.h0` instead, so the address stays
-  `[4 * %tid.x + param_0]`, where ptxas stores to param_0 from all 32
-  threads.
 - **`cvt` is read as its last operand unchanged** (PTX ISA §9.7.9.22):
   a two-source pack (`cvt.rn.bf16x2.f32 d, a, b` puts `a` in the
   upper half; 400 in seven Gluon fixtures), the bits of an
