@@ -50,9 +50,18 @@ pub enum Register { Named(Symbol), Cc }
 ```
 
 - CC is an implicit operand, as a flags register is in LLVM's
-  `MCInstrDesc::implicit_defs` / `implicit_uses`: the decoder adds it to
-  what `add.cc`, `addc`, a `call` or an undecoded form writes, and an
-  unparsed statement writes it with every register it names.
+  `MCInstrDesc::implicit_defs` / `implicit_uses`. Which statements
+  write and read it is the decoder's `carry` (`register_effects.rs`),
+  unchanged:
+
+  | Statement | Writes CC | Reads CC |
+  |---|---|---|
+  | `add`, `sub`, `mad` | with `.cc` | no |
+  | `addc`, `subc`, `madc` | with `.cc` | yes |
+  | `call` | yes | no |
+  | a form the decoder does not read | yes | yes |
+  | an unparsed statement, whatever it names | yes | not asked |
+  | anything else | no | no |
 - Special registers are not `Register`s. They are read-only (PTX ISA
   §10, "predefined, read-only variables"), so no write ever reaches a
   read of one, and two reads of `%clock` differ where two reads of
@@ -63,10 +72,21 @@ pub enum Register { Named(Symbol), Cc }
   register.
 
 The decoder's `stmt_written_registers` and `carry` become
-`writes(module, stmt) -> Vec<Register>` and
-`reads_cc(module, instr) -> bool`. The tracer's `defs` and `carry_defs`
-become one table, `writes: HashMap<Register, Vec<usize>>`, and the
-uniformity analysis's `read` and `read_carry` one `read`.
+`writes(module, stmt) -> Vec<Register>`, whose `Named` entries are
+today's list in its order, and `reads_cc(module, instr) -> bool`. The
+tracer's `defs` and `carry_defs` become one table,
+`writes: HashMap<Register, Vec<usize>>`; a lookup by register symbol
+asks for `Named(reg)`, and the induction chains take `Named` writes
+only. The uniformity analysis keeps its nodes and the order it queues
+them, which decides the reason a divergent node keeps (the first to
+reach it, `Uniformity::new`): named-register writes sorted and
+deduplicated as `Node::Def`, then CC writes in statement order as
+`Node::Carry`. Its `read` and `read_carry` become one `read`, which
+takes the node kind and the name in its reason (`%r1`, `CC.CF`) from
+the register; a guarded write still reads the old value of what its
+node is, its registers for `Node::Def`, CC for `Node::Carry`
+(`uniformity.rs`, a guarded `add.cc` keeps `%r4` uniform and its carry
+divergent).
 
 ## Values (`src/ssa.rs`)
 
@@ -96,19 +116,21 @@ pub struct RegisterSsa<'a> { /* cfg, doms, writes, φ blocks */ }
 
 impl RegisterSsa<'_> {
     fn new(cfg, doms, writes: HashMap<Register, Vec<usize>>) -> Self;
-    /// The value statement `op` reads from `reg`; `None` in an
-    /// unreachable block.
-    fn operand(&self, op: usize, reg: Register) -> Option<Value>;
+    /// The value a read of `reg` just before statement `stmt` sees
+    /// (MLIR's `getProgramPointBefore`); `stmt` is any statement of a
+    /// block, a label included. `None` in an unreachable block.
+    fn value_before(&self, stmt: usize, reg: Register) -> Option<Value>;
     /// What `arg` takes on each edge into its block; `None` is the
     /// kernel's start, an edge into the entry block.
     fn incoming(&self, arg: Value) -> Vec<(Option<BlockId>, Value)>;
-    /// The `Result`s and `Undef`s `v` may be, through `Argument`s.
+    /// The `Result`s `v` may be, through `Argument`s, in statement
+    /// order, then `Undef` if some path writes nothing; each once.
     fn sources(&self, v: Value) -> Vec<Value>;
 }
 ```
 
-- `operand(op, reg)`: the last write of `reg` in `op`'s block before
-  `op`; else the φ at that block, if one is placed; else the value at
+- `value_before(stmt, reg)`: the last write of `reg` in `stmt`'s block
+  before `stmt`; else the φ at that block, if one is placed; else the value at
   the end of the immediate dominator; at the entry block, `Undef`. In
   minimal SSA a block without a φ for a register starts with what its
   immediate dominator ends with.
@@ -119,18 +141,18 @@ impl RegisterSsa<'_> {
 - Unreachable blocks: the write table holds their writes, and the
   uniformity analysis and thread participation read in them. They are
   in no frontier and no φ takes a value from them, so they cannot
-  reach a value in reachable code; `operand` there is `None`.
-- `sources` walks `incoming` with a visited set and returns values in
-  statement order. A guarded `Result` is not walked through: its old
-  value is `operand(op, reg)`, which the user reads, as
-  `uniformity::def_reads` does today.
+  reach a value in reachable code; `value_before` there is `None`.
+- `sources` walks `incoming` with a visited set. A guarded `Result` is
+  not walked through: its old value is `value_before(op, reg)`, which
+  the user reads, as `uniformity::def_reads` does today.
 - The dominance frontiers come from the loop forest's dominator tree
   (Cooper, Harvey and Kennedy, "A Simple, Fast Dominance Algorithm",
   §4). Frontiers and φ placement need no loop structure; users keep
   their own refusal of cycles with two entries.
 
 `RegisterSsa` takes the writes, not the module, so it is independent
-of the analyses (`docs/architecture.md`). The tracer builds it in
+of the analyses that consume it (`docs/architecture.md`); it depends on
+`ptx` for `Register` and on the dominator tree. The tracer builds it in
 `AffineValueTracer::new` from its write table.
 
 ## Answers to `docs/architecture.md`'s five questions
@@ -152,9 +174,9 @@ of the analyses (`docs/architecture.md`). The tracer builds it in
 | `trace_reg` | `Def` interpreted, a counter at or after its increment `init + k·step`; `Carried(l)`: the counter of `l`, the innermost loop holding the read and an interfering definition, `init + (k−1)·step`; `Merged`: one shared immediate | `Result`: same; `Argument` at the header of loop `l`: `l`'s counter rule; other `Argument`: one shared immediate, refused when a source is `Undef` |
 | `iv_init` | `trace_reg` at the header, the loop's own definitions excluded: a dominating definition, or a merge of one immediate | the header `Argument`'s `incoming` from outside the loop, traced as one φ; with no `Argument` at the header, the value at its immediate dominator's end |
 | `induction_vars` | the loop's own definitions of a register, chained by hand; the chain's φ register is the first with a definition reaching the header from outside | same chain and restrictions; the φ register is the first whose header `Argument` has an outside `incoming` with a `Result` among its `sources` |
-| two-trip predicate loop (`trip_counts.rs`) | the branch predicate one copy in the loop; the copied register one definition in the loop, in the latch; its value on entry one definition; both `mov` of an immediate | same restrictions; "one definition" is `operand` being a `Result`, the value on entry the header `Argument`'s outside `incoming` |
+| two-trip predicate loop (`trip_counts.rs`) | the branch predicate one copy in the loop; the copied register one definition in the loop, in the latch; its value on entry one definition; both `mov` of an immediate | same restrictions, the one write in the loop and in the latch still counted in the write table; the copy is `value_before` the branch being a `Result`, the value on entry the header `Argument`'s outside `incoming` |
 | `uniformity::read_sites` | `reach_sites`; `Carried` expanded to every definition reaching the read; a missing definition on one path not seen | `sources(v)`'s `Result`s; an `Undef` divergent; gating predicates as today |
-| predicate reader | `reach_def` must be `Def`, unguarded, with uniform gates; else `Pred::Uniform` if the uniformity analysis finds it so | `operand` must be an unguarded `Result`; the rest unchanged |
+| predicate reader | `reach_def` must be `Def`, unguarded, with uniform gates; else `Pred::Uniform` if the uniformity analysis finds it so | `value_before` must be an unguarded `Result`; the rest unchanged |
 | `obstacle` | `Def` followed; `Merged`, `Carried`: `obstacle_of_any_def` | `Result` followed; `Argument`: `obstacle_of_any_def` |
 | `obstacle_of_any_def` | every definition of the register | unchanged |
 | `find_setp`, `predicate_reason` | the last write in the latch | unchanged |
@@ -177,29 +199,36 @@ loop's counter) is its own commit with a test pinning the new answer.
    `Site`; tests: straight line, diamond, one-sided write, loop
    counter, nested loops, two-entry cycle, entry with predecessors,
    unreachable block, CC.CF across a call. Done (`f1cec24`).
-4. `Register` in `src/ptx/ir.rs`; `src/ssa.rs` renamed to
-   `RegisterSsa`, `Value::{Result, Argument, Undef}` and `operand`,
-   `at_end` private.
-5. The decoder's `writes` and `reads_cc`; the tracer's one write table.
-6. The uniformity analysis's one `read`; its nodes unchanged.
-7. `incoming` and `sources`; tests through nested φs and a cycle.
-8. The tracer builds `RegisterSsa`. A temporary corpus snapshot of, for
-   every explicit and implicit (CC) read and every header query
-   excluding its loop: today's `ReachingDefinition`, the new `Value`,
-   its `sources`. Each class of difference explained.
-9. `uniformity::read_sites` reads `sources`.
-10. `uniformity::read_sites` refuses `Undef`.
-11. `trace_reg`'s `Merged` branch reads `Argument`s, `Undef` refused.
-12. `trace_reg`'s `Carried` branch reads header `Argument`s.
-13. `iv_init` reads the header `Argument`.
-14. `induction_vars` picks its φ register by the header `Argument`.
-15. The two-trip predicate loop reads `RegisterSsa`.
-16. The predicate reader reads `RegisterSsa`.
-17. `obstacle` reads `RegisterSsa`.
-18. `reach_def`, `reach_sites` and `path_avoiding` go, and the snapshot
-    of step 8 with them; the focused tests stay.
+4. `Location` becomes `Register` in `src/ptx/ir.rs`.
+5. `Value` and `Site` become one `Value::{Result, Argument, Undef}`.
+6. `Values` becomes `RegisterSsa`, `at` `value_before`, `at_end`
+   private.
+7. The decoder's `writes` and `reads_cc`, beside `stmt_written_registers`
+   and `carry`.
+8. The tracer's one write table, read through `Named` and `Cc` as
+   above, split further if the diff passes 50 lines.
+9. The uniformity analysis's one `read`.
+10. `stmt_written_registers` and `carry` go; the decoder's, the SSA's
+    and the corpus tests use `writes`, the SSA's test helper gaining
+    the CC write of an unparsed statement it now omits.
+11. `incoming` and `sources`; tests through nested φs and a cycle.
+12. The tracer builds `RegisterSsa`. A temporary corpus snapshot of, for
+    every explicit and implicit (CC) read and every header query
+    excluding its loop: today's `ReachingDefinition`, the new `Value`,
+    its `sources`. Each class of difference explained.
+13. `uniformity::read_sites` reads `sources`.
+14. `uniformity::read_sites` refuses `Undef`.
+15. `trace_reg`'s `Merged` branch reads `Argument`s, `Undef` refused.
+16. `trace_reg`'s `Carried` branch reads header `Argument`s.
+17. `iv_init` reads the header `Argument`.
+18. `induction_vars` picks its φ register by the header `Argument`.
+19. The two-trip predicate loop reads `RegisterSsa`.
+20. The predicate reader reads `RegisterSsa`.
+21. `obstacle` reads `RegisterSsa`.
+22. `reach_def`, `reach_sites` and `path_avoiding` go, and the snapshot
+    of step 12 with them; the focused tests stay.
 
-Steps 4–6 change no output.
+Steps 4–10 change no output.
 
 ## The uniform variable: what its plan must settle
 
