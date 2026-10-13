@@ -185,3 +185,9 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 | uniformity: a definition reads the operands after its written ones, and with a guard also the written ones (`split_operands`, shared with the tracer's reasons) | every lane-wise definition | no: every lane-wise form writes one operand | no lit test, as no output can differ |
 | CC.CF: `.cc` writes it, `addc`, `subc`, `madc` read it; uniformity reads it instead of taking the `*c` forms to differ per thread | none (no `.cc` in the corpus) | for a carry chain on values every thread shares | `micro/carry_uniform.ptx`, before: `warp: <= 5 sectors`; the guarded case by `divergence_follows_data_from_per_thread_registers_and_loads` |
 | `find_setp`: the last write of the latch predicate in the latch, if a `setp` writes it as its first output; a packed `setp` (`.f16x2`, `.bf16x2`) is refused, its first output comparing the low halves | every latch; the mbarrier spin-waits keep their reasons | where another write of the predicate follows the `setp`, or the predicate is a `p\|q` output | `micro/latch_pred_overwritten.ptx`, before: `trips = 10` where ptxas runs 3; `a_latch_on_setps_first_output_is_a_trip_count`, `a_packed_comparison_is_not_a_trip_count` |
+
+## Coverage of the parser steps
+
+| Step | Corpus | Differs from before | Test |
+|---|---|---|---|
+| a `.reg` in a `{ }` block is renamed `name$scopeN` (a counted family's members `prefix$scopeN$i`), and every register, guard and bracket base is resolved against the open blocks | 177 scoped declarations, all singular (`complete` 135, `lo, hi` 41, `%laneid` 1) | where a scoped name shadows an outer register or a special register | `micro/scoped_shadow.ptx`, before: `[param_0]`; `micro/scoped_family.ptx`, before: `[4 * %tid.x + param_0]` where ptxas stores to `param_0 + 28`; `a_scoped_register_shadows_only_in_its_block` |

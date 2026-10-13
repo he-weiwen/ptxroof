@@ -70,7 +70,7 @@ its shared writes and instruction counts remain counted
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
 - **Registers declared without `%` are symbols.** The parser reads `lo`
   in `{ .reg .b16 lo, hi; … }` (PTX ISA §4.4, §9.7.13.1) as a symbol
-  reference, and the same name in sibling scopes as one, so an
+  reference, so an
   instruction writing it defines nothing and one reading it reads
   nothing: Gluon's fp8 conversions (`cvt.rn.satfinite.e4m3x2.f32 lo,
   …` then `mov.b32 %r106, {lo, hi}` in quantize_transpose and the
@@ -78,11 +78,7 @@ its shared writes and instruction counts remain counted
   into `complete`, read by `@!complete` guards. In
   `micro/bare_registers.ptx` the packed value is taken as the same in
   every thread: a store only thread 0 runs is `warp: 4–5 sectors`.
-  Likewise a `.reg` that reuses a special register's name in a nested
-  scope takes the name in the whole kernel: in
-  `micro/scoped_shadow.ptx` the `%laneid` read after the scope, which
-  ptxas reads as `SR_LANEID`, is the scoped register's 0, so 32
-  threads' stores are `warp: 1 sector` at `[param_0]`. And a video
+  And a video
   instruction's operand selector (`%r1.h0`, PTX ISA §9.7.19.1) is read
   as part of the name: in `micro/video_selector.ptx` the `vadd` that
   writes all of %r1 writes `%r1.h0` instead, so the address stays

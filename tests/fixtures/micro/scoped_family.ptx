@@ -1,0 +1,29 @@
+//
+// HAND-WRITTEN: the block's `.reg .b32 %r<2>` declares a %r1 of its own
+// (PTX ISA §9.7.13.1), so the kernel's %r1 is still 7 after the block
+// and every thread stores 7 to word 7 (ptxas 13.4: `IMAD.MOV.U32 R5,
+// RZ, RZ, 0x7` and `STG.E [R2.64+0x1c], R5`, no `SR_TID` read).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_scoped_family(
+	.param .u64 micro_scoped_family_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_scoped_family_param_0];
+	mov.u32 	%r1, 7;
+	{
+	.reg .b32 	%r<2>;
+	mov.u32 	%r1, %tid.x;
+	}
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

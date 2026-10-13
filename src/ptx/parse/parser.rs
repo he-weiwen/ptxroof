@@ -9,8 +9,8 @@
 //! `function_name/inlined_at` forms — both appear in k2), `.pragma` in
 //! body position, `.section .debug_*` data sections (parsed and
 //! skipped), `{ ... }` statement blocks (inline-asm expansions —
-//! flattened, with the labels they define renamed per scope, since
-//! ptxas scopes a label to its block), and `.branchtargets`.
+//! flattened, with the labels and registers they declare renamed per
+//! scope), and `.branchtargets`.
 //!
 //! Malformed instructions in kernel bodies become `Stmt::Unparsed`; recovery
 //! skips to a semicolon, closing brace, or EOF. Unsupported top-level
@@ -39,6 +39,16 @@ pub fn parse(source: &str) -> Result<Module, ParseError> {
     Parser::new(source).run()
 }
 
+/// An open `{ }` block: "any variable declared within a scope is not
+/// available outside the scope" (PTX ISA §9.7.13.1). Its labels and
+/// registers are renamed `name$scopeN`, a counted register family's
+/// members `prefix$scopeN$i`.
+struct Scope {
+    id: u32,
+    names: HashMap<Symbol, Symbol>,
+    families: Vec<(Symbol, u32)>,
+}
+
 struct Parser<'a> {
     source: &'a str,
     toks: Vec<Token<'a>>,
@@ -52,8 +62,7 @@ struct Parser<'a> {
     shared_decls: Vec<SharedDecl>,
     /// Inlined location → the user line it was ultimately inlined at.
     inlined: HashMap<SourceLoc, SourceLoc>,
-    /// Per open `{ }` block, its labels renamed `name$scopeN`.
-    scopes: Vec<HashMap<Symbol, Symbol>>,
+    scopes: Vec<Scope>,
     scope_count: u32,
     operands: IndexVec<OperandId, Operand>,
     operand_lists: Vec<OperandId>,
@@ -468,15 +477,48 @@ impl<'a> Parser<'a> {
                 (self.interner.intern(n), self.interner.intern(&renamed))
             })
             .collect();
-        self.scopes.push(map);
+        self.scopes.push(Scope {
+            id,
+            names: map,
+            families: Vec::new(),
+        });
     }
 
-    fn scoped(&self, label: Symbol) -> Symbol {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|m| m.get(&label).copied())
-            .unwrap_or(label)
+    /// The name `sym` refers to: its innermost open block's, if one
+    /// declares it.
+    fn scoped(&mut self, sym: Symbol) -> Symbol {
+        let name = self.interner.resolve(sym);
+        let renamed = self.scopes.iter().rev().find_map(|s| {
+            if let Some(&r) = s.names.get(&sym) {
+                return Some(self.interner.resolve(r).to_owned());
+            }
+            s.families.iter().find_map(|&(prefix, n)| {
+                let prefix = self.interner.resolve(prefix);
+                let i: u32 = name.strip_prefix(prefix)?.parse().ok()?;
+                (i < n).then(|| format!("{prefix}$scope{}${i}", s.id))
+            })
+        });
+        renamed.map_or(sym, |r| self.interner.intern(&r))
+    }
+
+    /// A `.reg` in an open block takes a name of its own there.
+    fn declare_scoped(&mut self, decl: &mut RegDecl) {
+        let Some(scope) = self.scopes.last_mut() else {
+            return;
+        };
+        let name = self.interner.resolve(decl.prefix);
+        let renamed = match decl.count {
+            None => format!("{name}$scope{}", scope.id),
+            Some(_) => format!("{name}$scope{}$", scope.id),
+        };
+        let renamed = self.interner.intern(&renamed);
+        match decl.count {
+            None => {
+                scope.names.insert(decl.prefix, renamed);
+            }
+            Some(n) => scope.families.push((decl.prefix, n)),
+        }
+        decl.prefix = renamed;
     }
 
     fn parse_body_directive(
@@ -494,7 +536,8 @@ impl<'a> Parser<'a> {
         match self.interner.resolve(name) {
             "loc" => self.parse_loc(cur_loc),
             "reg" => {
-                if let Some(decls) = self.parse_reg_decl() {
+                if let Some(mut decls) = self.parse_reg_decl() {
+                    decls.iter_mut().for_each(|d| self.declare_scoped(d));
                     kernel.reg_decls.extend(decls);
                 } else {
                     kernel.stmts.push(Stmt::Unparsed { offset });
@@ -718,7 +761,8 @@ impl<'a> Parser<'a> {
             let reg = match self.peek().kind {
                 TokenKind::Register | TokenKind::Identifier => {
                     let t = self.bump();
-                    self.interner.intern(t.text)
+                    let sym = self.interner.intern(t.text);
+                    self.scoped(sym)
                 }
                 _ => return unparsed(self),
             };
@@ -805,6 +849,7 @@ impl<'a> Parser<'a> {
             TokenKind::Register => {
                 let t = self.bump();
                 let sym = self.interner.intern(t.text);
+                let sym = self.scoped(sym);
                 Some(self.push_operand(Operand::Register(sym)))
             }
             TokenKind::Number => {
@@ -823,11 +868,13 @@ impl<'a> Parser<'a> {
                 let base = match self.peek().kind {
                     TokenKind::Register => {
                         let t = self.bump();
-                        Operand::Register(self.interner.intern(t.text))
+                        let sym = self.interner.intern(t.text);
+                        Operand::Register(self.scoped(sym))
                     }
                     TokenKind::Identifier => {
                         let t = self.bump();
-                        Operand::SymbolRef(self.interner.intern(t.text))
+                        let sym = self.interner.intern(t.text);
+                        Operand::SymbolRef(self.scoped(sym))
                     }
                     _ => return None,
                 };
@@ -1162,10 +1209,43 @@ mod tests {
             .iter()
             .map(|d| m.interner.resolve(d.prefix))
             .collect();
-        assert_eq!(names, ["lo", "hi"]);
+        assert_eq!(names, ["lo$scope1", "hi$scope1"]);
         assert_eq!(k.reg_decls[1].class, FundamentalType::B16);
         assert!(!k.stmts.iter().any(|s| matches!(s, Stmt::Unparsed { .. })));
         assert_eq!(instrs(&m).len(), 3);
+    }
+
+    #[test]
+    fn a_scoped_register_shadows_only_in_its_block() {
+        let m = parse_body(
+            ".reg .b32 %r<4>;\n.reg .pred p;\n\
+             { .reg .b32 %r<2>; .reg .pred p; mov.u32 %r1, %r3; @p bra L; L: }\n\
+             { .reg .pred p; @p mov.u32 %r1, 0; }\n@p mov.u32 %r1, 1;\nret;",
+        );
+        let names: Vec<String> = instrs(&m)
+            .iter()
+            .flat_map(|i| {
+                let pred = i.predicate.map(|p| m.interner.resolve(p.reg).to_owned());
+                let ops = m.operand_ids(i.operands).iter();
+                pred.into_iter()
+                    .chain(ops.filter_map(|&id| match m.operand(id) {
+                        Operand::Register(r) => Some(m.interner.resolve(*r).to_owned()),
+                        _ => None,
+                    }))
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "%r$scope1$1",
+                "%r3",
+                "p$scope1",
+                "p$scope2",
+                "%r1",
+                "p",
+                "%r1"
+            ]
+        );
     }
 
     #[test]
