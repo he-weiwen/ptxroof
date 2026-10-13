@@ -2,7 +2,9 @@
 // HAND-WRITTEN: three addresses through a `cvt` that changes the
 // value: a bf16x2 pack of 1.0 and the thread index, the bits of the
 // thread index converted to f32, and a 64-to-32-bit truncation of
-// the thread index plus 2^32. Only the last address is 4·%tid.x.
+// the thread index plus 2^32. Only the last address is 4·%tid.x;
+// the tracer refuses all three: two conversions change bits, and the
+// truncation's source leaves 32 bits.
 //
 .version 8.7
 .target sm_80

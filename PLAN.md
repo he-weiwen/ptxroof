@@ -73,20 +73,17 @@ its shared writes and instruction counts remain counted
   `ld.global.v2.b32 %v, [%rd1]` overwrites `%v`, `%v.x` is still the
   thread index an earlier `mov.b32 %v.x, %r1` wrote: the address is
   `[4 * %tid.x + param_0]`, where ptxas takes it from the load.
-- **`cvt` is read as its last operand unchanged** (PTX ISA §9.7.9.22):
-  a two-source pack (`cvt.rn.bf16x2.f32 d, a, b` puts `a` in the
-  upper half; 400 in seven Gluon fixtures), the bits of an
-  integer-to-float conversion and a narrowing conversion are each read
-  as the source's value (`micro/cvt_reads.ptx`: the three addresses are `4 * %tid.x +
-  param_0`, the last plus `17179869184`; only the last is 4·%tid.x).
 - **Integer arithmetic is taken not to wrap where its range is
   unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
-  or `bfe` result is refused when its range, over constants, the block
-  shape `.reqntid` or `--launch` gives, and constant trip counts,
-  leaves its type (`micro/mul_wrap.ptx`: `mul.lo.s32` of 2^30 and 4,
-  unknown); one through a parameter, `%ctaid` (no grid is bound) or a
-  symbolic trip count keeps the tracer's documented assumption
-  (`src/analysis/scalar/trace.rs`, module doc).
+  or `bfe` result, and an integer `cvt`'s source and destination, are
+  refused when the value's range, over constants, the block shape
+  `.reqntid` or `--launch` gives, and constant trip counts, leaves the
+  type (`micro/mul_wrap.ptx`: `mul.lo.s32` of 2^30 and 4;
+  `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` + 2^32); one through
+  a parameter, `%ctaid` (no grid is bound) or a symbolic trip count
+  keeps the tracer's documented assumption
+  (`src/analysis/scalar/trace.rs`, module doc). A conversion to or from
+  floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value

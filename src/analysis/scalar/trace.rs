@@ -532,9 +532,36 @@ impl<'a> AffineValueTracer<'a> {
 
         let value = match mnemonic {
             Opcode::Mov => arg(1),
-            Opcode::Cvt | Opcode::Cvta => {
-                // Width changes are value-preserving in the nonneg domain.
-                self.trace_operand(*ops.last().expect("cvt has operands"), def, id, depth + 1)
+            Opcode::Cvta => {
+                self.trace_operand(*ops.last().expect("cvta has operands"), def, id, depth + 1)
+            }
+            // PTX ISA §9.7.9.22: an integer `cvt` keeps a value its source
+            // type reads that its destination type holds; any other
+            // conversion changes the value's bits.
+            Opcode::Cvt => {
+                let opcode = self.module.opcode(instr);
+                let types: Vec<(u32, i128, i128)> =
+                    mods.iter().filter_map(|m| int_type_range(m)).collect();
+                let numeric = mods.iter().filter(|m| m.contains(char::is_numeric)).count();
+                let [to, from] = types[..] else {
+                    return Err(format!("`{opcode}` is not an integer conversion"));
+                };
+                if numeric != 2 {
+                    return Err(format!("`{opcode}` is not an integer conversion"));
+                }
+                let a =
+                    self.trace_operand(*ops.last().expect("cvt has operands"), def, id, depth + 1)?;
+                let bound_a = match self.bindings {
+                    Some(b) => a.bind(b),
+                    None => a.clone(),
+                };
+                let range = bound_a.range(&|v| self.bound(v));
+                for (width, lo, hi) in [from, to] {
+                    if range.is_some_and(|(x, y)| x < lo || y >= hi) {
+                        return Err(format!("`{opcode}` leaves {width} bits"));
+                    }
+                }
+                Ok(a)
             }
             Opcode::Ld => {
                 if mods.contains(&"param")
@@ -942,8 +969,17 @@ impl<'a> AffineValueTracer<'a> {
 /// A 16- or 32-bit integer type's width and the values it reads, a `b`
 /// bit pattern either way.
 fn type_range(m: &str) -> Option<(u32, i128, i128)> {
-    let (kind, width) = m.split_at(1);
-    let width: u32 = width.parse().ok().filter(|w| matches!(w, 16 | 32))?;
+    int_type_range(m).filter(|(w, _, _)| matches!(w, 16 | 32))
+}
+
+/// An integer type's width and the values it reads: `u`, `s`, and a `b`
+/// bit pattern either way.
+fn int_type_range(m: &str) -> Option<(u32, i128, i128)> {
+    let (kind, width) = m.split_at_checked(1)?;
+    let width: u32 = width
+        .parse()
+        .ok()
+        .filter(|w| matches!(w, 8 | 16 | 32 | 64))?;
     let (lo, hi) = (-(1i128 << (width - 1)), 1i128 << width);
     match kind {
         "u" => Some((width, 0, hi)),

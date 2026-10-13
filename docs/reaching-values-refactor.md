@@ -448,7 +448,8 @@ Steps, one commit each:
      only `micro/mul_wrap.ptx`'s output changed, though most fixtures
      bind their block shape with `.reqntid`.
 27c. Integer `cvt` checks both types, a float or packing `cvt` is
-     refused (`micro/cvt_reads.ptx`: three unknowns).
+     refused (`micro/cvt_reads.ptx`: three unknowns). Done; only that
+     fixture's output changed.
 27d. Counter updates checked as above.
 27e. The setp branch merges: `git merge-tree` finds conflicts in
      PLAN.md and the register-effects corpus snapshot only; its
