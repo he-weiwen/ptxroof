@@ -219,11 +219,11 @@ loop's counter) is its own commit with a test pinning the new answer.
     of every explicit and implicit (CC) read and every header query
     excluding its loop where today's `ReachingDefinition` and the new
     `Value` and `sources` disagree, by class
-    (`src/analysis/scalar/snapshots/`). Done. Of 99,546 reads, 2,342
+    (`src/analysis/scalar/snapshots/`). Done. Of 99,553 reads, 2,342
     `Carried` reads are a φ at a join inside the loop, none of them a
     counter of that loop, and 1,128 `Merged` reads keep a definition a
     later write kills; no read's `Merged` misses a path writing
-    nothing. Of 29,902 header queries, 8,568 `None`s are a φ of an
+    nothing. Of 29,906 header queries, 8,568 `None`s are a φ of an
     enclosing loop that may be `Undef`; 159 single definitions and 10
     `Merged`s miss a write an enclosing loop carries back in, 6 of
     them counters (PLAN, "A loop counter's value on entry");

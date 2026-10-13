@@ -1,0 +1,38 @@
+//
+// HAND-WRITTEN: a loop stepping %r1 by 2 from 0 while %r1 != 5, storing
+// a[%r1] on each trip. %r1 is 2k mod 2^32, always even, so it is never
+// 5 and the loop does not exit. ptxas 13.4 (sm_89) keeps the loop, from
+// R0 = 0 and R3 = 4:
+//   IADD3 R0, R0, 0x2, RZ
+//   ISETP.NE.U32.AND P0, PT, R0.reuse, 0x5, PT
+//   IMAD.WIDE.U32 R4, R0, R3, c[0x0][0x160]
+//   STG.E [R4.64], RZ
+//   @P0 BRA 0x40
+// (without the store it removes the loop: the SASS is EXIT alone). The
+// trip solver divides 5 by 2 rounding down, so the loop is read as 2
+// trips.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_ne_latch_unreached(
+	.param .u64 micro_ne_latch_unreached_param_0
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_ne_latch_unreached_param_0];
+	mov.u32 	%r1, 0;
+$L__BB0_1:
+	add.u32 	%r1, %r1, 2;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], 0;
+	setp.ne.u32 	%p1, %r1, 5;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}
