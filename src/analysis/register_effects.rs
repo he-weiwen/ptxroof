@@ -106,10 +106,7 @@ pub(crate) fn carry(module: &Module, instr: &Instr) -> (bool, bool) {
 
 /// `instr`'s written operands, and the operands after them, which it
 /// reads; a form not decoded is taken to write and read all of them.
-pub(crate) fn split_operands<'m>(
-    module: &'m Module,
-    instr: &Instr,
-) -> (&'m [OperandId], &'m [OperandId]) {
+pub fn split_operands<'m>(module: &'m Module, instr: &Instr) -> (&'m [OperandId], &'m [OperandId]) {
     let ops = module.operand_ids(instr.operands);
     match written_operands(module, instr) {
         Some(n) => ops.split_at(n.min(ops.len())),
@@ -126,7 +123,7 @@ pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
 
 /// The registers statement `stmt` writes: an instruction's, or every one
 /// an unparsed statement names.
-pub(crate) fn stmt_written_registers(module: &Module, stmt: &Stmt) -> Vec<Symbol> {
+pub fn stmt_written_registers(module: &Module, stmt: &Stmt) -> Vec<Symbol> {
     match stmt {
         Stmt::Instr(instr) => written_registers(module, instr),
         Stmt::Unparsed { registers, .. } => registers.clone(),
@@ -138,7 +135,7 @@ pub(crate) fn stmt_written_registers(module: &Module, stmt: &Stmt) -> Vec<Symbol
 /// `p|q`, as in `tex`'s `{…}|p`, an address's base and coordinates, a
 /// selection's base, or a negated predicate.
 /// A selected destination writes its whole register (PTX ISA §9.7.19.1).
-pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
+pub fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
     match module.operand(op) {
         Operand::Register(r) => vec![*r],
         Operand::MultipleDestinations { children }
