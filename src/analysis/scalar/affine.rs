@@ -306,6 +306,40 @@ impl Affine {
         }
         Some(max)
     }
+
+    /// The least and the greatest value of the form when its base and
+    /// coefficients are constants and `bound` gives every variable's
+    /// least and greatest value; `None` when one is unbounded.
+    pub fn range(&self, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
+        let base = i128::from(self.base.as_const()?);
+        let mut range = (base, base);
+        for (v, c) in &self.terms {
+            let c = i128::from(c.as_const()?);
+            let (lo, hi) = var_range(v, bound)?;
+            let (a, b) = (c * i128::from(lo), c * i128::from(hi));
+            range = (
+                range.0.saturating_add(a.min(b)),
+                range.1.saturating_add(a.max(b)),
+            );
+        }
+        Some(range)
+    }
+}
+
+/// A variable's least and greatest value, a floor or a mod from its
+/// operand's.
+fn var_range(v: &Var, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i64, i64)> {
+    match v {
+        Var::Div(inner, d) => {
+            let (lo, hi) = var_range(inner, bound)?;
+            Some((lo.div_euclid(*d), hi.div_euclid(*d)))
+        }
+        Var::Mod(inner, m) => match var_range(inner, bound)? {
+            (lo, hi) if lo >= 0 && hi < *m => Some((lo, hi)),
+            _ => Some((0, m - 1)),
+        },
+        _ => bound(v),
+    }
 }
 
 impl fmt::Display for Affine {
@@ -317,6 +351,28 @@ impl fmt::Display for Affine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_range_spans_each_term_at_both_ends_of_its_variable() {
+        let tid = Affine::var(Var::Tid(Axis::X));
+        let k = Affine::var(Var::Iter(LoopId(0)));
+        let bound = |v: &Var| match v {
+            Var::Tid(Axis::X) => Some((0, 127)),
+            Var::Iter(_) => Some((1, 8)),
+            _ => None,
+        };
+        let a = tid.scale(SymExpr::Const(4))
+            + k.scale(SymExpr::Const(-16))
+            + Affine::invariant(SymExpr::Const(100));
+        assert_eq!(a.range(&bound), Some((100 - 128, 100 + 508 - 16)));
+        let floor = Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32));
+        assert_eq!(floor.range(&bound), Some((0, 3)));
+        let modulo = Affine::var(Var::Mod(Box::new(Var::Iter(LoopId(0))), 4));
+        assert_eq!(modulo.range(&bound), Some((0, 3)));
+        let ctaid = Affine::var(Var::Ctaid(Axis::X));
+        assert_eq!(ctaid.range(&bound), None);
+        let param = Affine::invariant(SymExpr::sym("param_0"));
+        assert_eq!(param.range(&bound), None);
+    }
 
     fn tid() -> Affine {
         Affine::var(Var::Tid(Axis::X))

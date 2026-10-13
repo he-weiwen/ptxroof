@@ -382,8 +382,8 @@ loop's counter) is its own commit with a test pinning the new answer.
     conversion or a recurrence's update is kept only when its range
     fits the type (`micro/mul_wrap.ptx`: unknown), as the setp
     branch's comparisons check theirs (`ae32551`). Planned in
-    "Register widths" below, revised after codex's review; the
-    owner decides the launch-bound rule before code.
+    "Register widths" below, revised after codex's review; bounds
+    come from the known launch only, as the owner chose.
 
 Steps 4–10 changed no output.
 
