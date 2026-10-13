@@ -2,6 +2,7 @@
 
 pub mod affine;
 pub mod lane_eval;
+pub mod recurrences;
 pub mod symexpr;
 pub mod trace;
 pub mod trip_counts;

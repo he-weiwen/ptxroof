@@ -331,7 +331,7 @@ loop's counter) is its own commit with a test pinning the new answer.
     definitions drop out of the shared-immediate test. Done; no fixture
     output changed (`trip_counts.rs` tests pin both).
 16. "Recurrences" recognition, a public function of its own module with
-    unit tests, not yet called.
+    unit tests, not yet called. Done (`src/analysis/scalar/recurrences.rs`).
 17. The tracer reads recurrences: `induction_vars`, `ivs`, `iv_init`,
     `exclude` and the post-increment shortcut go, the snapshot's
     counter column reads recurrences, and the lit tests in the table
