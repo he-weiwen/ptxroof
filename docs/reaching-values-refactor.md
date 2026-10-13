@@ -3,9 +3,10 @@
 Temporary design note, to be deleted when the refactor lands or is
 dropped. Rewritten 2026-10-13 after the register-effects decoder
 landed, revised after codex's review of the rewrite, then given MLIR's
-value names and one register type for `.reg` registers and CC; the
-first version and codex's review of it are in git (`b5cdcbf`,
-`4edba75`).
+value names and one register type for `.reg` registers and CC, then
+re-scoped from step 15 to recognize loop counters on SSA values, after
+the wrong outputs recorded in `0a40cef` to `db51742`; the first version
+and codex's review of it are in git (`b5cdcbf`, `4edba75`).
 
 ## Goal
 
@@ -155,6 +156,62 @@ of the analyses that consume it (`docs/architecture.md`); it depends on
 `ptx` for `Register` and on the dominator tree. The tracer builds it in
 `AffineValueTracer::new` from its write table.
 
+## Recurrences (replacing `induction_vars` and `iv_init`)
+
+Today a loop counter is a register with one static write in the loop's
+blocks, nested loops' included, that dominates the latches, chained by
+hand to the first register written before the loop; its entry value is
+traced with the loop's own writes left out, and a read of it, or of any
+register on its chain, is replaced by `init + k·step`. PLAN's wrong
+outputs for `micro/carried_counter.ptx`, `nested_counter_step.ptx`,
+`chain_offset.ptx`, `chain_start.ptx` and `guarded_step.ptx` come from
+those rules, not from the representation, which stays: one
+`k` per loop, restarting at 1 on each entry, in affine forms whose
+start may hold an enclosing loop's `k`.
+
+A counter becomes a header `Argument` that every back edge feeds back
+plus a step, as ScalarEvolution recognizes an add-recurrence on a
+header PHI (`llvm/lib/Analysis/ScalarEvolution.cpp`,
+`createAddRecFromPHI`). For loop `l` and an `Argument` `a` at its
+header:
+
+- Each back-edge value, `a`'s `incoming` from a predecessor in `l`,
+  walks back to `a + s` through unguarded `mov`, `add` and `sub` whose
+  statements are in `l`'s own blocks, not a nested loop's. Every back
+  edge gives the same `s`, and `s` is not 0.
+- `s` is an immediate, or a register whose value traces to a form with
+  no variable while `l`'s own header `Argument`s are not yet
+  recurrences: a step computed before the loop or recomputed in it
+  from invariants, as today.
+- The start is `a`'s `incoming` from outside `l`, the entry edges and
+  `None` for the kernel's start: one traced value they agree on, or no
+  recurrence.
+
+Loops are recognized outermost first, so an inner loop's start or step
+may hold an outer loop's `k`. A value is then read as:
+
+- a recurrence `Argument` of `l`: `start + (k_l − 1)·s`;
+- a `Result`: its statement's arithmetic, its operands read at it. The
+  shortcut that reads a counter at or after its increment as
+  `init + k·step` goes: `a + s` is that value;
+- any other `Argument`: one immediate shared by its `sources`, none of
+  them `Undef`, or refused;
+- `Undef`: refused.
+
+The step's lit tests expect: `micro/chain_offset.ptx` `4k + 4`;
+`micro/chain_start.ptx` 4 trips; `micro/guarded_step.ptx` unknown, its
+step guarded; `micro/nested_counter_step.ptx` unknown, its step in a
+nested loop; `micro/carried_counter.ptx` unknown, the outer header
+`Argument` it starts from no recurrence and its sources not one
+immediate; `micro/two_register_counter.ptx` `trips = param_1` as now.
+
+Exit values come after: at its loop's one exit, after `n` trips, a
+recurrence `a` is `start + (n − 1)·s` and `a + s` is `start + n·s`. A
+back-edge walk that meets such a value continues to the inner start,
+so an outer counter stepped by an inner loop is a recurrence with
+step `n·s` when `n` holds no variable (`micro/nested_counter_step.ptx` `16·k`,
+`micro/carried_counter.ptx` `16·(k_out − 1) + 4·(k_in − 1)`).
+
 ## Answers to `docs/architecture.md`'s five questions
 
 1. Predicated writes: a guarded `Result` is a ψ; its old value is the
@@ -171,9 +228,9 @@ of the analyses that consume it (`docs/architecture.md`); it depends on
 
 | User | Today | With `RegisterSsa` |
 |---|---|---|
-| `trace_reg` | `Def` interpreted, a counter at or after its increment `init + k·step`; `Carried(l)`: the counter of `l`, the innermost loop holding the read and an interfering definition, `init + (k−1)·step`; `Merged`: one shared immediate | `Result`: same; `Argument` at the header of loop `l`: `l`'s counter rule; other `Argument`: one shared immediate, refused when a source is `Undef` |
-| `iv_init` | `trace_reg` at the header, the loop's own definitions excluded: a dominating definition, or a merge of one immediate | the header `Argument`'s `incoming` from outside the loop, traced as one φ; with no `Argument` at the header, the value at its immediate dominator's end |
-| `induction_vars` | the loop's own definitions of a register, chained by hand; the chain's φ register is the first with a definition reaching the header from outside | same chain and restrictions; the φ register is the first whose header `Argument` has an outside `incoming` with a `Result` among its `sources` |
+| `trace_reg` | `Def` interpreted, a counter at or after its increment `init + k·step`; `Carried(l)`: the counter of `l`, the innermost loop holding the read and an interfering definition, `init + (k−1)·step`; `Merged`: one shared immediate | step 15: `Result` as `Def`, a header `Argument` whose register `ivs` holds as `Carried`, another `Argument` as `Merged` with `Undef` refused; step 16: "Recurrences" above |
+| `iv_init` | `trace_reg` at the header, the loop's own definitions excluded: a dominating definition, or a merge of one immediate | goes at step 16: a recurrence's start is its outside `incoming` |
+| `induction_vars` | the loop's own definitions of a register, chained by hand; the chain's φ register is the first with a definition reaching the header from outside | goes at step 16, for "Recurrences" |
 | two-trip predicate loop (`trip_counts.rs`) | the branch predicate one copy in the loop; the copied register one definition in the loop, in the latch; its value on entry one definition; both `mov` of an immediate | same restrictions, the one write in the loop and in the latch still counted in the write table; the copy is `value_before` the branch being a `Result`, the value on entry the header `Argument`'s outside `incoming` |
 | `uniformity::read_sites` | `reach_sites`; `Carried` expanded to every definition reaching the read; a missing definition on one path not seen | `sources(v)`'s `Result`s; an `Undef` divergent; gating predicates as today |
 | predicate reader | `reach_def` must be `Def`, unguarded, with uniform gates; else `Pred::Uniform` if the uniformity analysis finds it so | `value_before` must be an unguarded `Result`; the rest unchanged |
@@ -183,8 +240,8 @@ of the analyses that consume it (`docs/architecture.md`); it depends on
 
 The tracer reads a guarded write as its new value (PLAN, "an address
 through one is read as the last write"); that stays, fixed in its own
-commit. The uniformity analysis already reads the old value and the
-guard.
+commit, except that a guarded write is no recurrence's step. The
+uniformity analysis already reads the old value and the guard.
 
 ## Steps, one commit each
 
@@ -232,15 +289,37 @@ loop's counter) is its own commit with a test pinning the new answer.
 13. The tracer holds `RegisterSsa`, and `uniformity::read_sites` reads
     `sources`.
 14. `uniformity::read_sites` refuses `Undef`.
-15. `trace_reg`'s `Merged` branch reads `Argument`s, `Undef` refused.
-16. `trace_reg`'s `Carried` branch reads header `Argument`s.
-17. `iv_init` reads the header `Argument`.
-18. `induction_vars` picks its φ register by the header `Argument`.
-19. The two-trip predicate loop reads `RegisterSsa`.
-20. The predicate reader reads `RegisterSsa`.
-21. `obstacle` reads `RegisterSsa`.
-22. `reach_def`, `reach_sites` and `path_avoiding` go, and the snapshot
+15. `trace_reg` reads values: `value_before`, then a `Result` as
+    today's `Def`, a header `Argument` whose register `ivs` holds as
+    today's `Carried`, another `Argument` as today's `Merged` with
+    `Undef` refused, `Undef` as today's `None`. Killed definitions drop
+    out of the shared-immediate test.
+16. "Recurrences" replace `induction_vars`, `iv_init`, `exclude` and the
+    post-increment shortcut; trip matching reads counters through them.
+    One change of meaning, so one commit even past 50 lines, the
+    recognizer's unit tests beside it; the lit tests named in
+    "Recurrences" flip.
+17. The two-trip predicate loop reads `RegisterSsa`.
+18. The predicate reader reads `RegisterSsa`.
+19. `obstacle` reads `RegisterSsa`.
+20. `reach_def`, `reach_sites` and `path_avoiding` go, and the snapshot
     of step 12 with them; the focused tests stay.
+21. A `!=` latch has a trip count only when the bound is a positive
+    multiple of the step away from the start
+    (`micro/ne_latch_unreached.ptx`: unknown). The lower bound `k ≥ 1`
+    of the other comparisons waits for the negative trip count's design
+    (`micro/latch_exits_first.ptx`, on the setp branch).
+22. A loop footprint reads `⌊k/d⌋` and `k mod m` of its own `k` per
+    trip or refuses them (`micro/counter_floor_mod.ptx`: 12 B and 8 B),
+    and an access the tracer cannot read makes the loop's row a bound
+    (`micro/footprint_unknown.ptx`).
+23. Exit values, as in "Recurrences" (`micro/nested_counter_step.ptx`,
+    `micro/carried_counter.ptx` exact).
+24. `mul.hi` and `mad.hi` are refused (`micro/mul_hi.ptx`: unknown).
+25. Register widths: a value read through a 32-bit operation is kept
+    only when its range fits the type (`micro/mul_wrap.ptx`: unknown),
+    as the setp branch's comparisons check theirs (`ae32551`). Its own
+    plan before code.
 
 Steps 4–10 changed no output.
 
