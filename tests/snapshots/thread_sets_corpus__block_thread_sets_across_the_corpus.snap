@@ -539,5 +539,4 @@ tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.u16	63 in 2 war
 tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.b32	2 in 2 warps ((%tid.x mod 32) == 0)
 tests/fixtures/micro/guards.ptx	micro_guards	<block 0>	st.global.b16	32 in 1 warp (%tid.x >= 32)
 tests/fixtures/micro/param_fields.ptx	micro_param_fields	<block 0>	st.global.u32	64 in 2 warps (0 == 0)
-tests/fixtures/micro/setp_f16x2.ptx	micro_setp_f16x2	<block 0>	st.global.u32	64 in 2 warps (%tid.x >= 0)
 tests/fixtures/micro/setp_unsigned.ptx	micro_setp_unsigned	<block 0>	st.global.u32	48 in 2 warps (%tid.x < 48)

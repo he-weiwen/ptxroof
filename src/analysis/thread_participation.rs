@@ -684,10 +684,11 @@ fn condition(
         .map(|&m| module.interner.resolve(m))
         .collect();
     let cmp = mods.first()?.to_string();
+    // PTX ISA §9.7.7.2: a packed `setp` compares the low halves into p and the high into q.
     if !matches!(cmp.as_str(), "lt" | "le" | "gt" | "ge" | "eq" | "ne")
         || mods
             .iter()
-            .any(|m| *m == "and" || *m == "or" || *m == "xor")
+            .any(|m| matches!(*m, "and" | "or" | "xor" | "f16x2" | "bf16x2"))
     {
         return None;
     }
