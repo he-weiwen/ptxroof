@@ -9,8 +9,9 @@
 //   IMAD.WIDE.U32 R2, R2, R5, c[0x0][0x160]
 //   ISETP.GE.U32.AND P0, PT, R0, 0x4, PT
 //   STG.E [R2.64], RZ
-// storing at param_0 + 8, 12, 16 and 20. The induction search gives
-// %r2 the chain's start and step, %r1's, without the 1 between them.
+// storing at param_0 + 8, 12, 16 and 20. The old induction search gave
+// %r2 the chain's start and step, %r1's, without the 1 between them;
+// %r1's recurrence plus 2 keeps it.
 //
 .version 8.7
 .target sm_89

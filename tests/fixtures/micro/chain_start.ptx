@@ -8,8 +8,9 @@
 //   STG.E [R2.64+0x8], RZ
 //   STG.E [R2.64+0xc], RZ
 //   STG.E [R2.64+0x10], RZ
-// The induction search starts the chain at %r2's 100, not %r1's 0, so
-// the trip count is 4 - 100.
+// The old induction search started the chain at %r2's 100, not %r1's
+// 0, a trip count of 4 - 100; the recurrence starts from the value
+// entering the loop, %r1's 0.
 //
 .version 8.7
 .target sm_89

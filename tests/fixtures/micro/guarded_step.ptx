@@ -4,8 +4,9 @@
 // %p2 = %r5 != %r5, false. %r1 stays 0, so the store writes a[0] on
 // every trip: ptxas 13.4 (sm_89) folds the loop into one
 //   STG.E [R2.64], RZ
-// at param_0. The induction search takes the guarded add as a step of
-// 1 on every trip.
+// at param_0. The old induction search took the guarded add as a step
+// of 1 on every trip; a guarded write is no recurrence's step, and the
+// address is unknown.
 //
 .version 8.7
 .target sm_89

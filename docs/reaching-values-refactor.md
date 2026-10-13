@@ -335,7 +335,12 @@ loop's counter) is its own commit with a test pinning the new answer.
 17. The tracer reads recurrences: `induction_vars`, `ivs`, `iv_init`,
     `exclude` and the post-increment shortcut go, the snapshot's
     counter column reads recurrences, and the lit tests in the table
-    above flip.
+    above flip. Done. A recurrence whose start or step cannot be read
+    reports that read's reason, as before; one whose register step
+    varies is no counter, "carried around an enclosing loop". Besides
+    the table's five fixtures, one output changed: the B200 fp8 GEMM's
+    two scale loads, unknown before and after, now say "div by a
+    non-constant divisor" where they said "depends on special register".
 18. The two-trip predicate loop reads `RegisterSsa`.
 19. The predicate reader reads `RegisterSsa`.
 20. `obstacle` reads `RegisterSsa`.

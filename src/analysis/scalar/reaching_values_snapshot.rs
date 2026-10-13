@@ -53,13 +53,11 @@ impl Kernel<'_> {
         self.t.forest.get(l).header
     }
 
-    /// Whether `reg` is a counter of loop `l`, or the register a
-    /// counter's chain starts from.
+    /// Whether `reg` is a counter of loop `l`: its header φ a
+    /// recurrence.
     fn counter(&self, reg: Register, l: LoopId) -> bool {
-        let Register::Named(r) = reg else {
-            return false;
-        };
-        (self.t.ivs[l.0 as usize].iter()).any(|(&c, (_, phi))| c == r || *phi == r)
+        (self.t.recurrences.values())
+            .any(|(c, r)| *c == l && matches!(r.phi, Value::Argument { reg: p, .. } if p == reg))
     }
 
     fn reg(&self, reg: Register) -> String {

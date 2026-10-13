@@ -3,9 +3,10 @@
 // reset. %r1 counts every inner iteration, 0 to 31 over the 8 outer and
 // 4 inner trips, and the store writes a[%r1], 128 B: ptxas 13.4
 // (sm_89) unrolls both loops into 32 `STG.E [R2.64+4i]`, i = 0..31.
-// The tracer takes %r1's value on entry to the inner loop as the `mov`
-// before the outer loop, 0, every time, so the address does not depend
-// on the outer loop.
+// The old tracer took %r1's value on entry to the inner loop as the
+// `mov` before the outer loop, 0, every time, so the address did not
+// depend on the outer loop. The inner recurrence starts from the outer
+// loop's φ, which is no recurrence until exit values: unknown.
 //
 .version 8.7
 .target sm_89

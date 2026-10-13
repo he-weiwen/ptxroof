@@ -104,44 +104,6 @@ its shared writes and instruction counts remain counted
   the second output of `setp.lt.f16x2` compares the upper halves, 0 <
   0, so the store never runs; read as `on 64 threads in 2 warps
   (%tid.x >= 0)`.
-- **A loop counter's value on entry is taken from before every
-  enclosing loop**: it is traced with the loop's own writes left out,
-  so a value an enclosing loop carries back into it, a counter the
-  outer loop does not reset, is lost. In `micro/carried_counter.ptx`
-  the store is read as `[4 * k[$L__BB0_2] + param_0 - 4]`, invariant
-  in the outer `$L__BB0_1`, where its base advances 16 B per outer
-  trip: ptxas 13.4 stores 32 distinct words, 128 B. The inner loop's
-  `unique 16 B` is one execution of its own blocks, which is right;
-  no row is the union over the eight, 128 B (below, "count the loop's
-  own blocks only"). Gluon's `attn_fwd_ws_kernel` has such
-  counters (`%r1986` in `$L__BB0_43`, `%r1875` in `$L__BB0_14`), and
-  its w768 variant one (`%r2082`).
-- **A write in a nested loop is taken as one step of the enclosing
-  loop's counter**: the induction search counts every write in a
-  loop's blocks, an inner loop's included, as running once per trip.
-  In `micro/nested_counter_step.ptx` the store after the inner loop
-  is read as `[4 * k[$L__BB0_1] + param_0]`, 4 B per outer trip,
-  where ptxas 13.4 stores 16 B apart.
-- **A register of a counter's chain is read as the counter**: the
-  induction search gives every register of a chain of writes the
-  counter's start and step, without the offset between them. In
-  `micro/chain_offset.ptx`, `%r2 = %r1 + 2` then `%r1 = %r2 - 1`, the
-  store to `a[%r2]` is read as `[4 * k[$L__BB0_1] + param_0]`, where
-  ptxas 13.4 stores at param_0 + 4k + 4, 8 to 20.
-- **A counter's chain can start from a value the loop never reads**:
-  the induction search takes the first register of the chain, walking
-  back from the counter, that is written before the loop, whether or
-  not the loop reads that write. In `micro/chain_start.ptx`, `%r2 =
-  %r1 + 1` then `%r1 = %r2`, from `%r1 = 0` and `%r2 = 100`, the loop
-  is read as `trips = -96`, the store as `[4 * k[$L__BB0_1] + param_0
-  + 400]`, and the totals as `instructions = -668`, where ptxas 13.4
-  unrolls it into 4 stores at param_0 + 4 to + 16.
-- **A guarded write is taken as a counter step on every trip**: the
-  induction search does not read an increment's guard. In
-  `micro/guarded_step.ptx` the only write of `%r1` in the loop is
-  `@%p2 add.u32 %r1, %r1, 1`, with `%p2` false; the store to `a[%r1]`
-  is read as `[4 * k[$L__BB0_1] + param_0]`, `unique 16 B`, where
-  ptxas 13.4 stores once, at param_0, 4 B.
 - **An address through a floor or a mod of a loop counter is read as
   invariant in the loop**: the per-iteration step and the loop's unique
   bytes read the counter's own coefficient only. In
@@ -213,6 +175,18 @@ its shared writes and instruction counts remain counted
   inferred arguments), 749 have a trip count: 1,437 are mbarrier waits
   and 408 read loaded values, 242 grid-stride, 50 `max`/`min`, 34
   unpacks, 20 atomics, 19 divisions, 15 multi-exit.
+- **Counters the recurrence search refuses** (a header φ every back
+  edge feeds back plus one unguarded step in the loop's own blocks,
+  `src/analysis/scalar/recurrences.rs`): a register stepped by a guarded
+  write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
+  param_0), one stepped in a nested loop and read after it
+  (`micro/nested_counter_step.ptx`, 16 B apart), and an inner counter
+  the outer loop does not reset, started from the outer loop's φ
+  (`micro/carried_counter.ptx`, 32 distinct words; Gluon's
+  `attn_fwd_ws_kernel` has such counters, `%r1986` and `%r1875`, and
+  its w768 variant `%r2082`). Their addresses read `unknown: depends on
+  %r1, carried around an enclosing loop`; the last two need exit values
+  (`docs/reaching-values-refactor.md`, step 25).
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;

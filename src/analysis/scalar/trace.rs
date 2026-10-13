@@ -19,6 +19,7 @@
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::register_effects::{self, registers, split_operands};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
+use crate::analysis::scalar::recurrences::{Recurrence, recurrences};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{
@@ -28,6 +29,7 @@ use crate::ptx::ir::{
 use crate::ptx::literal::parse_int;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 /// Where a register's value at a statement comes from.
@@ -57,9 +59,11 @@ pub(crate) struct AffineValueTracer<'a> {
     pub(crate) params: HashMap<Symbol, usize>,
     /// `reach[a][b]`: a path of at least one edge from block a to b.
     pub(crate) reach: Vec<Vec<bool>>,
-    /// Per loop: counter register ↦ (step, the chain register defined
-    /// before the loop).
-    pub(crate) ivs: Vec<HashMap<Symbol, (SymExpr, Symbol)>>,
+    /// Each loop counter by its header φ, with its loop.
+    pub(crate) recurrences: HashMap<Value, (LoopId, Recurrence)>,
+    /// Inside a counter's start or register step: a guarded write there
+    /// is refused, not read as its new value.
+    strict: Cell<u32>,
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<String, i64>>,
 }
@@ -99,7 +103,15 @@ impl<'a> AffineValueTracer<'a> {
             }
         }
         let ssa = RegisterSsa::new(cfg, &forest.doms, writes.clone());
-        let mut t = AffineValueTracer {
+        let recurrences = (0..forest.loops.len() as u32)
+            .map(LoopId)
+            .flat_map(|l| {
+                recurrences(module, kernel, cfg, forest, &ssa, l)
+                    .into_iter()
+                    .map(move |r| (r.phi, (l, r)))
+            })
+            .collect();
+        AffineValueTracer {
             module,
             kernel,
             cfg,
@@ -108,18 +120,10 @@ impl<'a> AffineValueTracer<'a> {
             ssa,
             params,
             reach,
-            ivs: Vec::new(),
+            recurrences,
+            strict: Cell::new(0),
             bindings: None,
-        };
-        // Outer loops first: a step register may be an enclosing counter.
-        t.ivs = vec![HashMap::new(); forest.loops.len()];
-        let mut order: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
-        order.sort_by_key(|&l| forest.get(l).depth);
-        for l in order {
-            let m = t.induction_vars(l);
-            t.ivs[l.0 as usize] = m;
         }
-        t
     }
 
     /// Every one of these definitions is `mov r, imm` with one immediate.
@@ -165,13 +169,6 @@ impl<'a> AffineValueTracer<'a> {
             })
     }
 
-    /// In-loop registers whose ONLY in-loop definition adds a constant
-    /// to themselves → reg ↦ (step, phi). The addition may pass through
-    /// other single-definition registers (`t = i + 2; i = t - 1`,
-    /// nvcc's shape when the body also reads `i + 2`; `t = i + 1` then
-    /// `mov i, t` in the latch, LLVM's two-register counter); the step
-    /// is the sum of the constants along that chain, and phi is the
-    /// chain's register defined before the loop.
     /// The bound block shape has one row and one plane.
     fn one_dimensional(&self) -> bool {
         self.bindings.is_some_and(|b| {
@@ -191,104 +188,6 @@ impl<'a> AffineValueTracer<'a> {
             Some(b) => a.bind(b).as_const(),
             None => a.as_const(),
         }
-    }
-
-    pub(crate) fn induction_vars(&self, id: LoopId) -> HashMap<Symbol, (SymExpr, Symbol)> {
-        let l = self.forest.get(id);
-        let header_start = self.cfg.block(l.header).start;
-        let mut in_loop_defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
-        for &b in &l.blocks {
-            let blk = self.cfg.block(b);
-            for (i, stmt) in self.kernel.stmts[blk.start..blk.end].iter().enumerate() {
-                for reg in register_effects::writes(self.module, stmt) {
-                    if let Register::Named(reg) = reg {
-                        in_loop_defs.entry(reg).or_default().push(blk.start + i);
-                    }
-                }
-            }
-        }
-        // A loop-invariant step register: its value at the increment is
-        // a plain expression (4·N, say), whether it was computed before
-        // the loop or recomputed from invariants inside it. This loop's
-        // own counters are not known yet, so a read of one is refused.
-        let invariant_step = |s: Symbol, site: usize| -> Option<SymExpr> {
-            let v = self.trace_reg(s, site, Some(id), 0, None).ok()?;
-            v.is_invariant().then_some(v.base)
-        };
-        let add_const = |site: usize| -> Option<(Symbol, SymExpr)> {
-            let Stmt::Instr(instr) = &self.kernel.stmts[site] else {
-                return None;
-            };
-            let ops = self.module.operand_ids(instr.operands);
-            match (instr.mnemonic, ops) {
-                (Opcode::Mov, [_, src]) => match self.module.operand(*src) {
-                    Operand::Register(r) => Some((*r, SymExpr::Const(0))),
-                    _ => None,
-                },
-                (Opcode::Add, [_, a, b]) => {
-                    match (self.module.operand(*a), self.module.operand(*b)) {
-                        (Operand::Register(r), Operand::Immediate(c))
-                        | (Operand::Immediate(c), Operand::Register(r)) => Some((
-                            *r,
-                            SymExpr::Const(parse_int(self.module.interner.resolve(*c))?),
-                        )),
-                        (Operand::Register(r), Operand::Register(s)) => invariant_step(*s, site)
-                            .map(|step| (*r, step))
-                            .or_else(|| invariant_step(*r, site).map(|step| (*s, step))),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            }
-        };
-        let mut ivs = HashMap::new();
-        for (reg, sites) in &in_loop_defs {
-            let [mut site] = sites[..] else { continue };
-            // The increment must run every iteration.
-            let own = self.block_of(site);
-            if !l
-                .latches
-                .iter()
-                .all(|&lt| self.forest.doms.dominates(own, lt))
-            {
-                continue;
-            }
-            let mut step = SymExpr::Const(0);
-            let mut chain = vec![*reg];
-            for _ in 0..8 {
-                let Some((src, c)) = add_const(site) else {
-                    break;
-                };
-                step = SymExpr::add(step, c);
-                if src == *reg {
-                    let phi = chain.iter().copied().find(|&r| {
-                        matches!(
-                            self.reach_def(r, header_start, Some(id)),
-                            ReachingDefinition::Def(_) | ReachingDefinition::Merged(_)
-                        )
-                    });
-                    if let Some(phi) = phi
-                        && step != SymExpr::Const(0)
-                    {
-                        ivs.insert(*reg, (step, phi));
-                    }
-                    break;
-                }
-                let Some([next]) = in_loop_defs.get(&src).map(|s| &s[..]) else {
-                    break;
-                };
-                chain.push(src);
-                site = *next;
-            }
-        }
-        ivs
-    }
-
-    /// The counter's value on entry to loop `l`: its chain register's
-    /// reaching definition at the header, ignoring the loop's own.
-    pub(crate) fn iv_init(&self, reg: Symbol, l: LoopId, depth: u32) -> Result<Affine, String> {
-        let hdr = self.cfg.block(self.forest.get(l).header);
-        self.trace_reg(reg, hdr.start, Some(l), depth, Some(l))
     }
 
     pub(crate) fn last_instr(&self, b: BlockId) -> Option<(usize, &Instr)> {
@@ -385,34 +284,6 @@ impl<'a> AffineValueTracer<'a> {
         }
     }
 
-    /// The value a read of `reg` at `pos` sees, in `reach_def`'s terms:
-    /// a write as `Def`, a φ at a loop's header as that loop's `Carried`,
-    /// another φ as the writes it may hold, refused when a path leaves
-    /// the register unwritten, and `Undef` as `None`.
-    fn reaching_value(&self, reg: Symbol, pos: usize) -> Result<ReachingDefinition, String> {
-        let name = self.module.interner.resolve(reg);
-        let Some(v) = self.ssa.value_before(pos, Register::Named(reg)) else {
-            return Err(format!("{name} is read in a block no path reaches"));
-        };
-        Ok(match v {
-            Value::Result { op, .. } => ReachingDefinition::Def(op),
-            Value::Argument { block, .. } => {
-                if let Some(l) = (self.forest.loops.iter()).position(|l| l.header == block) {
-                    return Ok(ReachingDefinition::Carried(LoopId(l as u32)));
-                }
-                let mut defs = Vec::new();
-                for s in self.ssa.sources(v) {
-                    match s {
-                        Value::Result { op, .. } => defs.push(op),
-                        _ => return Err(format!("{name} is unwritten on some path")),
-                    }
-                }
-                ReachingDefinition::Merged(defs)
-            }
-            Value::Undef(_) => ReachingDefinition::None,
-        })
-    }
-
     /// Which of the definitions at statements `all` reach `pos`.
     pub(crate) fn reach_sites(
         &self,
@@ -503,7 +374,7 @@ impl<'a> AffineValueTracer<'a> {
         depth: u32,
     ) -> Result<Affine, String> {
         match self.module.operand(op) {
-            Operand::Register(reg) => self.trace_reg(*reg, pos, id, depth, None),
+            Operand::Register(reg) => self.trace_reg(*reg, pos, id, depth),
             Operand::Special(reg) => self.trace_special(*reg),
             Operand::Immediate(text) => {
                 let text = self.module.interner.resolve(*text);
@@ -557,60 +428,116 @@ impl<'a> AffineValueTracer<'a> {
         pos: usize,
         id: Option<LoopId>,
         depth: u32,
-        exclude: Option<LoopId>,
     ) -> Result<Affine, String> {
+        let Some(v) = self.ssa.value_before(pos, Register::Named(reg)) else {
+            let name = self.module.interner.resolve(reg);
+            return Err(format!("{name} is read in a block no path reaches"));
+        };
+        self.trace_value(v, id, depth)
+    }
+
+    /// A φ: a counter's `start + (k − 1)·step`, else one immediate every
+    /// path writes.
+    fn trace_phi(
+        &self,
+        v: Value,
+        block: BlockId,
+        reg: Symbol,
+        id: Option<LoopId>,
+        depth: u32,
+    ) -> Result<Affine, String> {
+        let name = self.module.interner.resolve(reg);
+        let header = (self.forest.loops.iter()).any(|l| l.header == block);
+        let refused = || {
+            self.obstacle_of_any_def(reg, id)
+                .unwrap_or_else(|| match header {
+                    true => format!(
+                        "latch condition depends on {name}, carried around an enclosing loop"
+                    ),
+                    false => format!("{name} has more than one reaching definition"),
+                })
+        };
+        if let Some((l, r)) = self.recurrences.get(&v) {
+            return (self.counter(*l, r, id, depth)).map_err(|why| why.unwrap_or_else(refused));
+        }
+        let mut defs = Vec::new();
+        for s in self.ssa.sources(v) {
+            match s {
+                Value::Result { op, .. } => defs.push(op),
+                _ => {
+                    let why = format!("{name} is unwritten on some path");
+                    return Err(self.obstacle_of_any_def(reg, id).unwrap_or(why));
+                }
+            }
+        }
+        match self.same_immediate(&defs) {
+            Some(c) => Ok(Affine::invariant(SymExpr::Const(c))),
+            None => Err(refused()),
+        }
+    }
+
+    /// Counter `r` of loop `l` in its iteration `k`: its start plus
+    /// `(k − 1)` steps, start and register steps read with no guarded
+    /// write and the steps free of every variable; `None` when a step
+    /// varies, so `r` counts nothing.
+    fn counter(
+        &self,
+        l: LoopId,
+        r: &Recurrence,
+        id: Option<LoopId>,
+        depth: u32,
+    ) -> Result<Affine, Option<String>> {
+        self.strict.set(self.strict.get() + 1);
+        let read = || -> Result<(Affine, SymExpr), Option<String>> {
+            let start = self.trace_value(r.start, id, depth + 1)?;
+            let mut step = SymExpr::Const(r.step.constant);
+            for &(reg, at, sign) in &r.step.registers {
+                let s = self
+                    .trace_reg(reg, at, Some(l), depth + 1)
+                    .map_err(|_| None)?;
+                if !s.is_invariant() {
+                    return Err(None);
+                }
+                step = SymExpr::add(step, SymExpr::mul(SymExpr::Const(sign), s.base));
+            }
+            Ok((start, step))
+        };
+        let read = read();
+        self.strict.set(self.strict.get() - 1);
+        let (start, step) = read?;
+        if step == SymExpr::Const(0) {
+            return Ok(start);
+        }
+        let back = SymExpr::mul(SymExpr::Const(-1), step.clone());
+        Ok(Affine::term(Var::Iter(l), step) + start + Affine::invariant(back))
+    }
+
+    fn trace_value(&self, v: Value, id: Option<LoopId>, depth: u32) -> Result<Affine, String> {
         if depth > 32 {
             return Err("value trace exceeds depth limit".to_owned());
         }
-        let name = self.module.interner.resolve(reg);
-        let reaching = match exclude {
-            Some(_) => self.reach_def(reg, pos, exclude),
-            None => self
-                .reaching_value(reg, pos)
-                .map_err(|why| self.obstacle_of_any_def(reg, id).unwrap_or(why))?,
+        let (def, reg) = match v {
+            Value::Result {
+                op,
+                reg: Register::Named(reg),
+            } => (op, reg),
+            Value::Argument {
+                block,
+                reg: Register::Named(reg),
+            } => return self.trace_phi(v, block, reg, id, depth),
+            Value::Undef(Register::Named(reg)) => {
+                let name = self.module.interner.resolve(reg);
+                return Err(format!("no definition found for {name}"));
+            }
+            _ => return Err("value is the carry flag".to_owned()),
         };
-        let def = match reaching {
-            ReachingDefinition::Def(d) => d,
-            ReachingDefinition::Carried(l) => {
-                // The counter of loop l read before its increment: the
-                // previous iteration's value, init + (k − 1)·step.
-                if let Some((step, phi)) = self.ivs[l.0 as usize].get(&reg) {
-                    let init = self.iv_init(*phi, l, depth + 1)?;
-                    let back = SymExpr::mul(SymExpr::Const(-1), step.clone());
-                    return Ok(Affine::term(Var::Iter(l), step.clone())
-                        + init
-                        + Affine::invariant(back));
-                }
-                return Err(self.obstacle_of_any_def(reg, id).unwrap_or_else(|| {
-                    format!("latch condition depends on {name}, carried around an enclosing loop")
-                }));
-            }
-            ReachingDefinition::Merged(defs) => {
-                // The same immediate on every path is that value.
-                if let Some(c) = self.same_immediate(&defs) {
-                    return Ok(Affine::invariant(SymExpr::Const(c)));
-                }
-                return Err(self
-                    .obstacle_of_any_def(reg, id)
-                    .unwrap_or_else(|| format!("{name} has more than one reaching definition")));
-            }
-            ReachingDefinition::None => return Err(format!("no definition found for {name}")),
-        };
-
-        // The counter of this loop or an enclosing one, read at or after
-        // its increment: init + k·step.
-        let mut l = id;
-        while let Some(cur) = l {
-            if let Some((step, phi)) = self.ivs[cur.0 as usize].get(&reg)
-                && self.in_loop(cur, def)
-                && let Stmt::Instr(instr) = &self.kernel.stmts[def]
-                && matches!(instr.mnemonic, Opcode::Add | Opcode::Mov)
-            {
-                let init = self.iv_init(*phi, cur, depth + 1)?;
-                return Ok(Affine::term(Var::Iter(cur), step.clone()) + init);
-            }
-            l = self.forest.get(cur).parent;
+        if self.strict.get() > 0
+            && let Stmt::Instr(instr) = &self.kernel.stmts[def]
+            && instr.predicate.is_some()
+        {
+            return Err("counter start or step written under a guard".to_owned());
         }
+        let name = self.module.interner.resolve(reg);
 
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return Err("value defined by a statement the parser could not read".to_owned());
