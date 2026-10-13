@@ -1,15 +1,12 @@
-//! The scalar affine tracer: where a register's value at a statement
-//! comes from, and that value as an affine form over thread and CTA
+//! The scalar affine tracer: a register's value at a statement, from
+//! register SSA (`crate::ssa`), as an affine form over thread and CTA
 //! indices, loop counters and the kernel parameters. The trip matcher
 //! reads latch conditions through it; address and branch-condition
 //! analyses read memory operands and predicates through the same code.
 //!
-//! Reaching definitions are computed on the dominator chain with a
-//! check that no other definition lies on a path that avoids the
-//! dominator: a value redefined inside a loop containing the read is
-//! loop-carried (a counter read before its increment is the previous
-//! iteration's value), and definitions meeting from several paths are
-//! refused. The tracer follows supported arithmetic and moves
+//! A loop counter is a recurrence (`super::recurrences`), read as its
+//! start plus `k − 1` steps; another φ is one immediate every path
+//! writes, or refused. The tracer follows supported arithmetic and moves
 //! down to `ld.param`, constants and special registers; unsupported operations
 //! is a named reason, preferring the fundamental obstacle (a special
 //! register, a memory load, an atomic) behind arithmetic it does not
@@ -31,20 +28,6 @@ use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-
-/// Where a register's value at a statement comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ReachingDefinition {
-    /// One definition, and no other can reach the statement.
-    Def(usize),
-    /// Defined again inside a loop containing the statement: the value
-    /// is the header's merge of the entry value and the back edge.
-    Carried(LoopId),
-    /// Definitions from more than one path meet before the statement:
-    /// these ones.
-    Merged(Vec<usize>),
-    None,
-}
 
 pub(crate) struct AffineValueTracer<'a> {
     pub(crate) module: &'a Module,
@@ -265,105 +248,6 @@ impl<'a> AffineValueTracer<'a> {
             stack.extend(self.cfg.block(b).succs.iter().copied());
         }
         false
-    }
-
-    /// The definition of `reg` whose value statement `pos` reads: the
-    /// latest in its own block, else the latest on the dominator chain,
-    /// provided no other definition lies on a path from that dominator
-    /// to `pos` that avoids the dominator. With `exclude`, definitions
-    /// inside that loop are ignored: the value on entry to the loop.
-    pub(crate) fn reach_def(
-        &self,
-        reg: Symbol,
-        pos: usize,
-        exclude: Option<LoopId>,
-    ) -> ReachingDefinition {
-        match self.writes.get(&Register::Named(reg)) {
-            Some(all) => self.reach_sites(all, pos, exclude),
-            None => ReachingDefinition::None,
-        }
-    }
-
-    /// Which of the definitions at statements `all` reach `pos`.
-    pub(crate) fn reach_sites(
-        &self,
-        all: &[usize],
-        pos: usize,
-        exclude: Option<LoopId>,
-    ) -> ReachingDefinition {
-        let sites: Vec<usize> = all
-            .iter()
-            .copied()
-            .filter(|&d| !exclude.is_some_and(|l| self.in_loop(l, d)))
-            .collect();
-        let here = self.block_of(pos);
-        let blk = self.cfg.block(here);
-        if let Some(&d) = sites
-            .iter()
-            .rev()
-            .find(|&&d| d >= blk.start && d < pos.min(blk.end))
-        {
-            return ReachingDefinition::Def(d);
-        }
-        let mut cur = self.forest.doms.idom[here.0 as usize];
-        while let Some(b) = cur {
-            let dblk = self.cfg.block(b);
-            if let Some(&d) = sites
-                .iter()
-                .rev()
-                .find(|&&d| d >= dblk.start && d < dblk.end)
-            {
-                let interfering: Vec<usize> = sites
-                    .iter()
-                    .copied()
-                    .filter(|&o| {
-                        let ob = self.block_of(o);
-                        o != d
-                            && ob != b
-                            && self.reach[b.0 as usize][ob.0 as usize]
-                            && self.path_avoiding(ob, here, b)
-                    })
-                    .collect();
-                if interfering.is_empty() {
-                    return ReachingDefinition::Def(d);
-                }
-                let mut l = self.forest.block_loop[here.0 as usize];
-                while let Some(id) = l {
-                    if interfering.iter().any(|&o| self.in_loop(id, o)) {
-                        return ReachingDefinition::Carried(id);
-                    }
-                    l = self.forest.get(id).parent;
-                }
-                let mut merged = vec![d];
-                merged.extend(interfering);
-                return ReachingDefinition::Merged(merged);
-            }
-            if b == ControlFlowGraph::ENTRY {
-                break;
-            }
-            cur = self.forest.doms.idom[b.0 as usize];
-        }
-        // No dominating definition: whatever reaches comes from paths
-        // that meet before the statement.
-        let arriving: Vec<usize> = sites
-            .iter()
-            .copied()
-            .filter(|&o| {
-                let ob = self.block_of(o);
-                self.reach[ob.0 as usize][here.0 as usize]
-            })
-            .collect();
-        if arriving.is_empty() {
-            return ReachingDefinition::None;
-        }
-        let mut l = self.forest.block_loop[here.0 as usize];
-        while let Some(id) = l {
-            if arriving.iter().any(|&o| self.in_loop(id, o)) {
-                return ReachingDefinition::Carried(id);
-            }
-            l = self.forest.get(id).parent;
-        }
-        ReachingDefinition::Merged(arriving)
     }
 
     pub(crate) fn trace_operand(
@@ -867,12 +751,10 @@ impl<'a> AffineValueTracer<'a> {
         if !seen.insert(reg) || seen.len() > 64 {
             return None;
         }
-        let def = match self.reach_def(reg, pos, None) {
-            ReachingDefinition::Def(d) => d,
-            ReachingDefinition::None => return None,
-            ReachingDefinition::Carried(_) | ReachingDefinition::Merged(_) => {
-                return self.obstacle_of_any_def(reg, id);
-            }
+        let def = match self.ssa.value_before(pos, Register::Named(reg)) {
+            Some(Value::Result { op, .. }) => op,
+            Some(Value::Argument { .. }) => return self.obstacle_of_any_def(reg, id),
+            Some(Value::Undef(_)) | None => return None,
         };
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return None;

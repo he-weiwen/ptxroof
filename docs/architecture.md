@@ -20,7 +20,8 @@ analysis framework is introduced.
 | `analysis/scalar/symexpr` | Symbolic count expressions | `core/symexpr` |
 | `analysis/scalar/affine` | Affine values over thread, CTA, and loop variables | `affine` |
 | `analysis/scalar/lane_eval` | Lane-dependent evaluation of affine values | helpers in `footprint` |
-| `analysis/scalar/trace` | Reaching-definition lookup and affine interpretation | `tracer` |
+| `analysis/scalar/trace` | Affine interpretation of register SSA values | `tracer` |
+| `analysis/scalar/recurrences` | Loop counters as recurrences on register SSA values | new |
 | `analysis/scalar/trip_counts` | Loop trip matching and unroll pairing | `trips` |
 | `analysis/thread_participation` | Threads that execute a block | `threads` |
 | `analysis/memory_footprint` | Sectors touched by a warp request | remaining `footprint` |
@@ -39,8 +40,8 @@ points remain available through `lib.rs`.
 Program representations and recognizable structures use domain names:
 `Module`, `Kernel`, `ControlFlowGraph`, and `LoopForest`. `DominanceInfo`
 contains dominance and reachability information; `TripCountResults` bundles
-trip counts and unroll pairs. `AffineValueTracer` performs affine tracing,
-and `ReachingDefinition` describes its definition-lookup outcomes.
+trip counts and unroll pairs. `AffineValueTracer` performs affine tracing
+of `RegisterSsa`'s `Value`s, and a `Recurrence` is a loop counter on them.
 
 Construction and aggregation helpers are named for their purpose:
 `KernelReportBuilder`, `CountAccumulator`, and `FlopAccumulator`.
@@ -132,10 +133,10 @@ whether SSA needs its own CFG before committing to a shared graph interface.
 If both representations need dominance and loop discovery, separate reusable
 graph algorithms from PTX-specific CFG construction at that time.
 
-Migrate the tracer's definition lookup first, then its affine interpretation,
-and subsequently trip counts, thread participation, and address reasoning as
-appropriate. `Affine` and `SymExpr` remain useful analysis value domains; SSA
-does not by itself recognize induction recurrences or derive trip counts.
+The tracer, the uniformity analysis, trip counting and thread participation
+read register SSA; `analysis/scalar/recurrences` recognizes loop counters on its
+values. `Affine` and `SymExpr` remain the analysis value domains; SSA does not
+by itself derive trip counts.
 
 Preserve origin mappings from SSA operations to PTX instructions and source
 locations. Instruction/FLOP/byte accounting remains tied to original PTX

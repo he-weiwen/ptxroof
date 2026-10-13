@@ -6,6 +6,3 @@ pub mod recurrences;
 pub mod symexpr;
 pub mod trace;
 pub mod trip_counts;
-
-#[cfg(test)]
-mod reaching_values_snapshot;

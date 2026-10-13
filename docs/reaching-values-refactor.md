@@ -345,10 +345,11 @@ loop's counter) is its own commit with a test pinning the new answer.
     output changed.
 19. The predicate reader reads `RegisterSsa`. Done; no fixture output
     changed.
-20. `obstacle` reads `RegisterSsa`.
+20. `obstacle` reads `RegisterSsa`. Done with step 21: the snapshot
+    was `reach_def`'s last reader. No fixture output changed.
 21. `reach_def` and `reach_sites` go, and the snapshot of step 12 with
     them; the focused tests stay. `path_avoiding` stays: the predicate
-    reader asks it which branch selects a block.
+    reader asks it which branch selects a block. Done.
 22. A `!=` latch whose `D(k) = A1·k + A0` has constant `A1` and `A0`
     has a trip count only when `−A0 / A1` is a positive integer
     (`micro/ne_latch_unreached.ptx`: unknown). A symbolic one keeps
