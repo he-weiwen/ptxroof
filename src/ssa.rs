@@ -23,14 +23,16 @@ pub enum Value {
     Undef(Register),
 }
 
-pub struct Values<'a> {
+/// Register SSA of one kernel, over its unchanged statements and CFG,
+/// as LLVM's `MemorySSA` is over memory.
+pub struct RegisterSsa<'a> {
     cfg: &'a ControlFlowGraph,
     doms: &'a DominanceInfo,
     writes: HashMap<Register, Vec<usize>>,
     phis: HashSet<(Register, BlockId)>,
 }
 
-impl<'a> Values<'a> {
+impl<'a> RegisterSsa<'a> {
     /// `writes`: the statements writing each register, in order, each
     /// in a block of `cfg`.
     pub fn new(
@@ -47,7 +49,7 @@ impl<'a> Values<'a> {
                     .map(move |b| (reg, b))
             })
             .collect();
-        Values {
+        RegisterSsa {
             cfg,
             doms,
             writes,
@@ -55,20 +57,16 @@ impl<'a> Values<'a> {
         }
     }
 
-    /// The value of `reg` a read at statement `pos` sees; `None` in an
-    /// unreachable block.
-    pub fn at(&self, reg: Register, pos: usize) -> Option<Value> {
-        self.before(reg, block_of(self.cfg, pos), pos)
-    }
-
-    /// The value of `reg` after block `b`'s last statement.
-    pub fn at_end(&self, reg: Register, b: BlockId) -> Option<Value> {
-        self.before(reg, b, self.cfg.block(b).end)
+    /// The value a read of `reg` just before statement `stmt` sees
+    /// (MLIR's `getProgramPointBefore`); `stmt` is any statement of a
+    /// block, a label included. `None` in an unreachable block.
+    pub fn value_before(&self, stmt: usize, reg: Register) -> Option<Value> {
+        self.lookup(reg, block_of(self.cfg, stmt), stmt)
     }
 
     /// The value of `reg` before statement `end` of block `b`, or after
-    /// it when `end` is the block's end.
-    fn before(&self, reg: Register, mut b: BlockId, mut end: usize) -> Option<Value> {
+    /// the block when `end` is its end.
+    fn lookup(&self, reg: Register, mut b: BlockId, mut end: usize) -> Option<Value> {
         if !self.doms.is_reachable(b) {
             return None;
         }
@@ -139,7 +137,7 @@ mod tests {
                 writes.entry(Register::Cc).or_default().push(i);
             }
         }
-        let v = Values::new(&cfg, &doms, writes);
+        let ssa = RegisterSsa::new(&cfg, &doms, writes);
         (reads.iter())
             .map(|&(name, at)| {
                 let reg = match name {
@@ -147,8 +145,8 @@ mod tests {
                     _ => Register::Named(module.interner.get(name).expect("register")),
                 };
                 let value = match at {
-                    L(line) => v.at(reg, line),
-                    End(b) => v.at_end(reg, BlockId(b)),
+                    L(line) => ssa.value_before(line, reg),
+                    End(b) => ssa.lookup(reg, BlockId(b), cfg.block(BlockId(b)).end),
                 };
                 match value {
                     Some(Value::Result { op, .. }) => format!("w{op}"),

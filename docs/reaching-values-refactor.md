@@ -201,8 +201,8 @@ loop's counter) is its own commit with a test pinning the new answer.
    unreachable block, CC.CF across a call. Done (`f1cec24`).
 4. `Location` becomes `Register` in `src/ptx/ir.rs`.
 5. `Value` and `Site` become one `Value::{Result, Argument, Undef}`.
-6. `Values` becomes `RegisterSsa`, `at` `value_before`, `at_end`
-   private.
+6. `Values` becomes `RegisterSsa` and `at` `value_before`; `at_end`
+   goes, as nothing outside the tests reads it before `incoming`.
 7. The decoder's `writes` and `reads_cc`, beside `stmt_written_registers`
    and `carry`.
 8. The tracer's one write table, read through `Named` and `Cc` as
