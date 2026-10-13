@@ -251,11 +251,13 @@ pub enum Operand {
     /// Bare identifier: branch-target label, global symbol, `WARP_SZ`.
     SymbolRef(Symbol),
     /// `[base]` / `[base+offset]`, and the operands after a comma: a
-    /// tensor map's or texture's coordinates (`[tmap, {c0, c1}]`).
+    /// tensor map's or texture's coordinates (`[tmap, {c0, c1}]`);
+    /// `unified` for `ld`'s `[a].unified` (PTX ISA §9.7.9.8).
     Memory {
         base: OperandId,
         offset: i64,
         rest: IdxRange<OperandId>,
+        unified: bool,
     },
     /// `{a, b, ...}` — vector / fragment list; children are a span into
     /// [`Module::operand_lists`].

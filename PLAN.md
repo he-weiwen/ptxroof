@@ -59,8 +59,7 @@ its shared writes and instruction counts remain counted
   `tests/register_effects_corpus.rs`), is taken to write every register
   it names. The parser drops a module's `.texref` declaration
   (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
-  'micro_texture_outputs_tex'`); an address followed by `.unified` (PTX ISA
-  §9.7.9.8, `unified_address_is_unparsed`) becomes `Unparsed`.
+  'micro_texture_outputs_tex'`).
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a
   fixed source-read size even with a runtime ignore-source predicate.
   Source locations, reproducible parser/classifier probes, and their outputs

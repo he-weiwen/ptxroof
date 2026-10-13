@@ -256,7 +256,7 @@ requested.
 | 9.7.9.5 | `shfl` (deprecated) | `Communication` | OK — same arm as `shfl.sync`; zero DRAM bytes is the correct accounting for intra-warp exchange. |
 | 9.7.9.6 | `shfl.sync` | `Communication` | OK. |
 | 9.7.9.7 | `prmt` | `Integer` | OK. |
-| 9.7.9.8 | `ld` | `Memory { space, Load, width × v2/v4/v8 }` | OK — space from modifiers with `Generic` as its own honest bucket (`cvta`-provenance refinement is documented anti-scope until a fixture emits generic loads); `.shared::cta` folds into `Shared`, `.shared::cluster` distinct; `volatile`/cache-op/eviction modifiers transparent. |
+| 9.7.9.8 | `ld` | `Memory { space, Load, width × v2/v4/v8 }` | OK — space from modifiers with `Generic` as its own honest bucket (`cvta`-provenance refinement is documented anti-scope until a fixture emits generic loads); `.shared::cta` folds into `Shared`, `.shared::cluster` distinct; `volatile`/cache-op/eviction modifiers transparent. The parser keeps an address's `.unified` (`micro/unified_load.ptx`). |
 | 9.7.9.9 | `ld.global.nc` | `Memory { Global, Load, bytes }` (via the `ld` arm; verified) | OK. |
 | 9.7.9.10 | `ldu` | `Memory { Global, Load, bytes }` | OK. |
 | 9.7.9.11 | `st` | `Memory { space, Store, bytes }` | OK. |

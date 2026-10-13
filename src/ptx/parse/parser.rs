@@ -961,7 +961,17 @@ impl<'a> Parser<'a> {
                 let start = self.operand_lists.len() as u32;
                 self.operand_lists.extend(rest);
                 let rest = IdxRange::new(start, self.operand_lists.len() as u32 - start);
-                Some(self.push_operand(Operand::Memory { base, offset, rest }))
+                let unified = self.at(TokenKind::Dot) && self.peek_at(1).text == "unified";
+                if unified {
+                    self.bump();
+                    self.bump();
+                }
+                Some(self.push_operand(Operand::Memory {
+                    base,
+                    offset,
+                    rest,
+                    unified,
+                }))
             }
             TokenKind::LParen => {
                 self.bump();
@@ -1106,9 +1116,14 @@ mod tests {
     }
 
     #[test]
-    fn unified_address_is_unparsed() {
+    fn unified_address_is_kept() {
         let m = parse_body("ld.b32 %r1, [%rd1].unified;\nret;");
-        assert_eq!(unparsed_count(&m), 1);
+        assert_eq!(unparsed_count(&m), 0);
+        let address = m.operand(m.operand_ids(instrs(&m)[0].operands)[1]);
+        assert!(
+            matches!(address, Operand::Memory { unified: true, .. }),
+            "{address:?}"
+        );
     }
 
     #[test]

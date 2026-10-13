@@ -148,13 +148,19 @@ fn dump_operand(m: &Module, id: OperandId) -> String {
             m.interner.resolve(*sym).to_owned()
         }
         Operand::Special(reg) => reg.name(),
-        Operand::Memory { base, offset, rest } => {
+        Operand::Memory {
+            base,
+            offset,
+            rest,
+            unified,
+        } => {
             let mut inner = vec![match (dump_operand(m, *base), offset) {
                 (base, 0) => base,
                 (base, offset) => format!("{base}+{offset}"),
             }];
             inner.extend(m.operand_ids(*rest).iter().map(|&id| dump_operand(m, id)));
-            format!("[{}]", inner.join(", "))
+            let unified = if *unified { ".unified" } else { "" };
+            format!("[{}]{unified}", inner.join(", "))
         }
         Operand::VectorList { children } => {
             let inner: Vec<String> = m

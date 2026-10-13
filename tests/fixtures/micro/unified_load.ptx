@@ -1,0 +1,27 @@
+//
+// HAND-WRITTEN: `ld.u32 %r2, [%rd1].unified` (PTX ISA §9.7.9.8) loads
+// into %r2, so the store's address after it comes from memory, not from
+// %tid.x (ptxas 13.4: `LD.E R5, desc[UR4][R4.64]`, then `IMAD.WIDE.U32
+// R2, R5, 0x4, R2`).
+//
+.version 8.7
+.target sm_90
+.address_size 64
+
+.visible .entry micro_unified_load(
+	.param .u64 micro_unified_load_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_unified_load_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %r1;
+	ld.u32 	%r2, [%rd1].unified;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
