@@ -12,10 +12,11 @@
 use crate::analysis::control_flow::loops::LoopForest;
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval_lane};
-use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
+use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Stmt};
+use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::HashMap;
 
@@ -497,7 +498,9 @@ impl PredicateReader<'_> {
     }
 
     fn read_definition(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
-        let ReachingDefinition::Def(def) = self.tracer.reach_def(reg, pos, None) else {
+        let Some(Value::Result { op: def, .. }) =
+            self.tracer.ssa.value_before(pos, Register::Named(reg))
+        else {
             return (Pred::Unknown, false);
         };
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
