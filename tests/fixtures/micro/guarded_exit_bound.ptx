@@ -1,0 +1,39 @@
+//
+// HAND-WRITTEN: a latch bound of 8 that lanes below 32 overwrite with
+// 4 under a guard, so lanes 0-31 leave the loop after 4 trips and
+// lanes 32-63 after 8, and the store after it writes a[4] or a[8]:
+// ptxas 13.4 (sm_89) selects the bound per lane,
+//   ISETP.GE.U32.AND P0, PT, R0, 0x20, PT
+//   SEL R0, R4, 0x8, !P0          (R4 = 4)
+// and stores at the counter that bound stops. Read as its guarded
+// write, the bound was 4 for every lane: 4 trips and a store at
+// param_0 + 16.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_guarded_exit_bound(
+	.param .u64 micro_guarded_exit_bound_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_guarded_exit_bound_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, 8;
+	setp.lt.u32 	%p1, %r1, 32;
+	@%p1 mov.u32 	%r2, 4;
+	mov.u32 	%r3, 0;
+$L__BB0_1:
+	add.u32 	%r3, %r3, 1;
+	setp.lt.u32 	%p2, %r3, %r2;
+	@%p2 bra 	$L__BB0_1;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], 0;
+	ret;
+}

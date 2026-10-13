@@ -130,7 +130,12 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
     (has_x && has_neg_mod).then_some(*c)
 }
 
+/// Loop `id`'s trip count, refusing a guarded write its latch reads.
 pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
+    tracer.strictly(|| latch_trips(tracer, id))
+}
+
+fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     let l = tracer.forest.get(id);
 
     // Structural requirements: one latch, one exit edge, at the latch.

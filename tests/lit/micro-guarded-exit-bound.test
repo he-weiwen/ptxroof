@@ -1,0 +1,8 @@
+# A latch bound of 8 that lanes below 32 overwrite with 4 under a
+# guard: ptxas selects 4 or 8 per lane, so the loop runs 4 or 8 trips
+# and the store after it lands at param_0 + 16 or + 32. The trip count
+# refuses the guarded bound, and the store's counter differs by lane.
+RUN: %ptxroof analyze %fixtures/micro/guarded_exit_bound.ptx | FileCheck "%s"
+CHECK: kernel micro_guarded_exit_bound
+CHECK: trips = unknown: %r2 is written under a guard
+CHECK: st.global.u32  global store 4 B    unknown: k[$L__BB0_1] differs between lanes after its loop, whose exit depends on %tid.x

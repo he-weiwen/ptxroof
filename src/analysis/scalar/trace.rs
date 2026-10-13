@@ -416,14 +416,10 @@ impl<'a> AffineValueTracer<'a> {
         id: Option<LoopId>,
         depth: u32,
     ) -> Result<Affine, Option<String>> {
-        self.strict.set(self.strict.get() + 1);
-        let read = || -> Result<(Affine, SymExpr), Option<String>> {
+        let (start, step) = self.strictly(|| {
             let start = self.trace_value(r.start, id, depth + 1)?;
-            Ok((start, self.step(l, &r.step, depth)?))
-        };
-        let read = read();
-        self.strict.set(self.strict.get() - 1);
-        let (start, step) = read?;
+            Ok::<_, Option<String>>((start, self.step(l, &r.step, depth)?))
+        })?;
         // The values the back edges feed, start + k·step for k in [1, n]
         // when the loop runs a constant n trips, stay in their type.
         if self.constant_trips(l).is_some() {
@@ -469,6 +465,14 @@ impl<'a> AffineValueTracer<'a> {
         Ok(sum)
     }
 
+    /// `f`, refusing every guarded write it reads.
+    pub(crate) fn strictly<T>(&self, f: impl FnOnce() -> T) -> T {
+        self.strict.set(self.strict.get() + 1);
+        let t = f();
+        self.strict.set(self.strict.get() - 1);
+        t
+    }
+
     /// Loop `l`'s trip count when it is a constant of at least 1, which
     /// makes its latch, and so its exit, the same for every lane.
     fn constant_trips(&self, l: LoopId) -> Option<i64> {
@@ -502,13 +506,13 @@ impl<'a> AffineValueTracer<'a> {
             }
             _ => return Err("value is the carry flag".to_owned()),
         };
+        let name = self.module.interner.resolve(reg);
         if self.strict.get() > 0
             && let Stmt::Instr(instr) = &self.kernel.stmts[def]
             && instr.predicate.is_some()
         {
-            return Err("counter start or step written under a guard".to_owned());
+            return Err(format!("{name} is written under a guard"));
         }
-        let name = self.module.interner.resolve(reg);
 
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return Err("value defined by a statement the parser could not read".to_owned());

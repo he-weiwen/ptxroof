@@ -273,7 +273,8 @@ blocks.
 The tracer reads a guarded write as its new value (PLAN, "an address
 through one is read as the last write"); that stays, fixed in its own
 commit, except in recurrences' starts, steps and their dependencies,
-which refuse a guarded write. The
+and in trip counts (`micro/guarded_exit_bound.ptx`), which refuse a
+guarded write. The
 uniformity analysis already reads the old value and the guard.
 
 ## Steps, one commit each
