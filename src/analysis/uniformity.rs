@@ -242,7 +242,9 @@ fn read_sites(
     // A γ's gating predicates: branches with two successors that reach
     // the read, one of them through a definition.
     if defs.len() > 1 {
-        sources.extend((0..t.cfg.blocks.len() as u32).map(BlockId).filter_map(|b| {
+        let blocks = (0..t.cfg.blocks.len() as u32).map(BlockId);
+        let reachable = blocks.filter(|&b| t.forest.doms.is_reachable(b));
+        sources.extend(reachable.filter_map(|b| {
             let succs = &t.cfg.block(b).succs;
             (succs.iter().filter(|&&s| reaches(s, here)).count() > 1
                 && defs
@@ -450,6 +452,16 @@ mod tests {
         };
         assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
         assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+    }
+
+    #[test]
+    fn a_branch_no_path_reaches_selects_nothing() {
+        // The block after the first arm's `bra` is dead; its branch on
+        // %tid.x would gate the merge if it counted.
+        let body = "setp.lt.u32 %p1, %r0, 4;\n@%p1 bra $L__A;\nmov.u32 %r2, 1;\nbra $L__J;\n\
+                    setp.eq.u32 %p3, %r1, 0;\n@%p3 bra $L__J;\n\
+                    $L__A:\nmov.u32 %r2, 2;\n$L__J:";
+        assert_eq!(uniform(body, "%r2"), Ok(()));
     }
 
     #[test]
