@@ -2,7 +2,8 @@
 
 Temporary design note, to be deleted when its steps land or it is
 dropped. It settles what `docs/reaching-values-refactor.md`'s last
-section left open. Revised after codex's review of `5edd553`.
+section left open. Revised after codex's reviews of `5edd553` and
+`ba152c8`.
 
 ## Goal
 
@@ -50,6 +51,9 @@ below, run over the 55 kernels outside `tests/fixtures/micro/`:
 - codex's two counterexamples, a uniform value copied in a loop and read
   after an exit that depends on `%tid.x`, and a uniform value copied
   under a `%tid.x` guard, stay unknown; neither shape occurs in the 55.
+  Its third, the copy minus lane 0's `shfl.sync.idx` of it, cancels
+  before any check; the same cancellation passes a counter today
+  (`micro/escaped_shfl.ptx`, PLAN "Wrong output"), which step U2 fixes.
 
 ## Design
 
@@ -67,8 +71,8 @@ of the defining statement (`Instr::offset` through the report's
 `LineIndex`), and an `Argument` as `uniform(%r34@$L__BB0_5)`, its
 block's `cfg.block_name`. One statement writes one value of a
 register, so the register and the line name it unless two statements
-share the line; the name then adds the statement's index among them,
-`@106.2`.
+share the line, which the parser accepts; the name then adds the
+statement's index among them, `@106.2`.
 
 ### Where it is read
 
@@ -90,12 +94,22 @@ only when the loop's exits are (`uniformity.rs`, `def_reads`,
 
 Between the read and the address the value flows through statements
 the tracer reads (unguarded, in the strict pass) and φs it reads, which
-take one immediate or are recurrences; what remains is a loop exit, so
-`per_lane` (`report/build.rs`) checks a uniform variable as it checks a
-counter: for every loop holding the variable's definition (its
-statement, or its φ's block) but not the address, the loop's exits are
-uniform, or the address is unknown, "uniform(…) differs between lanes
-after its loop, whose exit …". It looks through `Div` and `Mod`.
+take one immediate or are recurrences; what remains is leaving a loop
+or a cycle. A check on the address alone misses a term that cancels
+first (`u − shfl.idx(u, 0)`), so every read in an address trace checks
+the terms its trace returns, through `Div` and `Mod`, where they cross
+out:
+
+- a counter of a loop not holding the read: the loop's exits are
+  uniform (what `per_lane` checks of the whole address today, which
+  goes);
+- `uniform(v)`: `Uniformity::value_uniform_at(v, pos)`, `read_sites`
+  over `v`'s defining statements (its own, or its φ's sources): the
+  exits of every loop holding one but not the read, and the refusal of
+  a read after a cycle with more than one entry (`uniformity.rs`).
+
+Otherwise the address is unknown, "… differs between lanes after its
+loop, whose exit …".
 
 The fallback is off in `loop_trips` (trip counts, the nested steps and
 exit values built on them, and the loop-keyed `constant_trips` cache)
@@ -165,8 +179,12 @@ previous commit and explains each change.
 
 U1. `AffineValueTracer::uniformity`, the lazily built answer; its users
     read it from the tracer. No output changes.
-U2. `Var::Uniform` in addresses: `trace_address` and its strict second
-    pass, the fallback and where it is off, `per_lane`'s check, the
+U2. `trace_address`: each read in an address checks the counters it
+    returns that cross out of their loop, and `per_lane` goes.
+    `micro/escaped_shfl.ptx` reads unknown; its PLAN entry goes; any
+    other changed output explained.
+U3. `Var::Uniform` in addresses: the strict second pass, the fallback
+    and where it is off, `value_uniform_at` in the per-read check, the
     rendering, the "varies" note, and loop footprints counting such
     addresses as unread. Expected: the 316 accesses read, no footprint
     changed (their loops' unique bytes were unknown already), and k1's
@@ -180,9 +198,22 @@ U2. `Var::Uniform` in addresses: `trace_address` and its strict second
     - that value read after a loop whose exit depends on `%tid.x`, and
       copied in the loop and read after it: both unknown;
     - a uniform value copied under a `%tid.x` guard: unknown;
+    - the copy minus lane 0's `shfl.sync.idx` of it after that exit:
+      unknown;
+    - a uniform value copied in a cycle with two entries and read after
+      an exit that depends on `%tid.x`: unknown;
     - a counter starting at a uniform `div`: its header φ read as
       `uniform(%r4@$L__BB…)`, stride "varies";
-    - `u − u` of one uniform value: the address without it.
+    - a counter starting at `mov start, u` with `u` a uniform `div`:
+      `uniform(u)` plus the counter's stride; the same with the loop
+      inside an enclosing loop that computes `u` (stride "varies" for
+      the enclosing loop); and read after the loop with a constant trip
+      count (exit value) and with an exit on `%tid.x` (unknown);
+    - a nested loop whose bound is a uniform `div`: its trip count stays
+      unknown, so an outer counter it steps is no counter;
+    - `u − u` of one uniform value: the address without it; `u − w` of
+      two: both terms;
+    - two uniform values written on one PTX line: `@106.1`, `@106.2`.
 
 PLAN's "uniform(v)" missing-feature entry points here while the steps
 land.
