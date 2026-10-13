@@ -172,8 +172,9 @@ its shared writes and instruction counts remain counted
   the outer loop does not reset, started from the outer loop's φ
   (`micro/carried_counter.ptx`, 32 distinct words; Gluon's
   `attn_fwd_ws_kernel` has such counters, `%r1986` and `%r1875`, and
-  its w768 variant `%r2082`). Their addresses read `unknown: depends on
-  %r1, carried around an enclosing loop`; the last two need exit values
+  its w768 variant `%r2082`). Their addresses read `unknown: %r1 is
+  written under a guard on some path` and, for the last two, `depends
+  on %r1, carried around an enclosing loop`; those need exit values
   (`docs/reaching-values-refactor.md`, step 25).
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse

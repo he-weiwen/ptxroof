@@ -439,6 +439,21 @@ mod tests {
         assert_eq!(latch(4, -2, 0), Ok("2".to_owned()));
     }
 
+    /// A bound of 7 that two false-guarded writes of 0 leave alone: the
+    /// header φ's sources are both guarded, so it is no shared 0.
+    #[test]
+    fn a_bound_merged_from_guarded_writes_is_refused() {
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nsetp.ne.u32 %p2, %r1, %r1;\n\
+             mov.u32 %r3, 7;\n@%p2 mov.u32 %r3, 0;\nmov.u32 %r2, 0;\n\
+             $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p1, %r2, %r3;\n\
+             @%p2 mov.u32 %r3, 0;\n@%p1 bra $L__L;\nret;",
+        );
+        let why = "%r3 is written under a guard on some path";
+        assert_eq!(trips_of(&src)[0].1.as_ref().unwrap_err(), why);
+    }
+
     /// A bound two paths set to 7, one after a 3 it overwrites: the 3
     /// does not reach the loop.
     #[test]

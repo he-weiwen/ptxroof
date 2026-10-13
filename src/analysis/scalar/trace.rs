@@ -346,13 +346,19 @@ impl<'a> AffineValueTracer<'a> {
         }
         let mut defs = Vec::new();
         for s in self.ssa.sources(v) {
-            match s {
-                Value::Result { op, .. } => defs.push(op),
-                _ => {
-                    let why = format!("{name} is unwritten on some path");
-                    return Err(self.obstacle_of_any_def(reg, id).unwrap_or(why));
-                }
-            }
+            let why = match s {
+                Value::Result { op, .. } => match &self.kernel.stmts[op] {
+                    Stmt::Instr(i) if i.predicate.is_some() => {
+                        format!("{name} is written under a guard on some path")
+                    }
+                    _ => {
+                        defs.push(op);
+                        continue;
+                    }
+                },
+                _ => format!("{name} is unwritten on some path"),
+            };
+            return Err(self.obstacle_of_any_def(reg, id).unwrap_or(why));
         }
         match self.same_immediate(&defs) {
             Some(c) => Ok(Affine::invariant(SymExpr::Const(c))),
