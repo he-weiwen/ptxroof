@@ -11,7 +11,7 @@
 
 use crate::analysis::control_flow::loops::LoopForest;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
-use crate::analysis::scalar::lane_eval::{depends_on_lane, eval_lane};
+use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -126,7 +126,7 @@ impl Pred {
             Pred::False => Tri::No,
             Pred::Unknown | Pred::Uniform => Tri::Maybe,
             Pred::Cmp(c) => {
-                if holds(&c.cmp, eval_lane(&c.form, tid)) {
+                if holds(&c.cmp, at(&c.form, tid)) {
                     Tri::Yes
                 } else {
                     Tri::No
@@ -287,7 +287,16 @@ fn negate(cmp: &str) -> &str {
     }
 }
 
-fn holds(cmp: &str, x: i64) -> bool {
+/// `form` at thread `tid` in i128: an i64 base plus i64 coefficients
+/// times thread indices below 1024 keeps every partial sum far inside
+/// it, so a comparison of 64-bit operands reads exactly.
+fn at(form: &Affine, tid: [i64; 3]) -> i128 {
+    (form.terms.iter()).fold(i128::from(form.base.const_part()), |x, (v, c)| {
+        x + i128::from(c.as_const().unwrap_or(0)) * i128::from(eval(v, tid))
+    })
+}
+
+fn holds(cmp: &str, x: i128) -> bool {
     match cmp {
         "lt" => x < 0,
         "le" => x <= 0,

@@ -1,0 +1,9 @@
+# A 64-bit setp on %tid.x << 54, at least 2^63 from thread 512 on:
+# ptxas skips the store on thread 0 alone. The comparison reads in
+# i128, so the store runs on 1023 threads, not the 511 an i64 reading
+# left positive.
+RUN: %ptxroof analyze %fixtures/micro/setp_u64_wide.ptx | FileCheck "%s"
+CHECK: kernel micro_setp_u64_wide
+CHECK: st.global.u32  global store 4 B on 1023 threads in 32 warps (18014398509481984 * %tid.x > 0)
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load 0 B, store 4092 B
