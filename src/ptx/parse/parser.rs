@@ -324,12 +324,25 @@ impl<'a> Parser<'a> {
         let first = self.operands.len();
         self.parse_body(&mut kernel)?;
         for id in (first..self.operands.len()).map(OperandId::from_usize) {
-            if let Operand::Register(sym) = self.operands[id]
-                && let name = self.interner.resolve(sym)
-                && let Some(reg) = SpecialReg::from_name(name)
-                && !declares(&self.interner, &kernel.reg_decls, name)
-            {
-                self.operands[id] = Operand::Special(reg);
+            match self.operands[id] {
+                Operand::Register(sym)
+                    if let name = self.interner.resolve(sym)
+                        && let Some(reg) = SpecialReg::from_name(name)
+                        && !declares(&self.interner, &kernel.reg_decls, name) =>
+                {
+                    self.operands[id] = Operand::Special(reg);
+                }
+                // PTX ISA §4.4: a register's name need not start with `%`.
+                Operand::SymbolRef(sym)
+                    if declares(
+                        &self.interner,
+                        &kernel.reg_decls,
+                        self.interner.resolve(sym),
+                    ) =>
+                {
+                    self.operands[id] = Operand::Register(sym);
+                }
+                _ => {}
             }
         }
         Ok(kernel)
@@ -1213,6 +1226,31 @@ mod tests {
         assert_eq!(k.reg_decls[1].class, FundamentalType::B16);
         assert!(!k.stmts.iter().any(|s| matches!(s, Stmt::Unparsed { .. })));
         assert_eq!(instrs(&m).len(), 3);
+    }
+
+    #[test]
+    fn registers_declared_without_percent_are_registers() {
+        let m = parse_body(
+            "{ .reg .b16 lo, hi; cvt.rn.satfinite.e4m3x2.f32 lo, %f1, %f2; \
+             mov.b32 %r3, {lo, hi}; }\n{ .reg .pred done; @!done bra $L; }\n$L:\nret;",
+        );
+        let is = instrs(&m);
+        let name = |id: OperandId| match m.operand(id) {
+            Operand::Register(r) => m.interner.resolve(*r),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(name(m.operand_ids(is[0].operands)[0]), "lo$scope1");
+        let Operand::VectorList { children } = m.operand(m.operand_ids(is[1].operands)[1]) else {
+            panic!("{{lo, hi}} is not a vector");
+        };
+        let packed: Vec<_> = m
+            .operand_ids(*children)
+            .iter()
+            .map(|&id| name(id))
+            .collect();
+        assert_eq!(packed, ["lo$scope1", "hi$scope1"]);
+        let guard = is[2].predicate.expect("guarded");
+        assert_eq!(m.interner.resolve(guard.reg), "done$scope2");
     }
 
     #[test]

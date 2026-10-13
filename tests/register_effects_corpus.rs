@@ -2,9 +2,7 @@
 //! instruction form in the fixtures to write, with the form's count of
 //! statements, in one reviewable snapshot (`-`: not decoded). A changed
 //! row is a change in which registers the tool believes an instruction
-//! writes. Each written operand is a register, a `{…}`, a `p|q` or `_`,
-//! or a register declared without `%`, which the parser leaves a symbol
-//! (PLAN.md).
+//! writes. Each written operand is a register, a `{…}`, a `p|q` or `_`.
 
 use ptxroof::analysis::register_effects::written_operands;
 use ptxroof::ptx::ir::{Operand, Stmt};
@@ -41,18 +39,12 @@ fn written_operands_across_the_corpus() {
                 let written = written_operands(&m, i);
                 let ops = m.operand_ids(i.operands);
                 for &op in ops.iter().take(written.unwrap_or(0)) {
-                    let symbol_written = |s| {
-                        m.interner.resolve(s) == "_"
-                            || k.reg_decls
-                                .iter()
-                                .any(|d| d.prefix == s && d.count.is_none())
-                    };
                     assert!(
                         match m.operand(op) {
                             Operand::Register(_)
                             | Operand::VectorList { .. }
                             | Operand::MultipleDestinations { .. } => true,
-                            Operand::SymbolRef(s) => symbol_written(*s),
+                            Operand::SymbolRef(s) => m.interner.resolve(*s) == "_",
                             _ => false,
                         },
                         "{}: `{}` writes {:?}",

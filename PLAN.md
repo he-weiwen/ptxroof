@@ -68,19 +68,8 @@ its shared writes and instruction counts remain counted
   fixed source-read size even with a runtime ignore-source predicate.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
-- **Registers declared without `%` are symbols.** The parser reads `lo`
-  in `{ .reg .b16 lo, hi; … }` (PTX ISA §4.4, §9.7.13.1) as a symbol
-  reference, so an
-  instruction writing it defines nothing and one reading it reads
-  nothing: Gluon's fp8 conversions (`cvt.rn.satfinite.e4m3x2.f32 lo,
-  …` then `mov.b32 %r106, {lo, hi}` in quantize_transpose and the
-  lm_head_dx GEMM) and the attention forward's `mbarrier.test_wait`
-  into `complete`, read by `@!complete` guards. In
-  `micro/bare_registers.ptx` the packed value is taken as the same in
-  every thread: a store only thread 0 runs is `warp: 4–5 sectors`.
-  And a video
-  instruction's operand selector (`%r1.h0`, PTX ISA §9.7.19.1) is read
-  as part of the name: in `micro/video_selector.ptx` the `vadd` that
+- **A video instruction's operand selector is read as part of the
+  register's name** (`%r1.h0`, PTX ISA §9.7.19.1): in `micro/video_selector.ptx` the `vadd` that
   writes all of %r1 writes `%r1.h0` instead, so the address stays
   `[4 * %tid.x + param_0]`, where ptxas stores to param_0 from all 32
   threads.
