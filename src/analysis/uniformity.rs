@@ -11,7 +11,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
-use crate::analysis::register_effects::{carry, split_operands};
+use crate::analysis::register_effects::{reads_cc, split_operands};
 use crate::analysis::scalar::trace::{
     AffineValueTracer, ReachingDefinition, SpecialRegister, special_register,
 };
@@ -65,7 +65,11 @@ impl Uniformity {
                 && matches!(instr.mnemonic, Opcode::Bra | Opcode::Brx)
             {
                 let mut rs = operand_reads(t, t.module.operand_ids(instr.operands), pos);
-                rs.extend(instr.predicate.map(|p| read(t, p.reg, pos)));
+                rs.extend(
+                    instr
+                        .predicate
+                        .map(|p| read(t, Register::Named(p.reg), pos)),
+                );
                 reads.extend(rs.into_iter().map(|r| (Node::Branch(b), r)));
             }
         }
@@ -114,7 +118,7 @@ impl Uniformity {
         reg: Symbol,
         pos: usize,
     ) -> Result<(), String> {
-        match read(t, reg, pos) {
+        match read(t, Register::Named(reg), pos) {
             Read::Uniform => Ok(()),
             Read::Divergent(why) => Err(why),
             Read::On(sources) => (sources.iter())
@@ -140,7 +144,7 @@ impl Uniformity {
         reg: Symbol,
         pos: usize,
     ) -> Result<(), String> {
-        match read(t, reg, pos) {
+        match read(t, Register::Named(reg), pos) {
             Read::Uniform => Ok(()),
             Read::Divergent(why) => Err(why),
             Read::On(sources) => sources
@@ -168,27 +172,25 @@ fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool) -> Vec<Read> {
     }
     let (written, inputs) = split_operands(t.module, instr);
     let mut rs = operand_reads(t, inputs, d);
-    if carry(t.module, instr).1 {
-        rs.push(read_carry(t, d));
+    if reads_cc(t.module, instr) {
+        rs.push(read(t, Register::Cc, d));
     }
     if let Some(p) = instr.predicate {
-        rs.push(read(t, p.reg, d));
+        rs.push(read(t, Register::Named(p.reg), d));
         match carry_out {
-            true => rs.push(read_carry(t, d)),
+            true => rs.push(read(t, Register::Cc, d)),
             false => rs.extend(operand_reads(t, written, d)),
         }
     }
     rs
 }
 
-fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
-    let sites = (t.writes.get(&Register::Named(reg))).map_or(&[][..], Vec::as_slice);
-    read_sites(t, t.module.interner.resolve(reg), sites, pos, Node::Def)
-}
-
-fn read_carry(t: &AffineValueTracer, pos: usize) -> Read {
-    let sites = t.writes.get(&Register::Cc).map_or(&[][..], Vec::as_slice);
-    read_sites(t, "CC.CF", sites, pos, Node::Carry)
+fn read(t: &AffineValueTracer, reg: Register, pos: usize) -> Read {
+    let sites = t.writes.get(&reg).map_or(&[][..], Vec::as_slice);
+    match reg {
+        Register::Named(r) => read_sites(t, t.module.interner.resolve(r), sites, pos, Node::Def),
+        Register::Cc => read_sites(t, "CC.CF", sites, pos, Node::Carry),
+    }
 }
 
 /// A read at `pos` of `name`, which the statements `sites` define, each
@@ -299,7 +301,7 @@ fn read_special(reg: SpecialReg) -> Read {
 fn operand_reads(t: &AffineValueTracer, ops: &[OperandId], pos: usize) -> Vec<Read> {
     ops.iter()
         .flat_map(|&op| match t.module.operand(op) {
-            Operand::Register(r) => vec![read(t, *r, pos)],
+            Operand::Register(r) => vec![read(t, Register::Named(*r), pos)],
             Operand::Special(reg) => vec![read_special(*reg)],
             Operand::Memory { base, rest, .. } => {
                 let mut rs = operand_reads(t, &[*base], pos);
