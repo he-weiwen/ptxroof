@@ -297,9 +297,12 @@ fn operand_reads(t: &AffineValueTracer, ops: &[OperandId], pos: usize) -> Vec<Re
         .flat_map(|&op| match t.module.operand(op) {
             Operand::Register(r) => vec![read(t, *r, pos)],
             Operand::Special(reg) => vec![read_special(*reg)],
-            Operand::Memory { base, .. } | Operand::Selected { base, .. } => {
-                operand_reads(t, &[*base], pos)
+            Operand::Memory { base, rest, .. } => {
+                let mut rs = operand_reads(t, &[*base], pos);
+                rs.extend(operand_reads(t, t.module.operand_ids(*rest), pos));
+                rs
             }
+            Operand::Selected { base, .. } => operand_reads(t, &[*base], pos),
             Operand::VectorList { children } | Operand::MultipleDestinations { children } => {
                 operand_reads(t, t.module.operand_ids(*children), pos)
             }

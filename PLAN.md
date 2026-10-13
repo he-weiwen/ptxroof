@@ -57,11 +57,9 @@ its shared writes and instruction counts remain counted
   register-effects decoder does not decode, `call` or a sub-operation
   it does not list (none in the corpus,
   `tests/register_effects_corpus.rs`), is taken to write every register
-  it names. The parser drops TMA coordinates (five B200 fixtures
-  do not round-trip: `Arguments mismatch for instruction
-  'cp.async.bulk.tensor'`) and a texture's coordinates and its
-  module's `.texref` (`micro/texture_outputs.ptx`: `Arguments mismatch
-  for instruction 'tex'`); negated source predicates, parenthesized
+  it names. The parser drops a module's `.texref` declaration
+  (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
+  'micro_texture_outputs_tex'`); negated source predicates, parenthesized
   call operands and an address followed by `.unified` (PTX ISA
   §9.7.9.8, `unified_address_is_unparsed`) become `Unparsed`.
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a

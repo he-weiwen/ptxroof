@@ -352,7 +352,7 @@ impl KernelReportBuilder<'_> {
                     if space == Space::Param {
                         continue;
                     }
-                    let Operand::Memory { base, offset } = module.operand(mem_ops[i]) else {
+                    let Operand::Memory { base, offset, .. } = module.operand(mem_ops[i]) else {
                         continue;
                     };
                     let (address, unknown, form) = match module.operand(*base) {

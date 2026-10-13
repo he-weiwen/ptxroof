@@ -250,8 +250,13 @@ pub enum Operand {
     Immediate(Symbol),
     /// Bare identifier: branch-target label, global symbol, `WARP_SZ`.
     SymbolRef(Symbol),
-    /// `[base]` / `[base+offset]`.
-    Memory { base: OperandId, offset: i64 },
+    /// `[base]` / `[base+offset]`, and the operands after a comma: a
+    /// tensor map's or texture's coordinates (`[tmap, {c0, c1}]`).
+    Memory {
+        base: OperandId,
+        offset: i64,
+        rest: IdxRange<OperandId>,
+    },
     /// `{a, b, ...}` — vector / fragment list; children are a span into
     /// [`Module::operand_lists`].
     VectorList { children: IdxRange<OperandId> },

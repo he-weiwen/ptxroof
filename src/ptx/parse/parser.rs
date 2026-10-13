@@ -2,7 +2,7 @@
 //!
 //! Transcribed from v1's `lib/PTX/Parser.cpp` (v1 lives only in git
 //! history now, last at 690d81d; statement/operand grammar,
-//! per-statement error recovery, tolerant memory-operand skip)
+//! per-statement error recovery)
 //! and extended from inline-asm bodies to full programs: module
 //! directives, kernel signatures with param tables, `.reg`/`.shared`
 //! declarations, labels, extended `.loc` (plain and
@@ -941,22 +941,17 @@ impl<'a> Parser<'a> {
                     }
                     offset = parse_int(self.bump().text)?;
                 }
-                // Tolerant skip to the matching ']' (v1 rule): TMA tensor
-                // operands carry `[base, {dim_list}]`, which we don't
-                // model at the memory-operand level.
-                let mut depth = 0u32;
-                loop {
-                    match self.peek().kind {
-                        TokenKind::RBracket if depth == 0 => break,
-                        TokenKind::LBracket | TokenKind::LBrace => depth += 1,
-                        TokenKind::RBracket | TokenKind::RBrace => depth = depth.checked_sub(1)?,
-                        TokenKind::EndOfFile => return None,
-                        _ => {}
-                    }
-                    self.bump();
+                let mut rest = Vec::new();
+                while self.eat(TokenKind::Comma) {
+                    rest.push(self.parse_single_operand()?);
                 }
-                self.bump(); // consume ']'
-                Some(self.push_operand(Operand::Memory { base, offset }))
+                if !self.eat(TokenKind::RBracket) {
+                    return None;
+                }
+                let start = self.operand_lists.len() as u32;
+                self.operand_lists.extend(rest);
+                let rest = IdxRange::new(start, self.operand_lists.len() as u32 - start);
+                Some(self.push_operand(Operand::Memory { base, offset, rest }))
             }
             TokenKind::LBrace => {
                 self.bump();
@@ -1141,6 +1136,38 @@ mod tests {
     }
 
     #[test]
+    fn bracketed_coordinates_are_operands() {
+        let m = parse_body(
+            "cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes \
+             [%r1], [%rd1, {%r2, %r3}], [%r4];\n\
+             tex.2d.v4.f32.f32 {%f1, %f2, %f3, %f4}, [t, s, {%f5, %f6}];\nret;",
+        );
+        let is = instrs(&m);
+        let rest = |i: &Instr, k: usize| match m.operand(m.operand_ids(i.operands)[k]) {
+            Operand::Memory { rest, .. } => format!(
+                "{:?}",
+                m.operand_ids(*rest)
+                    .iter()
+                    .map(|&id| m.operand(id))
+                    .collect::<Vec<_>>()
+            ),
+            other => panic!("{other:?}"),
+        };
+        assert!(
+            rest(is[0], 1).starts_with("[VectorList"),
+            "{}",
+            rest(is[0], 1)
+        );
+        assert_eq!(rest(is[0], 0), "[]");
+        assert!(
+            rest(is[1], 1).starts_with("[SymbolRef"),
+            "{}",
+            rest(is[1], 1)
+        );
+        assert_eq!(unparsed_count(&m), 0);
+    }
+
+    #[test]
     fn memory_operands() {
         let m = parse_body(
             "ld.global.u16 %rs1, [%rd25+8];\nst.global.u16 [%rd24], %rs12;\n\
@@ -1151,7 +1178,9 @@ mod tests {
             let ops = m.operand_ids(i.operands);
             ops.iter()
                 .find_map(|&id| match m.operand(id) {
-                    Operand::Memory { base, offset } => Some((m.operand(*base).clone(), *offset)),
+                    Operand::Memory { base, offset, .. } => {
+                        Some((m.operand(*base).clone(), *offset))
+                    }
                     _ => None,
                 })
                 .expect("memory operand")
