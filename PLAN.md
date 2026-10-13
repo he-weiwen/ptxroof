@@ -84,6 +84,15 @@ its shared writes and instruction counts remain counted
   the load at offset 0, so comparing two fields of a by-value
   aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
   threads in 2 warps`, `store 256 B` per CTA).
+- **A floating-point `setp` that selects threads is read as an
+  integer comparison of its operands' traced values** (PTX ISA
+  §9.7.6.2): the bits a `mov.b32` puts in a float register, an integer
+  a `cvt.rn.f32.u32` rounds. In `micro/setp_float.ptx` ptxas runs the
+  first store on threads 16 to 47, the bits of `%tid.x - 16` being a
+  NaN below 16 (`FSETP.GEU`), read as `on 48 threads in 2 warps
+  (%tid.x < 48)`; and the second on none, `2^24 + %tid.x` rounding to
+  at least 2^24 + 1's 2^24, read as `on 1 thread in 1 warp (%tid.x <
+  1)`.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
