@@ -382,7 +382,8 @@ loop's counter) is its own commit with a test pinning the new answer.
     conversion or a recurrence's update is kept only when its range
     fits the type (`micro/mul_wrap.ptx`: unknown), as the setp
     branch's comparisons check theirs (`ae32551`). Planned in
-    "Register widths" below, for review before code.
+    "Register widths" below, revised after codex's review; the
+    owner decides the launch-bound rule before code.
 
 Steps 4–10 changed no output.
 
@@ -398,38 +399,57 @@ ScalarEvolution keeps every expression's type and proves no-wrap from
 the IR's `nsw`/`nuw` flags; PTX carries no such flags, so a range has
 to come from the program.
 
-Rule: a 16- or 32-bit integer result whose form has a bounded range
-that leaves its type is refused (`` `mul.lo.s32` leaves 32 bits ``). A
-form whose range is not bounded, through a parameter or a counter of a
-symbolic trip count, keeps the documented assumption, a PLAN
-limitation, as step 22 kept symbolic `!=` distances. 64-bit results
-are not checked.
+Rule: a 16- or 32-bit integer value whose form has a bounded range
+that leaves the range its type reads is refused. A form whose range is
+not bounded keeps the documented assumption, a PLAN limitation, as step
+22 kept symbolic `!=` distances. 64-bit results are not checked; a
+64-bit value read from a narrower one is.
 
-- The range of a form: its constant base plus each term's coefficient,
-  a constant, times its variable's bounds: `%tid.x`, `%tid.y` in
-  [0, 1023] and `%tid.z` in [0, 63] (§10.1, §10.2); `%ctaid.x` in
-  [0, 2^31 − 2] and `%ctaid.y`, `%ctaid.z` in [0, 65534] (§10.6,
-  §10.7); a counter `k` in [1, n] for a constant trip count `n` of at
-  least 1; `⌊v/d⌋` and `v mod m` from `v`'s. A symbolic coefficient or
-  base, or another variable, leaves it unbounded. The setp branch's
-  `range` (`ae32551`, `thread_participation.rs`, thread indices only)
-  is the start; it moves to `affine.rs` once that branch merges.
-- The type's range, from the instruction's type modifier: `u` in
-  [0, 2^w), `s` in [−2^(w−1), 2^(w−1)), `b` in [−2^(w−1), 2^w), a bit
-  pattern a later conversion may read either way.
-- Checked results: `add`, `sub`, `mul.lo`, `mad.lo`, `shl` and a `cvt`
-  to a narrower integer, the operations the tracer reads into a form.
+Codex's review of the first version (bce1465) found that architectural
+bounds refuse correct outputs: `%ctaid.x` up to 2^31 − 2 puts k2's
+`32 * %ctaid.x`, k5's and rope_norm's `64 * %ctaid.x` and the B200 MLA
+kernel's `576 * %ctaid.x` past 32 bits, though no launch they take
+does. So a variable is bounded only by what the launch is known to be:
+
+- `%tid.x`, `%tid.y`, `%tid.z` below the block shape, from `.reqntid`
+  or `--bind`; `%ctaid.*` below `%nctaid.*` only when the grid is
+  bound; a counter `k` in [1, n] for a constant trip count `n` of at
+  least 1, with both ends, as `k` starts at 1; `⌊v/d⌋` and `v mod m`
+  from `v`'s, each term on its own (a correlated `Div` and `Mod` of one
+  variable bounded loosely). A symbolic coefficient or base, or an
+  unbound variable, leaves the form unbounded. Range arithmetic that
+  overflows `i64` refuses the value, not the check.
+- The range a type reads: `u` in [0, 2^w), `s` in [−2^(w−1), 2^(w−1));
+  a `b` value is a bit pattern, so its range is checked where it is
+  read as a number: by a `cvt`'s source type, by `mul.wide`'s and
+  `setp`'s type, or by an address's 64-bit add of a 32-bit index.
+- Checked operations: `add`, `sub`, `mul.lo`, `mad.lo`, `shl`, `bfe`,
+  and every integer `cvt`, both its source and its destination type,
+  `.u8` and `.s8` included; a float or packing `cvt` is refused. A
+  `mad.lo`'s product is checked before its addend, refusing a wrap the
+  addend would cancel. `shl` by a count of at least the width is 0
+  (PTX ISA §9.7.8.6). `mul.wide` doubles the width.
+- A counter's update: the recognizer collapses its chain into a step,
+  so each back edge's chain is checked again with the counter at its
+  range's ends. A loop's own trip count is solved without that check
+  first; a trip count found while its counter is being checked is not
+  used to bound it.
 
 Steps, one commit each:
 
-27a. The setp branch merges; its `range` moves to `affine.rs` with
-     counter and CTA-index bounds, its tests kept.
-27b. The tracer refuses a 16- or 32-bit result whose bounded range
-     leaves its type (`micro/mul_wrap.ptx`: unknown); every changed
-     fixture output explained.
-27c. A narrowing `cvt` of a bounded value outside the narrow type is
-     refused, and the float and packing conversions of PLAN's `cvt`
-     entry with it (`micro/cvt_reads.ptx`).
+27a. `range` over affine forms in `affine.rs`, with launch-known bounds
+     and the rules above, and unit tests; not yet called. Independent of
+     the setp branch, whose comparison check later reads it.
+27b. The tracer checks each 16- and 32-bit `add`, `sub`, `mul.lo`,
+     `mad.lo`, `shl` and `bfe` result where it interprets the
+     instruction (`micro/mul_wrap.ptx`: unknown); every changed fixture
+     output explained, none expected without a launch binding.
+27c. Integer `cvt` checks both types, a float or packing `cvt` is
+     refused (`micro/cvt_reads.ptx`: three unknowns).
+27d. Counter updates checked as above.
+27e. The setp branch merges: `git merge-tree` finds conflicts in
+     PLAN.md and the register-effects corpus snapshot only; its
+     comparison range check moves onto 27a's `range`.
 
 ## The uniform variable: what its plan must settle
 
