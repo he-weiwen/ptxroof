@@ -619,6 +619,7 @@ impl<'a> Parser<'a> {
                 self.resync_to_semicolon();
                 kernel.stmts.push(Stmt::BranchTargets(targets));
             }
+            "calltargets" | "callprototype" => self.resync_to_semicolon(),
             "local" | "const" | "global" | "param" | "align" => {
                 // In-body variable declarations we don't model; the
                 // instructions touching them are still counted, and in
@@ -961,6 +962,20 @@ impl<'a> Parser<'a> {
                 self.operand_lists.extend(rest);
                 let rest = IdxRange::new(start, self.operand_lists.len() as u32 - start);
                 Some(self.push_operand(Operand::Memory { base, offset, rest }))
+            }
+            TokenKind::LParen => {
+                self.bump();
+                let mut children = Vec::new();
+                while !self.eat(TokenKind::RParen) {
+                    children.push(self.parse_single_operand()?);
+                    if !self.eat(TokenKind::Comma) && !self.at(TokenKind::RParen) {
+                        return None;
+                    }
+                }
+                let start = self.operand_lists.len() as u32;
+                self.operand_lists.extend(children);
+                let span = IdxRange::new(start, self.operand_lists.len() as u32 - start);
+                Some(self.push_operand(Operand::ParamList { children: span }))
             }
             TokenKind::Bang => {
                 self.bump();

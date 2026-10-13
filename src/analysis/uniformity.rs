@@ -305,7 +305,9 @@ fn operand_reads(t: &AffineValueTracer, ops: &[OperandId], pos: usize) -> Vec<Re
             Operand::Selected { base, .. } | Operand::Negated { inner: base } => {
                 operand_reads(t, &[*base], pos)
             }
-            Operand::VectorList { children } | Operand::MultipleDestinations { children } => {
+            Operand::VectorList { children }
+            | Operand::MultipleDestinations { children }
+            | Operand::ParamList { children } => {
                 operand_reads(t, t.module.operand_ids(*children), pos)
             }
             Operand::Immediate(_) | Operand::SymbolRef(_) => Vec::new(),
@@ -385,9 +387,11 @@ mod tests {
         assert_eq!(uniform(carry, "%r3"), tid());
         // The carry it keeps is not part of its register result.
         assert_eq!(uniform(carry, "%r4"), Ok(()));
-        // PTX ISA §9.7.2: calls do not preserve CC.CF, and one with a
-        // parenthesized list is not parsed.
+        // PTX ISA §9.7.2: calls do not preserve CC.CF, and neither does
+        // a statement the parser cannot read.
         let carry = "add.cc.u32 %r2, %r0, 1;\ncall (%r5), f, (%r0);\naddc.u32 %r3, 0, 0;";
+        assert_eq!(uniform(carry, "%r3"), Err("comes from `call`".to_owned()));
+        let carry = "add.cc.u32 %r2, %r0, 1;\nfuture.op %r5;\naddc.u32 %r3, 0, 0;";
         assert_eq!(
             uniform(carry, "%r3"),
             Err("comes from a statement not parsed".to_owned())

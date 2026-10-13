@@ -343,7 +343,7 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | 9.7.13.2 | `@` | Parser-level; sets the `predicated` bit on the guarded instruction's `Measurement`, which propagates as `≤` (at-most) bounds | OK — this is the model's designed answer to divergence: bounds, not probabilities. |
 | 9.7.13.3 | `bra` | `Control` | OK. |
 | 9.7.13.4 | `brx.idx` | `Control` (mnemonic `brx`) | OK — and CFG-side, unresolved `.branchtargets` surface as a report unknown (commit `d58b305`), so indirect branches degrade honestly. |
-| 9.7.13.5 | `call` | `Control` | OK at the classifier layer. ⚠ misfit §E: flops/bytes inside the callee are not attributed to the call site. Fine while the corpus is fully-inlined nvcc output; recommend a report-level named unknown when a kernel calls a function whose body the module doesn't contain (extern), so the gap is visible the day it matters. |
+| 9.7.13.5 | `call` | `Control` | OK at the classifier layer; the parser reads its `(…)` return and argument lists (`Operand::ParamList`, `micro/call_returns.ptx`), and skips `.calltargets` and `.callprototype`. ⚠ misfit §E: flops/bytes inside the callee are not attributed to the call site. Fine while the corpus is fully-inlined nvcc output; recommend a report-level named unknown when a kernel calls a function whose body the module doesn't contain (extern), so the gap is visible the day it matters. |
 | 9.7.13.6 | `ret` | `Control` | OK. |
 | 9.7.13.7 | `exit` | `Control` | OK. |
 

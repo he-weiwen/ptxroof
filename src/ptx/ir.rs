@@ -268,6 +268,8 @@ pub enum Operand {
     Selected { base: OperandId, selector: Symbol },
     /// `!%p` — a negated predicate source (`{!}c` in PTX ISA Syntax).
     Negated { inner: OperandId },
+    /// `(a, b)` — a call's return or argument list (PTX ISA §9.7.13.5).
+    ParamList { children: IdxRange<OperandId> },
 }
 
 /// One executable instruction.

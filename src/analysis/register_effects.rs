@@ -38,6 +38,12 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
             | "commit" => Some(0),
             _ => None,
         },
+        Call => {
+            let first = module.operand_ids(instr.operands).first();
+            let returns =
+                first.is_some_and(|&op| matches!(module.operand(op), Operand::ParamList { .. }));
+            Some(usize::from(returns))
+        }
         Wgmma => match modifiers.next()? {
             "mma_async" => Some(1),
             "fence" | "commit_group" | "wait_group" => Some(0),
@@ -76,13 +82,13 @@ pub fn written_operands(module: &Module, instr: &Instr) -> Option<usize> {
         Applypriority | Bra | Brkpt | Brx | Cp | Discard | Exit | Fence | Griddepcontrol
         | Membar | Nanosleep | Pmevent | Prefetch | Prefetchu | Red | Ret | Setmaxnreg | St
         | Stackrestore | Stmatrix | Sured | Sust | Tensormap | Trap => Some(0),
-        _ => None,
     }
 }
 
 /// Whether `instr` writes the carry flag CC.CF, and whether it reads it:
 /// `.cc` writes it, `addc`, `subc` and `madc` read it, and "no other
-/// instructions access the condition code" (PTX ISA §9.7.2); a form not
+/// instructions access the condition code" (PTX ISA §9.7.2); a call
+/// leaves it unknown, as one "is not preserved across calls"; a form not
 /// decoded may do both.
 pub(crate) fn carry(module: &Module, instr: &Instr) -> (bool, bool) {
     use Opcode::*;
@@ -91,6 +97,7 @@ pub(crate) fn carry(module: &Module, instr: &Instr) -> (bool, bool) {
     }
     let cc = (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "cc");
     match instr.mnemonic {
+        Call => (true, false),
         Add | Sub | Mad => (cc, false),
         Addc | Subc | Madc => (cc, true),
         _ => (false, false),
@@ -124,11 +131,11 @@ pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
 pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
     match module.operand(op) {
         Operand::Register(r) => vec![*r],
-        Operand::MultipleDestinations { children } | Operand::VectorList { children } => {
-            (module.operand_ids(*children).iter())
-                .flat_map(|&c| registers(module, c))
-                .collect()
-        }
+        Operand::MultipleDestinations { children }
+        | Operand::VectorList { children }
+        | Operand::ParamList { children } => (module.operand_ids(*children).iter())
+            .flat_map(|&c| registers(module, c))
+            .collect(),
         Operand::Memory { base, rest, .. } => std::iter::once(base)
             .chain(module.operand_ids(*rest))
             .flat_map(|&op| registers(module, op))
@@ -471,6 +478,19 @@ mod tests {
             ("fabric.get [%r1];", None),
         ] {
             assert_eq!(written(instr).as_deref(), regs, "{instr}");
+        }
+    }
+
+    #[test]
+    fn a_call_writes_the_registers_it_returns_into() {
+        for (instr, regs) in [
+            ("call (%r1), f, (%r2, 3);", "%r1"),
+            ("call.uni (retval0), f, (param0);", ""),
+            ("call.uni g, (%r2);", ""),
+            ("call init;", ""),
+            ("call (%r1), %rd2, (%r3, %r4), Fproto;", "%r1"),
+        ] {
+            assert_eq!(written(instr).as_deref(), Some(regs), "{instr}");
         }
     }
 }

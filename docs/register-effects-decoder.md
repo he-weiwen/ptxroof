@@ -75,7 +75,7 @@ operands by position too; they keep doing so.
 | A, carry | as A; `.cc` writes CC.CF; the `*c` forms read it | `add sub mad addc subc madc` | 6 |
 | B | keyword: no written operand | `applypriority bra brkpt brx cp discard exit fence griddepcontrol membar nanosleep pmevent prefetch prefetchu red ret setmaxnreg st stackrestore stmatrix tensormap trap` | 22 |
 | C | a sub-operation modifier | below | 8 |
-| `call` | operand shape: the leading `(…)` list; not decoded until the parser keeps it | `call` | 1 |
+| `call` | operand shape: a leading `(…)` return list is written; CC.CF is left unknown | `call` | 1 |
 | D | keyword, outside the audit: textures and surfaces 1 (`istypep suld suq tex tld4 txq`) or 0 (`sured sust`); video 1; `fabric`'s `try_get`, `try_put`, `try_red`, `try_pullred`, `submit`, `wait` 0 | `fabric`, textures and surfaces, video (`vabsdiff* vadd* vavrg* vmad vmax* vmin* vset* vshl vshr vsub*`) | 32 |
 
 Class C, written operands. Each list is exhaustive; any other
@@ -199,3 +199,4 @@ Corpus: statements in `tests/fixtures` whose form the case decodes;
 | a parameter's own `.align` and a byte array's `[size]` are kept and printed | the tensor maps of the five B200 TMA fixtures | no analysis output; the dump's parameter layout | three of the five TMA fixtures round-trip; `params_with_types` |
 | a kernel's `.maxnreg`, `.minnctapersm` and `.maxnctapersm` are kept and printed | two B200 fixtures with `.maxnreg 168` | no analysis output; without it ptxas ignores `setmaxnreg` | all five TMA fixtures round-trip; `maxntid_directive` |
 | a negated predicate source (`!%p`) is an `Operand::Negated` over it, which is read | none (no `!` source in the corpus) | for a statement with one, which was unparsed | `micro/negated_predicate.ptx`, before: "latch predicate is not defined in the latch block" and the `setp` uncounted; `negated_predicate_sources` |
+| `call`'s `(…)` lists are `Operand::ParamList`; the decoder takes a leading one as written, and a call as leaving CC.CF unknown; `.calltargets` and `.callprototype` are skipped | none (no `call` in the corpus) | for a call with lists, which was unparsed | `micro/call_returns.ptx`, before: `[4 * %tid.x + param_0]` where ptxas stores to `param_0`; `a_call_writes_the_registers_it_returns_into`; the call case of `divergence_follows_data_from_per_thread_registers_and_loads` |

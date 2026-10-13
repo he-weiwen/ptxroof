@@ -1,0 +1,35 @@
+//
+// HAND-WRITTEN: `call (%r2), zero, (%r1)` writes its return value, 0,
+// into %r2 (PTX ISA §9.7.13.5: "return value into register d"), so
+// every thread stores to param_0, not to its own word (ptxas 13.4:
+// `CALL.REL.NOINC`, then `IMAD.WIDE.U32 R2, RZ, R2, c[0x0][0x160]`).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.func (.reg .b32 rv) zero(
+	.reg .b32 a
+)
+{
+	mov.u32 	rv, 0;
+	ret;
+}
+
+.visible .entry micro_call_returns(
+	.param .u64 micro_call_returns_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_call_returns_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %r1;
+	call (%r2), zero, (%r1);
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

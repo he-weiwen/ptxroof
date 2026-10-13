@@ -54,14 +54,13 @@ its shared writes and instruction counts remain counted
   analysis only when the comparison is free of the thread index
   (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and
   an address through one is read as the last write. A form the
-  register-effects decoder does not decode, `call` or a sub-operation
-  it does not list (none in the corpus,
+  register-effects decoder does not decode, a sub-operation it does
+  not list (none in the corpus,
   `tests/register_effects_corpus.rs`), is taken to write every register
   it names. The parser drops a module's `.texref` declaration
   (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
-  'micro_texture_outputs_tex'`); parenthesized
-  call operands and an address followed by `.unified` (PTX ISA
-  §9.7.9.8, `unified_address_is_unparsed`) become `Unparsed`.
+  'micro_texture_outputs_tex'`); an address followed by `.unified` (PTX ISA
+  §9.7.9.8, `unified_address_is_unparsed`) becomes `Unparsed`.
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a
   fixed source-read size even with a runtime ignore-source predicate.
   Source locations, reproducible parser/classifier probes, and their outputs
@@ -153,8 +152,9 @@ its shared writes and instruction counts remain counted
   nvcc 13.4 already emits `.version 9.4`).
 - **Calls.** Module-scope `.func` declarations and definitions are
   discarded (`module_scope_functions_are_skipped`), so no callee's
-  instructions are counted; nvcc's parenthesized `call.uni` is
-  unparsed (above).
+  instructions are counted, and a kernel calling one does not
+  round-trip (`micro/call_returns.ptx`: "Call to 'zero' requires call
+  prototype").
 - **Sibling loops on one source line** beyond the unroll pair are
   reported as variants and excluded from totals.
 - **In a kernel with a cycle of more than one entry**, the uniformity

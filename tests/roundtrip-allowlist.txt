@@ -16,3 +16,7 @@ k2/k2.sm_80.ptx
 # The module's .texref declaration is dropped (PLAN.md, register effects),
 # so ptxas reports "Unknown symbol 'micro_texture_outputs_tex'".
 micro/texture_outputs.ptx
+
+# Module-scope .func definitions are discarded (PLAN.md, calls), so ptxas
+# reports "Call to 'zero' requires call prototype".
+micro/call_returns.ptx

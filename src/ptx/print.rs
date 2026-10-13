@@ -173,6 +173,14 @@ fn dump_operand(m: &Module, id: OperandId) -> String {
             inner.join("|")
         }
         Operand::Negated { inner } => format!("!{}", dump_operand(m, *inner)),
+        Operand::ParamList { children } => {
+            let inner: Vec<String> = m
+                .operand_ids(*children)
+                .iter()
+                .map(|&id| dump_operand(m, id))
+                .collect();
+            format!("({})", inner.join(", "))
+        }
         Operand::Selected { base, selector } => {
             format!(
                 "{}.{}",
