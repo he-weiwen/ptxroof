@@ -93,6 +93,11 @@ its shared writes and instruction counts remain counted
   thread in 1 warp`; `setp.eq.u32` of `%tid.x + 0xFFFFFFF0` against 0
   runs it on thread 16 (`ISETP.NE.U32`), read as `on 0 threads in 0
   warps`.
+- **A floating-point latch `setp` is read as an integer comparison**
+  of the traced forms (PTX ISA §9.7.6.2). In `micro/latch_float.ptx`
+  the latch compares the bits of the counter and of 10 with
+  `setp.lt.ftz.f32`, which flushes them to zero, so ptxas's loop
+  (`FSETP.GEU.FTZ`) runs once; read as `trips = 10`, `store 40 B`.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
