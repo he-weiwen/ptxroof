@@ -403,6 +403,31 @@ mod tests {
         assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
     }
 
+    /// A bound two paths set to 7, one after a 3 it overwrites: the 3
+    /// does not reach the loop.
+    #[test]
+    fn a_bound_every_path_last_sets_alike_is_that_value() {
+        let bound = |other_arm: &str| {
+            kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nsetp.lt.u32 %p2, %r1, 4;\n\
+                     @%p2 bra $L__A;\n{other_arm}bra $L__J;\n\
+                     $L__A:\nmov.u32 %r3, 7;\n$L__J:\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\n\
+                     setp.lt.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;"
+                ),
+            )
+        };
+        let trips = trips_of(&bound("mov.u32 %r3, 3;\nmov.u32 %r3, 7;\n"));
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "7");
+        let trips = trips_of(&bound(""));
+        assert_eq!(
+            trips[0].1.as_ref().unwrap_err(),
+            "%r3 is unwritten on some path"
+        );
+    }
+
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;
     /// §10.24: `%clock64` is a cycle counter.
     #[test]

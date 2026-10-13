@@ -328,7 +328,8 @@ loop's counter) is its own commit with a test pinning the new answer.
     today's `Carried`, another `Argument` as today's `Merged` with
     `Undef` refused, `Undef` as today's `None`. A query excluding a
     loop, `iv_init`'s, keeps `reach_def` until step 17. Killed
-    definitions drop out of the shared-immediate test.
+    definitions drop out of the shared-immediate test. Done; no fixture
+    output changed (`trip_counts.rs` tests pin both).
 16. "Recurrences" recognition, a public function of its own module with
     unit tests, not yet called.
 17. The tracer reads recurrences: `induction_vars`, `ivs`, `iv_init`,

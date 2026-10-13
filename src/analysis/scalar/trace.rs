@@ -26,7 +26,7 @@ use crate::ptx::ir::{
     SpecialScalar, SpecialVector, Stmt,
 };
 use crate::ptx::literal::parse_int;
-use crate::ssa::RegisterSsa;
+use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
 use std::collections::{HashMap, HashSet};
 
@@ -385,6 +385,34 @@ impl<'a> AffineValueTracer<'a> {
         }
     }
 
+    /// The value a read of `reg` at `pos` sees, in `reach_def`'s terms:
+    /// a write as `Def`, a φ at a loop's header as that loop's `Carried`,
+    /// another φ as the writes it may hold, refused when a path leaves
+    /// the register unwritten, and `Undef` as `None`.
+    fn reaching_value(&self, reg: Symbol, pos: usize) -> Result<ReachingDefinition, String> {
+        let name = self.module.interner.resolve(reg);
+        let Some(v) = self.ssa.value_before(pos, Register::Named(reg)) else {
+            return Err(format!("{name} is read in a block no path reaches"));
+        };
+        Ok(match v {
+            Value::Result { op, .. } => ReachingDefinition::Def(op),
+            Value::Argument { block, .. } => {
+                if let Some(l) = (self.forest.loops.iter()).position(|l| l.header == block) {
+                    return Ok(ReachingDefinition::Carried(LoopId(l as u32)));
+                }
+                let mut defs = Vec::new();
+                for s in self.ssa.sources(v) {
+                    match s {
+                        Value::Result { op, .. } => defs.push(op),
+                        _ => return Err(format!("{name} is unwritten on some path")),
+                    }
+                }
+                ReachingDefinition::Merged(defs)
+            }
+            Value::Undef(_) => ReachingDefinition::None,
+        })
+    }
+
     /// Which of the definitions at statements `all` reach `pos`.
     pub(crate) fn reach_sites(
         &self,
@@ -535,7 +563,13 @@ impl<'a> AffineValueTracer<'a> {
             return Err("value trace exceeds depth limit".to_owned());
         }
         let name = self.module.interner.resolve(reg);
-        let def = match self.reach_def(reg, pos, exclude) {
+        let reaching = match exclude {
+            Some(_) => self.reach_def(reg, pos, exclude),
+            None => self
+                .reaching_value(reg, pos)
+                .map_err(|why| self.obstacle_of_any_def(reg, id).unwrap_or(why))?,
+        };
+        let def = match reaching {
             ReachingDefinition::Def(d) => d,
             ReachingDefinition::Carried(l) => {
                 // The counter of loop l read before its increment: the
