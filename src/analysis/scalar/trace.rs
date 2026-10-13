@@ -424,6 +424,24 @@ impl<'a> AffineValueTracer<'a> {
         let read = read();
         self.strict.set(self.strict.get() - 1);
         let (start, step) = read?;
+        // The values the back edges feed, start + k·step for k in [1, n]
+        // when the loop runs a constant n trips, stay in their type.
+        if self.constant_trips(l).is_some() {
+            let fed = Affine::term(Var::Iter(l), step.clone()) + start.clone();
+            let lp = self.forest.get(l);
+            for (_, v) in (self.ssa.incoming(r.phi).into_iter())
+                .filter(|(p, _)| p.is_some_and(|p| lp.blocks.binary_search(&p).is_ok()))
+            {
+                if let Value::Result { op, .. } = v
+                    && let Stmt::Instr(instr) = &self.kernel.stmts[op]
+                {
+                    let mods: Vec<&str> = (self.module.modifiers(instr).iter())
+                        .map(|&m| self.module.interner.resolve(m))
+                        .collect();
+                    self.fits(fed.clone(), instr, &mods).map_err(Some)?;
+                }
+            }
+        }
         if step == SymExpr::Const(0) {
             return Ok(start);
         }

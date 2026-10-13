@@ -450,7 +450,8 @@ Steps, one commit each:
 27c. Integer `cvt` checks both types, a float or packing `cvt` is
      refused (`micro/cvt_reads.ptx`: three unknowns). Done; only that
      fixture's output changed.
-27d. Counter updates checked as above.
+27d. Counter updates checked as above. Done; no fixture output changed
+     (`report/build.rs` test pins a counter stepped past 32 bits).
 27e. The setp branch merges: `git merge-tree` finds conflicts in
      PLAN.md and the register-effects corpus snapshot only; its
      comparison range check moves onto 27a's `range`.

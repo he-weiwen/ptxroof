@@ -1898,6 +1898,31 @@ mod tests {
     }
 
     #[test]
+    fn a_counter_whose_update_leaves_its_type_is_refused() {
+        // %r1 steps by 2^30 for 8 trips: its update reaches 2^33, past
+        // 32 bits, though the store reads it before the update.
+        let src = |step: &str| {
+            format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 1, 1, 1\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, 0;\nmov.u32 %r5, 0;\n\
+                 $L__LOOP:\nmul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                 st.global.u32 [%rd3], 0;\nadd.u32 %r1, %r1, {step};\n\
+                 add.u32 %r5, %r5, 1;\nsetp.lt.u32 %p1, %r5, 8;\n@%p1 bra $L__LOOP;\nret;\n}}\n"
+            )
+        };
+        let unknown = |step: &str| {
+            let r = analyze(&src(step), "t", &AnalyzeOptions::default()).expect("analyzes");
+            r.kernels[0].loops[0].accesses[0].unknown.clone()
+        };
+        assert_eq!(unknown("1"), None);
+        assert_eq!(
+            unknown("1073741824"),
+            Some("`add.u32` leaves 32 bits".to_owned())
+        );
+    }
+
+    #[test]
     fn an_access_of_no_bytes_leaves_a_loop_footprint_whole() {
         // A zero-source cp.async through a loaded pointer: its address is
         // unknown, but it reads no global bytes.
