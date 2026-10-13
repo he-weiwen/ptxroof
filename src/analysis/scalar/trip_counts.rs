@@ -37,7 +37,7 @@ use crate::analysis::scalar::affine::Var;
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::{AffineValueTracer, ReachingDefinition};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Stmt};
+use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
 
@@ -277,8 +277,8 @@ fn predicate_phi_trips(
     }
     let latch_blk = tracer.cfg.block(latch);
     let mut in_loop = tracer
-        .defs
-        .get(phi)?
+        .writes
+        .get(&Register::Named(*phi))?
         .iter()
         .filter(|&&d| tracer.in_loop(id, d));
     let (&latch_def, None) = (in_loop.next()?, in_loop.next()) else {

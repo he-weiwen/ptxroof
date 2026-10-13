@@ -17,13 +17,13 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::register_effects::{carry, registers, split_operands, stmt_written_registers};
+use crate::analysis::register_effects::{self, registers, split_operands, stmt_written_registers};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{
-    Element, Instr, Kernel, Module, Opcode, Operand, OperandId, SpecialReg, SpecialScalar,
-    SpecialVector, Stmt,
+    Element, Instr, Kernel, Module, Opcode, Operand, OperandId, Register, SpecialReg,
+    SpecialScalar, SpecialVector, Stmt,
 };
 use crate::ptx::literal::parse_int;
 use crate::support::intern::Symbol;
@@ -48,11 +48,8 @@ pub(crate) struct AffineValueTracer<'a> {
     pub(crate) kernel: &'a Kernel,
     pub(crate) cfg: &'a ControlFlowGraph,
     pub(crate) forest: &'a LoopForest,
-    /// Definition sites (statement indices) per register symbol.
-    pub(crate) defs: HashMap<Symbol, Vec<usize>>,
-    /// The statements that write the carry flag CC.CF, unparsed ones
-    /// included.
-    pub(crate) carry_defs: Vec<usize>,
+    /// The statements writing each register, CC included, in order.
+    pub(crate) writes: HashMap<Register, Vec<usize>>,
     /// param symbol -> positional index.
     pub(crate) params: HashMap<Symbol, usize>,
     /// `reach[a][b]`: a path of at least one edge from block a to b.
@@ -71,20 +68,14 @@ impl<'a> AffineValueTracer<'a> {
         cfg: &'a ControlFlowGraph,
         forest: &'a LoopForest,
     ) -> Self {
-        let mut defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
-        let mut carry_defs = Vec::new();
+        let mut writes: HashMap<Register, Vec<usize>> = HashMap::new();
         for (i, stmt) in kernel.stmts.iter().enumerate() {
             let in_cfg = (cfg.blocks.iter()).any(|b| (b.start..b.end).contains(&i));
             if !in_cfg {
                 continue;
             }
-            for reg in stmt_written_registers(module, stmt) {
-                defs.entry(reg).or_default().push(i);
-            }
-            match stmt {
-                Stmt::Instr(instr) if carry(module, instr).0 => carry_defs.push(i),
-                Stmt::Unparsed { .. } => carry_defs.push(i),
-                _ => {}
+            for reg in register_effects::writes(module, stmt) {
+                writes.entry(reg).or_default().push(i);
             }
         }
         let params = kernel
@@ -109,8 +100,7 @@ impl<'a> AffineValueTracer<'a> {
             kernel,
             cfg,
             forest,
-            defs,
-            carry_defs,
+            writes,
             params,
             reach,
             ivs: Vec::new(),
@@ -158,13 +148,16 @@ impl<'a> AffineValueTracer<'a> {
     pub(crate) fn obstacle_of_any_def(&self, reg: Symbol, id: Option<LoopId>) -> Option<String> {
         let mut seen = HashSet::new();
         seen.insert(reg);
-        self.defs.get(&reg)?.iter().find_map(|&d| {
-            let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
-                return None;
-            };
-            (split_operands(self.module, instr).1.iter())
-                .find_map(|&op| self.operand_obstacle(op, d, id, &mut seen))
-        })
+        self.writes
+            .get(&Register::Named(reg))?
+            .iter()
+            .find_map(|&d| {
+                let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
+                    return None;
+                };
+                (split_operands(self.module, instr).1.iter())
+                    .find_map(|&op| self.operand_obstacle(op, d, id, &mut seen))
+            })
     }
 
     /// In-loop registers whose ONLY in-loop definition adds a constant
@@ -306,7 +299,7 @@ impl<'a> AffineValueTracer<'a> {
     /// The last write of `reg` in block `b` before statement `before`.
     pub(crate) fn last_write_in(&self, b: BlockId, before: usize, reg: Symbol) -> Option<usize> {
         let blk = self.cfg.block(b);
-        let defs = self.defs.get(&reg)?;
+        let defs = self.writes.get(&Register::Named(reg))?;
         (defs.iter().rev())
             .copied()
             .find(|&d| blk.start <= d && d < before)
@@ -379,7 +372,7 @@ impl<'a> AffineValueTracer<'a> {
         pos: usize,
         exclude: Option<LoopId>,
     ) -> ReachingDefinition {
-        match self.defs.get(&reg) {
+        match self.writes.get(&Register::Named(reg)) {
             Some(all) => self.reach_sites(all, pos, exclude),
             None => ReachingDefinition::None,
         }

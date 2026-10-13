@@ -16,7 +16,7 @@ use crate::analysis::scalar::trace::{
     AffineValueTracer, ReachingDefinition, SpecialRegister, special_register,
 };
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, SpecialReg, Stmt};
+use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
@@ -42,7 +42,10 @@ pub(crate) struct Uniformity {
 impl Uniformity {
     pub(crate) fn new(t: &AffineValueTracer) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
-        let defs: BTreeSet<usize> = t.defs.values().flatten().copied().collect();
+        let defs: BTreeSet<usize> = (t.writes.iter())
+            .filter(|(r, _)| matches!(r, Register::Named(_)))
+            .flat_map(|(_, ds)| ds.iter().copied())
+            .collect();
         for d in defs {
             reads.extend(
                 def_reads(t, d, false)
@@ -50,7 +53,7 @@ impl Uniformity {
                     .map(|r| (Node::Def(d), r)),
             );
         }
-        for &d in &t.carry_defs {
+        for &d in t.writes.get(&Register::Cc).into_iter().flatten() {
             reads.extend(
                 def_reads(t, d, true)
                     .into_iter()
@@ -179,12 +182,13 @@ fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool) -> Vec<Read> {
 }
 
 fn read(t: &AffineValueTracer, reg: Symbol, pos: usize) -> Read {
-    let sites = t.defs.get(&reg).map_or(&[][..], Vec::as_slice);
+    let sites = (t.writes.get(&Register::Named(reg))).map_or(&[][..], Vec::as_slice);
     read_sites(t, t.module.interner.resolve(reg), sites, pos, Node::Def)
 }
 
 fn read_carry(t: &AffineValueTracer, pos: usize) -> Read {
-    read_sites(t, "CC.CF", &t.carry_defs, pos, Node::Carry)
+    let sites = t.writes.get(&Register::Cc).map_or(&[][..], Vec::as_slice);
+    read_sites(t, "CC.CF", sites, pos, Node::Carry)
 }
 
 /// A read at `pos` of `name`, which the statements `sites` define, each
