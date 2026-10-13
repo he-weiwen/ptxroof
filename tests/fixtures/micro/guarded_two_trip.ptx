@@ -1,0 +1,41 @@
+//
+// HAND-WRITTEN: LLVM's two-trip loop, `mov.pred %p2, %p3` in the
+// header and `mov.pred %p3, 0` in the latch, where only lanes below 32
+// set %p3 true before the loop, under a guard: lanes 0-31 run 2 trips
+// and store a[2], lanes 32-63 keep a false %p3, run 1 and store a[1].
+// ptxas 13.4 (sm_89) continues by the guard's comparison,
+//   ISETP.LT.U32.AND P0, PT, R0, 0x20, PT
+//   PLOP3.LUT P1, PT, P0, PT, PT, 0x80, 0x0
+//   @P1 BRA
+// Read as every lane's, the guarded true gave 2 trips and a store at
+// param_0 + 8 for every lane.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_guarded_two_trip(
+	.param .u64 micro_guarded_two_trip_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<5>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_guarded_two_trip_param_0];
+	mov.u32 	%r1, %tid.x;
+	setp.lt.u32 	%p1, %r1, 32;
+	setp.ne.u32 	%p3, %r1, %r1;
+	@%p1 mov.pred 	%p3, -1;
+	mov.u32 	%r3, 0;
+$L__BB0_1:
+	mov.pred 	%p2, %p3;
+	add.u32 	%r3, %r3, 1;
+	mov.pred 	%p3, 0;
+	@%p2 bra 	$L__BB0_1;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], 0;
+	ret;
+}

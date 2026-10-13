@@ -321,6 +321,14 @@ fn predicate_phi_trips(
     if outside.iter().any(|&v| v != outside[0]) {
         return None;
     }
+    for (site, reg) in [(copy, pred), (latch_def, *phi), (init_def, *phi)] {
+        if let Stmt::Instr(instr) = &tracer.kernel.stmts[site]
+            && instr.predicate.is_some()
+        {
+            let name = tracer.module.interner.resolve(reg);
+            return Some(Err(format!("{name} is written under a guard")));
+        }
+    }
     let (Operand::Immediate(latch_val), Operand::Immediate(init_val)) =
         (mov_src(latch_def)?, mov_src(init_def)?)
     else {
@@ -453,6 +461,31 @@ mod tests {
         assert_eq!(latch(0, 2, 5), never);
         assert_eq!(latch(6, 2, 4), never);
         assert_eq!(latch(4, -2, 0), Ok("2".to_owned()));
+    }
+
+    /// The two-trip shape with each of its writes guarded: the lanes the
+    /// guard skips keep another value.
+    #[test]
+    fn a_two_trip_loop_with_a_guarded_write_is_refused() {
+        let trips = |init: &str, copy: &str, latch: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nsetp.lt.u32 %p1, %r1, 4;\n\
+                     setp.ne.u32 %p3, %r1, %r1;\n{init}mov.pred %p3, -1;\n\
+                     $L__L:\n{copy}mov.pred %p2, %p3;\n{latch}mov.pred %p3, 0;\n\
+                     @%p2 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        let (g, guarded) = ("@%p1 ", |p: &str| {
+            Err(format!("{p} is written under a guard"))
+        });
+        assert_eq!(trips("", "", ""), Ok("2".to_owned()));
+        assert_eq!(trips(g, "", ""), guarded("%p3"));
+        assert_eq!(trips("", g, ""), guarded("%p2"));
+        assert_eq!(trips("", "", g), guarded("%p3"));
     }
 
     /// A bound of 7 that two false-guarded writes of 0 leave alone: the
