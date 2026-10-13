@@ -2,7 +2,7 @@
 
 Temporary design note, to be deleted when its steps land or it is
 dropped. It settles what `docs/reaching-values-refactor.md`'s last
-section left open.
+section left open. Revised after codex's review of `5edd553`.
 
 ## Goal
 
@@ -22,11 +22,8 @@ definition (`llvm/lib/Analysis/ScalarEvolution.cpp:14466–14471`,
 
 ## Measurement
 
-A prototype, not committed, on `7db279e`: `Var::Uniform`, and in
-`trace_reg`, when a read's trace fails and
-`Uniformity::is_uniform(reg, pos)` holds, the variable of the value read;
-on only while a memory operand's address is traced. Run over the 55
-kernels outside `tests/fixtures/micro/`:
+A prototype, not committed, on `7db279e`, with the rules of "Design"
+below, run over the 55 kernels outside `tests/fixtures/micro/`:
 
 - 4,795 traced address operands: 1,332 read, 3,463 unknown. The
   prototype reads 316 more, 246 global and 70 shared; none of the 1,332
@@ -35,9 +32,10 @@ kernels outside `tests/fixtures/micro/`:
   grouped tile schedule, `pid / num_pid_in_group` and
   `pid % group_size_m`, e.g. the B200 fp8 GEMM's lines 104–136), "mod of
   an induction variable" 40, `selp` 30, the depth limit 8, "more than
-  one reaching definition" 6 (k1's and k2's remainder loops reading the
-  main loop's final counter, PLAN "Addresses the tracer cannot read"),
-  10 others.
+  one reaching definition" 6 (k1's and k2's remainder loops, whose
+  counter starts at the main loop's final counter, PLAN "Addresses the
+  tracer cannot read"), 10 others. The 6 need the fallback in a
+  counter's start; without it the prototype reads 304.
 - Of the 246 global: sectors per warp for 49; 197 have a lane
   coefficient that is a parameter and need `--bind`, as other addresses
   do today.
@@ -49,13 +47,9 @@ kernels outside `tests/fixtures/micro/`:
   ssd's `selp`), 8 global (the B200 `bmm_kernel_persistent`'s tile
   indices, recomputed each persistent iteration, 6; a `min` of a
   counter in ssd and mamba2, 2).
-- One base with different uniform variables in one loop: once, rope_kv
-  deepseek-v3's loop 0, `uniform(%r9)` and `uniform(%r1)` on
-  `param_0 + 54·param_5 − 2·param_4`.
-- Loop footprints: of 58 loops with global accesses, 15 read every
-  address today; with uniform variables defined outside the loop, 8
-  more do (mamba2 ×3, the sm_89 fp8 GEMM ×2, k1's two remainder loops
-  and k2's).
+- codex's two counterexamples, a uniform value copied in a loop and read
+  after an exit that depends on `%tid.x`, and a uniform value copied
+  under a `%tid.x` guard, stay unknown; neither shape occurs in the 55.
 
 ## Design
 
@@ -63,97 +57,132 @@ kernels outside `tests/fixtures/micro/`:
 
 `Var::Uniform(Value)`; `Value` and `Register` derive `Ord` for the
 `BTreeMap` of terms. It is not a lane variable (`depends_on_lane` is
-false), `Affine::range` leaves it unbounded, `--bind` does not bind it,
-and `per_lane` ignores it. The report renders a `Result` as
-`uniform(%r83@106)`, 106 the defining statement's line in the PTX file,
-and an `Argument` as `uniform(%r34@$L__BB0_5)`, its block.
+false), `Affine::range` leaves it unbounded, `--bind` does not bind it.
+Two reads of one `Value` in one execution of the statements between
+them are one number; two different `Value`s are different variables,
+with no relation known (`u − u` cancels, `u − w` does not).
 
-Two reads of one `Value` are one variable: in one execution of the
-statements between them they are the same number. Two different
-`Value`s are different variables, with no relation known.
+The report renders a `Result` as `uniform(%r83@106)`, 106 the PTX line
+of the defining statement (`Instr::offset` through the report's
+`LineIndex`), and an `Argument` as `uniform(%r34@$L__BB0_5)`, its
+block's `cfg.block_name`. One statement writes one value of a
+register, so the register and the line name it unless two statements
+share the line; the name then adds the statement's index among them,
+`@106.2`.
 
 ### Where it is read
 
-Only in a memory operand's address. The tracer gains
-`trace_address(op, pos, scope)`, which turns the fallback on for the
-trace, as `strictly` turns on the refusal of guarded writes;
-`loop_trips` turns it off, so a trip count, and with it a nested step
-or an exit value, never holds a uniform variable. Thread selectors
-(`thread_participation.rs`) and `trip_counts.rs` keep their tracer and
-their reasons: a uniform bound gives neither a count nor a lane set.
+Only in a memory operand's address, and only when the address cannot
+be read otherwise: the tracer's `trace_address` traces it as today, and
+when that fails, traces it again strictly (`strictly`: a guarded write
+is refused, not read as its new value) with the fallback on. An address
+read today keeps its form, and a uniform variable never passes a
+guarded write between its read and the address.
 
 The fallback sits in `trace_reg`, at a read: the innermost read whose
-trace fails and whose value `is_uniform` at that read becomes the
-variable, so `4 * uniform(%r70) + %tid.x` keeps its lane term.
-`is_uniform` already answers for the read, not the definition: a value
-defined in a loop and read after it is uniform only when the loop's
-exits are (`uniformity.rs`, `read_sites`), a guarded write only when its
-guard and old value are, and `Undef` never.
+trace fails and whose value `Uniformity::is_uniform(reg, pos)` holds at
+that read becomes the variable, so `4 * uniform(%r70) + %tid.x` keeps
+its lane term. `is_uniform` answers for the read: a guarded write is
+uniform only when its guard and old value are, a join only when its
+selecting branches are, a value defined in a loop and read after it
+only when the loop's exits are (`uniformity.rs`, `def_reads`,
+`read_sites`), and `Undef` never.
+
+Between the read and the address the value flows through statements
+the tracer reads (unguarded, in the strict pass) and φs it reads, which
+take one immediate or are recurrences; what remains is a loop exit, so
+`per_lane` (`report/build.rs`) checks a uniform variable as it checks a
+counter: for every loop holding the variable's definition (its
+statement, or its φ's block) but not the address, the loop's exits are
+uniform, or the address is unknown, "uniform(…) differs between lanes
+after its loop, whose exit …". It looks through `Div` and `Mod`.
+
+The fallback is off in `loop_trips` (trip counts, the nested steps and
+exit values built on them, and the loop-keyed `constant_trips` cache)
+and in a counter's register steps (a step must be free of variables);
+it is on in a counter's start, the value entering the loop, defined
+outside it: k1's remainder counter starts at `%r34 + …` and reads
+`uniform(%r34@$L__BB0_5)` there. A counter whose start is itself the
+value that fails is no counter; the read of its header φ then falls
+back, a variable defined in the loop. Thread selectors (`thread_participation.rs`) and
+`trip_counts.rs` keep their own tracer and their reasons: a uniform
+bound gives neither a count nor a lane set.
 
 ### A variable that varies with a loop
 
-`uniform(v)` with `v`'s statement (or, for an `Argument`, its block)
-inside loop `L` may differ between `L`'s iterations. So for `L`:
+`uniform(v)` with `v`'s definition inside loop `L` may differ between
+`L`'s iterations. For `L`, and for every loop enclosing `L`'s blocks
+that hold the definition, the access's stride note says "varies", as for
+a floor or mod of the counter (step 24 of the refactor), through `Div`
+and `Mod`; `at_trip` does not read it. For a loop not holding the
+definition the variable is invariant.
 
-- the access's stride note for `L` says "varies", as for a floor or
-  mod of `L`'s counter (step 24 of the refactor);
-- `L`'s footprint counts the access as an unread address: requested
-  bytes only, unique and sector bytes unknown (step 23).
+### Loop footprints
 
-For a loop not holding `v`'s definition the variable is invariant.
-
-### Overlapping bases
-
-A loop footprint unions intervals per base, the address without its
-lane and counter terms, and takes different bases to be disjoint
-(PLAN, "Unique bytes per loop assume different pointer parameters are
-disjoint"). Two bases equal but for their uniform terms may overlap or
-coincide, so the loop's unique bytes are unknown then.
+A loop footprint counts every address holding a uniform variable as an
+unread address: requested bytes only, unique and sector bytes unknown
+(step 23 of the refactor). Taking such addresses into the per-base
+intervals needs a rule for bases that may overlap; see "Open".
 
 ### Construction order
 
-`report/build.rs` builds the tracer, then `Uniformity::new(&tracer)`,
-which reads the tracer's write table, SSA, CFG and loops but traces
-nothing. The tracer holds a `OnceCell<Uniformity>`, set right after:
-`tracer.set_uniformity(Uniformity::new(&tracer))`; thread sets,
-accesses and `per_lane` read it from the tracer. Moving the facts both
-read (module, kernel, CFG, loops, writes, SSA, reachability) into a
-struct of their own would avoid the cell; it touches every user of
-those fields, so it is left out.
+`Uniformity::new` reads the tracer's write table, SSA, CFG, loops and
+reachability, and traces nothing. The tracer gets
+`uniformity(&self) -> &Uniformity`, a `OnceCell::get_or_init(||
+Uniformity::new(self))`; thread sets, accesses and `per_lane` read it
+there instead of building their own.
 
 ### Not in this plan
 
 Trip counts and thread selectors in uniform variables; a load from a
 uniform address as uniform; lane-dependent swizzles.
 
+## Open: overlapping bases (the owner's decision)
+
+A loop footprint unions intervals per base, the address without its
+lane and counter terms, and sums different bases. PLAN states that as
+"different pointer parameters are disjoint"; the code also sums one
+pointer at different symbolic offsets, `param_5 − 8·param_1` and
+`param_5 − 6·param_1` in k1's main loop. A uniform variable can make
+two bases coincide (`p + u` and `p + 64·%ctaid.x` when
+`u = 64·%ctaid.x`), and a 64-bit one can hide a pointer (`selp.b64`
+between two). Measured: with uniform variables defined outside the
+loop, 8 loops would read every address (6 with each base on its own
+pointer parameter, 2 with one pointer at several bases); most have
+symbolic trip counts, so they need `--bind` to report bytes. Options:
+
+1. Keep "Loop footprints" above (no U3).
+2. Sum bases on different pointer parameters only when every uniform
+   variable in them is at most 32 bits; any two bases on one pointer
+   that differ in a uniform term make unique bytes unknown.
+3. Treat uniform variables as the code treats parameters today, and
+   list it in PLAN.
+
 ## Steps, one commit each
 
 Each step diffs every fixture's text and JSON output against the
 previous commit and explains each change.
 
-U1. The tracer holds the uniformity answer (`OnceCell`); no output
-    changes.
-U2. `Var::Uniform` in addresses, as above: `trace_address`, the
-    fallback, `loop_trips` turning it off, the rendering, the "varies"
-    note, and a loop footprint counting any address with a uniform
-    variable as unread. Expected: the 316 accesses read, no footprint
-    changed (their loops' unique bytes were unknown already). Fixture
-    `micro/uniform_address.ptx`, ptxas's SASS for each kernel:
-    - a CTA-uniform `div` by a parameter, `%ctaid.x / param_1`, times
-      a stride plus `%tid.x`: read, sectors per warp as ptxas;
+U1. `AffineValueTracer::uniformity`, the lazily built answer; its users
+    read it from the tracer. No output changes.
+U2. `Var::Uniform` in addresses: `trace_address` and its strict second
+    pass, the fallback and where it is off, `per_lane`'s check, the
+    rendering, the "varies" note, and loop footprints counting such
+    addresses as unread. Expected: the 316 accesses read, no footprint
+    changed (their loops' unique bytes were unknown already), and k1's
+    remainder loop out of PLAN's "Addresses the tracer cannot read".
+    Fixture `micro/uniform_address.ptx`, ptxas's SASS for each kernel:
+    - `%ctaid.x / param_1` times 64 plus `%tid.x`: read, sectors per
+      warp as for a parameter base;
     - the same `div` of `%tid.x`: unknown, its reason unchanged;
-    - a uniform value defined in a loop and used in it: stride
-      "varies", unique unknown;
-    - the same value read after a loop whose exit depends on `%tid.x`:
-      unknown.
-U3. A loop footprint reads a uniform variable defined outside the loop
-    as part of the base, and its unique bytes are unknown when two
-    bases differ only in uniform terms. Expected: the loops above that
-    have numeric trip counts and bound shapes gain footprints; rope_kv
-    deepseek-v3's loop 0 stays unknown. Fixture
-    `micro/uniform_bases.ptx`: two accesses on `param_0 + 64·uniform(a)`
-    and `param_0 + 64·uniform(b)` in one loop.
+    - a uniform `div` of the counter in a loop: stride "varies", the
+      loop's unique bytes unknown; and its floor, `shr` by 3, the same;
+    - that value read after a loop whose exit depends on `%tid.x`, and
+      copied in the loop and read after it: both unknown;
+    - a uniform value copied under a `%tid.x` guard: unknown;
+    - a counter starting at a uniform `div`: its header φ read as
+      `uniform(%r4@$L__BB…)`, stride "varies";
+    - `u − u` of one uniform value: the address without it.
 
 PLAN's "uniform(v)" missing-feature entry points here while the steps
-land, and goes with U3; U2 takes k1's remainder loop out of "Addresses
-the tracer cannot read".
+land.
