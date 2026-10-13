@@ -308,25 +308,13 @@ fn on_lane_only(a: &Affine) -> bool {
         })
 }
 
-/// The least and the greatest value of a form over the thread index
-/// alone, on any block.
-fn range(a: &Affine) -> Option<(i64, i64)> {
-    let base = a.base.as_const()?;
-    a.terms.iter().try_fold((base, base), |(lo, hi), (v, c)| {
-        let top = c.as_const()?.checked_mul(largest(v)?)?;
-        Some((lo.checked_add(top.min(0))?, hi.checked_add(top.max(0))?))
-    })
-}
-
-/// PTX ISA §10.1, §10.2: `%tid.x` and `%tid.y` are below 1024 and
-/// `%tid.z` below 64 on every target.
-fn largest(v: &Var) -> Option<i64> {
+/// The thread index's values on any block, PTX ISA §10.1, §10.2:
+/// `%tid.x` and `%tid.y` below 1024, `%tid.z` below 64.
+fn any_block(v: &Var) -> Option<(i64, i64)> {
     match v {
-        Var::Tid(Axis::Z) => Some(63),
-        Var::Tid(_) => Some(1023),
-        Var::Div(inner, d) => Some(largest(inner)? / d),
-        Var::Mod(inner, m) => Some(largest(inner)?.min(m - 1)),
-        Var::Ctaid(_) | Var::Iter(_) => None,
+        Var::Tid(Axis::Z) => Some((0, 63)),
+        Var::Tid(_) => Some((0, 1023)),
+        _ => None,
     }
 }
 
@@ -730,7 +718,7 @@ fn condition(
     let b = tracer.trace_operand(ops[2], def, None, 0).ok()?;
     let form = a.clone() - b.clone();
     let fits = |x: &Affine, min: i128, end: i128| {
-        range(x).is_some_and(|(lo, hi)| min <= lo.into() && i128::from(hi) < end)
+        (x.range(&any_block)).is_some_and(|(lo, hi)| min <= lo && hi < end)
     };
     let (sign, width) = ty.split_at_checked(1).unwrap_or_default();
     let comparable = width

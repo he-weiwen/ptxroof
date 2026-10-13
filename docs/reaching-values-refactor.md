@@ -356,8 +356,7 @@ loop's counter) is its own commit with a test pinning the new answer.
     today's assumption that it divides (k1's and k2's `K − K mod 4`,
     the fp8 GEMMs, `micro/two_register_counter.ptx`), a PLAN entry.
     The lower bound `k ≥ 1` of the other comparisons waits for the
-    negative trip count's design (`micro/latch_exits_first.ptx`, on
-    the setp branch). Done; only `micro/ne_latch_unreached.ptx`'s output
+    negative trip count's design (`micro/latch_exits_first.ptx`). Done; only `micro/ne_latch_unreached.ptx`'s output
     changed.
 23. A loop footprint's requested bytes count every access whose size
     is known, its address read or not; its unique bytes and sectors are
@@ -454,7 +453,8 @@ Steps, one commit each:
      (`report/build.rs` test pins a counter stepped past 32 bits).
 27e. The setp branch merges: `git merge-tree` finds conflicts in
      PLAN.md and the register-effects corpus snapshot only; its
-     comparison range check moves onto 27a's `range`.
+     comparison range check moves onto 27a's `range`. Done (`1112168`
+     and the next commit), the comparison keeping its any-block bounds.
 
 ## The uniform variable: what its plan must settle
 
