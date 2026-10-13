@@ -57,6 +57,9 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
     if let Some([x, y, z]) = k.reqntid {
         let _ = writeln!(out, ".reqntid {x}, {y}, {z}");
     }
+    for &(name, value) in &k.tuning {
+        let _ = writeln!(out, ".{} {value}", m.interner.resolve(name));
+    }
     let _ = writeln!(out, "{{");
 
     let mut seen = std::collections::HashSet::new();

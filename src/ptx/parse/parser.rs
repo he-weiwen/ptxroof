@@ -297,6 +297,7 @@ impl<'a> Parser<'a> {
             shared_decls: Vec::new(),
             maxntid: None,
             reqntid: None,
+            tuning: Vec::new(),
             stmts: Vec::new(),
         };
 
@@ -319,7 +320,8 @@ impl<'a> Parser<'a> {
                 "maxntid" => kernel.maxntid = Some(self.parse_dim3()?),
                 "reqntid" => kernel.reqntid = Some(self.parse_dim3()?),
                 "maxnreg" | "minnctapersm" | "maxnctapersm" => {
-                    self.expect_u32("directive argument")?;
+                    let value = self.expect_u32("directive argument")?;
+                    kernel.tuning.push((name, value));
                 }
                 _ => {
                     self.pos = save;
@@ -1546,9 +1548,15 @@ mod tests {
     #[test]
     fn maxntid_directive() {
         let src = ".version 8.7\n.target sm_80\n.visible .entry k()\n\
-                   .maxntid 16, 16, 1\n{\nret;\n}\n";
+                   .maxntid 16, 16, 1\n.maxnreg 168\n{\nret;\n}\n";
         let m = parse(src).expect("parses");
         assert_eq!(m.kernels[0].maxntid, Some([16, 16, 1]));
+        let tuning = &m.kernels[0].tuning;
+        assert_eq!(tuning.len(), 1);
+        assert_eq!(
+            (m.interner.resolve(tuning[0].0), tuning[0].1),
+            ("maxnreg", 168)
+        );
     }
 
     #[test]

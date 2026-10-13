@@ -336,6 +336,9 @@ pub struct Kernel {
     /// `.maxntid x, y, z` / `.reqntid x, y, z` between signature and body.
     pub maxntid: Option<[u32; 3]>,
     pub reqntid: Option<[u32; 3]>,
+    /// The other performance-tuning directives (PTX ISA §11.4):
+    /// `.maxnreg`, `.minnctapersm`, `.maxnctapersm`, for the printer.
+    pub tuning: Vec<(Symbol, u32)>,
     pub stmts: Vec<Stmt>,
 }
 
