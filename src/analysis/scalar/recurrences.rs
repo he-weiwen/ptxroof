@@ -81,8 +81,19 @@ pub fn recurrences(
         let Some(Some(step)) = steps.first() else {
             continue;
         };
+        // Register steps match by the value they add, wherever it is added.
+        let read = |&(r, at, sign): &(Symbol, usize, i64)| {
+            (ssa.value_before(at, Register::Named(r)), sign)
+        };
+        let same = |s: &Step| {
+            s.constant == step.constant
+                && s.registers
+                    .iter()
+                    .map(read)
+                    .eq(step.registers.iter().map(read))
+        };
         if rest.iter().all(|v| v == start)
-            && steps.iter().all(|s| s.as_ref() == Some(step))
+            && steps.iter().all(|s| s.as_ref().is_some_and(same))
             && *step != Step::default()
         {
             out.push(Recurrence {
@@ -254,6 +265,19 @@ mod tests {
         let body = "mov.u32 %r1, 0;\n$L:\nsub.s32 %r1, %r1, %r9;\n\
                     setp.gt.s32 %p1, %r1, %r2;\n@%p1 bra $L;\nret;";
         assert_eq!(recurrences_of(body, 0), ["%r1: w0 → +0 -%r9@2"]);
+    }
+
+    #[test]
+    fn two_latches_adding_one_register_step_alike_are_one_recurrence() {
+        // blocks: 0 lines 0-1, 1 lines 2-4 (header), 2 lines 5-6, 3 lines
+        // 7-10, 4 line 11; each latch adds %r9, written before the loop.
+        let body = "mov.u32 %r9, 3;\nmov.u32 %r1, 0;\n$L:\nsetp.lt.u32 %p1, %r1, %r2;\n\
+                    @%p1 bra $L__B;\nadd.u32 %r1, %r1, %r9;\nbra $L;\n\
+                    $L__B:\nadd.u32 %r1, %r1, %r9;\nsetp.lt.u32 %p2, %r1, 99;\n\
+                    @%p2 bra $L;\nret;";
+        let found = recurrences_of(body, 0);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].starts_with("%r1: w1 → +0 +%r9@"), "{found:?}");
     }
 
     #[test]
