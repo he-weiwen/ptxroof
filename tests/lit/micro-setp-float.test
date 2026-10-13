@@ -1,9 +1,13 @@
-# Wrong output (PLAN.md): `setp.lt.f32` is read as an integer comparison
-# of the traced values. ptxas runs the first store on threads 16 to 47
-# (the bits of %tid.x - 16 are a NaN below 16) and the second on none
-# (2^24 + %tid.x and 2^24 + 1 both round to at least 2^24).
+# `setp.lt.f32` compares floats. ptxas runs the first store on threads
+# 16 to 47 (the bits of %tid.x - 16 are a NaN below 16) and the second
+# on none (2^24 + %tid.x and 2^24 + 1 both round to at least 2^24). A
+# floating-point comparison is not read, so both stores are bounds.
 RUN: %ptxroof analyze %fixtures/micro/setp_float.ptx | FileCheck "%s"
 CHECK-LABEL: kernel micro_setp_float_bits
-CHECK: st.global.u32  global store 4 B on 48 threads in 2 warps (%tid.x < 48)
+CHECK: st.global.u32  global store 4 B (predicated)  warp: <= 5 sectors (ideal 4)  [4 * %tid.x + param_0]
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load 0 B, store <= 256 B
 CHECK-LABEL: kernel micro_setp_float_cvt
-CHECK: st.global.u32  global store 4 B on 1 thread in 1 warp (%tid.x < 1)
+CHECK: st.global.u32  global store 4 B (predicated)  warp: <= 5 sectors (ideal 4)  [4 * %tid.x + param_0]
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load 0 B, store <= 256 B

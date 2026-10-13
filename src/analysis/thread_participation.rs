@@ -687,9 +687,9 @@ pub(crate) fn thread_sets(
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, when it
-/// compares two such forms; an unsigned `lt`, `le`, `gt` or `ge` only
-/// when both lie in [0, 2^width) on every thread. A form free of the
-/// thread index whose comparison the uniformity analysis finds
+/// compares two such forms as integers; an unsigned `lt`, `le`, `gt` or
+/// `ge` only when both lie in [0, 2^width) on every thread. A form free
+/// of the thread index whose comparison the uniformity analysis finds
 /// divergent was read wrong (through a guarded write), and is none.
 fn condition(
     module: &Module,
@@ -707,11 +707,12 @@ fn condition(
         .map(|&m| module.interner.resolve(m))
         .collect();
     let cmp = mods.first()?.to_string();
-    // PTX ISA §9.7.7.2: a packed `setp` compares the low halves into p and the high into q.
+    let ty = *mods.last()?;
+    // PTX ISA §9.7.6.2, §9.7.7.2: a floating-point `setp` compares floats, a packed one per half.
     if !matches!(cmp.as_str(), "lt" | "le" | "gt" | "ge" | "eq" | "ne")
-        || mods
-            .iter()
-            .any(|m| matches!(*m, "and" | "or" | "xor" | "f16x2" | "bf16x2"))
+        || ty.starts_with('f')
+        || ty.starts_with("bf")
+        || mods.iter().any(|m| matches!(*m, "and" | "or" | "xor"))
     {
         return None;
     }
@@ -721,10 +722,7 @@ fn condition(
     }
     let a = tracer.trace_operand(ops[1], def, None, 0).ok()?;
     let b = tracer.trace_operand(ops[2], def, None, 0).ok()?;
-    let width = mods
-        .last()?
-        .strip_prefix('u')
-        .and_then(|w| w.parse::<u32>().ok());
+    let width = ty.strip_prefix('u').and_then(|w| w.parse::<u32>().ok());
     let comparable = !matches!(cmp.as_str(), "lt" | "le" | "gt" | "ge")
         || width.is_none_or(|w| {
             [&a, &b]
