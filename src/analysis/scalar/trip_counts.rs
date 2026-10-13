@@ -180,6 +180,10 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
         return predicate_phi_trips(tracer, id, latch, branch.0, pred.reg, continue_if_true)
             .unwrap_or_else(|| Err(predicate_reason(tracer, latch, branch.0, pred.reg)));
     };
+    if setp.predicate.is_some() {
+        let name = tracer.module.interner.resolve(pred.reg);
+        return Err(format!("{name} is written under a guard"));
+    }
     let cmp = tracer
         .module
         .modifiers(setp)
