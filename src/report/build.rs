@@ -437,9 +437,14 @@ impl KernelReportBuilder<'_> {
                     if let Some(a) = &form {
                         let mut cur = scope;
                         while let Some(l) = cur {
+                            let stepped = (a.terms.keys())
+                                .any(|v| *v != Var::Iter(l) && at_trip(v, l, 0).is_some());
                             reuse.push(Reuse {
                                 r#loop: display[l.0 as usize].clone(),
-                                stride: a.terms.get(&Var::Iter(l)).map(ToString::to_string),
+                                stride: match stepped {
+                                    true => Some("varies".to_owned()),
+                                    false => a.terms.get(&Var::Iter(l)).map(ToString::to_string),
+                                },
                             });
                             cur = forest.get(l).parent;
                         }
@@ -493,6 +498,17 @@ struct AccessForm {
     /// The block may not run on every iteration of its loop, and no
     /// thread-index selection explains that.
     conditional: bool,
+}
+
+/// `v` at trip `k` of loop `id`, when `v` is that loop's counter or a
+/// floor or mod of it.
+fn at_trip(v: &Var, id: LoopId, k: i64) -> Option<i64> {
+    match v {
+        Var::Iter(l) if *l == id => Some(k),
+        Var::Div(inner, d) => at_trip(inner, id, k).map(|x| x.div_euclid(*d)),
+        Var::Mod(inner, m) => at_trip(inner, id, k).map(|x| x.rem_euclid(*m)),
+        _ => None,
+    }
 }
 
 /// The direction a count is known in; `None` when bounded in neither.
@@ -862,7 +878,8 @@ impl<'a> KernelReportBuilder<'a> {
         let mut complete = true;
         let mut at_most = false;
         let mut per_base: HashMap<Affine, Vec<(i64, i64)>> = HashMap::new();
-        let mut patterns: HashMap<Affine, Vec<SectorPattern>> = HashMap::new();
+        // Each warp's pattern, with the trips it is summed over.
+        let mut patterns: HashMap<Affine, Vec<(SectorPattern, i64)>> = HashMap::new();
         for f in global {
             let set = &f.set;
             let lanes = (0..threads)
@@ -877,6 +894,20 @@ impl<'a> KernelReportBuilder<'a> {
             let stride = match form.terms.get(&Var::Iter(id)) {
                 Some(c) => c.as_const()?,
                 None => 0,
+            };
+            // A floor or mod of the counter moves the address by its
+            // value at each trip.
+            let mut stepped = Vec::new();
+            for (v, c) in &form.terms {
+                if *v != Var::Iter(id) && at_trip(v, id, 0).is_some() {
+                    stepped.push((v, c.as_const()?));
+                }
+            }
+            let shift = |k: i64| -> i64 {
+                stride * k
+                    + (stepped.iter())
+                        .map(|(v, c)| c * at_trip(v, id, k).unwrap_or(0))
+                        .sum::<i64>()
             };
             if form.terms.iter().any(|(v, c)| {
                 crate::analysis::scalar::lane_eval::depends_on_lane(v) && c.as_const().is_none()
@@ -896,7 +927,8 @@ impl<'a> KernelReportBuilder<'a> {
             }
             let mut key = form.clone();
             key.terms.retain(|v, _| {
-                !crate::analysis::scalar::lane_eval::depends_on_lane(v) && *v != Var::Iter(id)
+                !crate::analysis::scalar::lane_eval::depends_on_lane(v)
+                    && at_trip(v, id, 0).is_none()
             });
             key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
             let intervals = per_base.entry(key.clone()).or_default();
@@ -906,16 +938,16 @@ impl<'a> KernelReportBuilder<'a> {
                     .filter(|&tid| set.contains(tid, self.shape))
                     .map(|tid| crate::analysis::scalar::lane_eval::eval_lane(form, tid))
                     .collect();
-                if !offsets.is_empty() {
-                    patterns
-                        .entry(key.clone())
-                        .or_default()
-                        .push(SectorPattern::new(
-                            &offsets,
-                            bytes,
-                            i64::from(f.align),
-                            stride,
-                        ));
+                let align = i64::from(f.align);
+                let pats = patterns.entry(key.clone()).or_default();
+                if offsets.is_empty() {
+                } else if stepped.is_empty() {
+                    pats.push((SectorPattern::new(&offsets, bytes, align, stride), trips));
+                } else {
+                    for k in 1..=trips {
+                        let at: Vec<i64> = offsets.iter().map(|o| o + shift(k)).collect();
+                        pats.push((SectorPattern::new(&at, bytes, align, 0), 1));
+                    }
                 }
             }
             for t in 0..threads {
@@ -928,7 +960,7 @@ impl<'a> KernelReportBuilder<'a> {
                     return None;
                 }
                 for k in 1..=trips {
-                    let start = base + stride * k;
+                    let start = base + shift(k);
                     intervals.push((start, start + bytes));
                 }
             }
@@ -954,8 +986,8 @@ impl<'a> KernelReportBuilder<'a> {
         let mut sector_bytes = Some(ByteRange { min: 0, max: 0 });
         for pats in patterns.values() {
             let totals: Vec<u64> = (0..SECTOR)
-                .filter(|&rho| pats.iter().all(|p| p.aligned(rho, trips)))
-                .map(|rho| pats.iter().map(|p| p.total(rho, trips)).sum())
+                .filter(|&rho| pats.iter().all(|(p, n)| p.aligned(rho, *n)))
+                .map(|rho| pats.iter().map(|(p, n)| p.total(rho, *n)).sum())
                 .collect();
             sector_bytes = match (sector_bytes, totals.iter().min(), totals.iter().max()) {
                 (Some(s), Some(&lo), Some(&hi)) => Some(ByteRange {

@@ -369,7 +369,8 @@ loop's counter) is its own commit with a test pinning the new answer.
     `carried_counter.ptx` come back with their requested bytes.
 24. A loop footprint reads `⌊k/d⌋` and `k mod m` of its own `k` per
     trip: unique-byte intervals, sector patterns and the reuse note
-    (`micro/counter_floor_mod.ptx`: 12 B and 8 B).
+    (`micro/counter_floor_mod.ptx`: 12 B and 8 B). Done; that fixture's
+    output alone changed, its reuse note now "varies".
 25. Exit values, as in "Recurrences" (`micro/nested_counter_step.ptx`,
     `micro/carried_counter.ptx` addresses exact).
 26. `mul.hi` and `mad.hi` are refused (`micro/mul_hi.ptx`: both stores

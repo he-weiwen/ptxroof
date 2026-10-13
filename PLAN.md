@@ -104,13 +104,6 @@ its shared writes and instruction counts remain counted
   the second output of `setp.lt.f16x2` compares the upper halves, 0 <
   0, so the store never runs; read as `on 64 threads in 2 warps
   (%tid.x >= 0)`.
-- **An address through a floor or a mod of a loop counter is read as
-  invariant in the loop**: the per-iteration step and the loop's unique
-  bytes read the counter's own coefficient only. In
-  `micro/counter_floor_mod.ptx` the stores are read as `[4 *
-  ⌊k[$L__BB0_1]/2⌋ + param_0]` and `[4 * (k[$L__BB0_3] mod 2) +
-  param_1]`, each `invariant` in its loop, `unique 4 B`, where ptxas
-  13.4 stores to three words of param_0, 12 B, and two of param_1, 8 B.
 - **A `!=` latch with a symbolic distance is taken to meet its
   bound**: the trip solver divides the distance by the step, rounding
   down, as `src/analysis/scalar/trip_counts.rs`'s doc assumes the

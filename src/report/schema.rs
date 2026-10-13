@@ -316,7 +316,8 @@ pub struct Access {
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct Reuse {
     pub r#loop: String,
-    /// Bytes the address advances per iteration; absent when it does not.
+    /// Bytes the address advances per iteration; absent when it does not,
+    /// `varies` when it moves by a floor or mod of the counter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stride: Option<String>,
 }

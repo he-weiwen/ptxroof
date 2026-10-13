@@ -421,6 +421,7 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                 .map(|r| match &r.stride {
                     Some(s) if s.starts_with('-') => format!("k[{}]: {s} B/iter", r.r#loop),
                     Some(s) if s.parse::<i64>().is_ok() => format!("k[{}]: +{s} B/iter", r.r#loop),
+                    Some(s) if s == "varies" => format!("k[{}]: varies", r.r#loop),
                     Some(s) => format!("k[{}]: {s} B/iter", r.r#loop),
                     None => format!("k[{}]: invariant", r.r#loop),
                 })
