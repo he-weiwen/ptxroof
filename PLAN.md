@@ -111,13 +111,14 @@ its shared writes and instruction counts remain counted
   ⌊k[$L__BB0_1]/2⌋ + param_0]` and `[4 * (k[$L__BB0_3] mod 2) +
   param_1]`, each `invariant` in its loop, `unique 4 B`, where ptxas
   13.4 stores to three words of param_0, 12 B, and two of param_1, 8 B.
-- **A `!=` latch is solved without checking that the counter meets
-  the bound**: the trip solver divides the distance by the step,
-  rounding down (`src/analysis/scalar/trip_counts.rs`, whose doc
-  assumes the division is exact). In `micro/ne_latch_unreached.ptx`,
-  stepping by 2 from 0 while `!= 5`, the loop is read as `trips = 2`,
-  `requested 8 B`, where the counter is always even and the loop does
-  not exit; ptxas 13.4 keeps it, comparing with 5.
+- **A `!=` latch with a symbolic distance is taken to meet its
+  bound**: the trip solver divides the distance by the step, rounding
+  down, as `src/analysis/scalar/trip_counts.rs`'s doc assumes the
+  division exact (k1's and k2's `K − K mod 4`, the fp8 GEMMs,
+  `micro/two_register_counter.ptx`). A constant distance that is no
+  positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
+  stepping by 2 from 0 while `!= 5`, reads `trips = unknown`, where the
+  loop does not exit.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,

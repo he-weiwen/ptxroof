@@ -357,7 +357,8 @@ loop's counter) is its own commit with a test pinning the new answer.
     the fp8 GEMMs, `micro/two_register_counter.ptx`), a PLAN entry.
     The lower bound `k ≥ 1` of the other comparisons waits for the
     negative trip count's design (`micro/latch_exits_first.ptx`, on
-    the setp branch).
+    the setp branch). Done; only `micro/ne_latch_unreached.ptx`'s output
+    changed.
 23. A loop footprint's requested bytes count every access whose size
     is known, its address read or not; its unique bytes and sectors are
     unknown when an address is not read

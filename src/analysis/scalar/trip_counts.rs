@@ -15,7 +15,8 @@
 //! (k = iteration number; a counter read after its increment is
 //! init + k·step, read before it init + (k − 1)·step), trips
 //! solve to:  `ne` → −A0/A1 (exact division — compiler-generated
-//! not-equal latches step in divisor units);  `lt` → ceildiv(−A0, A1);
+//! not-equal latches step in divisor units; a constant −A0/A1 that is
+//! not a positive integer is refused);  `lt` → ceildiv(−A0, A1);
 //! `le` → floordiv(−A0, A1) + 1;  `gt`/`ge` → mirrored.
 //!
 //! Anything else — multiple exits, exits not at the latch, latch
@@ -345,6 +346,11 @@ fn solve(cmp: &str, continue_if_true: bool, a1: i64, a0: SymExpr) -> TripCount {
                 return Err("latch condition does not involve an induction variable".to_owned());
             }
             let num = if a1 > 0 { neg(a0) } else { a0 };
+            if let Some(n) = num.as_const()
+                && (n <= 0 || n % a1.abs() != 0)
+            {
+                return Err("latch condition never meets its `!=` bound".to_owned());
+            }
             Ok(SymExpr::floor_div(num, a1.abs()))
         }
         // D < 0: false at the smallest k with A1·k ≥ −A0.
@@ -412,6 +418,25 @@ mod tests {
         );
         let trips = trips_of(&src);
         assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+    }
+
+    #[test]
+    fn a_not_equal_bound_the_counter_never_meets_is_no_trip_count() {
+        let latch = |start: i64, step: i64, bound: i64| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "mov.u32 %r2, {start};\n$L__L:\nadd.s32 %r2, %r2, {step};\n\
+                     setp.ne.s32 %p1, %r2, {bound};\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        assert_eq!(latch(0, 2, 6), Ok("3".to_owned()));
+        let never = Err("latch condition never meets its `!=` bound".to_owned());
+        assert_eq!(latch(0, 2, 5), never);
+        assert_eq!(latch(6, 2, 4), never);
+        assert_eq!(latch(4, -2, 0), Ok("2".to_owned()));
     }
 
     /// A bound two paths set to 7, one after a 3 it overwrites: the 3

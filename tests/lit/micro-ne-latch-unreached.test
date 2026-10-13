@@ -1,7 +1,7 @@
 # A loop stepping by 2 from 0 while the counter != 5: the counter is
 # always even, so the loop does not exit (ptxas keeps it, comparing
-# with 5), but 5 / 2 is rounded down to 2 trips.
+# with 5). The constant distance 5 is no multiple of the step 2, so the
+# trip count is refused.
 RUN: %ptxroof analyze %fixtures/micro/ne_latch_unreached.ptx | FileCheck "%s"
 CHECK: kernel micro_ne_latch_unreached
-CHECK: trips = 2
-CHECK: global bytes per CTA over the loop's own blocks: requested 8 B, unique 8 B, in sectors 64 B
+CHECK: trips = unknown: latch condition never meets its `!=` bound
