@@ -428,7 +428,8 @@ does. So a variable is bounded only by what the launch is known to be:
   `.u8` and `.s8` included; a float or packing `cvt` is refused. A
   `mad.lo`'s product is checked before its addend, refusing a wrap the
   addend would cancel. `shl` by a count of at least the width is 0
-  (PTX ISA §9.7.8.6). `mul.wide` doubles the width.
+  (PTX ISA §9.7.8.8: a count past the width is clamped to it).
+  `mul.wide` doubles the width.
 - A counter's update: the recognizer collapses its chain into a step,
   so each back edge's chain is checked again with the counter at its
   range's ends. A loop's own trip count is solved without that check
