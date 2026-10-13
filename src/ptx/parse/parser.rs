@@ -64,6 +64,8 @@ struct Parser<'a> {
     inlined: HashMap<SourceLoc, SourceLoc>,
     scopes: Vec<Scope>,
     scope_count: u32,
+    /// Spliced into renamed names: no token of the source contains it.
+    scope_tag: String,
     operands: IndexVec<OperandId, Operand>,
     operand_lists: Vec<OperandId>,
     modifier_pool: Vec<Symbol>,
@@ -71,9 +73,14 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(source: &'a str) -> Self {
+        let toks = tokenize(source);
+        let mut scope_tag = "$scope".to_owned();
+        while toks.iter().any(|t| t.text.contains(scope_tag.as_str())) {
+            scope_tag.push('_');
+        }
         Parser {
             source,
-            toks: tokenize(source),
+            toks,
             pos: 0,
             interner: Interner::default(),
             version: (0, 0),
@@ -85,6 +92,7 @@ impl<'a> Parser<'a> {
             inlined: HashMap::new(),
             scopes: Vec::new(),
             scope_count: 0,
+            scope_tag,
             operands: IndexVec::new(),
             operand_lists: Vec::new(),
             modifier_pool: Vec::new(),
@@ -486,7 +494,7 @@ impl<'a> Parser<'a> {
         let map = names
             .into_iter()
             .map(|n| {
-                let renamed = format!("{n}$scope{id}");
+                let renamed = format!("{n}{}{id}", self.scope_tag);
                 (self.interner.intern(n), self.interner.intern(&renamed))
             })
             .collect();
@@ -507,8 +515,8 @@ impl<'a> Parser<'a> {
             }
             s.families.iter().find_map(|&(prefix, n)| {
                 let prefix = self.interner.resolve(prefix);
-                let i: u32 = name.strip_prefix(prefix)?.parse().ok()?;
-                (i < n).then(|| format!("{prefix}$scope{}${i}", s.id))
+                let i = member(name, prefix, n)?;
+                Some(format!("{prefix}{}{}${i}", self.scope_tag, s.id))
             })
         });
         renamed.map_or(sym, |r| self.interner.intern(&r))
@@ -522,8 +530,8 @@ impl<'a> Parser<'a> {
         };
         let text = self.interner.resolve(name);
         let renamed = match count {
-            None => format!("{text}$scope{}", scope.id),
-            Some(_) => format!("{text}$scope{}$", scope.id),
+            None => format!("{text}{}{}", self.scope_tag, scope.id),
+            Some(_) => format!("{text}{}{}$", self.scope_tag, scope.id),
         };
         let renamed = self.interner.intern(&renamed);
         match count {
@@ -979,12 +987,16 @@ fn declares(interner: &Interner, decls: &[RegDecl], name: &str) -> bool {
         let prefix = interner.resolve(d.prefix);
         match d.count {
             None => prefix == name,
-            Some(n) => name
-                .strip_prefix(prefix)
-                .and_then(|i| i.parse::<u32>().ok())
-                .is_some_and(|i| i < n),
+            Some(n) => member(name, prefix, n).is_some(),
         }
     })
+}
+
+/// `name`'s index in `.reg prefix<count>`, which declares `prefix0` to
+/// `prefix{count-1}` spelled in decimal.
+fn member(name: &str, prefix: &str, count: u32) -> Option<u32> {
+    let i: u32 = name.strip_prefix(prefix)?.parse().ok()?;
+    (i < count && name.len() == prefix.len() + i.to_string().len()).then_some(i)
 }
 
 fn parse_version(text: &str) -> Option<(u32, u32)> {
@@ -1337,6 +1349,28 @@ mod tests {
         assert_eq!(selected(ops[0]), "%r1.h0");
         assert_eq!(selected(ops[1]), "%r2.b3");
         assert!(matches!(m.operand(ops[2]), Operand::Register(_)));
+    }
+
+    #[test]
+    fn renamed_names_are_new_names() {
+        let names = |body: &str| -> Vec<String> {
+            let m = parse_body(body);
+            let ops = m.operand_ids(instrs(&m)[0].operands).to_vec();
+            ops.iter()
+                .map(|&id| match m.operand(id) {
+                    Operand::Register(r) => m.interner.resolve(*r).to_owned(),
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(
+            names("{ .reg .b32 %r<2>; .reg .b32 %r0<2>; mov.u32 %r1, %r01; }\nret;"),
+            ["%r$scope1$1", "%r0$scope1$1"]
+        );
+        assert_eq!(
+            names(".reg .b32 %r$scope1;\n{ .reg .b32 %r; mov.u32 %r, %r$scope1; }\nret;"),
+            ["%r$scope_1", "%r$scope1"]
+        );
     }
 
     #[test]
