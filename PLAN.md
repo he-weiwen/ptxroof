@@ -308,10 +308,10 @@ its shared writes and instruction counts remain counted
 
 ## Missing features
 
-- SSA representation and migration of suitable dataflow analyses: planned,
-  not implemented. The current tracer combines definition lookup and affine
-  interpretation (`src/analysis/scalar/trace.rs`); construction semantics and
-  migration boundaries are described in `docs/architecture.md`.
+- Migration of the dataflow analyses to register SSA: started. `src/ssa.rs`
+  places φs and answers which value a read sees (unit tests there); no
+  analysis reads it yet, and the tracer still looks definitions up itself
+  (`src/analysis/scalar/trace.rs`). Steps: `docs/reaching-values-refactor.md`.
 
 One line each, with the trigger that would start it.
 

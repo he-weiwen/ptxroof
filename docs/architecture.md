@@ -29,6 +29,7 @@ analysis framework is introduced.
 | `report/schema` | Owned, serializable output structures | `report/tree` |
 | `report/names` | Kernel demangling for display | demangling portion of `cfg/naming` |
 | `report/text` | Text rendering of the report schema | unchanged |
+| `ssa` | Register SSA values over the PTX CFG | new |
 
 One crate remains sufficient. The CLI stays in `main.rs` and the library entry
 points remain available through `lib.rs`.
@@ -110,14 +111,12 @@ These distinct evaluation modes remain explicit.
 
 ## Planned SSA addition
 
-Add SSA as a second representation alongside `ptx`, when its semantics are
-implemented. Do not create empty modules or placeholder interfaces now.
-
-```text
-src/ssa/ir.rs       values, instructions, block/merge representation
-src/ssa/build.rs    construction from parsed PTX and its control flow
-src/ssa/verify.rs   representation invariants
-```
+SSA is a second representation alongside `ptx`. `src/ssa.rs` holds register
+values only: φ placement over the PTX CFG and the value a read sees, built
+from the writes the caller supplies. It has no instructions of its own; the
+answers to the questions below and the migration steps are in
+`docs/reaching-values-refactor.md`. Do not create empty modules or
+placeholder interfaces.
 
 The intended flow is:
 

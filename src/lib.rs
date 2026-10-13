@@ -7,6 +7,7 @@
 pub mod analysis;
 pub mod ptx;
 pub mod report;
+pub mod ssa;
 pub mod support;
 
 /// Tool version, baked in from Cargo.toml at compile time.
