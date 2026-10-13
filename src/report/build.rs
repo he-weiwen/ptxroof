@@ -888,7 +888,7 @@ impl<'a> KernelReportBuilder<'a> {
             requested += f.bytes as u64 * trips as u64 * lanes;
             at_most |= !f.guard_exact || f.conditional;
             let Some(form) = &f.form else {
-                complete = false;
+                complete &= f.bytes == 0 || lanes == 0;
                 continue;
             };
             let stride = match form.terms.get(&Var::Iter(id)) {
@@ -1877,6 +1877,23 @@ mod tests {
         let src = src.replace(".reqntid 32, 1, 1\n", "");
         let r = analyze(&src, "t", &opts).expect("analyzes");
         assert_eq!(r.kernels[0].loops[0].global_bytes_per_cta, None);
+    }
+
+    #[test]
+    fn an_access_of_no_bytes_leaves_a_loop_footprint_whole() {
+        // A zero-source cp.async through a loaded pointer: its address is
+        // unknown, but it reads no global bytes.
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   .shared .align 16 .b8 dst[512];\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, dst;\nmov.u32 %r2, 0;\n\
+                   $L__LOOP:\nld.global.u64 %rd4, [%rd1];\n\
+                   cp.async.cg.shared.global [%r1], [%rd4], 16, 0;\n\
+                   add.s32 %r2, %r2, 1;\nsetp.lt.u32 %p1, %r2, 2;\n@%p1 bra $L__LOOP;\n\
+                   cp.async.wait_all;\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        let b = (r.kernels[0].loops[0].global_bytes_per_cta.clone()).expect("enumerable");
+        assert_eq!((b.requested, b.unique), (512, Some(8)));
     }
 
     #[test]
