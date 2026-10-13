@@ -39,7 +39,7 @@ mnemonic; the "Today" column names the arm where routing matters.
 
 An instruction that fails parsing inside a kernel becomes `Stmt::Unparsed`
 and never reaches the classifier. Over the committed corpus that is
-policed by CI (`tests/parse-allowlist.txt`: one micro fixture, an array element operand); at
+policed by CI (`tests/parse-allowlist.txt`: two micro fixtures, an array element operand and a vector register's declaration); at
 `analyze` time each one is counted in `instruction_classes.unparsed`
 and listed in the report's unknowns, the same treatment an
 unclassified instruction gets. (The ISA's `|`-separated destination

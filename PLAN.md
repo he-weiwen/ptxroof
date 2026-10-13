@@ -67,6 +67,12 @@ its shared writes and instruction counts remain counted
   fixed source-read size even with a runtime ignore-source predicate.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
+- **Vector registers are not modelled** (PTX ISA §6.4.3): the parser
+  does not read `.reg .v2 .b32 %v;`, and an element `%v.x` is a register
+  of its own, apart from `%v`. In `micro/vector_register.ptx`, after
+  `ld.global.v2.b32 %v, [%rd1]` overwrites `%v`, `%v.x` is still the
+  thread index an earlier `mov.b32 %v.x, %r1` wrote: the address is
+  `[4 * %tid.x + param_0]`, where ptxas takes it from the load.
 - **`cvt` is read as its last operand unchanged** (PTX ISA §9.7.9.22):
   a two-source pack (`cvt.rn.bf16x2.f32 d, a, b` puts `a` in the
   upper half; 400 in seven Gluon fixtures), the bits of an

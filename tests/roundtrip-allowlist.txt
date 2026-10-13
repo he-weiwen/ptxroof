@@ -25,3 +25,6 @@ micro/call_returns.ptx
 # An array element operand is unparsed (PLAN.md, register effects), and the
 # .local array it reads is discarded.
 micro/unparsed_writes.ptx
+
+# A vector register's declaration is unparsed (PLAN.md, vector registers).
+micro/vector_register.ptx

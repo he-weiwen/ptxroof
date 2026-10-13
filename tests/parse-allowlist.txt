@@ -5,3 +5,7 @@
 # An array element operand, `lbuf[1]` (PTX ISA §6.4.2; PLAN.md, register
 # effects), pins how an unparsed statement's registers are written.
 micro/unparsed_writes.ptx
+
+# A vector register's declaration, `.reg .v2 .b32 %v` (PTX ISA §6.4.3;
+# PLAN.md, vector registers).
+micro/vector_register.ptx
