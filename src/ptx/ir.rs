@@ -266,6 +266,8 @@ pub enum Operand {
     /// `%r1.h0` — a video instruction's byte or half of a register
     /// (PTX ISA §9.7.19.1, `.asel`, `.bsel`, `.dsel`).
     Selected { base: OperandId, selector: Symbol },
+    /// `!%p` — a negated predicate source (`{!}c` in PTX ISA Syntax).
+    Negated { inner: OperandId },
 }
 
 /// One executable instruction.

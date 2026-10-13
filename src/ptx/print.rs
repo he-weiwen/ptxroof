@@ -172,6 +172,7 @@ fn dump_operand(m: &Module, id: OperandId) -> String {
                 .collect();
             inner.join("|")
         }
+        Operand::Negated { inner } => format!("!{}", dump_operand(m, *inner)),
         Operand::Selected { base, selector } => {
             format!(
                 "{}.{}",

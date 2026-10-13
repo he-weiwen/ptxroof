@@ -1,0 +1,8 @@
+# `!%p2` is a negated predicate source, so the latch's `setp.lt.and` is
+# parsed: a comparison combined with a predicate, and counted. It was
+# unparsed, "latch predicate is not defined in the latch block", and
+# missing from the loop's instructions.
+RUN: %ptxroof analyze %fixtures/micro/negated_predicate.ptx | FileCheck "%s"
+CHECK: kernel micro_negated_predicate
+CHECK: trips = unknown: latch condition combines a comparison with a predicate
+CHECK: instructions = 4 * trips($L__loop) + 5

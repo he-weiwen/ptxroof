@@ -962,6 +962,11 @@ impl<'a> Parser<'a> {
                 let rest = IdxRange::new(start, self.operand_lists.len() as u32 - start);
                 Some(self.push_operand(Operand::Memory { base, offset, rest }))
             }
+            TokenKind::Bang => {
+                self.bump();
+                let inner = self.parse_single_operand()?;
+                Some(self.push_operand(Operand::Negated { inner }))
+            }
             TokenKind::LBrace => {
                 self.bump();
                 let mut children = Vec::new();
@@ -1198,6 +1203,27 @@ mod tests {
         assert_eq!(mem(is[1]).1, 0);
         assert!(matches!(mem(is[2]).0, Operand::SymbolRef(_)));
         assert_eq!(mem(is[3]).1, -4);
+    }
+
+    #[test]
+    fn negated_predicate_sources() {
+        let m = parse_body(
+            "setp.lt.and.s32 %p1, %r1, 10, !%p2;\nbar.red.and.pred %p3, 0, !%p4;\n\
+             vote.sync.ballot.b32 %r2, !%p5, -1;\nret;",
+        );
+        assert_eq!(unparsed_count(&m), 0);
+        let negated: Vec<&str> = instrs(&m)[..3]
+            .iter()
+            .flat_map(|i| m.operand_ids(i.operands).iter())
+            .filter_map(|&id| match m.operand(id) {
+                Operand::Negated { inner } => match m.operand(*inner) {
+                    Operand::Register(r) => Some(m.interner.resolve(*r)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(negated, ["%p2", "%p4", "%p5"]);
     }
 
     #[test]

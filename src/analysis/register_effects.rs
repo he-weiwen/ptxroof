@@ -118,8 +118,8 @@ pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
 }
 
 /// The registers operand `op` names: itself, the elements of a `{…}` or
-/// `p|q`, as in `tex`'s `{…}|p`, an address's base and coordinates, or a
-/// selection's base.
+/// `p|q`, as in `tex`'s `{…}|p`, an address's base and coordinates, a
+/// selection's base, or a negated predicate.
 /// A selected destination writes its whole register (PTX ISA §9.7.19.1).
 pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
     match module.operand(op) {
@@ -133,7 +133,9 @@ pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
             .chain(module.operand_ids(*rest))
             .flat_map(|&op| registers(module, op))
             .collect(),
-        Operand::Selected { base, .. } => registers(module, *base),
+        Operand::Selected { base, .. } | Operand::Negated { inner: base } => {
+            registers(module, *base)
+        }
         _ => Vec::new(),
     }
 }

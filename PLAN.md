@@ -59,7 +59,7 @@ its shared writes and instruction counts remain counted
   `tests/register_effects_corpus.rs`), is taken to write every register
   it names. The parser drops a module's `.texref` declaration
   (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
-  'micro_texture_outputs_tex'`); negated source predicates, parenthesized
+  'micro_texture_outputs_tex'`); parenthesized
   call operands and an address followed by `.unified` (PTX ISA
   §9.7.9.8, `unified_address_is_unparsed`) become `Unparsed`.
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a
