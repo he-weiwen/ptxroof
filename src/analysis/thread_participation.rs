@@ -687,11 +687,13 @@ pub(crate) fn thread_sets(
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, when it
-/// compares two such forms as integers; an `lt`, `le`, `gt` or `ge`
+/// compares two such forms as integers: an `lt`, `le`, `gt` or `ge`
 /// only when both lie in the range of its type, [0, 2^width) or
-/// [−2^(width−1), 2^(width−1)), on every thread. A form free of the
-/// thread index whose comparison the uniformity analysis finds
-/// divergent was read wrong (through a guarded write), and is none.
+/// [−2^(width−1), 2^(width−1)), on every thread, an `eq` or `ne` only
+/// when `a − b` lies in (−2^width, 2^width), so that it is zero
+/// exactly when it is zero modulo 2^width. A form free of the thread
+/// index whose comparison the uniformity analysis finds divergent was
+/// read wrong (through a guarded write), and is none.
 fn condition(
     module: &Module,
     kernel: &Kernel,
@@ -723,18 +725,21 @@ fn condition(
     }
     let a = tracer.trace_operand(ops[1], def, None, 0).ok()?;
     let b = tracer.trace_operand(ops[2], def, None, 0).ok()?;
-    let bounds = match ty.split_at_checked(1) {
-        Some(("u", w)) => w.parse::<u32>().ok().map(|w| (0, 1i128 << w)),
-        Some(("s", w)) => (w.parse::<u32>().ok()).map(|w| (-1i128 << (w - 1), 1i128 << (w - 1))),
-        _ => None,
+    let form = a.clone() - b.clone();
+    let fits = |x: &Affine, min: i128, end: i128| {
+        range(x).is_some_and(|(lo, hi)| min <= lo.into() && i128::from(hi) < end)
     };
-    let comparable = !matches!(cmp.as_str(), "lt" | "le" | "gt" | "ge")
-        || bounds.is_none_or(|(min, end)| {
-            [&a, &b]
-                .into_iter()
-                .all(|x| range(x).is_some_and(|(lo, hi)| min <= lo.into() && i128::from(hi) < end))
+    let (sign, width) = ty.split_at_checked(1).unwrap_or_default();
+    let comparable = width
+        .parse::<u32>()
+        .is_ok_and(|w| match (cmp.as_str(), sign) {
+            ("eq" | "ne", _) => fits(&form, 1 - (1 << w), 1 << w),
+            (_, "u") => fits(&a, 0, 1 << w) && fits(&b, 0, 1 << w),
+            (_, "s") => {
+                fits(&a, -1 << (w - 1), 1 << (w - 1)) && fits(&b, -1 << (w - 1), 1 << (w - 1))
+            }
+            _ => false,
         });
-    let form = a - b;
     let lanes = form.terms.keys().any(depends_on_lane);
     if !lanes && !uniformity.is_uniform_def(def) {
         None

@@ -84,12 +84,6 @@ its shared writes and instruction counts remain counted
   the load at offset 0, so comparing two fields of a by-value
   aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
   threads in 2 warps`, `store 256 B` per CTA).
-- **An equality `setp` that selects threads compares the traced
-  forms, which do not wrap at the register width** (PTX ISA §9.7.6.2);
-  only an `lt`, `le`, `gt` or `ge` is checked to stay in its type's
-  range. In `micro/setp_wraps.ptx`, `setp.eq.u32` of `%tid.x +
-  0xFFFFFFF0` against 0 runs the store on thread 16 (ptxas:
-  `ISETP.NE.U32`), read as `on 0 threads in 0 warps`.
 - **A floating-point latch `setp` is read as an integer comparison**
   of the traced forms (PTX ISA §9.7.6.2). In `micro/latch_float.ptx`
   the latch compares the bits of the counter and of 10 with
@@ -177,7 +171,8 @@ its shared writes and instruction counts remain counted
   `lt`, `le`, `gt` or `ge` is read only when both operands lie in the
   range of its type, [0, 2^width) or [−2^(width−1), 2^(width−1)), for
   every `%tid` below 1024 (§10.2), so not on a CTA index (b200
-  `tut_sg_prefixdense`'s `128·%ctaid.x + 64 < 128·%ctaid.x + 128`).
+  `tut_sg_prefixdense`'s `128·%ctaid.x + 64 < 128·%ctaid.x + 128`); an
+  `eq` or `ne` only when their difference lies in (−2^width, 2^width).
   Otherwise what it guards is a bound (`micro/setp_float.ptx`,
   `micro/setp_f16x2.ptx`, `micro/setp_unsigned.ptx`,
   `micro/setp_wraps.ptx`: `(predicated)`, `store <= 256 B`).
