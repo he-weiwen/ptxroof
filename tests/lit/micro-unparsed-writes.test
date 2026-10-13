@@ -1,0 +1,6 @@
+# `ld.local.u32 %r2, lbuf[1]` is unparsed, but it is taken to write the
+# registers it names, so the address after it is not read as the thread
+# index's, `4 * %tid.x + param_0`; ptxas stores to param_0 + 20.
+RUN: %ptxroof analyze %fixtures/micro/unparsed_writes.ptx | FileCheck "%s"
+CHECK: kernel micro_unparsed_writes
+CHECK: st.global.u32  global store 4 B {{ +}}unknown: value defined by a statement the parser could not read

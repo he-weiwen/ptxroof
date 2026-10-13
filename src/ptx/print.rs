@@ -92,7 +92,7 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
                 let names: Vec<_> = targets.iter().map(|&t| m.interner.resolve(t)).collect();
                 let _ = writeln!(out, ".branchtargets {};", names.join(", "));
             }
-            Stmt::Unparsed { offset } => {
+            Stmt::Unparsed { offset, .. } => {
                 // Comments are dropped on reparse; the corpus check keeps
                 // committed fixtures free of these.
                 let _ = writeln!(out, "// unparsed statement at byte {offset}");

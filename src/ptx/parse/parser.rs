@@ -333,6 +333,12 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "'{' starting kernel body")?;
         let first = self.operands.len();
         self.parse_body(&mut kernel)?;
+        for stmt in &mut kernel.stmts {
+            if let Stmt::Unparsed { registers, .. } = stmt {
+                let decls = &kernel.reg_decls;
+                registers.retain(|&r| declares(&self.interner, decls, self.interner.resolve(r)));
+            }
+        }
         for id in (first..self.operands.len()).map(OperandId::from_usize) {
             match self.operands[id] {
                 Operand::Register(sym)
@@ -560,7 +566,10 @@ impl<'a> Parser<'a> {
         let offset = self.peek().offset;
         self.bump(); // consume '.'
         let Ok(name) = self.expect_ident("body directive name") else {
-            kernel.stmts.push(Stmt::Unparsed { offset });
+            kernel.stmts.push(Stmt::Unparsed {
+                offset,
+                registers: Vec::new(),
+            });
             self.resync_to_semicolon();
             return Ok(());
         };
@@ -573,7 +582,10 @@ impl<'a> Parser<'a> {
                     }
                     kernel.reg_decls.extend(decls);
                 } else {
-                    kernel.stmts.push(Stmt::Unparsed { offset });
+                    kernel.stmts.push(Stmt::Unparsed {
+                        offset,
+                        registers: Vec::new(),
+                    });
                     self.resync_to_semicolon();
                 }
             }
@@ -582,7 +594,10 @@ impl<'a> Parser<'a> {
                     decl.name = self.declare_scoped(decl.name, None);
                     kernel.shared_decls.push(decl);
                 } else {
-                    kernel.stmts.push(Stmt::Unparsed { offset });
+                    kernel.stmts.push(Stmt::Unparsed {
+                        offset,
+                        registers: Vec::new(),
+                    });
                     self.resync_to_semicolon();
                 }
             }
@@ -599,7 +614,10 @@ impl<'a> Parser<'a> {
                         return Ok(());
                     }
                 }
-                kernel.stmts.push(Stmt::Unparsed { offset });
+                kernel.stmts.push(Stmt::Unparsed {
+                    offset,
+                    registers: Vec::new(),
+                });
                 self.resync_to_semicolon();
             }
             "pragma" => {
@@ -642,7 +660,10 @@ impl<'a> Parser<'a> {
                 self.resync_to_semicolon();
             }
             _ => {
-                kernel.stmts.push(Stmt::Unparsed { offset });
+                kernel.stmts.push(Stmt::Unparsed {
+                    offset,
+                    registers: Vec::new(),
+                });
                 self.resync_to_semicolon();
             }
         }
@@ -800,9 +821,20 @@ impl<'a> Parser<'a> {
 
     fn parse_instruction(&mut self, loc: Option<SourceLoc>) -> Stmt {
         let offset = self.peek().offset;
+        let start = self.pos;
         let unparsed = |p: &mut Self| {
             p.resync_to_semicolon();
-            Stmt::Unparsed { offset }
+            let names: Vec<&str> = (p.toks[start..p.pos].iter())
+                .filter(|t| matches!(t.kind, TokenKind::Register | TokenKind::Identifier))
+                .map(|t| t.text.split('.').next().unwrap_or(t.text))
+                .collect();
+            let registers = (names.into_iter())
+                .map(|n| {
+                    let sym = p.interner.intern(n);
+                    p.scoped(sym)
+                })
+                .collect();
+            Stmt::Unparsed { offset, registers }
         };
 
         // Optional predicate: @p / @!p; the name may be a register
@@ -1601,6 +1633,25 @@ mod tests {
         let m = parse_body("fma.rn.f32 %f1, ;\nadd.f32 %f1, %f1, %f1;");
         assert_eq!(unparsed_count(&m), 1);
         assert_eq!(instrs(&m).len(), 1); // the add survived
+    }
+
+    #[test]
+    fn an_unparsed_statement_keeps_the_registers_it_names() {
+        let m = parse_body(
+            ".reg .b32 %r<3>;\n.local .u32 a[4];\n\
+             { .reg .b32 t; ld.local.u32 t, a[1]; }\n\
+             ld.local.u32 %r1, a[%r2];\nfuture.op %tid.x;\nret;",
+        );
+        let registers: Vec<Vec<&str>> = (m.kernels[0].stmts.iter())
+            .filter_map(|s| match s {
+                Stmt::Unparsed { registers, .. } => {
+                    Some(registers.iter().map(|&r| m.interner.resolve(r)).collect())
+                }
+                _ => None,
+            })
+            .collect();
+        let none: Vec<&str> = Vec::new();
+        assert_eq!(registers, [vec!["t$scope1"], vec!["%r1", "%r2"], none]);
     }
 
     #[test]

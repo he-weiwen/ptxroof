@@ -21,3 +21,7 @@ micro/texture_outputs.ptx
 # Module-scope .func definitions are discarded (PLAN.md, calls), so ptxas
 # reports "Call to 'zero' requires call prototype".
 micro/call_returns.ptx
+
+# An array element operand is unparsed (PLAN.md, register effects), and the
+# .local array it reads is discarded.
+micro/unparsed_writes.ptx

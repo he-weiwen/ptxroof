@@ -17,7 +17,7 @@
 //! in [`super::trip_counts`].
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::register_effects::{carry, registers, split_operands, written_registers};
+use crate::analysis::register_effects::{carry, registers, split_operands, stmt_written_registers};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -74,20 +74,16 @@ impl<'a> AffineValueTracer<'a> {
         let mut defs: HashMap<Symbol, Vec<usize>> = HashMap::new();
         let mut carry_defs = Vec::new();
         for (i, stmt) in kernel.stmts.iter().enumerate() {
+            let in_cfg = (cfg.blocks.iter()).any(|b| (b.start..b.end).contains(&i));
+            if !in_cfg {
+                continue;
+            }
+            for reg in stmt_written_registers(module, stmt) {
+                defs.entry(reg).or_default().push(i);
+            }
             match stmt {
-                Stmt::Instr(instr) => {
-                    for reg in written_registers(module, instr) {
-                        defs.entry(reg).or_default().push(i);
-                    }
-                    if carry(module, instr).0 {
-                        carry_defs.push(i);
-                    }
-                }
-                Stmt::Unparsed { .. }
-                    if (cfg.blocks.iter()).any(|b| (b.start..b.end).contains(&i)) =>
-                {
-                    carry_defs.push(i)
-                }
+                Stmt::Instr(instr) if carry(module, instr).0 => carry_defs.push(i),
+                Stmt::Unparsed { .. } => carry_defs.push(i),
                 _ => {}
             }
         }
@@ -206,8 +202,7 @@ impl<'a> AffineValueTracer<'a> {
         for &b in &l.blocks {
             let blk = self.cfg.block(b);
             for (i, stmt) in self.kernel.stmts[blk.start..blk.end].iter().enumerate() {
-                let Stmt::Instr(instr) = stmt else { continue };
-                for reg in written_registers(self.module, instr) {
+                for reg in stmt_written_registers(self.module, stmt) {
                     in_loop_defs.entry(reg).or_default().push(blk.start + i);
                 }
             }
@@ -584,7 +579,7 @@ impl<'a> AffineValueTracer<'a> {
         }
 
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
-            return Err("definition is not an instruction".to_owned());
+            return Err("value defined by a statement the parser could not read".to_owned());
         };
         let mnemonic = instr.mnemonic;
         let mods: Vec<&str> = self

@@ -300,10 +300,12 @@ pub enum Stmt {
     /// `LABEL: .branchtargets L0, L1, ...;` — the jump table for a
     /// preceding `brx.idx`.
     BranchTargets(Vec<Symbol>),
-    /// A statement the parser could not understand. Counted by the
-    /// corpus-wide parse check; never poisons the kernel.
+    /// A statement the parser could not understand, with the registers
+    /// it names. Counted by the corpus-wide parse check; never poisons
+    /// the kernel.
     Unparsed {
         offset: u32,
+        registers: Vec<Symbol>,
     },
 }
 

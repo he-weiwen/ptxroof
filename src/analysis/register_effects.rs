@@ -1,6 +1,6 @@
 //! Which registers an instruction writes.
 
-use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId};
+use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Stmt};
 use crate::support::intern::Symbol;
 
 /// How many of `instr`'s leading operands it writes, `None` for a form
@@ -124,6 +124,16 @@ pub(crate) fn written_registers(module: &Module, instr: &Instr) -> Vec<Symbol> {
         .collect()
 }
 
+/// The registers statement `stmt` writes: an instruction's, or every one
+/// an unparsed statement names.
+pub(crate) fn stmt_written_registers(module: &Module, stmt: &Stmt) -> Vec<Symbol> {
+    match stmt {
+        Stmt::Instr(instr) => written_registers(module, instr),
+        Stmt::Unparsed { registers, .. } => registers.clone(),
+        _ => Vec::new(),
+    }
+}
+
 /// The registers operand `op` names: itself, the elements of a `{…}` or
 /// `p|q`, as in `tex`'s `{…}|p`, an address's base and coordinates, a
 /// selection's base, or a negated predicate.
@@ -150,7 +160,6 @@ pub(crate) fn registers(module: &Module, op: OperandId) -> Vec<Symbol> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ptx::ir::Stmt;
     use crate::ptx::parse::parser::parse;
 
     /// The registers `instr` writes, by name, and whether it is decoded.

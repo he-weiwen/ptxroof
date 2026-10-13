@@ -57,7 +57,10 @@ its shared writes and instruction counts remain counted
   register-effects decoder does not decode, a sub-operation it does
   not list (none in the corpus,
   `tests/register_effects_corpus.rs`), is taken to write every register
-  it names. The parser drops a module's `.texref` declaration
+  it names, and so is a statement the parser does not read, such as one
+  indexing an array, `lbuf[1]` (PTX ISA §6.4.2;
+  `micro/unparsed_writes.ptx`: the address after it is unknown, where
+  ptxas stores to param_0 + 20). The parser drops a module's `.texref` declaration
   (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
   'micro_texture_outputs_tex'`).
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a

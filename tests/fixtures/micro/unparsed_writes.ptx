@@ -1,0 +1,30 @@
+//
+// HAND-WRITTEN: `ld.local.u32 %r2, lbuf[1]` indexes an array (PTX ISA
+// §6.4.2), which the parser does not read, but it loads into %r2, so
+// the store's address after it is not the thread index's (ptxas 13.4:
+// `MOV R2, 0x5`, `IMAD.WIDE.U32 R2, R2, R3, c[0x0][0x160]`: every thread
+// stores to param_0 + 20).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_unparsed_writes(
+	.param .u64 micro_unparsed_writes_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+	.local .align 4 .u32 lbuf[4];
+
+	ld.param.u64 	%rd1, [micro_unparsed_writes_param_0];
+	mov.u32 	%r1, %tid.x;
+	st.local.u32 	[lbuf+4], 5;
+	mov.u32 	%r2, %r1;
+	ld.local.u32 	%r2, lbuf[1];
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
