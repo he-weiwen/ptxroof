@@ -215,7 +215,7 @@ decision, not just an arm).
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
 | 9.7.6.1 | `set` | `Predicate` | OK — produces a 0/1 value in a data register, but comparisons are not flops under the convention. |
-| 9.7.6.2 | `setp` | `Predicate` | OK for the common form. **Wart**: the optional dual-destination form `setp ... p|q, a, b` hits the parser-level `d|p` gap (verified `Unparsed`) and is silently skipped at analyze time. nvcc rarely emits it; fix with the shared `d|p` operand form (Tier 2 rider). |
+| 9.7.6.2 | `setp` | `Predicate` | OK, the dual-destination form `setp ... p|q, a, b` included: it parses as one `p|q` operand (`multiple_destination_registers`) and is counted (`micro/guards.ptx`'s `setp.lt.u32 %p2|%p8`). |
 | 9.7.6.3 | `selp` | `Predicate` | OK. |
 | 9.7.6.4 | `slct` | `Predicate` | OK. |
 
@@ -224,7 +224,7 @@ decision, not just an arm).
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
 | 9.7.7.1 | `set` (f16 variants) | `Predicate` (same arm) | OK. |
-| 9.7.7.2 | `setp` (f16 variants) | `Predicate` (same arm) | OK (same `d|p` caveat). |
+| 9.7.7.2 | `setp` (f16 variants) | `Predicate` (same arm) | OK, `p|q` included (`micro/setp_f16x2.ptx`'s `setp.lt.f16x2 %p1|%p2`). |
 
 ## §9.7.8 Logic and Shift Instructions
 

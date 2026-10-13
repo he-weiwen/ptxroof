@@ -1,5 +1,14 @@
-# Wrong output (PLAN.md): `setp.lt.u32` is read as a signed
-# comparison, %tid.x < 48. ptxas runs the store on threads 16 to 47.
+# `setp.lt.u32` compares unsigned. ptxas runs the first store on threads
+# 16 to 47, %tid.x - 16 wrapping below 16, and the second on the
+# threads with %tid.x mod 16 == 0, %tid.x << 28 wrapping above 15. An
+# unsigned comparison is read only when both operands lie in [0, 2^32)
+# on every thread, so both stores are bounds.
 RUN: %ptxroof analyze %fixtures/micro/setp_unsigned.ptx | FileCheck "%s"
-CHECK: kernel micro_setp_unsigned
-CHECK: st.global.u32  global store 4 B on 48 threads in 2 warps (%tid.x < 48)
+CHECK-LABEL: kernel micro_setp_unsigned
+CHECK: st.global.u32  global store 4 B (predicated)  warp: <= 5 sectors (ideal 4)  [4 * %tid.x + param_0]
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load 0 B, store <= 256 B
+CHECK-LABEL: kernel micro_setp_unsigned_wraps
+CHECK: st.global.u32  global store 4 B (predicated)  warp: <= 5 sectors (ideal 4)  [4 * %tid.x + param_0]
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load 0 B, store <= 256 B

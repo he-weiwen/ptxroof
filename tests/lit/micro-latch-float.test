@@ -1,0 +1,9 @@
+# The latch `setp.lt.ftz.f32` compares floats: the bits of the counter
+# and of 10 are subnormal and flushed to zero, so ptxas's loop runs
+# once. A floating-point latch is not a trip count.
+RUN: %ptxroof analyze %fixtures/micro/latch_float.ptx | FileCheck "%s"
+CHECK: kernel micro_latch_float
+CHECK: loop $L__BB0_1 ($L__BB0_1)
+CHECK-NEXT: trips = unknown: latch condition compares floating-point values
+CHECK: totals [static]:
+CHECK: global bytes: load 0 B, store 4 * trips($L__BB0_1) B

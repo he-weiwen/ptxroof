@@ -89,15 +89,6 @@ its shared writes and instruction counts remain counted
   the load at offset 0, so comparing two fields of a by-value
   aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
   threads in 2 warps`, `store 256 B` per CTA).
-- **A `setp` that selects threads is read as a signed comparison of
-  its operands' values whatever its type, and its second output as the
-  first's negation** (PTX ISA §9.7.6.2, §9.7.7.2). In
-  `micro/setp_unsigned.ptx`, `setp.lt.u32` of `%tid.x - 16` against 32
-  runs the store on threads 16 to 47 (ptxas: `ISETP.GE.U32`), read as
-  `on 48 threads in 2 warps (%tid.x < 48)`. In `micro/setp_f16x2.ptx`
-  the second output of `setp.lt.f16x2` compares the upper halves, 0 <
-  0, so the store never runs; read as `on 64 threads in 2 warps
-  (%tid.x >= 0)`.
 - **A `!=` latch with a symbolic distance is taken to meet its
   bound**: the trip solver divides the distance by the step, rounding
   down, as `src/analysis/scalar/trip_counts.rs`'s doc assumes the
@@ -106,6 +97,15 @@ its shared writes and instruction counts remain counted
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
   stepping by 2 from 0 while `!= 5`, reads `trips = unknown`, where the
   loop does not exit.
+- **A loop whose latch is false at its first evaluation gets a trip
+  count below one.** In `micro/latch_exits_first.ptx` a counter from
+  10 is compared below 5 (`setp.lt.s32`): the body runs once (ptxas
+  13.4, and on an RTX 4090), read as `trips = -5` and `store -40 B`;
+  the same loop against a parameter reads `trips = param_1 - 10`, -5
+  with `--bind 1:n=5`. The count is 1 when the loop is entered and 0
+  when a guard skips it, as for nvcc's remainder loop at K = 4096
+  (`k2-bind.test`: `trips = 0`); the trip matcher does not read the
+  guard.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason. Not read: xor swizzles of shared addresses (every ldmatrix
   and cp.async destination in the Gluon GEMM and attention kernels,
@@ -142,7 +142,9 @@ its shared writes and instruction counts remain counted
   data-dependent bounds, multi-exit loops, inner loops bounded by an
   enclosing loop's counter (`micro/triangular.ptx`), a latch `setp`
   that combines its comparison with a predicate
-  (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`), and the attention kernels'
+  (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
+  compares floats (`micro/latch_float.ptx`: "latch condition compares
+  floating-point values"), and the attention kernels'
   causal loops, bounded by the CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. Bounds the
@@ -189,6 +191,17 @@ its shared writes and instruction counts remain counted
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare
   (`a_value_from_a_cycle_with_two_entries_is_divergent_after_it`).
+- **`setp`s not read as thread selectors.** A floating-point `setp`
+  compares floats, not the traced integer forms, and `.f16x2` and
+  `.bf16x2` each half on its own (PTX ISA §9.7.6.2, §9.7.7.2); an
+  `lt`, `le`, `gt` or `ge` is read only when both operands lie in the
+  range of its type, [0, 2^width) or [−2^(width−1), 2^(width−1)), for
+  every `%tid` below 1024 (§10.2), so not on a CTA index (b200
+  `tut_sg_prefixdense`'s `128·%ctaid.x + 64 < 128·%ctaid.x + 128`); an
+  `eq` or `ne` only when their difference lies in (−2^width, 2^width).
+  Otherwise what it guards is a bound (`micro/setp_float.ptx`,
+  `micro/setp_f16x2.ptx`, `micro/setp_unsigned.ptx`,
+  `micro/setp_wraps.ptx`: `(predicated)`, `store <= 256 B`).
 
 ### Presentation
 
@@ -264,13 +277,15 @@ its shared writes and instruction counts remain counted
   MLA, a block-scaled GEMM), and hand-written micro kernels. clang is
   untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 61 of the 70 fixtures. k14's is
-  rejected because the in-kernel `.local` depot declaration is
-  discarded; assembler diagnostics can vary (the current round trip reports
-  `Arguments mismatch for instruction 'mov'`). k1's and k2's assemble to
-  different SASS because `.pragma "nounroll";` is discarded, so ptxas
-  unrolls the loop it annotated. Five B200 TMA kernels lose their
-  tensor coordinates (above). These are allowlisted in
+  identical to the original's for 87 of the 96 fixtures
+  (`tests/lit.sh -v tests/lit/roundtrip`, ptxas 13.4). k14's and
+  `micro/address_operands.ptx`'s are rejected because the in-kernel
+  `.local` declaration is discarded (`Unknown symbol
+  '__local_depot0'`, `'lbuf'`). k1's and k2's assemble to different
+  SASS because `.pragma "nounroll";` is discarded, so ptxas unrolls
+  the loop it annotated. `micro/texture_outputs.ptx`,
+  `call_returns.ptx`, `unparsed_writes.ptx` and `vector_register.ptx`
+  lose what the parser drops (above). These are allowlisted in
   `tests/roundtrip-allowlist.txt`. One lit test per fixture
   (`tests/lit/roundtrip`), unsupported without the toolkit or when
   ptxas rejects the fixture's `.version` as newer than its own.

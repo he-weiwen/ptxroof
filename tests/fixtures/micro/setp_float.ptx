@@ -1,0 +1,60 @@
+//
+// HAND-WRITTEN: `setp.lt.f32` compares floating-point values, false when
+// either is NaN (PTX ISA §9.7.6.2). In the first kernel the registers
+// hold the bits of %tid.x - 16 and of 32: below thread 16 a NaN, from
+// 16 to 47 zero or a subnormal below that of 32, so only those store
+// (ptxas 13.4: `IADD3 R0, R5, -0x10, RZ`, `FSETP.GEU.AND P0, PT, R0,
+// 4.484155085839414627e-44, PT`, `@P0 EXIT`). In the second they hold
+// 2^24 + %tid.x and 2^24 + 1 rounded to nearest even (§9.7.9.22), at
+// least 2^24 and 2^24, so no thread stores (ptxas 13.4: `I2FP.F32.U32
+// R0, R0`, `FSETP.GEU.AND P0, PT, R0, 16777216, PT`, `@P0 EXIT`).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_setp_float_bits(
+	.param .u64 micro_setp_float_bits_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<4>;
+	.reg .f32 	%f<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_setp_float_bits_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s32 	%r2, %r1, -16;
+	mov.b32 	%f1, %r2;
+	mov.b32 	%r3, 32;
+	mov.b32 	%f2, %r3;
+	setp.lt.f32 	%p1, %f1, %f2;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_setp_float_cvt(
+	.param .u64 micro_setp_float_cvt_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<4>;
+	.reg .f32 	%f<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_setp_float_cvt_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s32 	%r2, %r1, 16777216;
+	cvt.rn.f32.u32 	%f1, %r2;
+	mov.u32 	%r3, 16777217;
+	cvt.rn.f32.u32 	%f2, %r3;
+	setp.lt.f32 	%p1, %f1, %f2;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r1;
+	ret;
+}

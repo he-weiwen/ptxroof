@@ -10,7 +10,7 @@
 //! same for every thread empties or keeps whole warps.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::scalar::affine::{Affine, Var};
+use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval_lane};
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::uniformity::Uniformity;
@@ -306,6 +306,28 @@ fn on_lane_only(a: &Affine) -> bool {
                 && matches!(v, Var::Tid(_) | Var::Div(..) | Var::Mod(..))
                 && depends_on_lane(v)
         })
+}
+
+/// The least and the greatest value of a form over the thread index
+/// alone, on any block.
+fn range(a: &Affine) -> Option<(i64, i64)> {
+    let base = a.base.as_const()?;
+    a.terms.iter().try_fold((base, base), |(lo, hi), (v, c)| {
+        let top = c.as_const()?.checked_mul(largest(v)?)?;
+        Some((lo.checked_add(top.min(0))?, hi.checked_add(top.max(0))?))
+    })
+}
+
+/// PTX ISA §10.1, §10.2: `%tid.x` and `%tid.y` are below 1024 and
+/// `%tid.z` below 64 on every target.
+fn largest(v: &Var) -> Option<i64> {
+    match v {
+        Var::Tid(Axis::Z) => Some(63),
+        Var::Tid(_) => Some(1023),
+        Var::Div(inner, d) => Some(largest(inner)? / d),
+        Var::Mod(inner, m) => Some(largest(inner)?.min(m - 1)),
+        Var::Ctaid(_) | Var::Iter(_) => None,
+    }
 }
 
 impl Constraint {
@@ -668,9 +690,13 @@ pub(crate) fn thread_sets(
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, when it
-/// compares two such forms. A form free of the thread index whose
-/// comparison the uniformity analysis finds divergent was read wrong
-/// (through a guarded write), and is none.
+/// compares two such forms as integers: an `lt`, `le`, `gt` or `ge`
+/// only when both lie in the range of its type, [0, 2^width) or
+/// [−2^(width−1), 2^(width−1)), on every thread, an `eq` or `ne` only
+/// when `a − b` lies in (−2^width, 2^width), so that it is zero
+/// exactly when it is zero modulo 2^width. A form free of the thread
+/// index whose comparison the uniformity analysis finds divergent was
+/// read wrong (through a guarded write), and is none.
 fn condition(
     module: &Module,
     kernel: &Kernel,
@@ -687,10 +713,12 @@ fn condition(
         .map(|&m| module.interner.resolve(m))
         .collect();
     let cmp = mods.first()?.to_string();
+    let ty = *mods.last()?;
+    // PTX ISA §9.7.6.2, §9.7.7.2: a floating-point `setp` compares floats, a packed one per half.
     if !matches!(cmp.as_str(), "lt" | "le" | "gt" | "ge" | "eq" | "ne")
-        || mods
-            .iter()
-            .any(|m| *m == "and" || *m == "or" || *m == "xor")
+        || ty.starts_with('f')
+        || ty.starts_with("bf")
+        || mods.iter().any(|m| matches!(*m, "and" | "or" | "xor"))
     {
         return None;
     }
@@ -700,11 +728,25 @@ fn condition(
     }
     let a = tracer.trace_operand(ops[1], def, None, 0).ok()?;
     let b = tracer.trace_operand(ops[2], def, None, 0).ok()?;
-    let form = a - b;
+    let form = a.clone() - b.clone();
+    let fits = |x: &Affine, min: i128, end: i128| {
+        range(x).is_some_and(|(lo, hi)| min <= lo.into() && i128::from(hi) < end)
+    };
+    let (sign, width) = ty.split_at_checked(1).unwrap_or_default();
+    let comparable = width
+        .parse::<u32>()
+        .is_ok_and(|w| match (cmp.as_str(), sign) {
+            ("eq" | "ne", _) => fits(&form, 1 - (1 << w), 1 << w),
+            (_, "u") => fits(&a, 0, 1 << w) && fits(&b, 0, 1 << w),
+            (_, "s") => {
+                fits(&a, -1 << (w - 1), 1 << (w - 1)) && fits(&b, -1 << (w - 1), 1 << (w - 1))
+            }
+            _ => false,
+        });
     let lanes = form.terms.keys().any(depends_on_lane);
     if !lanes && !uniformity.is_uniform_def(def) {
         None
-    } else if on_lane_only(&form) {
+    } else if on_lane_only(&form) && comparable {
         Some(Pred::Cmp(Constraint { form, cmp }))
     } else if !lanes {
         Some(Pred::Uniform)

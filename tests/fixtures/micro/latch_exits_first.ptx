@@ -1,0 +1,61 @@
+//
+// HAND-WRITTEN: do-while loops whose latch `setp.lt.s32` (PTX ISA
+// §9.7.6.2) is false at its first evaluation, so the body runs once.
+// The first counts from 10 against 5 (ptxas 13.4: `IADD3 R7, R7, 0x1,
+// RZ`, `ISETP.GE.AND P0, PT, R7, 0x5, PT`, two `STG.E`, `@!P0 BRA`);
+// the second against its parameter (ptxas 13.4 unrolls it, its last
+// test `ISETP.LT.OR P0, PT, R7, c[0x0][0x168], P0`). On an RTX 4090
+// both store 11 and the count 1, the second launched with 5; with 20
+// it stores 20 and 10. Both kernels take the same parameters, so one
+// --bind covers them.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_latch_exits_first(
+	.param .u64 micro_latch_exits_first_param_0,
+	.param .u32 micro_latch_exits_first_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_latch_exits_first_param_0];
+	mov.u32 	%r4, 0;
+	mov.u32 	%r1, 10;
+$L__BB0_1:
+	add.s32 	%r1, %r1, 1;
+	add.s32 	%r4, %r4, 1;
+	st.global.u32 	[%rd1], %r1;
+	st.global.u32 	[%rd1+4], %r4;
+	setp.lt.s32 	%p1, %r1, 5;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}
+
+.visible .entry micro_latch_exits_first_param(
+	.param .u64 micro_latch_exits_first_param_param_0,
+	.param .u32 micro_latch_exits_first_param_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_latch_exits_first_param_param_0];
+	ld.param.u32 	%r5, [micro_latch_exits_first_param_param_1];
+	mov.u32 	%r4, 0;
+	mov.u32 	%r1, 10;
+$L__BB1_1:
+	add.s32 	%r1, %r1, 1;
+	add.s32 	%r4, %r4, 1;
+	st.global.u32 	[%rd1], %r1;
+	st.global.u32 	[%rd1+4], %r4;
+	setp.lt.s32 	%p1, %r1, %r5;
+	@%p1 bra 	$L__BB1_1;
+	ret;
+}
