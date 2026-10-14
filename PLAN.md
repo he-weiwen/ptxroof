@@ -242,6 +242,19 @@ its shared writes and instruction counts remain counted
   Otherwise what it guards is a bound (`micro/setp_float.ptx`,
   `micro/setp_f16x2.ptx`, `micro/setp_unsigned.ptx`,
   `micro/setp_wraps.ptx`: `(predicated)`, `store <= 256 B`).
+- **A guard comparing the thread index with a CTA index, a parameter
+  or a loop counter is an unknown selector.** Only a comparison of
+  thread-index terms with a constant is read
+  (`src/analysis/thread_participation.rs`, `on_lane_only`), and no grid
+  is bound, so the masks Triton builds from `pid·BLOCK + arange`
+  against a parameter leave what they guard a bound, with `--bind` too.
+  In b200 `set_mla_kv_buffer_kernel_norope`, `8·(%tid.x mod 128) +
+  1024·%ctaid.y < 576` guards a 16 B load and store: its record (grid
+  8192×1×1, so `%ctaid.y` is 0) executes the store 589,824 times, 72
+  threads in each CTA, where the report says `<= 1048576`, all 128
+  (`b200-mixed-index-guard.test`). A guard on a loaded value is one as
+  well (`micro/guards.ptx`: the store total stays a bound). The census
+  counts by cause are in the message of the commit that adds this entry.
 
 ### Presentation
 

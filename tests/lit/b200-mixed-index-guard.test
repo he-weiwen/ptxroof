@@ -1,0 +1,12 @@
+# A guard comparing the thread index with a CTA index is an unknown
+# selector (PLAN.md, "Reported as unknowns"). In set_mla_kv_buffer_kernel_norope
+# `8·(%tid.x mod 128) + 1024·%ctaid.y < 576` guards a 16 B load and
+# store. The record's grid is 8192x1x1, so %ctaid.y is 0 and the store
+# runs on 72 threads of each CTA, 589824 times; the report bounds it by
+# all 128.
+RUN: %ptxroof analyze %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json | FileCheck "%s"
+CHECK: kernel set_mla_kv_buffer_kernel_norope
+CHECK: st.global.v4.b32  global store 16 B (predicated)
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load <= 3072 B, store <= 2048 B
+CHECK: line 93: @%p1 st.global.v4.b32 [ %rd4 + 0 ], { %r1, %r2, %r3, %r4 };  predicted <= 1048576, measured 589824  (STG.E.128 x1)
