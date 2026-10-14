@@ -250,6 +250,14 @@ U4. Overlapping bases, as above. Expected: the fp8 GEMM's K loop exact
     exact), `p + (q − p)·%ctaid.x` beside `q`, a 64-bit uniform base
     beside `p`, and a module-scope array beside `p` (ranges), and `u`
     computed in an outer loop for an inner one (exact for the inner).
+    Done: under the lit tests' bindings the fp8 GEMM's K loops read
+    `unique <= 196608 B` (c_fc) and `<= 12582912 B` (lm_head_dx), both
+    ends equal, where they read unknown; `micro/one_pointer_two_bases.ptx`
+    reads 16–32 B and `micro/uniform_counter.ptx`'s two loops over a
+    counter starting at u read 1024 B; JSON's `unique` is `{min, max}`.
+    No other output changed. The module-scope array's kernel is
+    `micro/uniform_bases_global.ptx`, apart because the parser drops
+    `.global` declarations, so it does not round-trip.
 
 PLAN's "uniform(v)" missing-feature entry points here while the steps
 land.

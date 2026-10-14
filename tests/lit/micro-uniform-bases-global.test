@@ -1,0 +1,7 @@
+# A module-scope array beside a pointer parameter, 512 distinct bytes
+# each: the parameter may point into the array, so the base on the
+# array has no known pointer and the unique bytes are 512 to 1024.
+RUN: %ptxroof analyze %fixtures/micro/uniform_bases_global.ptx | FileCheck "%s"
+CHECK: kernel micro_bases_global_array
+CHECK: [4 * %tid.x + 128 * k[$L__BB6_1] + gbuf - 128]
+CHECK: global bytes per CTA over the loop's own blocks: requested 1024 B, unique 512–1024 B, in sectors 1024–1280 B

@@ -1,0 +1,40 @@
+//
+// HAND-WRITTEN: micro/uniform_bases.ptx's loop of 4 trips over 32
+// threads, storing a word at gbuf + 4·(%tid.x + 32·k), a module-scope
+// array, and at p + 4·(%tid.x + 32·k): 512 to 1024 distinct bytes, as
+// p may point into gbuf. The parser drops the `.global` declaration
+// (tests/roundtrip-allowlist.txt).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.global .align 4 .b8 gbuf[8192];
+
+.visible .entry micro_bases_global_array(
+	.param .u64 micro_bases_global_array_param_0,
+	.param .u64 micro_bases_global_array_param_1,
+	.param .u32 micro_bases_global_array_param_2
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<12>;
+	.reg .b64 	%rd<12>;
+
+	ld.param.u64 	%rd1, [micro_bases_global_array_param_0];
+	mov.u64 	%rd6, gbuf;
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r3, 0;
+$L__BB6_1:
+	mad.lo.s32 	%r8, %r3, 32, %r2;
+	mul.wide.u32 	%rd2, %r8, 4;
+	add.s64 	%rd3, %rd6, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	add.s64 	%rd5, %rd1, %rd2;
+	st.global.u32 	[%rd5], %r2;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB6_1;
+	ret;
+}

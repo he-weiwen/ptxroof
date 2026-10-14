@@ -1,0 +1,25 @@
+# Loop footprints over bases holding uniform variables, 512 distinct
+# bytes each. Bases on one pointer that may coincide give a range, at
+# least the largest and at most the sum; two pointers are summed; one
+# base at overlapping offsets is unioned; a base whose coefficient names
+# another pointer and a 64-bit uniform base have no known pointer and
+# give a range; under a guard both ends are upper
+# bounds; a uniform value an outer loop computes is fixed in the inner.
+RUN: %ptxroof analyze %fixtures/micro/uniform_bases.ptx | FileCheck "%s"
+CHECK-LABEL: kernel micro_bases_one_pointer
+CHECK: global bytes per CTA over the loop's own blocks: requested 1024 B, unique 512–1024 B, in sectors 1024–1280 B
+CHECK-LABEL: kernel micro_bases_one_pointer_guarded
+CHECK: global bytes per CTA over the loop's own blocks: requested <= 1024 B, unique <= 512–1024 B, in sectors <= 1024–1280 B
+CHECK-LABEL: kernel micro_bases_two_pointers
+CHECK: global bytes per CTA over the loop's own blocks: requested 1024 B, unique 1024 B, in sectors 1024–1280 B
+CHECK-LABEL: kernel micro_bases_overlapping_offsets
+CHECK: global bytes per CTA over the loop's own blocks: requested 1024 B, unique 576 B, in sectors 1024–1280 B
+CHECK-LABEL: kernel micro_bases_pointer_in_coefficient
+CHECK: [4 * %tid.x + (param_1 - param_0) * %ctaid.x + 128 * k[$L__BB4_1] + param_0 - 128]
+CHECK: global bytes per CTA over the loop's own blocks: requested 1024 B, unique 512–1024 B, in sectors 1024–1280 B
+CHECK-LABEL: kernel micro_bases_wide_uniform
+CHECK: [4 * %tid.x + 128 * k[$L__BB5_1] + uniform(%rd7@211) - 128]
+CHECK: global bytes per CTA over the loop's own blocks: requested 1024 B, unique 512–1024 B, in sectors 1024–1280 B
+CHECK-LABEL: kernel micro_bases_outer_uniform
+CHECK: k[$L__BB7_2]: +128 B/iter, k[$L__BB7_1]: varies
+CHECK: global bytes per CTA over the loop's own blocks: requested 512 B, unique 512 B, in sectors 512–640 B

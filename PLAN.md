@@ -71,7 +71,9 @@ its shared writes and instruction counts remain counted
   it names, and so is a statement the parser does not read, such as one
   indexing an array, `lbuf[1]` (PTX ISA §6.4.2;
   `micro/unparsed_writes.ptx`: the address after it is unknown, where
-  ptxas stores to param_0 + 20). The parser drops a module's `.texref` declaration
+  ptxas stores to param_0 + 20). The parser drops a module's `.global`
+  variable declarations (`micro/uniform_bases_global.ptx` does not
+  round-trip: `Unknown symbol 'gbuf'`) and its `.texref` declaration
   (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
   'micro_texture_outputs_tex'`).
   The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a
@@ -152,19 +154,18 @@ its shared writes and instruction counts remain counted
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
   (`micro/offsets_wide.ptx`: `warp: ? (lane offsets reach 2^62
   bytes)`; `requested 32 B, unique unknown` for 8 distinct stores).
-- **A loop footprint takes an address holding a uniform variable as
-  unread**: requested bytes only, unique and sector bytes unknown, also
-  for a variable the loop does not change (`micro/uniform_counter.ptx`,
-  `micro_uniform_start_copy`: requested 1024 B, unique unknown).
-  Reading it needs a rule for bases that may overlap
-  (`docs/uniform-variables.md`, "Open").
+- **A loop footprint takes an address holding a uniform variable the
+  loop computes as unread**: requested bytes only, unique and sector
+  bytes unknown (`micro/uniform_address.ptx`, `micro_uniform_in_loop`:
+  requested 2048 B, unique unknown).
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B
   unique for the 131,072 B requested; aliasing would halve it), and
-  so bases on one pointer that differ by an unbound parameter
-  (`micro/one_pointer_two_bases.ptx`: a[k] and a[k + n] count 32 B
-  unique, 16 B with `--bind 1:n=0`), count
+  an offset from a pointer to stay in its allocation; bases on one
+  pointer, or naming no single pointer, may overlap and give a range
+  (`micro/one_pointer_two_bases.ptx`: a[k] and a[k + n] count
+  16–32 B, 16 B with `--bind 1:n=0`; `micro/uniform_bases.ptx`), count
   the loop's own blocks only, and need a numeric trip count, the block
   shape, constant lane and counter coefficients, and every access's
   address (else `unique unknown`, `micro/footprint_unknown.ptx`). k5's K loop at
@@ -399,9 +400,9 @@ its shared writes and instruction counts remain counted
 
 - A value the tracer cannot read but every thread of the CTA shares as
   an affine variable, `uniform(v)`, keyed by its register SSA value:
-  addresses read it (`docs/uniform-variables.md`, steps U1–U3); loop
-  footprints, trip counts and thread selectors do not, the first
-  pending the owner's rule for overlapping bases. Register SSA itself
+  addresses and loop footprints read it (`docs/uniform-variables.md`,
+  steps U1–U4); trip counts and thread selectors do not. Register SSA
+  itself
   (`src/ssa.rs`) is what the tracer, the uniformity analysis, trip
   counting and the predicate reader read.
 

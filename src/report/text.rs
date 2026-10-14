@@ -336,7 +336,8 @@ fn render_loop(w: &mut String, l: &LoopNode, depth: usize) {
             None => String::new(),
         };
         let unique = match b.unique {
-            Some(u) => format!("{bound}{u} B"),
+            Some(u) if u.min == u.max => format!("{bound}{} B", u.min),
+            Some(u) => format!("{bound}{}–{} B", u.min, u.max),
             None => "unknown".to_owned(),
         };
         let _ = writeln!(

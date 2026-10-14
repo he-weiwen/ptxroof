@@ -438,6 +438,10 @@ impl KernelReportBuilder<'_> {
                         None => (None, None, None),
                     };
                     if let Some(b) = bytes.filter(|_| !self.unused[pos]) {
+                        let uniform_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
+                            v.uniform()
+                                .is_some_and(|u| scope.is_some_and(|l| defined_in(u, l)))
+                        });
                         forms.entry(scope).or_default().push(AccessForm {
                             form: form.clone(),
                             bytes: b,
@@ -446,6 +450,7 @@ impl KernelReportBuilder<'_> {
                             set: set.clone(),
                             guard_exact,
                             conditional,
+                            uniform_varies,
                         });
                     }
                     let mut reuse = Vec::new();
@@ -515,6 +520,26 @@ struct AccessForm {
     /// The block may not run on every iteration of its loop, and no
     /// thread-index selection explains that.
     conditional: bool,
+    /// The address holds a uniform variable defined in its loop.
+    uniform_varies: bool,
+}
+
+/// The bytes the half-open intervals cover.
+fn union_len(mut intervals: Vec<(i64, i64)>) -> i64 {
+    intervals.sort_unstable();
+    let mut len = 0;
+    let mut cur: Option<(i64, i64)> = None;
+    for (s, e) in intervals {
+        match cur {
+            Some((cs, ce)) if s <= ce => cur = Some((cs, ce.max(e))),
+            Some((cs, ce)) => {
+                len += ce - cs;
+                cur = Some((s, e));
+            }
+            None => cur = Some((s, e)),
+        }
+    }
+    len + cur.map_or(0, |(cs, ce)| ce - cs)
 }
 
 /// `v` at trip `k` of loop `id`, when `v` is that loop's counter or a
@@ -958,9 +983,11 @@ impl<'a> KernelReportBuilder<'a> {
     /// Global bytes one CTA requests over one execution of loop `id`'s
     /// own blocks, and the distinct bytes they touch: every lane of every
     /// executing thread at every iteration, as intervals merged per
-    /// base (the form without its lane, counter and constant parts:
-    /// forms on different pointers are assumed disjoint). Needs a
-    /// numeric trip count, the block shape, and every global address's
+    /// base (the form without its lane, counter and constant parts).
+    /// Bases on different pointers are assumed disjoint; bases on one
+    /// pointer, or on none known, may overlap, so the distinct bytes are
+    /// at most their sum and at least the largest on each pointer. Needs
+    /// a numeric trip count, the block shape, and every global address's
     /// lane and counter coefficients as constants.
     fn loop_bytes(&self, id: LoopId) -> Option<LoopBytes> {
         let trips = self.trip_exprs[id.0 as usize]
@@ -1000,9 +1027,7 @@ impl<'a> KernelReportBuilder<'a> {
                 Var::Iter(l) if *l == id => Some((0, trips)),
                 _ => in_block(self.shape)(v),
             };
-            let read = |a: &&Affine| {
-                offsets_fit(a, varies, &bound) && !a.terms.keys().any(|v| v.uniform().is_some())
-            };
+            let read = |a: &&Affine| offsets_fit(a, varies, &bound) && !f.uniform_varies;
             let Some(form) = (f.form.as_ref()).filter(read) else {
                 complete &= f.bytes == 0 || lanes == 0;
                 continue;
@@ -1086,24 +1111,23 @@ impl<'a> KernelReportBuilder<'a> {
                 }
             }
         }
-        let mut unique = 0i64;
-        for mut intervals in per_base.into_values() {
-            intervals.sort_unstable();
-            let mut cur: Option<(i64, i64)> = None;
-            for (s, e) in intervals {
-                match cur {
-                    Some((cs, ce)) if s <= ce => cur = Some((cs, ce.max(e))),
-                    Some((cs, ce)) => {
-                        unique += ce - cs;
-                        cur = Some((s, e));
-                    }
-                    None => cur = Some((s, e)),
+        let (mut most, mut loose) = (0i64, 0i64);
+        let mut largest: HashMap<String, i64> = HashMap::new();
+        for (key, intervals) in per_base {
+            let len = union_len(intervals);
+            most += len;
+            match self.pointer(&key) {
+                Some(p) => {
+                    let m = largest.entry(p).or_default();
+                    *m = (*m).max(len);
                 }
-            }
-            if let Some((cs, ce)) = cur {
-                unique += ce - cs;
+                None => loose = loose.max(len),
             }
         }
+        let unique = ByteRange {
+            min: largest.values().sum::<i64>().max(loose) as u64,
+            max: most as u64,
+        };
         let mut sector_bytes = Some(ByteRange { min: 0, max: 0 });
         for pats in patterns.values() {
             let totals: Vec<u64> = (0..SECTOR)
@@ -1120,10 +1144,76 @@ impl<'a> KernelReportBuilder<'a> {
         }
         Some(LoopBytes {
             requested,
-            unique: complete.then_some(unique as u64),
+            unique: complete.then_some(unique),
             sector_bytes: sector_bytes.filter(|_| complete),
             at_most,
         })
+    }
+
+    /// The pointer a loop footprint's base sits on: the one 64-bit
+    /// parameter it names, with coefficient 1 in its symbolic part, when
+    /// it names no other address (a parameter in a coefficient, a
+    /// module-scope array) and no 64-bit uniform value. An offset from a
+    /// pointer is taken to stay in its allocation.
+    fn pointer(&self, key: &Affine) -> Option<String> {
+        let pointer = |name: &str| {
+            (name
+                .strip_prefix("param_")
+                .and_then(|i| i.parse::<usize>().ok()))
+            .and_then(|i| self.kernel.params.get(i))
+            .is_some_and(|p| p.ty.bytes() == Some(8))
+        };
+        let address =
+            |name: &String| pointer(name) || !(name.starts_with("param_") || name.starts_with('%'));
+        let mut coefficients = Vec::new();
+        for (v, c) in &key.terms {
+            let wide = v.uniform().is_some_and(|u| {
+                let (Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg)) =
+                    u;
+                !matches!(self.register_bytes(reg), Some(1 | 2 | 4))
+            });
+            if wide {
+                return None;
+            }
+            coefficients.extend(c.symbols());
+        }
+        if coefficients.iter().any(address) {
+            return None;
+        }
+        let [p] = &key
+            .base
+            .symbols()
+            .into_iter()
+            .filter(address)
+            .collect::<Vec<_>>()[..]
+        else {
+            return None;
+        };
+        let direct = match &key.base {
+            SymExpr::Sym(n) => n == p,
+            SymExpr::Sum(ts) => ts.iter().any(|t| matches!(t, SymExpr::Sym(n) if n == p)),
+            _ => false,
+        };
+        (direct && pointer(p)).then(|| p.clone())
+    }
+
+    /// The bytes a register's declaration gives it.
+    fn register_bytes(&self, reg: Register) -> Option<u32> {
+        let Register::Named(reg) = reg else {
+            return None;
+        };
+        let name = self.module.interner.resolve(reg);
+        (self.kernel.reg_decls.iter())
+            .find(|d| {
+                let prefix = self.module.interner.resolve(d.prefix);
+                match d.count {
+                    Some(_) => name
+                        .strip_prefix(prefix)
+                        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+                    None => name == prefix,
+                }
+            })
+            .and_then(|d| d.class.bytes())
     }
 
     /// The threads a set selects, when a thread-index condition does.
@@ -2033,7 +2123,10 @@ mod tests {
             r.kernels[0].loops[0].global_bytes_per_cta,
             Some(LoopBytes {
                 requested: 2048,
-                unique: Some(1028),
+                unique: Some(ByteRange {
+                    min: 1028,
+                    max: 1028
+                }),
                 sector_bytes: Some(ByteRange {
                     min: 1280,
                     max: 1536
@@ -2048,7 +2141,10 @@ mod tests {
             r.kernels[0].loops[0].global_bytes_per_cta,
             Some(LoopBytes {
                 requested: 2016,
-                unique: Some(1028),
+                unique: Some(ByteRange {
+                    min: 1028,
+                    max: 1028
+                }),
                 sector_bytes: Some(ByteRange {
                     min: 1280,
                     max: 1536
@@ -2067,7 +2163,16 @@ mod tests {
             .clone()
             .expect("still enumerable");
         assert!(b.at_most);
-        assert_eq!((b.requested, b.unique), (2048, Some(1028)));
+        assert_eq!(
+            (b.requested, b.unique),
+            (
+                2048,
+                Some(ByteRange {
+                    min: 1028,
+                    max: 1028
+                })
+            )
+        );
         // The second load in a block a loaded value skips: a bound even
         // though it is not guarded.
         let branched = src.replace(
@@ -2081,7 +2186,16 @@ mod tests {
             .clone()
             .expect("still enumerable");
         assert!(b.at_most);
-        assert_eq!((b.requested, b.unique), (3072, Some(1028)));
+        assert_eq!(
+            (b.requested, b.unique),
+            (
+                3072,
+                Some(ByteRange {
+                    min: 1028,
+                    max: 1028
+                })
+            )
+        );
         let src = src.replace(".reqntid 32, 1, 1\n", "");
         let r = analyze(&src, "t", &opts).expect("analyzes");
         assert_eq!(r.kernels[0].loops[0].global_bytes_per_cta, None);
@@ -2143,7 +2257,10 @@ mod tests {
                    cp.async.wait_all;\nret;\n}\n";
         let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
         let b = (r.kernels[0].loops[0].global_bytes_per_cta.clone()).expect("enumerable");
-        assert_eq!((b.requested, b.unique), (512, Some(8)));
+        assert_eq!(
+            (b.requested, b.unique),
+            (512, Some(ByteRange { min: 8, max: 8 }))
+        );
     }
 
     #[test]

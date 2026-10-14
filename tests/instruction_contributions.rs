@@ -7,7 +7,7 @@ use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
-use ptxroof::report::schema::{ContributionDetails, InstructionVariant};
+use ptxroof::report::schema::{ByteRange, ContributionDetails, InstructionVariant};
 use ptxroof::report::{AnalyzeOptions, analyze, text};
 
 fn source(body: &str) -> String {
@@ -273,7 +273,7 @@ L:
         if launch.is_some() {
             let bytes = loop_node.global_bytes_per_cta.as_ref().unwrap();
             assert_eq!(bytes.requested, 0);
-            assert_eq!(bytes.unique, Some(0));
+            assert_eq!(bytes.unique, Some(ByteRange { min: 0, max: 0 }));
             let sectors = bytes.sector_bytes.as_ref().unwrap();
             assert_eq!((sectors.min, sectors.max), (0, 0));
             let cta = kernel.totals_per_cta.as_ref().unwrap();

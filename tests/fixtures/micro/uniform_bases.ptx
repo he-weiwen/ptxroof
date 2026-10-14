@@ -1,0 +1,259 @@
+//
+// HAND-WRITTEN: loops of 4 trips over 32 threads, each storing a word
+// at base + 4·(%tid.x + 32·k) for k = 0 to 3, 512 distinct bytes per
+// base, with u = %ctaid.x / param_2 and w = %ctaid.y / param_2 uniform
+// values the tracer does not read:
+// - micro_bases_one_pointer: p + 512·u and p + 512·w, which coincide
+//   when u = w: 512 to 1024 distinct bytes;
+// - micro_bases_one_pointer_guarded: the same under a guard on
+//   %ctaid.x < param_3;
+// - micro_bases_two_pointers: p + 512·u and q + 512·u: 1024;
+// - micro_bases_overlapping_offsets: p + 512·u and the same 64 bytes on:
+//   576;
+// - micro_bases_pointer_in_coefficient: p + (q − p)·%ctaid.x, which is q
+//   at CTA 1, and q: 512 to 1024;
+// - micro_bases_wide_uniform: a `selp.b64` of p and q on a uniform
+//   predicate, and p: 512 to 1024 (a module-scope array beside p is
+//   micro/uniform_bases_global.ptx);
+// - micro_bases_outer_uniform: u recomputed in an outer loop of 2 trips
+//   from %ctaid.x plus its counter, read in the inner loop: 512 per
+//   inner execution.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_bases_one_pointer(
+	.param .u64 micro_bases_one_pointer_param_0,
+	.param .u64 micro_bases_one_pointer_param_1,
+	.param .u32 micro_bases_one_pointer_param_2
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<12>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_bases_one_pointer_param_0];
+	ld.param.u32 	%r1, [micro_bases_one_pointer_param_2];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r4, %ctaid.x;
+	div.u32 	%r5, %r4, %r1;
+	mov.u32 	%r6, %ctaid.y;
+	div.u32 	%r7, %r6, %r1;
+	mov.u32 	%r3, 0;
+$L__BB0_1:
+	mad.lo.s32 	%r8, %r3, 32, %r2;
+	mad.lo.s32 	%r9, %r5, 128, %r8;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	mad.lo.s32 	%r10, %r7, 128, %r8;
+	mul.wide.u32 	%rd4, %r10, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r2;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}
+
+.visible .entry micro_bases_one_pointer_guarded(
+	.param .u64 micro_bases_one_pointer_guarded_param_0,
+	.param .u64 micro_bases_one_pointer_guarded_param_1,
+	.param .u32 micro_bases_one_pointer_guarded_param_2,
+	.param .u32 micro_bases_one_pointer_guarded_param_3
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<12>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_bases_one_pointer_guarded_param_0];
+	ld.param.u32 	%r1, [micro_bases_one_pointer_guarded_param_2];
+	ld.param.u32 	%r11, [micro_bases_one_pointer_guarded_param_3];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r4, %ctaid.x;
+	setp.lt.u32 	%p2, %r4, %r11;
+	div.u32 	%r5, %r4, %r1;
+	mov.u32 	%r6, %ctaid.y;
+	div.u32 	%r7, %r6, %r1;
+	mov.u32 	%r3, 0;
+$L__BB1_1:
+	mad.lo.s32 	%r8, %r3, 32, %r2;
+	mad.lo.s32 	%r9, %r5, 128, %r8;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p2 st.global.u32 	[%rd3], %r2;
+	mad.lo.s32 	%r10, %r7, 128, %r8;
+	mul.wide.u32 	%rd4, %r10, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	@%p2 st.global.u32 	[%rd5], %r2;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB1_1;
+	ret;
+}
+
+.visible .entry micro_bases_two_pointers(
+	.param .u64 micro_bases_two_pointers_param_0,
+	.param .u64 micro_bases_two_pointers_param_1,
+	.param .u32 micro_bases_two_pointers_param_2
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<12>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_bases_two_pointers_param_0];
+	ld.param.u64 	%rd6, [micro_bases_two_pointers_param_1];
+	ld.param.u32 	%r1, [micro_bases_two_pointers_param_2];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r4, %ctaid.x;
+	div.u32 	%r5, %r4, %r1;
+	mov.u32 	%r3, 0;
+$L__BB2_1:
+	mad.lo.s32 	%r8, %r3, 32, %r2;
+	mad.lo.s32 	%r9, %r5, 128, %r8;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	add.s64 	%rd5, %rd6, %rd2;
+	st.global.u32 	[%rd5], %r2;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB2_1;
+	ret;
+}
+
+.visible .entry micro_bases_overlapping_offsets(
+	.param .u64 micro_bases_overlapping_offsets_param_0,
+	.param .u64 micro_bases_overlapping_offsets_param_1,
+	.param .u32 micro_bases_overlapping_offsets_param_2
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<12>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_bases_overlapping_offsets_param_0];
+	ld.param.u32 	%r1, [micro_bases_overlapping_offsets_param_2];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r4, %ctaid.x;
+	div.u32 	%r5, %r4, %r1;
+	mov.u32 	%r3, 0;
+$L__BB3_1:
+	mad.lo.s32 	%r8, %r3, 32, %r2;
+	mad.lo.s32 	%r9, %r5, 128, %r8;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	st.global.u32 	[%rd3+64], %r2;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB3_1;
+	ret;
+}
+
+.visible .entry micro_bases_pointer_in_coefficient(
+	.param .u64 micro_bases_pointer_in_coefficient_param_0,
+	.param .u64 micro_bases_pointer_in_coefficient_param_1,
+	.param .u32 micro_bases_pointer_in_coefficient_param_2
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<12>;
+	.reg .b64 	%rd<12>;
+
+	ld.param.u64 	%rd1, [micro_bases_pointer_in_coefficient_param_0];
+	ld.param.u64 	%rd6, [micro_bases_pointer_in_coefficient_param_1];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r4, %ctaid.x;
+	sub.s64 	%rd7, %rd6, %rd1;
+	cvt.u64.u32 	%rd8, %r4;
+	mul.lo.s64 	%rd9, %rd7, %rd8;
+	add.s64 	%rd10, %rd1, %rd9;
+	mov.u32 	%r3, 0;
+$L__BB4_1:
+	mad.lo.s32 	%r8, %r3, 32, %r2;
+	mul.wide.u32 	%rd2, %r8, 4;
+	add.s64 	%rd3, %rd10, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	add.s64 	%rd5, %rd6, %rd2;
+	st.global.u32 	[%rd5], %r2;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB4_1;
+	ret;
+}
+
+.visible .entry micro_bases_wide_uniform(
+	.param .u64 micro_bases_wide_uniform_param_0,
+	.param .u64 micro_bases_wide_uniform_param_1,
+	.param .u32 micro_bases_wide_uniform_param_2
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<12>;
+	.reg .b64 	%rd<12>;
+
+	ld.param.u64 	%rd1, [micro_bases_wide_uniform_param_0];
+	ld.param.u64 	%rd6, [micro_bases_wide_uniform_param_1];
+	ld.param.u32 	%r1, [micro_bases_wide_uniform_param_2];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r4, %ctaid.x;
+	setp.lt.u32 	%p2, %r4, %r1;
+	selp.b64 	%rd7, %rd1, %rd6, %p2;
+	mov.u32 	%r3, 0;
+$L__BB5_1:
+	mad.lo.s32 	%r8, %r3, 32, %r2;
+	mul.wide.u32 	%rd2, %r8, 4;
+	add.s64 	%rd3, %rd7, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	add.s64 	%rd5, %rd1, %rd2;
+	st.global.u32 	[%rd5], %r2;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB5_1;
+	ret;
+}
+
+.visible .entry micro_bases_outer_uniform(
+	.param .u64 micro_bases_outer_uniform_param_0,
+	.param .u64 micro_bases_outer_uniform_param_1,
+	.param .u32 micro_bases_outer_uniform_param_2
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<14>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_bases_outer_uniform_param_0];
+	ld.param.u32 	%r1, [micro_bases_outer_uniform_param_2];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r4, %ctaid.x;
+	mov.u32 	%r12, 0;
+$L__BB7_1:
+	add.s32 	%r13, %r4, %r12;
+	div.u32 	%r5, %r13, %r1;
+	mov.u32 	%r3, 0;
+$L__BB7_2:
+	mad.lo.s32 	%r8, %r3, 32, %r2;
+	mad.lo.s32 	%r9, %r5, 128, %r8;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB7_2;
+	add.s32 	%r12, %r12, 1;
+	setp.lt.u32 	%p2, %r12, 2;
+	@%p2 bra 	$L__BB7_1;
+	ret;
+}

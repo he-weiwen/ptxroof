@@ -18,6 +18,10 @@ k2/k2.sm_80.ptx
 # so ptxas reports "Unknown symbol 'micro_texture_outputs_tex'".
 micro/texture_outputs.ptx
 
+# The module's .global variable declaration is dropped (PLAN.md, register
+# effects), so ptxas reports "Unknown symbol 'gbuf'".
+micro/uniform_bases_global.ptx
+
 # Module-scope .func definitions are discarded (PLAN.md, calls), so ptxas
 # reports "Call to 'zero' requires call prototype".
 micro/call_returns.ptx
