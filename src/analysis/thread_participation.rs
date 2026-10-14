@@ -644,6 +644,9 @@ impl PredicateReader<'_> {
 pub struct ThreadSets {
     pub blocks: Vec<ThreadSet>,
     pub guards: HashMap<usize, Pred>,
+    /// The edges no thread follows: the other way out of a branch
+    /// every thread takes the same way.
+    pub dead_edges: Vec<(BlockId, BlockId)>,
 }
 
 impl ThreadSets {
@@ -701,7 +704,26 @@ pub(crate) fn thread_sets(
         let p = reader.of(guard.reg, pos, 0);
         guards.insert(pos, if guard.negated { !p } else { p });
     }
-    ThreadSets { blocks, guards }
+    let mut dead_edges = Vec::new();
+    for (b, blk) in cfg.blocks.iter_enumerated() {
+        if let Some((pos, instr)) = tracer.last_instr(b)
+            && let (Opcode::Bra, Some(guard), &[taken, fallthrough]) =
+                (instr.mnemonic, instr.predicate, &blk.succs[..])
+            && taken != fallthrough
+        {
+            let p = reader.of(guard.reg, pos, 0);
+            match if guard.negated { !p } else { p } {
+                Pred::True => dead_edges.push((b, fallthrough)),
+                Pred::False => dead_edges.push((b, taken)),
+                _ => {}
+            }
+        }
+    }
+    ThreadSets {
+        blocks,
+        guards,
+        dead_edges,
+    }
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, when it

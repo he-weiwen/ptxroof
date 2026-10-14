@@ -59,6 +59,29 @@ impl ControlFlowGraph {
         &self.blocks[id]
     }
 
+    /// This graph without the edges `dead` lists.
+    pub fn without(&self, dead: &[(BlockId, BlockId)]) -> ControlFlowGraph {
+        let mut blocks = IndexVec::new();
+        for (id, b) in self.blocks.iter_enumerated() {
+            blocks.push(Block {
+                label: b.label,
+                start: b.start,
+                end: b.end,
+                succs: (b.succs.iter().copied())
+                    .filter(|&s| !dead.contains(&(id, s)))
+                    .collect(),
+                preds: (b.preds.iter().copied())
+                    .filter(|&p| !dead.contains(&(p, id)))
+                    .collect(),
+            });
+        }
+        ControlFlowGraph {
+            blocks,
+            call_sites: Vec::new(),
+            unresolved_branches: Vec::new(),
+        }
+    }
+
     /// Instructions of a block, in order.
     /// The block's label, or `<block N>` when it has none (the entry
     /// block and fallthrough blocks after a branch).
@@ -296,6 +319,17 @@ mod tests {
             .iter()
             .map(|b| b.succs.iter().map(|s| s.0).collect())
             .collect()
+    }
+
+    #[test]
+    fn without_drops_an_edge_from_both_ends() {
+        let (_, cfg) = cfg_of("@%p1 bra $L__A;\nadd.f32 %f1, %f1, %f1;\n$L__A:\nret;");
+        let pruned = cfg.without(&[(BlockId(0), BlockId(1))]);
+        assert_eq!(shape(&pruned), [vec![2], vec![2], vec![]]);
+        let preds: Vec<Vec<u32>> = (pruned.blocks.iter())
+            .map(|b| b.preds.iter().map(|p| p.0).collect())
+            .collect();
+        assert_eq!(preds, [vec![], vec![], vec![0, 1]]);
     }
 
     #[test]
