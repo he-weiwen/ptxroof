@@ -62,7 +62,7 @@ pub enum Pred {
 
 /// Whether a thread satisfies a predicate; `Maybe` when an unknown
 /// selector decides.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tri {
     Yes,
     No,
@@ -164,6 +164,49 @@ impl Pred {
                     _ => Tri::Maybe,
                 }
             }
+        }
+    }
+
+    /// The predicate at the CTA `c`: each comparison's `%ctaid` terms
+    /// at their value there.
+    fn at_cta(&self, c: [i64; 3]) -> Pred {
+        let at = |p: &Pred| Box::new(p.at_cta(c));
+        match self {
+            Pred::Cmp(k) if k.cta.is_some() => {
+                let base = i128::from(k.form.base.const_part()) + k.cta_part(c);
+                let Ok(base) = i64::try_from(base) else {
+                    return Pred::Unknown;
+                };
+                Pred::Cmp(Constraint {
+                    form: Affine {
+                        terms: (k.form.terms.iter())
+                            .filter(|(v, _)| !on_cta(v))
+                            .map(|(v, c)| (v.clone(), c.clone()))
+                            .collect(),
+                        base: SymExpr::Const(base),
+                    },
+                    cmp: k.cmp.clone(),
+                    cta: None,
+                })
+            }
+            Pred::Elect(p) => Pred::Elect(at(p)),
+            Pred::Not(p) => Pred::Not(at(p)),
+            Pred::And(a, b) => Pred::And(at(a), at(b)),
+            Pred::Or(a, b) => Pred::Or(at(a), at(b)),
+            p => p.clone(),
+        }
+    }
+
+    /// The comparisons whose `%ctaid` terms vary over the grid.
+    fn over_ctas<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
+        match self {
+            Pred::Cmp(k) if k.cta.is_some() => out.push(k),
+            Pred::Elect(p) | Pred::Not(p) => p.over_ctas(out),
+            Pred::And(a, b) | Pred::Or(a, b) => {
+                a.over_ctas(out);
+                b.over_ctas(out);
+            }
+            _ => {}
         }
     }
 
@@ -341,6 +384,29 @@ fn holds(cmp: &str, x: i128) -> bool {
     }
 }
 
+/// `v`, a CTA index or a floor or remainder of one, at the CTA `c`.
+fn cta_index(v: &Var, c: [i64; 3]) -> i64 {
+    match v {
+        Var::Ctaid(Axis::X) => c[0],
+        Var::Ctaid(Axis::Y) => c[1],
+        Var::Ctaid(Axis::Z) => c[2],
+        Var::Div(x, d) => cta_index(x, c).div_euclid(*d),
+        Var::Mod(x, m) => cta_index(x, c).rem_euclid(*m),
+        _ => 0,
+    }
+}
+
+/// The axes of the CTA index `v` reads.
+fn cta_axes(v: &Var, used: &mut [bool; 3]) {
+    match v {
+        Var::Ctaid(Axis::X) => used[0] = true,
+        Var::Ctaid(Axis::Y) => used[1] = true,
+        Var::Ctaid(Axis::Z) => used[2] = true,
+        Var::Div(x, _) | Var::Mod(x, _) => cta_axes(x, used),
+        _ => {}
+    }
+}
+
 /// A CTA index, or a floor or remainder of one.
 fn on_cta(v: &Var) -> bool {
     match v {
@@ -408,6 +474,11 @@ fn on_lane_only(a: &Affine) -> bool {
         })
 }
 
+/// The most CTAs `ThreadSet::launch` enumerates, and the most lanes it
+/// evaluates over its groups of CTAs.
+const CTA_BUDGET: u64 = 1 << 24;
+const LANE_BUDGET: u64 = 1 << 26;
+
 /// The thread index's values on any block, PTX ISA §10.1, §10.2:
 /// `%tid.x` and `%tid.y` below 1024, `%tid.z` below 64.
 fn any_block(v: &Var) -> Option<(i64, i64)> {
@@ -419,6 +490,14 @@ fn any_block(v: &Var) -> Option<(i64, i64)> {
 }
 
 impl Constraint {
+    /// The value of the form's `%ctaid` terms at the CTA `c`.
+    fn cta_part(&self, c: [i64; 3]) -> i128 {
+        (self.form.terms.iter())
+            .filter(|(v, _)| on_cta(v))
+            .map(|(v, k)| i128::from(k.as_const().unwrap_or(0)) * i128::from(cta_index(v, c)))
+            .sum()
+    }
+
     /// `form cmp 0` with the constant moved to the right: `⌊%tid.x/32⌋ < 4`.
     pub fn render(&self) -> String {
         let c = self.form.base.as_const().unwrap_or(0);
@@ -474,6 +553,76 @@ impl ThreadSet {
     /// PTX ISA §3.1 forms warps from consecutive thread ids.
     pub fn warps(&self, shape: [u32; 3]) -> Option<Counted> {
         self.tally(shape, |min, max| (u32::from(min > 0), u32::from(max > 0)))
+    }
+
+    /// The threads and warps the set holds over a launch of `grid` CTAs
+    /// of `shape`, when a thread-index condition selects them and the
+    /// count is exact at every CTA. The CTAs are grouped by whether each
+    /// comparison whose `%ctaid` terms vary holds on every lane of the
+    /// block, on none, or on some at the value those terms take: two
+    /// CTAs of a group give every lane the same truth, so one of each
+    /// group is counted. None past `CTA_BUDGET` CTAs on the axes those
+    /// comparisons read, or `LANE_BUDGET` lane evaluations.
+    pub fn launch(&self, shape: [u32; 3], grid: [u32; 3]) -> Option<(u64, u64)> {
+        let mut over = Vec::new();
+        self.pred.over_ctas(&mut over);
+        let mut used = [false; 3];
+        for v in over.iter().flat_map(|k| k.form.terms.keys()) {
+            cta_axes(v, &mut used);
+        }
+        let ctas = |read: bool| {
+            (0..3)
+                .filter(|&i| used[i] == read)
+                .try_fold(1u64, |n, i| n.checked_mul(u64::from(grid[i])))
+        };
+        let (read, rest) = (ctas(true)?, ctas(false)?);
+        if read > CTA_BUDGET {
+            return None;
+        }
+        let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
+            .map(|l| lane_of(l, shape))
+            .collect();
+        let lanes: Vec<(i128, i128)> = (over.iter())
+            .map(|k| {
+                (threads.iter().map(|&t| at(&k.form, t)))
+                    .fold((i128::MAX, i128::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)))
+            })
+            .collect();
+        let n = |i: usize| if used[i] { i64::from(grid[i]) } else { 1 };
+        let mut groups = HashMap::new();
+        for z in 0..n(2) {
+            for y in 0..n(1) {
+                for x in 0..n(0) {
+                    let c = [x, y, z];
+                    let key: Vec<(Tri, i128)> = (over.iter().zip(&lanes))
+                        .map(|(k, &(lo, hi))| {
+                            let u = k.cta_part(c);
+                            match decide(&k.cmp, lo + u, hi + u) {
+                                Tri::Maybe => (Tri::Maybe, u),
+                                t => (t, 0),
+                            }
+                        })
+                        .collect();
+                    groups.entry(key).or_insert((0u64, c)).0 += 1;
+                }
+            }
+        }
+        if (groups.len() as u64).checked_mul(threads.len() as u64)? > LANE_BUDGET {
+            return None;
+        }
+        let (mut sum_t, mut sum_w) = (0u64, 0u64);
+        for (k, c) in groups.into_values() {
+            let at = ThreadSet {
+                pred: self.pred.at_cta(c),
+            };
+            let (t, w) = (at.count(shape)?, at.warps(shape)?);
+            if t.certain != t.possible || w.certain != w.possible {
+                return None;
+            }
+            sum_t = sum_t.checked_add(u64::from(t.certain).checked_mul(k)?)?;
+            sum_w = sum_w.checked_add(u64::from(w.certain).checked_mul(k)?)?;
+        }
+        Some((sum_t.checked_mul(rest)?, sum_w.checked_mul(rest)?))
     }
 
     /// Per warp, the fewest and the most lanes in the set, folded by
@@ -1112,6 +1261,69 @@ mod tests {
 
     fn set_of(pred: Pred) -> ThreadSet {
         ThreadSet { pred }
+    }
+
+    /// `a·%tid.x + b·%ctaid.x + base cmp 0`, `%ctaid.x` below `ctas`.
+    fn over_ctas(a: i64, b: i64, base: i64, cmp: &str, ctas: i64) -> Pred {
+        let (lo, hi) = (0, i128::from(b) * i128::from(ctas - 1));
+        Pred::Cmp(Constraint {
+            form: Affine::var(Var::Tid(Axis::X)).scale(SymExpr::Const(a))
+                + Affine::var(Var::Ctaid(Axis::X)).scale(SymExpr::Const(b))
+                + Affine::invariant(SymExpr::Const(base)),
+            cmp: cmp.to_owned(),
+            cta: Some((lo.min(hi), lo.max(hi))),
+        })
+    }
+
+    #[test]
+    fn a_launch_sums_each_cta_s_threads_and_warps() {
+        let set = |pred| ThreadSet { pred };
+        // t < 2c over CTAs 0..4: 0, 2, 4 and 6 threads in 0, 1, 1, 1 warps.
+        let below = over_ctas(1, -2, 0, "lt", 4);
+        assert_eq!(
+            set(below.clone()).launch([32, 1, 1], [4, 1, 1]),
+            Some((12, 3))
+        );
+        assert_eq!(
+            set(over_ctas(1, -2, 0, "eq", 4)).launch([32, 1, 1], [4, 1, 1]),
+            Some((4, 4))
+        );
+        // An axis no comparison reads multiplies.
+        assert_eq!(
+            set(below.clone()).launch([32, 1, 1], [4, 1 << 25, 1]),
+            Some((12 << 25, 3 << 25))
+        );
+        // A set free of %ctaid: its count at every CTA.
+        let lanes = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-16)),
+            cmp: "lt".to_owned(),
+            cta: None,
+        });
+        assert_eq!(
+            set(lanes.clone()).launch([32, 1, 1], [3, 2, 1]),
+            Some((96, 6))
+        );
+        // No condition, or one not decided at a CTA: no count.
+        assert_eq!(set(Pred::True).launch([32, 1, 1], [4, 1, 1]), None);
+        assert_eq!(
+            set(below.clone().and(Pred::Uniform)).launch([32, 1, 1], [4, 1, 1]),
+            None
+        );
+        // An election of one lane per warp counts; one among lanes that a
+        // comparison then splits does not.
+        let first_two = over_ctas(0, 1, -2, "lt", 4);
+        let elected = Pred::Elect(Box::new(Pred::True));
+        assert_eq!(
+            set(first_two.and(elected.clone())).launch([64, 1, 1], [4, 1, 1]),
+            Some((4, 4))
+        );
+        assert_eq!(set(below.and(elected)).launch([32, 1, 1], [4, 1, 1]), None);
+        // Past the budgets: 2^24 CTAs on the axis read, or 130,944 groups of
+        // a lane-dependent comparison times 1024 lanes.
+        let one = over_ctas(1, -1, 0, "lt", (1 << 24) + 1);
+        assert_eq!(set(one).launch([32, 1, 1], [(1 << 24) + 1, 1, 1]), None);
+        let spread = over_ctas(128, -1, 0, "lt", 1 << 17);
+        assert_eq!(set(spread).launch([1024, 1, 1], [1 << 17, 1, 1]), None);
     }
 
     #[test]

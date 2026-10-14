@@ -1,0 +1,10 @@
+# Counts over the launch, summed over the record's CTAs. In
+# _chunk_scan_fwd_tma (grid 2x32x80, 384 threads), the load on line 184
+# runs on the 256 threads of warps 0 to 7 in the CTAs whose %ctaid.y is
+# not 0, 31 of every 32: 2·31·80·256 = 1269760 times. ptxas attributes
+# to the line an IMAD.MOV.U32 that runs on those 256 threads of every
+# CTA, 1310720 times, and the record measures 1310720 + 1269760.
+RUN: %ptxroof analyze %fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ptx --ncu %fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ncu.json | FileCheck "%s"
+CHECK: grid: 2x32x80 CTAs
+CHECK: global load 4 B on <= 256 threads in <= 8 warps (⌊%tid.x/32⌋ < 8 and %ctaid.y != 0)
+CHECK: line 184: @%p17 ld.global.b32 { %r93 }, [ %rd62 + 0 ];  predicted 1269760, measured 2580480  (IMAD.MOV.U32 x1, LDG.E x1)

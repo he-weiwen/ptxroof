@@ -262,7 +262,11 @@ its shared writes and instruction counts remain counted
   threads per CTA, as the record measures, `b200-mixed-index-guard.test`),
   and otherwise per CTA a bound, the lanes in at some CTA
   (`micro/cta_mask.ptx`: under 16 CTAs `<= 64 threads`, where the last
-  stores on 40; `micro/cta_guards.ptx`). Without a grid the masks
+  stores on 40; `micro/cta_guards.ptx`). The ncu comparison sums such a
+  set's count over the CTAs (`ThreadSet::launch`; scan_tma's line 184,
+  `b200-launch-counts.test`), but not past 2^24 CTAs on the axes its
+  comparisons read or 2^26 lane evaluations
+  (`a_launch_sums_each_cta_s_threads_and_warps`). Without a grid the masks
   Triton builds from `pid·BLOCK + arange` leave what they guard a bound
   (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
   is an unknown selector too (`micro/guards.ptx`: the store total stays
@@ -471,7 +475,9 @@ One line each, with the trigger that would start it.
   lines are not the PTX's (`tests/lit/k5-ncu-stale.test`), and
   gives each block a verdict (`kernels[].measured`): a line whose
   `CountConstraint` is not `Free` and whose SASS is one opcode must
-  equal an exact prediction or stay within a bound. Each block also
+  equal an exact prediction or stay within a bound. A prediction is
+  per-CTA threads times trips times CTAs, or, where the threads differ
+  by CTA, their sum over the grid times trips. Each block also
   counts its instructions, those with SASS and those that agree, and
   lists every line whose measured count is not the predicted number,
   with its SASS opcodes (`differing`); the text report prints them

@@ -835,6 +835,10 @@ struct KernelReportBuilder<'a> {
     unused: Vec<bool>,
     /// The block shape when known (`--launch` or `.reqntid`), else zeros.
     shape: [u32; 3],
+    /// With the grid bound, the threads and warps over the launch of each
+    /// block's set (`None`) and of each guarded statement's, where
+    /// `ThreadSet::launch` counts them.
+    launches: HashMap<(BlockId, Option<usize>), (u64, u64)>,
     /// The PTX file's lines, naming a uniform value by its statement's.
     lines: &'a LineIndex,
 }
@@ -903,12 +907,32 @@ impl<'a> KernelReportBuilder<'a> {
             sets: ThreadSets::default(),
             unused: Vec::new(),
             shape,
+            launches: HashMap::new(),
             lines,
         };
         let tracer =
             AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
         let uniformity = tracer.uniformity();
         b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer, uniformity);
+        let grid = (SpecialVector::Nctaid.components()).map(|reg| {
+            bind_map
+                .get(&reg.name())
+                .and_then(|&n| u32::try_from(n).ok())
+        });
+        if let [Some(x), Some(y), Some(z)] = grid {
+            for (block, blk) in b.cfg.blocks.iter_enumerated() {
+                let guarded = (blk.start..blk.end).filter(|s| b.sets.guards.contains_key(s));
+                for stmt in [None].into_iter().chain(guarded.map(Some)) {
+                    let set = match stmt {
+                        Some(s) => b.sets.of(block, s),
+                        None => b.sets.blocks[block.0 as usize].clone(),
+                    };
+                    if let Some(n) = set.launch(shape, [x, y, z]) {
+                        b.launches.insert((block, stmt), n);
+                    }
+                }
+            }
+        }
         let doms = dominators(&b.cfg.without(&b.sets.dead_edges));
         let always = |x: BlockId, targets: &[BlockId]| {
             let mut live = (targets.iter())
@@ -1799,6 +1823,13 @@ impl<'a> KernelReportBuilder<'a> {
         }
     }
 
+    /// The threads and warps that run statement `stmt` of block `b` over
+    /// the launch, where the grid is bound and they are counted.
+    fn launch(&self, b: BlockId, stmt: usize) -> Option<(u64, u64)> {
+        let guard = self.sets.guards.contains_key(&stmt).then_some(stmt);
+        self.launches.get(&(b, guard)).copied()
+    }
+
     fn measured(
         &self,
         record: &NcuRecord,
@@ -1831,18 +1862,33 @@ impl<'a> KernelReportBuilder<'a> {
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
                 let never = !self.counted(bm.block, i.provenance);
+                let trips = mult.as_const().filter(|_| alone);
+                // Over the launch, a set counted at every CTA explains its
+                // block as an exact count per CTA does.
+                let launch = self.launch(bm.block, i.provenance);
                 predictions.push(Prediction {
                     line,
                     constraint: count_constraint(self.module, instr),
-                    executions: match never {
-                        true => alone.then_some(0),
-                        false => {
-                            (mult.as_const().filter(|_| alone)).map(|m| (m * threads) as u64 * ctas)
+                    executions: match (never, launch) {
+                        (true, _) => alone.then_some(0),
+                        (false, Some((n, _))) => {
+                            trips.and_then(|m| u64::try_from(m).ok()?.checked_mul(n))
                         }
+                        (false, None) => trips.map(|m| (m * threads) as u64 * ctas),
                     },
                     at_most: !never
-                        && (at_most
-                            || (instr.predicate.is_some() && !(holds || guarded && explained))),
+                        && match launch {
+                            Some(_) => {
+                                chain_at_most
+                                    || !cta.exact
+                                    || (instr.predicate.is_some() && !(holds || guarded))
+                            }
+                            None => {
+                                at_most
+                                    || (instr.predicate.is_some()
+                                        && !(holds || guarded && explained))
+                            }
+                        },
                 });
             }
             let name = self.cfg.block_name(self.module, bm.block);
