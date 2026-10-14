@@ -605,15 +605,22 @@ struct CountAccumulator {
 }
 
 impl CountAccumulator {
-    /// `count` times `mult`; `None` when the count is not known.
+    /// `count` times `mult`; `None` when the count is not known, and
+    /// unknown when it, or the sum, does not fit in `i64`.
     fn add(&mut self, count: i64, mult: Option<&SymExpr>, at_most: bool) {
         let Some(mult) = mult else {
             return self.add_unknown();
         };
         let (coeff, rest) = SymExpr::split_const(mult.clone());
+        let Some(term) = coeff.checked_mul(count) else {
+            return self.add_unknown();
+        };
         match self.groups.iter_mut().find(|(m, _)| *m == rest) {
-            Some((_, n)) => *n += coeff * count,
-            None => self.groups.push((rest, coeff * count)),
+            Some((_, n)) => match n.checked_add(term) {
+                Some(sum) => *n = sum,
+                None => return self.add_unknown(),
+            },
+            None => self.groups.push((rest, term)),
         }
         self.at_most |= at_most;
         self.touched = true;
@@ -1409,28 +1416,32 @@ impl<'a> KernelReportBuilder<'a> {
                     .any(|l| self.trip_info.trips[l.0 as usize].is_err());
             let mult = (!unread).then_some(mult);
             let mult = mult.as_ref();
+            // None when a count over the launch does not fit in i64.
             let resolve = |set: &ThreadSet, stmt: Option<usize>| {
                 let per_cta = self.executing(bm, set, chain_at_most, cta);
-                let Some(n) = ctas.and_then(|n| i64::try_from(n).ok()) else {
-                    return per_cta;
+                let Some(n) = ctas else {
+                    return Some(per_cta);
                 };
-                let over = self.launches.get(&(bm.block, stmt));
-                match over
-                    .and_then(|&(t, w)| Some((i64::try_from(t).ok()?, i64::try_from(w).ok()?)))
-                {
-                    Some((t, w)) => {
+                let n = i64::try_from(n).ok()?;
+                match self.launches.get(&(bm.block, stmt)) {
+                    Some(&(t, w)) => {
                         let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
-                        (t, Some((w, bound)), bound, true)
+                        let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
+                        Some((t, Some((w, bound)), bound, true))
                     }
                     None => {
                         let (threads, warps, at_most, explained) = per_cta;
-                        let warps = warps.map(|(w, bound)| (w * n, bound));
-                        (threads * n, warps, at_most, explained)
+                        let warps = match warps {
+                            Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
+                            None => None,
+                        };
+                        Some((threads.checked_mul(n)?, warps, at_most, explained))
                     }
                 }
             };
-            let (threads, warps, block_at_most, _) =
-                resolve(&self.sets.blocks[bm.block.0 as usize], None);
+            let block = resolve(&self.sets.blocks[bm.block.0 as usize], None);
+            let mult = mult.filter(|_| block.is_some());
+            let (threads, warps, block_at_most, _) = block.unwrap_or((0, None, false, false));
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
@@ -1457,16 +1468,20 @@ impl<'a> KernelReportBuilder<'a> {
                 if !self.counted(bm.block, m.provenance) {
                     continue;
                 }
-                let (threads, at_most) = match self.sets.guards.get(&m.provenance) {
-                    Some(Pred::True) => (threads, block_at_most),
+                let (threads, at_most, mult) = match self.sets.guards.get(&m.provenance) {
+                    Some(Pred::True) => (threads, block_at_most, mult),
                     Some(_) => {
-                        let (threads, _, at_most, explained) =
-                            resolve(&self.sets.of(bm.block, m.provenance), Some(m.provenance));
-                        (threads, at_most || !explained)
+                        match resolve(&self.sets.of(bm.block, m.provenance), Some(m.provenance)) {
+                            Some((threads, _, at_most, explained)) => {
+                                (threads, at_most || !explained, mult)
+                            }
+                            None => (0, false, None),
+                        }
                     }
-                    None => (threads, block_at_most || m.predicated),
+                    None => (threads, block_at_most || m.predicated, mult),
                 };
-                let n = m.count as i64 * threads;
+                let n = (m.count as i64).checked_mul(threads);
+                let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
                 match m.kind {
                     MeasureKind::Flops { pipe, precision } => {
                         flops

@@ -2,10 +2,13 @@
 # unbounded and the mask an unknown selector. Under 15 CTAs every thread
 # of every CTA stores, so the guard holds; under 16 the last CTA stores
 # on its first 40 threads, so per CTA the store is a bound, and over the
-# launch it is 1000 threads' 4000 B.
+# launch it is 1000 threads' 4000 B. Under the largest grid CUDA allows,
+# 2^31-1 by 65535 by 65535 CTAs, a count over the launch leaves i64 and
+# is unknown.
 RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 | FileCheck --check-prefix=FREE "%s"
 RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 15 | FileCheck --check-prefix=FULL "%s"
 RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 16 | FileCheck --check-prefix=PARTIAL "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 2147483647,65535,65535 | FileCheck --check-prefix=HUGE "%s"
 FREE: st.global.u32  global store 4 B (predicated)  warp: <= 5 sectors (ideal 4)
 FREE: totals per CTA [static]:
 FREE: global bytes: load 0 B, store <= 256 B
@@ -17,3 +20,6 @@ PARTIAL: totals per CTA [static]:
 PARTIAL: global bytes: load 0 B, store <= 256 B
 PARTIAL: totals per launch [static]:
 PARTIAL: global bytes: load 0 B, store 4000 B
+HUGE: totals per launch [static]:
+HUGE: instructions = 0 + unknown
+HUGE: global bytes: load 0 B, store 0 B + unknown

@@ -520,7 +520,7 @@ fn render_flops(w: &mut String, pad: &str, label: &str, table: &BTreeMap<String,
 /// then constants by value. Per-CTA totals add a warp-instruction
 /// column.
 fn render_instructions(w: &mut String, pad: &str, i: &InstructionCounts) {
-    if i.total.expr == "0" {
+    if i.total.expr == "0" && !i.total.at_least {
         return;
     }
     let of = |live: &Count, all: Option<&Count>| match all {
