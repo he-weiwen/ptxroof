@@ -9,6 +9,7 @@ CHECK: loop gluon_attn_bwd.py:112 ($L__BB0_2)
 CHECK: trips = unknown: latch condition depends on special register %ctaid.x
 CHECK: mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32    160
 CHECK: tensor flops = 20480  (bf16 20480)
-CHECK: global bytes: load <= 192 B, store <= 128 B
+# The `red` under `mov.pred %p20, -1` runs on every thread: its store is exact.
+CHECK: global bytes: load <= 192 B, store 128 B
 CHECK: unknowns:
 CHECK: coverage: instructions_classified 100.0% (1247/1247)

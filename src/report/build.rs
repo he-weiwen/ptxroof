@@ -1292,12 +1292,14 @@ impl<'a> KernelReportBuilder<'a> {
                 if !self.counted(bm.block, m.provenance) {
                     continue;
                 }
-                let (threads, at_most) = if self.sets.guards.contains_key(&m.provenance) {
-                    let (threads, _, at_most, explained) =
-                        resolve(&self.sets.of(bm.block, m.provenance));
-                    (threads, at_most || !explained)
-                } else {
-                    (threads, block_at_most || m.predicated)
+                let (threads, at_most) = match self.sets.guards.get(&m.provenance) {
+                    Some(Pred::True) => (threads, block_at_most),
+                    Some(_) => {
+                        let (threads, _, at_most, explained) =
+                            resolve(&self.sets.of(bm.block, m.provenance));
+                        (threads, at_most || !explained)
+                    }
+                    None => (threads, block_at_most || m.predicated),
                 };
                 let n = m.count as i64 * threads;
                 match m.kind {
@@ -1717,6 +1719,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let (threads, _, at_most, explained) =
                     self.executing(bm, &set, chain_at_most, Some(cta));
                 let guarded = self.sets.guards.contains_key(&i.provenance);
+                let holds = self.sets.guards.get(&i.provenance) == Some(&Pred::True);
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
                 let never = !self.counted(bm.block, i.provenance);
@@ -1730,7 +1733,8 @@ impl<'a> KernelReportBuilder<'a> {
                         }
                     },
                     at_most: !never
-                        && (at_most || (instr.predicate.is_some() && !(guarded && explained))),
+                        && (at_most
+                            || (instr.predicate.is_some() && !(holds || guarded && explained))),
                 });
             }
             let name = self.cfg.block_name(self.module, bm.block);
@@ -1941,6 +1945,21 @@ mod tests {
         // 64 × 4 B as a bound, plus 32 × 2 B exact.
         assert_eq!(cta.bytes["global"].store.expr, "320");
         assert!(cta.bytes["global"].store.at_most);
+    }
+
+    #[test]
+    fn a_guard_every_thread_reads_as_true_keeps_counts_exact() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nsetp.eq.u32 %p1, 1, 1;\n\
+                   @%p1 ld.global.u32 %r1, [%rd1];\nst.global.u32 [%rd1], %r1;\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        let cta = r.kernels[0]
+            .totals_per_cta
+            .as_ref()
+            .expect("reqntid gives a launch");
+        assert_eq!(cta.bytes["global"].load.expr, "128");
+        assert!(!cta.bytes["global"].load.at_most);
     }
 
     #[test]

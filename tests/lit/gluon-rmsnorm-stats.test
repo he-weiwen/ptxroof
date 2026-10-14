@@ -16,9 +16,9 @@ CHECK: flops = 534  (f32 534)
 CHECK: global bytes: load <= 300 B, store <= 108 B
 CHECK: AI(global) >= 1.3186274509803921 flop/B
 # Per CTA the live loads and stores measure 37888 B and 12320 B (the
-# ncu record's LDG and STG executions); the `<=` and 4 B are the one
-# guarded `atom`.
+# ncu record's LDG and STG executions); the 4 B more are the `atom` one
+# thread of each CTA runs (512 executions over 512 CTAs).
 CHECK: totals per CTA [static]:
-CHECK: global bytes: load <= 37892 B, store <= 12324 B
+CHECK: global bytes: load 37892 B, store 12324 B
 CHECK: unknowns: none
 CHECK: coverage: instructions_classified 100.0% (1146/1146)
