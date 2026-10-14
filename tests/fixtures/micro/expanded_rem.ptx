@@ -1,0 +1,33 @@
+//
+// HAND-WRITTEN: %tid.x mod 32 spelled `%tid.x − 32·⌊%tid.x/32⌋` (the
+// shape LLVM gives a remainder it expands), times 2^26, then a store at
+// param_0 plus that. The product is below 31·2^26 < 2^31 on every thread
+// of the 1024, so `mul.lo.s32` does not wrap: ptxas 13.4 (sm_89) emits
+//   SHF.R.U32.HI R0, RZ, 0x5, R5
+//   IMAD R0, R0, -0x20, R5
+//   LEA R2, P0, R0, c[0x0][0x160], 0x1a
+// and stores at param_0 + R0·2^26, R5 = %tid.x.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_expanded_rem(
+	.param .u64 micro_expanded_rem_param_0
+)
+.reqntid 1024, 1, 1
+{
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_expanded_rem_param_0];
+	mov.u32 	%r1, %tid.x;
+	shr.u32 	%r2, %r1, 5;
+	shl.b32 	%r3, %r2, 5;
+	sub.s32 	%r4, %r1, %r3;
+	mul.lo.s32 	%r5, %r4, 67108864;
+	cvt.u64.u32 	%rd2, %r5;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

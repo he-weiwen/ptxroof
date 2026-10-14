@@ -336,16 +336,73 @@ impl Affine {
     /// `i128` line when a partial sum leaves it.
     pub fn range(&self, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
         let base = i128::from(self.base.as_const()?);
-        let mut range = Some((base, base));
+        let mut groups: BTreeMap<&Var, Vec<(&Var, i128)>> = BTreeMap::new();
         for (v, c) in &self.terms {
-            let c = i128::from(c.as_const()?);
-            let (lo, hi) = var_range(v, bound)?;
-            let (a, b) = (c * i128::from(lo), c * i128::from(hi));
-            range =
-                range.and_then(|(x, y)| Some((x.checked_add(a.min(b))?, y.checked_add(a.max(b))?)));
+            let x = match v {
+                Var::Div(x, _) | Var::Mod(x, _) => x,
+                _ => v,
+            };
+            (groups.entry(x).or_default()).push((v, i128::from(c.as_const()?)));
+        }
+        let mut range = Some((base, base));
+        for (x, terms) in &groups {
+            let (a, b) = group_range(x, terms, bound)?;
+            range = range.and_then(|(lo, hi)| Some((lo.checked_add(a)?, hi.checked_add(b)?)));
         }
         Some(range.unwrap_or((i128::MIN, i128::MAX)))
     }
+}
+
+/// The range of `Σ c·t` over terms `t` that are `x`, `⌊x/d⌋` or
+/// `x mod d`: each term's range summed, and, when the floors and
+/// remainders share one divisor `d`, no wider than the range of
+/// `(c₁·d + c₂)·q + (c₁ + c₃)·r` over `x = d·q + r`, `q` and `r` taken
+/// apart.
+fn group_range(
+    x: &Var,
+    terms: &[(&Var, i128)],
+    bound: &dyn Fn(&Var) -> Option<(i64, i64)>,
+) -> Option<(i128, i128)> {
+    let span = |c: i128, (lo, hi): (i64, i64)| {
+        let (a, b) = (c.checked_mul(lo.into())?, c.checked_mul(hi.into())?);
+        Some((a.min(b), a.max(b)))
+    };
+    let mut sum = Some((0i128, 0i128));
+    let (mut d, mut c) = (None, [0i128; 3]);
+    for &(v, k) in terms {
+        let (a, b) = span(k, var_range(v, bound)?).expect("i64 by i64 fits i128");
+        sum = sum.and_then(|(lo, hi)| Some((lo.checked_add(a)?, hi.checked_add(b)?)));
+        let (slot, e) = match v {
+            Var::Div(_, e) => (1, *e),
+            Var::Mod(_, e) => (2, *e),
+            _ => (0, 0),
+        };
+        c[slot] += k;
+        if slot > 0 {
+            d = if d.is_none_or(|d| d == e) {
+                Some(e)
+            } else {
+                Some(0)
+            };
+        }
+    }
+    let sum = sum.unwrap_or((i128::MIN, i128::MAX));
+    let joint = || {
+        let d = d.filter(|&d| d > 0)?;
+        let (lo, hi) = var_range(x, bound)?;
+        let q = (lo.div_euclid(d), hi.div_euclid(d));
+        let r = match q.0 == q.1 {
+            true => (lo.rem_euclid(d), hi.rem_euclid(d)),
+            false => (0, d - 1),
+        };
+        let (a, b) = span(c[0].checked_mul(d.into())?.checked_add(c[1])?, q)?;
+        let (e, f) = span(c[0].checked_add(c[2])?, r)?;
+        Some((a.checked_add(e)?, b.checked_add(f)?))
+    };
+    Some(match joint() {
+        Some((a, b)) => (sum.0.max(a), sum.1.min(b)),
+        None => sum,
+    })
 }
 
 /// A variable's least and greatest value, a floor or a mod from its
@@ -394,6 +451,29 @@ mod tests {
         assert_eq!(ctaid.range(&bound), None);
         let param = Affine::invariant(SymExpr::sym("param_0"));
         assert_eq!(param.range(&bound), None);
+    }
+
+    #[test]
+    fn a_range_takes_a_variable_with_its_floor_and_remainder() {
+        let x = || Var::Ctaid(Axis::X);
+        let floor = |d| Affine::var(Var::Div(Box::new(x()), d));
+        let rem = |d| Affine::var(Var::Mod(Box::new(x()), d));
+        let c = |k| SymExpr::Const(k);
+        let grid = |lo, hi| move |v: &Var| (*v == x()).then_some((lo, hi));
+        // scaled_mm's 1048576·(x mod 448), traced as x and ⌊x/448⌋.
+        let a = Affine::var(x()).scale(c(1048576)) + floor(448).scale(c(-469762048));
+        assert_eq!(a.range(&grid(0, 28671)), Some((0, 1048576 * 447)));
+        // Each term's range stays a bound: 2x − ⌊x/4⌋ is 6, 7, 9 at x = 3, 4, 5.
+        let b = Affine::var(x()).scale(c(2)) + floor(4).scale(c(-1));
+        assert_eq!(b.range(&grid(3, 5)), Some((5, 10)));
+        // One quotient: r runs from lo mod d to hi mod d.
+        assert_eq!(b.range(&grid(4, 6)), Some((7, 11)));
+        // A floor and remainder by one divisor, negative coefficients.
+        let d = floor(8).scale(c(-8)) + rem(8).scale(c(-1)) + Affine::var(x());
+        assert_eq!(d.range(&grid(-20, 100)), Some((0, 0)));
+        // Two divisors stay per term.
+        let e = Affine::var(x()) + floor(4).scale(c(-4)) + floor(8);
+        assert_eq!(e.range(&grid(0, 15)), Some((-12, 16)));
     }
 
     #[test]

@@ -8,7 +8,6 @@
 
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
-use crate::analysis::scalar::symexpr::SymExpr;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -19,21 +18,22 @@ pub const SECTOR: i64 = 32;
 const OFFSET_LIMIT: i128 = 1 << 62;
 
 /// Whether the terms of `a` that `varies` picks sum within
-/// `OFFSET_LIMIT` bytes of 0 at every value `bound` gives them; each
-/// bound holds 0, so every partial sum does too.
+/// `OFFSET_LIMIT` bytes of 0 at every value `bound` gives them, each
+/// term's range taken on its own; each bound holds 0, so every partial
+/// sum does too.
 pub fn offsets_fit(
     a: &Affine,
     varies: impl Fn(&Var) -> bool,
     bound: &dyn Fn(&Var) -> Option<(i64, i64)>,
 ) -> bool {
-    let part = Affine {
-        terms: (a.terms.iter())
-            .filter(|(v, _)| varies(v))
-            .map(|(v, c)| (v.clone(), c.clone()))
-            .collect(),
-        base: SymExpr::Const(0),
-    };
-    (part.range(bound)).is_some_and(|(lo, hi)| -OFFSET_LIMIT <= lo && hi <= OFFSET_LIMIT)
+    let mut sum = Some((0i128, 0i128));
+    for (v, c) in a.terms.iter().filter(|(v, _)| varies(v)) {
+        let Some((lo, hi)) = Affine::term(v.clone(), c.clone()).range(bound) else {
+            return false;
+        };
+        sum = sum.and_then(|(x, y)| Some((x.checked_add(lo)?, y.checked_add(hi)?)));
+    }
+    sum.is_some_and(|(lo, hi)| -OFFSET_LIMIT <= lo && hi <= OFFSET_LIMIT)
 }
 
 /// A thread index's values in a block of `shape`.
@@ -386,6 +386,18 @@ mod tests {
                 .unwrap_err()
                 .contains("modulo")
         );
+    }
+
+    #[test]
+    fn offsets_fit_bounds_each_term() {
+        let c = |n: i64| SymExpr::Const(n);
+        let k = 1 << 60;
+        // 2^60·x − 2^61·⌊x/2⌋ is at most 2^60, but 2^60·x alone reaches 2^63.
+        let a = tid().scale(c(k))
+            + Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 2)).scale(c(-2 * k));
+        assert_eq!(a.range(&in_block([8, 1, 1])), Some((0, i128::from(k))));
+        assert!(!offsets_fit(&a, depends_on_lane, &in_block([8, 1, 1])));
+        assert!(offsets_fit(&a, depends_on_lane, &in_block([2, 1, 1])));
     }
 
     #[test]
