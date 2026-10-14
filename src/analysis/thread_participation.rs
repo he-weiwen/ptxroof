@@ -582,6 +582,9 @@ impl ThreadSet {
         let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
             .map(|l| lane_of(l, shape))
             .collect();
+        if threads.is_empty() {
+            return None;
+        }
         let lanes: Vec<(i128, i128)> = (over.iter())
             .map(|k| {
                 (threads.iter().map(|&t| at(&k.form, t)))
@@ -604,11 +607,11 @@ impl ThreadSet {
                         })
                         .collect();
                     groups.entry(key).or_insert((0u64, c)).0 += 1;
+                    if groups.len() as u64 > LANE_BUDGET / threads.len() as u64 {
+                        return None;
+                    }
                 }
             }
-        }
-        if (groups.len() as u64).checked_mul(threads.len() as u64)? > LANE_BUDGET {
-            return None;
         }
         let (mut sum_t, mut sum_w) = (0u64, 0u64);
         for (k, c) in groups.into_values() {
@@ -1303,8 +1306,9 @@ mod tests {
             set(lanes.clone()).launch([32, 1, 1], [3, 2, 1]),
             Some((96, 6))
         );
-        // No condition, or one not decided at a CTA: no count.
+        // No condition, one not decided at a CTA, or no block shape: no count.
         assert_eq!(set(Pred::True).launch([32, 1, 1], [4, 1, 1]), None);
+        assert_eq!(set(below.clone()).launch([0, 0, 0], [4, 1, 1]), None);
         assert_eq!(
             set(below.clone().and(Pred::Uniform)).launch([32, 1, 1], [4, 1, 1]),
             None
