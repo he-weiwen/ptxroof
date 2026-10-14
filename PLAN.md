@@ -19,7 +19,9 @@ need, over the lanes that execute it, once the block shape and the parameters in
 coefficients are bound; per
 block and per guarded instruction, which threads of the CTA run it
 when the selecting branches and the guard are thread-index
-comparisons, `%laneid` in a one-dimensional block, or constants
+comparisons, with the grid given comparisons with the CTA index as
+well (a bound per CTA where CTAs differ), `%laneid` in a
+one-dimensional block, or constants
 (rmsnorm's loads under `mov.pred %p2, 0` run on no thread and count in
 no total, per thread or per CTA; with `--bind 10:K=768` the c_fc fp8
 GEMM's path for a short K, `gluon-fp8-gemm-c-fc-warps.test`), combined with
@@ -240,27 +242,32 @@ its shared writes and instruction counts remain counted
   `.bf16x2` each half on its own (PTX ISA §9.7.6.2, §9.7.7.2); an
   `lt`, `le`, `gt` or `ge` is read only when both operands lie in the
   range of its type, [0, 2^width) or [−2^(width−1), 2^(width−1)), for
-  every `%tid` below 1024 (§10.2), so not on a CTA index (b200
+  every `%tid` below 1024 (§10.2) and every `%ctaid` below the grid,
+  so not on a CTA index when no grid is given (b200
   `tut_sg_prefixdense`'s `128·%ctaid.x + 64 < 128·%ctaid.x + 128`); an
   `eq` or `ne` only when their difference lies in (−2^width, 2^width).
   Otherwise what it guards is a bound (`micro/setp_float.ptx`,
   `micro/setp_f16x2.ptx`, `micro/setp_unsigned.ptx`,
   `micro/setp_wraps.ptx`: `(predicated)`, `store <= 256 B`).
-- **A guard comparing the thread index with a CTA index, an unbound
-  parameter or a loop counter is an unknown selector.** Only a
-  comparison of thread-index terms with a constant is read, its
-  operands under `--bind` (`src/analysis/thread_participation.rs`,
-  `on_lane_only`; `micro/guard_bound_param.ptx`: `%tid.x < n` runs on
-  48 threads with `--bind 1:n=48`), and no grid is bound, so the masks
-  Triton builds from `pid·BLOCK + arange` against a parameter leave
-  what they guard a bound, with `--bind` too.
-  In b200 `set_mla_kv_buffer_kernel_norope`, `8·(%tid.x mod 128) +
-  1024·%ctaid.y < 576` guards a 16 B load and store: its record (grid
-  8192×1×1, so `%ctaid.y` is 0) executes the store 589,824 times, 72
-  threads in each CTA, where the report says `<= 1048576`, all 128
-  (`b200-mixed-index-guard.test`). A guard on a loaded value is one as
-  well (`micro/guards.ptx`: the store total stays a bound). The census
-  counts by cause are in the message of the commit that adds this entry.
+- **A guard comparing the thread index with a CTA index needs the
+  grid, and one with an unbound parameter or a loop counter is an
+  unknown selector.** A comparison over `%tid` and `%ctaid` with
+  constant coefficients, its operands under `--bind`
+  (`micro/guard_bound_param.ptx`: `%tid.x < n` runs on 48 threads with
+  `--bind 1:n=48`), is read only with `--grid` or a record's grid
+  (`src/analysis/thread_participation.rs`, `across_ctas`): decided
+  where the grid decides it, its `%ctaid` terms dropped where they take
+  one value (b200 `set_mla_kv_buffer_kernel_norope`'s
+  `8·(%tid.x mod 128) + 1024·%ctaid.y < 576` under 8192×1×1 CTAs: 72
+  threads per CTA, as the record measures, `b200-mixed-index-guard.test`),
+  and otherwise per CTA a bound, the lanes in at some CTA
+  (`micro/cta_mask.ptx`: under 16 CTAs `<= 64 threads`, where the last
+  stores on 40; `micro/cta_guards.ptx`). Without a grid the masks
+  Triton builds from `pid·BLOCK + arange` leave what they guard a bound
+  (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
+  is an unknown selector too (`micro/guards.ptx`: the store total stays
+  a bound). The census counts by cause are in the message of commit
+  `ccf8220`.
 
 ### Presentation
 

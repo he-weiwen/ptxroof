@@ -1,0 +1,34 @@
+//
+// HAND-WRITTEN: Triton's `pid·BLOCK + arange < n` mask: thread t of CTA
+// c stores when t + 64·c < n. With n = 1000, every thread of CTAs 0 to
+// 14 stores, and threads 0 to 39 of CTA 15. ptxas 13.4 (sm_89):
+//   LEA R2, R2, R5, 0x6
+//   ISETP.GE.U32.AND P0, PT, R2, c[0x0][0x168], PT
+//   @P0 EXIT
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_cta_mask(
+	.param .u64 micro_cta_mask_param_0,
+	.param .u32 micro_cta_mask_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_cta_mask_param_0];
+	ld.param.u32 	%r1, [micro_cta_mask_param_1];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r3, %ctaid.x;
+	shl.b32 	%r4, %r3, 6;
+	add.s32 	%r5, %r4, %r2;
+	setp.lt.u32 	%p1, %r5, %r1;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r2;
+	ret;
+}

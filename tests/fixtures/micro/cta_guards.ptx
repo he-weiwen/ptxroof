@@ -1,0 +1,96 @@
+//
+// HAND-WRITTEN: stores guarded on comparisons of the thread index with
+// the CTA index.
+//
+// micro_cta_compare: thread t of CTA c stores when t < 2c, t <= 2c,
+// t > 2c, t >= 2c, t == 2c and t != 2c.
+//
+// micro_cta_branch: a branch on %ctaid.x >= 4 skips every store; then
+// stores under t < 16 and c < 2, under t < 16 or c < 2, and under
+// not (t < 16 and c < 2).
+//
+// micro_cta_rows: a block of 40×2 threads, three warps, the third of
+// 16 lanes; thread (x, y) of CTA c stores when x + 16·c < 24.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_cta_compare(
+	.param .u64 micro_cta_compare_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<7>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_cta_compare_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %ctaid.x;
+	shl.b32 	%r3, %r2, 1;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	setp.lt.u32 	%p1, %r1, %r3;
+	setp.le.u32 	%p2, %r1, %r3;
+	setp.gt.u32 	%p3, %r1, %r3;
+	setp.ge.u32 	%p4, %r1, %r3;
+	setp.eq.u32 	%p5, %r1, %r3;
+	setp.ne.u32 	%p6, %r1, %r3;
+	@%p1 st.global.u32 	[%rd3], 1;
+	@%p2 st.global.u32 	[%rd3], 2;
+	@%p3 st.global.u32 	[%rd3], 3;
+	@%p4 st.global.u32 	[%rd3], 4;
+	@%p5 st.global.u32 	[%rd3], 5;
+	@%p6 st.global.u32 	[%rd3], 6;
+	ret;
+}
+
+.visible .entry micro_cta_branch(
+	.param .u64 micro_cta_branch_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<6>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_cta_branch_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %ctaid.x;
+	setp.ge.u32 	%p1, %r2, 4;
+	@%p1 bra 	$L__BB3_2;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], 0;
+	setp.lt.u32 	%p2, %r1, 16;
+	setp.lt.u32 	%p3, %r2, 2;
+	and.pred 	%p4, %p2, %p3;
+	or.pred 	%p5, %p2, %p3;
+	@%p4 st.global.u32 	[%rd3], 1;
+	@%p5 st.global.u32 	[%rd3], 2;
+	@!%p4 st.global.u32 	[%rd3], 3;
+$L__BB3_2:
+	ret;
+}
+
+.visible .entry micro_cta_rows(
+	.param .u64 micro_cta_rows_param_0
+)
+.reqntid 40, 2, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_cta_rows_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %ctaid.x;
+	shl.b32 	%r3, %r2, 4;
+	add.s32 	%r4, %r3, %r1;
+	setp.lt.u32 	%p1, %r4, 24;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r1;
+	ret;
+}

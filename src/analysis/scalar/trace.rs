@@ -969,7 +969,7 @@ impl<'a> AffineValueTracer<'a> {
     /// A variable's least and greatest value when the launch or a
     /// constant trip count fixes it: `%tid` below the bound block shape,
     /// `%ctaid` below a bound grid, a counter in [1, n].
-    fn bound(&self, v: &Var) -> Option<(i64, i64)> {
+    pub(crate) fn bound(&self, v: &Var) -> Option<(i64, i64)> {
         let shape = |vector: SpecialVector, axis: &Axis| {
             let i = match axis {
                 Axis::X => 0,
