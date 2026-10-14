@@ -1663,12 +1663,18 @@ impl<'a> KernelReportBuilder<'a> {
                 let guarded = self.sets.guards.contains_key(&i.provenance);
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
+                let never = self.sets.never(bm.block, i.provenance);
                 predictions.push(Prediction {
                     line,
                     constraint: count_constraint(self.module, instr),
-                    executions: (mult.as_const().filter(|_| alone))
-                        .map(|m| (m * threads) as u64 * ctas),
-                    at_most: at_most || (instr.predicate.is_some() && !(guarded && explained)),
+                    executions: match never {
+                        true => alone.then_some(0),
+                        false => {
+                            (mult.as_const().filter(|_| alone)).map(|m| (m * threads) as u64 * ctas)
+                        }
+                    },
+                    at_most: !never
+                        && (at_most || (instr.predicate.is_some() && !(guarded && explained))),
                 });
             }
             let name = self.cfg.block_name(self.module, bm.block);

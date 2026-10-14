@@ -185,7 +185,7 @@ impl<'a> AffineValueTracer<'a> {
     }
 
     /// A constant, after the bindings if there are any.
-    fn constant(&self, a: &Affine) -> Option<i64> {
+    pub(crate) fn constant(&self, a: &Affine) -> Option<i64> {
         match self.bindings {
             Some(b) => a.bind(b).as_const(),
             None => a.as_const(),

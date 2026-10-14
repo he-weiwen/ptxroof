@@ -12,6 +12,7 @@
 use crate::analysis::control_flow::loops::LoopForest;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
+use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -747,20 +748,39 @@ fn condition(
         (x.range(&any_block)).is_some_and(|(lo, hi)| min <= lo && hi < end)
     };
     let (sign, width) = ty.split_at_checked(1).unwrap_or_default();
-    let comparable = width
-        .parse::<u32>()
-        .is_ok_and(|w| match (cmp.as_str(), sign) {
-            ("eq" | "ne", _) => fits(&form, 1 - (1 << w), 1 << w),
-            (_, "u") => fits(&a, 0, 1 << w) && fits(&b, 0, 1 << w),
-            (_, "s") => {
-                fits(&a, -1 << (w - 1), 1 << (w - 1)) && fits(&b, -1 << (w - 1), 1 << (w - 1))
-            }
-            _ => false,
+    let comparable = |a: &Affine, b: &Affine| {
+        width
+            .parse::<u32>()
+            .is_ok_and(|w| match (cmp.as_str(), sign) {
+                ("eq" | "ne", _) => fits(&(a.clone() - b.clone()), 1 - (1 << w), 1 << w),
+                (_, "u") => fits(a, 0, 1 << w) && fits(b, 0, 1 << w),
+                (_, "s") => {
+                    fits(a, -1 << (w - 1), 1 << (w - 1)) && fits(b, -1 << (w - 1), 1 << (w - 1))
+                }
+                _ => false,
+            })
+    };
+    let constant = |op| {
+        (tracer
+            .strictly(|| tracer.trace_operand(op, def, None, 0))
+            .ok())
+        .and_then(|x| tracer.constant(&x))
+        .map(|c| Affine::invariant(SymExpr::Const(c)))
+    };
+    if let (Some(x), Some(y)) = (constant(ops[1]), constant(ops[2]))
+        && comparable(&x, &y)
+    {
+        let d = (x - y).base.as_const()?;
+        return Some(if holds(&cmp, d.into()) {
+            Pred::True
+        } else {
+            Pred::False
         });
+    }
     let lanes = form.terms.keys().any(depends_on_lane);
     if !lanes && !uniformity.is_uniform_def(def) {
         None
-    } else if on_lane_only(&form) && comparable {
+    } else if on_lane_only(&form) && comparable(&a, &b) {
         Some(Pred::Cmp(Constraint { form, cmp }))
     } else if !lanes {
         Some(Pred::Uniform)
