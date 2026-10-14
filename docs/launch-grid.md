@@ -176,18 +176,27 @@ G0. Joint range of a variable, its floor and its remainder by one
     divisor; `offsets_fit` per term. Unit tests (negative ranges, a
     partial sum past `i64`); `micro/expanded_rem.ptx`,
     `(%tid.x − 32·⌊%tid.x/32⌋)·2^26` in a block of 1024, read today as
-    "`mul.lo.s32` leaves 32 bits".
+    "`mul.lo.s32` leaves 32 bits". Done in `06513b0`: no other output
+    changed.
 S1. Strict operands in `condition`. `micro/guarded_selector.ptx`.
-S2. `elect.sync` with no certain candidate. Unit test.
+    Done in `4a8d1ea`: no fixture's or census kernel's output changed.
+S2. `elect.sync` with no certain candidate. Unit test. Done in
+    `82ee772`: no fixture's or census kernel's output changed.
 G1. `--grid`, the record's grid, `%nctaid` bound. Fixture: a 32-bit
     product of `%ctaid.x` that wraps under one grid and not another.
+    Done in `f1765bf`: under the records only the echoed grid changed.
 G2. Comparisons with `%ctaid`. Fixtures: `%tid.x + 64·%ctaid.x < n`
     under a grid whose last CTA is partial; each of the six
     comparisons; a `%ctaid`-only branch folded and one not;
     `and`/`or`/`not` of a lane and a `%ctaid` comparison; a block of
     two rows with partial warps; no grid (today's output).
-    `b200-mixed-index-guard.test` becomes exact per CTA.
+    `b200-mixed-index-guard.test` becomes exact per CTA. Done in
+    `ae6218c`, folding over the launch's block shape rather than any
+    block's: 8 blocks confirmed, none contradicted.
 G3. Counts per launch in the ncu comparison. The norope store's
     prediction becomes 589,824. Unit tests at the budgets and an
-    election.
+    election. Done in `586e59b`; norope was exact per CTA after G2,
+    and scan_tma's line 184 pins the sum
+    (`b200-launch-counts.test`).
 G4. Totals per launch, with a loop whose trip count is not read.
+    Done with this note's last edit (`b200-launch-totals.test`).

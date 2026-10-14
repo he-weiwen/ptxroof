@@ -88,6 +88,10 @@ pub struct KernelReport {
     /// when the block size is only a maximum).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub totals_per_cta: Option<Aggregates>,
+    /// Kernel totals over the launch's CTAs (needs `launch` and the
+    /// grid): a block's threads summed over the CTAs where they differ.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub totals_per_launch: Option<Aggregates>,
     /// Loops ranked by instructions executed per invocation (a symbolic
     /// expression), most first.
     pub ranking: Vec<RankEntry>,

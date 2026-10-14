@@ -1,0 +1,15 @@
+# Totals per launch under a record's grid. norope's store runs on 72
+# threads of each of its 8192 CTAs, 16 B each: 9437184 B. ds2 rope's
+# loads and stores sit in a loop whose latch reads %ctaid.y, so its
+# trip count is not read and may differ by CTA: per CTA they are
+# 16640·trips B, per launch unknown.
+RUN: %ptxroof analyze %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json | FileCheck --check-prefix=NOROPE "%s"
+RUN: %ptxroof analyze %fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ncu.json | FileCheck --check-prefix=DS2 "%s"
+NOROPE: totals per CTA [static]:
+NOROPE: global bytes: load 2176 B, store 1152 B
+NOROPE: totals per launch [static]:
+NOROPE: global bytes: load 17825792 B, store 9437184 B
+DS2: totals per CTA [static]:
+DS2: global bytes: load 16640 * trips(
+DS2: totals per launch [static]:
+DS2: global bytes: load 0 B + unknown, store 0 B + unknown

@@ -605,7 +605,11 @@ struct CountAccumulator {
 }
 
 impl CountAccumulator {
-    fn add(&mut self, count: i64, mult: &SymExpr, at_most: bool) {
+    /// `count` times `mult`; `None` when the count is not known.
+    fn add(&mut self, count: i64, mult: Option<&SymExpr>, at_most: bool) {
+        let Some(mult) = mult else {
+            return self.add_unknown();
+        };
         let (coeff, rest) = SymExpr::split_const(mult.clone());
         match self.groups.iter_mut().find(|(m, _)| *m == rest) {
             Some((_, n)) => *n += coeff * count,
@@ -749,7 +753,13 @@ struct IssueAccumulator {
 }
 
 impl IssueAccumulator {
-    fn add(&mut self, threads: i64, warps: Option<(i64, bool)>, mult: &SymExpr, at_most: bool) {
+    fn add(
+        &mut self,
+        threads: i64,
+        warps: Option<(i64, bool)>,
+        mult: Option<&SymExpr>,
+        at_most: bool,
+    ) {
         self.threads.add(threads, mult, at_most);
         if let Some((warps, warps_at_most)) = warps {
             self.warps.add(warps, mult, warps_at_most);
@@ -784,7 +794,7 @@ impl FlopAccumulator {
         }
     }
 
-    fn add(&mut self, precision: Precision, n: i64, mult: &SymExpr, at_most: bool) {
+    fn add(&mut self, precision: Precision, n: i64, mult: Option<&SymExpr>, at_most: bool) {
         self.by_precision
             .get_mut(&precision)
             .expect("every precision pre-inserted")
@@ -914,12 +924,7 @@ impl<'a> KernelReportBuilder<'a> {
             AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
         let uniformity = tracer.uniformity();
         b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer, uniformity);
-        let grid = (SpecialVector::Nctaid.components()).map(|reg| {
-            bind_map
-                .get(&reg.name())
-                .and_then(|&n| u32::try_from(n).ok())
-        });
-        if let [Some(x), Some(y), Some(z)] = grid {
+        if let Some(grid) = b.grid() {
             for (block, blk) in b.cfg.blocks.iter_enumerated() {
                 let guarded = (blk.start..blk.end).filter(|s| b.sets.guards.contains_key(s));
                 for stmt in [None].into_iter().chain(guarded.map(Some)) {
@@ -927,7 +932,7 @@ impl<'a> KernelReportBuilder<'a> {
                         Some(s) => b.sets.of(block, s),
                         None => b.sets.blocks[block.0 as usize].clone(),
                     };
-                    if let Some(n) = set.launch(shape, [x, y, z]) {
+                    if let Some(n) = set.launch(shape, grid) {
                         b.launches.insert((block, stmt), n);
                     }
                 }
@@ -1367,8 +1372,17 @@ impl<'a> KernelReportBuilder<'a> {
     /// Aggregate over blocks; `below` = aggregate within this loop
     /// (multipliers stop there), `None` = whole kernel. With
     /// `cta`, every per-thread count additionally scales by the CTA's
-    /// thread count, and is an upper bound when that count is one.
-    fn aggregates(&self, below: Option<LoopId>, cta: Option<&LaunchInfo>) -> Aggregates {
+    /// thread count, and is an upper bound when that count is one. With
+    /// `ctas` too, over the launch: a block or guarded instruction at its
+    /// threads and warps over the grid where they are counted, else at
+    /// its count per CTA times the CTAs; one under a loop whose trip
+    /// count is not read is unknown, its trips perhaps differing by CTA.
+    fn aggregates(
+        &self,
+        below: Option<LoopId>,
+        cta: Option<&LaunchInfo>,
+        ctas: Option<u64>,
+    ) -> Aggregates {
         let mut flops: BTreeMap<Pipe, FlopAccumulator> = Pipe::ALL
             .iter()
             .map(|&p| (p, FlopAccumulator::new()))
@@ -1390,30 +1404,54 @@ impl<'a> KernelReportBuilder<'a> {
             if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
                 continue;
             }
-            let resolve = |set: &ThreadSet| self.executing(bm, set, chain_at_most, cta);
+            let unread = ctas.is_some()
+                && (self.chain(bm.block).iter())
+                    .any(|l| self.trip_info.trips[l.0 as usize].is_err());
+            let mult = (!unread).then_some(mult);
+            let mult = mult.as_ref();
+            let resolve = |set: &ThreadSet, stmt: Option<usize>| {
+                let per_cta = self.executing(bm, set, chain_at_most, cta);
+                let Some(n) = ctas.and_then(|n| i64::try_from(n).ok()) else {
+                    return per_cta;
+                };
+                let over = self.launches.get(&(bm.block, stmt));
+                match over
+                    .and_then(|&(t, w)| Some((i64::try_from(t).ok()?, i64::try_from(w).ok()?)))
+                {
+                    Some((t, w)) => {
+                        let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
+                        (t, Some((w, bound)), bound, true)
+                    }
+                    None => {
+                        let (threads, warps, at_most, explained) = per_cta;
+                        let warps = warps.map(|(w, bound)| (w * n, bound));
+                        (threads * n, warps, at_most, explained)
+                    }
+                }
+            };
             let (threads, warps, block_at_most, _) =
-                resolve(&self.sets.blocks[bm.block.0 as usize]);
+                resolve(&self.sets.blocks[bm.block.0 as usize], None);
             for instruction in &bm.instructions {
-                instruction_all.add(threads, warps, &mult, block_at_most);
+                instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
                     continue;
                 }
                 let kind = instructions
                     .entry(instruction_kind(&instruction.classified))
                     .or_default();
-                kind.total.add(threads, warps, &mult, block_at_most);
+                kind.total.add(threads, warps, mult, block_at_most);
                 kind.opcodes
                     .entry(instruction.opcode.clone())
                     .or_default()
-                    .add(threads, warps, &mult, block_at_most);
+                    .add(threads, warps, mult, block_at_most);
                 kind.variants
                     .entry((
                         instruction.opcode.clone(),
                         instruction.classified.contributions.clone(),
                     ))
                     .or_default()
-                    .add(threads, warps, &mult, block_at_most);
-                instruction_total.add(threads, warps, &mult, block_at_most);
+                    .add(threads, warps, mult, block_at_most);
+                instruction_total.add(threads, warps, mult, block_at_most);
             }
             for m in &bm.measurements {
                 if !self.counted(bm.block, m.provenance) {
@@ -1423,7 +1461,7 @@ impl<'a> KernelReportBuilder<'a> {
                     Some(Pred::True) => (threads, block_at_most),
                     Some(_) => {
                         let (threads, _, at_most, explained) =
-                            resolve(&self.sets.of(bm.block, m.provenance));
+                            resolve(&self.sets.of(bm.block, m.provenance), Some(m.provenance));
                         (threads, at_most || !explained)
                     }
                     None => (threads, block_at_most || m.predicated),
@@ -1434,16 +1472,16 @@ impl<'a> KernelReportBuilder<'a> {
                         flops
                             .get_mut(&pipe)
                             .expect("every pipe pre-inserted")
-                            .add(precision, n, &mult, at_most);
+                            .add(precision, n, mult, at_most);
                     }
                     MeasureKind::Bytes { space, direction } => {
                         let entry = bytes.entry(space.key()).or_default();
                         match direction {
-                            Direction::Load => entry.0.add(n, &mult, at_most),
-                            Direction::Store => entry.1.add(n, &mult, at_most),
+                            Direction::Load => entry.0.add(n, mult, at_most),
+                            Direction::Store => entry.1.add(n, mult, at_most),
                         }
                     }
-                    MeasureKind::Conversions => conversions.add(n, &mult, at_most),
+                    MeasureKind::Conversions => conversions.add(n, mult, at_most),
                     MeasureKind::UnquantifiedBytes { space, direction } => {
                         let entry = bytes.entry(space.key()).or_default();
                         match direction {
@@ -1632,7 +1670,7 @@ impl<'a> KernelReportBuilder<'a> {
             depth: self.forest.get(id).depth,
             trips,
             unroll,
-            per_iteration: self.aggregates(Some(id), None),
+            per_iteration: self.aggregates(Some(id), None, None),
             accesses: self.accesses.get(&Some(id)).cloned().unwrap_or_default(),
             global_bytes_per_cta: self.loop_bytes(id),
             loops: self
@@ -1661,7 +1699,7 @@ impl<'a> KernelReportBuilder<'a> {
                     for &cl in &self.chain(b) {
                         mult = SymExpr::mul(mult, self.trip_exprs[cl.0 as usize].clone());
                     }
-                    weight.add(instrs, &mult, false);
+                    weight.add(instrs, Some(&mult), false);
                 }
                 let weight = weight.expr();
                 let approx: HashMap<String, i64> = weight
@@ -1823,6 +1861,16 @@ impl<'a> KernelReportBuilder<'a> {
         }
     }
 
+    /// The grid, when bound.
+    fn grid(&self) -> Option<[u32; 3]> {
+        let [x, y, z] = (SpecialVector::Nctaid.components()).map(|reg| {
+            self.bind_map
+                .get(&reg.name())
+                .and_then(|&n| u32::try_from(n).ok())
+        });
+        Some([x?, y?, z?])
+    }
+
     /// The threads and warps that run statement `stmt` of block `b` over
     /// the launch, where the grid is bound and they are counted.
     fn launch(&self, b: BlockId, stmt: usize) -> Option<(u64, u64)> {
@@ -1935,7 +1983,14 @@ impl<'a> KernelReportBuilder<'a> {
                 source: source.to_owned(),
                 exact: source != ".maxntid",
             });
-        let totals_per_cta = launch.as_ref().map(|l| self.aggregates(None, Some(l)));
+        let totals_per_cta = launch
+            .as_ref()
+            .map(|l| self.aggregates(None, Some(l), None));
+        let ctas = self
+            .grid()
+            .and_then(|g| g.iter().try_fold(1u64, |n, &d| n.checked_mul(d.into())));
+        let totals_per_launch =
+            (launch.as_ref().zip(ctas)).map(|(l, n)| self.aggregates(None, Some(l), Some(n)));
 
         let unknowns = self.unknowns();
         let measured = (ncu.filter(|(r, _)| r.kernel == name).zip(launch.as_ref()))
@@ -1962,6 +2017,7 @@ impl<'a> KernelReportBuilder<'a> {
             launch,
             accesses: self.accesses.get(&None).cloned().unwrap_or_default(),
             totals_per_cta,
+            totals_per_launch,
             ranking: ranking.into_iter().map(|(_, r)| r).collect(),
             loops: self
                 .forest
@@ -1969,7 +2025,7 @@ impl<'a> KernelReportBuilder<'a> {
                 .into_iter()
                 .map(|t| self.loop_node(t))
                 .collect(),
-            totals: self.aggregates(None, None),
+            totals: self.aggregates(None, None, None),
             unknowns,
             unused: (self.kernel.stmts.iter().enumerate())
                 .filter_map(|(s, stmt)| match stmt {

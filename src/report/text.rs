@@ -94,6 +94,10 @@ pub fn render(report: &Report) -> String {
             let _ = writeln!(w, "  totals per CTA [static]:");
             render_aggregates(w, per_cta, "    ");
         }
+        if let Some(per_launch) = &k.totals_per_launch {
+            let _ = writeln!(w, "  totals per launch [static]:");
+            render_aggregates(w, per_launch, "    ");
+        }
 
         if k.unknowns.is_empty() {
             let _ = writeln!(w, "  unknowns: none");

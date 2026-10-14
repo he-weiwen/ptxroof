@@ -27,7 +27,10 @@ no total, per thread or per CTA; with `--bind 10:K=768` the c_fc fp8
 GEMM's path for a short K, `gluon-fp8-gemm-c-fc-warps.test`), combined with
 `and`, `or` and `not`, or `elect.sync`'s one lane per warp, so
 per-CTA totals count each on its own threads
-(`micro/guards.ptx`, `micro/elect.ptx`), and which lanes of a warp
+(`micro/guards.ptx`, `micro/elect.ptx`), and with the grid given the
+totals per launch its threads summed over the CTAs
+(`micro/cta_mask.ptx`: 4000 B stored by 1000 threads of 16 CTAs of
+64), and which lanes of a warp
 run it when the rest of the condition is the same for every thread
 (`micro/carry_uniform.ptx`'s branch on a carry from two parameters:
 `warp: 4–5 sectors`); and per loop
@@ -179,6 +182,10 @@ its shared writes and instruction counts remain counted
 
 ### Reported as unknowns
 
+- **A block under a loop whose trip count is not read is unknown in
+  the totals per launch**, as its trips may differ by CTA: ds2 rope's
+  loop, whose latch reads `%ctaid.y`, moves `16640·trips` B per CTA
+  and `+ unknown` per launch (`b200-launch-totals.test`).
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unroll main+remainder pair, LLVM's two-register counter and its
