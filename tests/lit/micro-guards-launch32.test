@@ -7,4 +7,4 @@ CHECK: block size: 32 threads, 1 warp (32x1x1 from flag)
 CHECK: totals per CTA [static]:
 CHECK: global store 16 B      32
 CHECK: st.global.v4.f32     32
-CHECK: global bytes: load 260 B, store <= 702 B
+CHECK: global bytes: load 260 B, store <= 706 B

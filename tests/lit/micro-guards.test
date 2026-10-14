@@ -12,4 +12,4 @@ CHECK: <block 0>  ld.global.f32     global load 4 B on 1 thread in 1 warp (%tid.
 CHECK: totals per CTA [static]:
 CHECK: global store 8 B      127
 CHECK: st.global.b64        63
-CHECK: global bytes: load 516 B, store <= 1730 B
+CHECK: global bytes: load 516 B, store <= 1734 B

@@ -24,6 +24,7 @@ analysis framework is introduced.
 | `analysis/scalar/recurrences` | Loop counters as recurrences on register SSA values | new |
 | `analysis/scalar/trip_counts` | Loop trip matching and unroll pairing | `trips` |
 | `analysis/thread_participation` | Threads that execute a block | `threads` |
+| `analysis/dead_code` | Instructions whose results nothing with an effect reads | new |
 | `analysis/memory_footprint` | Sectors touched by a warp request | remaining `footprint` |
 | `analysis/instruction_counts` | Classification, measurements, and collection | `classify`, `core/measurement`, `report/collect` |
 | `report/build` | Analysis orchestration and report-specific aggregation | unchanged |
@@ -84,6 +85,7 @@ trip_counts <-> trace -> affine -> symexpr
      +-> loop_names --------> control_flow
 
 thread_participation -> trace
+dead_code -> ssa, classify, register_effects
 uniformity <-> trace
 affine -> ssa (`Var::Uniform` names a register SSA value)
 thread_participation -> lane_eval -> affine

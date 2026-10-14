@@ -95,8 +95,18 @@ pub struct KernelReport {
     /// unquantifiable bytes, unresolved trips, irreducible regions,
     /// call sites. Never silently empty when something was dropped.
     pub unknowns: Vec<UnknownEntry>,
+    /// Instructions that run but whose results nothing with an effect
+    /// reads (ptxas removes them); in no total.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unused: Vec<UnusedInstruction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub measured: Option<Vec<MeasuredBlock>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnusedInstruction {
+    pub line: u32,
+    pub opcode: String,
 }
 
 #[derive(Debug, Serialize)]

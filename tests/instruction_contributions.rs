@@ -30,7 +30,7 @@ fn atomic_contributions_scale_with_loops_and_launch_but_instruction_counts_do_no
     let src = source(
         "mov.u32 %r1, 0;
 L:
-    atom.global.add.f32 %f1, [output], %f2;
+    atom.global.add.f32 %f1, [output], %f3;
     red.global.add.f32 [output], %f2;
     fma.rn.f32 %f3, %f1, %f2, %f3;
     add.u32 %r1, %r1, 1;
@@ -189,7 +189,7 @@ ret;",
 #[test]
 fn ignored_unknown_and_unquantified_contributions_stay_distinct() {
     let report = analyze(
-        &source("prefetch.global.L2 [source];\nwgmma.fence.sync.aligned;\nld.global %r1, [source];\nret;"),
+        &source("prefetch.global.L2 [source];\nwgmma.fence.sync.aligned;\nld.global %r1, [source];\nst.global.u32 [source], %r1;\nret;"),
         "unknown",
         &Default::default(),
     )

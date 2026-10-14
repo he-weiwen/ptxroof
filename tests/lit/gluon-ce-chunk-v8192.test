@@ -1,14 +1,16 @@
 # The same kernel at a two-block vocabulary: LLVM unrolls the first
 # pass and turns the two-trip second pass into a predicate phi
 # (`mov.pred` set true before the loop, copied in the header, set false
-# in the latch). The matcher reads that as two trips.
+# in the latch). The matcher reads that as two trips. The default values
+# Triton moves into loads it then issues unguarded are unused (no SASS in
+# the kernel's ncu record) and count in no total.
 RUN: %ptxroof analyze %fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ptx | FileCheck "%s"
 CHECK: kernel ce_chunk_kernel
 CHECK: loop gluon_ce.py:54 ($L__BB0_3)
 CHECK: trips = 2
-CHECK: instructions = 265
+CHECK: instructions = 261
 CHECK: AI(global) = 5.78125 flop/B
 CHECK: totals [static]:
-CHECK: instructions = <= 979
+CHECK: instructions = <= 960
 CHECK: unknowns: none
 CHECK: coverage: loop_trips_resolved 100.0% (1/1)

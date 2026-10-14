@@ -23,6 +23,7 @@
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::control_flow::{dominators, loop_forest};
+use crate::analysis::dead_code::unused;
 use crate::analysis::instruction_counts::classify::{
     ArithKind, ClassifiedInstruction, Direction, InstructionCategory, Pipe, Precision, Space,
 };
@@ -436,7 +437,7 @@ impl KernelReportBuilder<'_> {
                         Some(Err(why)) => (None, None, Some(why)),
                         None => (None, None, None),
                     };
-                    if let Some(b) = bytes {
+                    if let Some(b) = bytes.filter(|_| !self.unused[pos]) {
                         forms.entry(scope).or_default().push(AccessForm {
                             form: form.clone(),
                             bytes: b,
@@ -793,6 +794,8 @@ struct KernelReportBuilder<'a> {
     access_forms: ByScope<AccessForm>,
     /// Which threads run each block and each guarded instruction.
     sets: ThreadSets,
+    /// Per statement: it runs, but nothing with an effect reads its results.
+    unused: Vec<bool>,
     /// The block shape when known (`--launch` or `.reqntid`), else zeros.
     shape: [u32; 3],
     /// The PTX file's lines, naming a uniform value by its statement's.
@@ -861,6 +864,7 @@ impl<'a> KernelReportBuilder<'a> {
             accesses: HashMap::new(),
             access_forms: HashMap::new(),
             sets: ThreadSets::default(),
+            unused: Vec::new(),
             shape,
             lines,
         };
@@ -894,6 +898,26 @@ impl<'a> KernelReportBuilder<'a> {
             };
             b.cond_entry[i] &= !always(l.header, targets);
         }
+        let compile_time: HashMap<String, i64> = (SpecialVector::Ntid.components().into_iter())
+            .zip(kernel.reqntid.into_iter().flatten())
+            .map(|(reg, n)| (reg.name(), i64::from(n)))
+            .collect();
+        let static_sets;
+        let sets = match compile_time == *bind_map {
+            true => &b.sets,
+            false => {
+                let t = AffineValueTracer::new(module, kernel, &b.cfg, &b.forest)
+                    .with_bindings(&compile_time);
+                static_sets = thread_sets(module, kernel, &b.cfg, &b.forest, &t, t.uniformity());
+                &static_sets
+            }
+        };
+        b.unused = unused(module, kernel, &tracer.ssa, |s| {
+            match sets.never(tracer.block_of(s), s) {
+                true => Some(false),
+                false => (sets.guards.get(&s) == Some(&Pred::True)).then_some(true),
+            }
+        });
         let (accesses, access_forms) = b.accesses_by_scope(&tracer, uniformity);
         b.accesses = accesses;
         b.access_forms = access_forms;
@@ -1161,6 +1185,12 @@ impl<'a> KernelReportBuilder<'a> {
     }
 
     /// Loop chain of a block, innermost first.
+    /// Whether statement `stmt` of block `b` counts: some thread runs it,
+    /// and something with an effect reads its results.
+    fn counted(&self, b: BlockId, stmt: usize) -> bool {
+        !self.sets.never(b, stmt) && !self.unused[stmt]
+    }
+
     fn chain(&self, b: BlockId) -> Vec<LoopId> {
         let mut out = Vec::new();
         let mut cur = self.forest.block_loop[b.0 as usize];
@@ -1238,7 +1268,7 @@ impl<'a> KernelReportBuilder<'a> {
             let (threads, warps, block_at_most, _) =
                 resolve(&self.sets.blocks[bm.block.0 as usize]);
             for instruction in &bm.instructions {
-                if self.sets.never(bm.block, instruction.provenance) {
+                if !self.counted(bm.block, instruction.provenance) {
                     continue;
                 }
                 let kind = instructions
@@ -1259,7 +1289,7 @@ impl<'a> KernelReportBuilder<'a> {
                 instruction_total.add(threads, warps, &mult, block_at_most);
             }
             for m in &bm.measurements {
-                if self.sets.never(bm.block, m.provenance) {
+                if !self.counted(bm.block, m.provenance) {
                     continue;
                 }
                 let (threads, at_most) = if self.sets.guards.contains_key(&m.provenance) {
@@ -1491,7 +1521,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let mut weight = CountAccumulator::default();
                 for &b in &l.blocks {
                     let instrs = (self.blocks[b.0 as usize].instructions.iter())
-                        .filter(|i| !self.sets.never(b, i.provenance))
+                        .filter(|i| self.counted(b, i.provenance))
                         .count() as i64;
                     let mut mult = SymExpr::Const(1);
                     for &cl in &self.chain(b) {
@@ -1530,7 +1560,7 @@ impl<'a> KernelReportBuilder<'a> {
         let mut unknown_ops: BTreeMap<String, u64> = BTreeMap::new();
         let mut unquantified: BTreeMap<String, u64> = BTreeMap::new();
         for bm in &self.blocks {
-            for m in (bm.measurements.iter()).filter(|m| !self.sets.never(bm.block, m.provenance)) {
+            for m in (bm.measurements.iter()).filter(|m| self.counted(bm.block, m.provenance)) {
                 match m.kind {
                     MeasureKind::UnknownOps { mnemonic } => {
                         *unknown_ops.entry(mnemonic.name().to_owned()).or_default() += m.count;
@@ -1689,7 +1719,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let guarded = self.sets.guards.contains_key(&i.provenance);
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
-                let never = self.sets.never(bm.block, i.provenance);
+                let never = !self.counted(bm.block, i.provenance);
                 predictions.push(Prediction {
                     line,
                     constraint: count_constraint(self.module, instr),
@@ -1783,6 +1813,15 @@ impl<'a> KernelReportBuilder<'a> {
                 .collect(),
             totals: self.aggregates(None, None),
             unknowns,
+            unused: (self.kernel.stmts.iter().enumerate())
+                .filter_map(|(s, stmt)| match stmt {
+                    Stmt::Instr(i) if self.unused[s] => Some(UnusedInstruction {
+                        line: self.lines.line(i.offset),
+                        opcode: self.module.opcode(i),
+                    }),
+                    _ => None,
+                })
+                .collect(),
             measured,
         }
     }
@@ -1935,7 +1974,7 @@ mod tests {
                    mov.u32 %r2, 0;\nsetp.ne.s32 %p2, %r1, 0;\n\
                    $L__LOOP:\nld.global.f32 %f1, [%rd3];\nld.global.f32 %f2, [%rd5];\n\
                    add.s64 %rd3, %rd3, 128;\nadd.s32 %r2, %r2, 1;\nsetp.lt.u32 %p1, %r2, 8;\n\
-                   @%p1 bra $L__LOOP;\nret;\n}\n";
+                   @%p1 bra $L__LOOP;\nadd.f32 %f3, %f1, %f2;\nst.global.f32 [%rd5], %f3;\nret;\n}\n";
         let r = analyze(src, "t", &opts).expect("analyzes");
         // 32 lanes × 4 B × 8 trips per load; the first sweeps 1024 B in 4
         // or 5 sectors a trip, the second is one word in one sector.
@@ -2280,7 +2319,7 @@ mod tests {
         let src = ".version 8.7\n.target sm_90a\n.address_size 64\n\
                    .visible .entry k()\n{\n\
                    ld.global.f32 %f1, [%rd1];\nfma.rn.f32 %f2, %f1, %f1, %f1;\n\
-                   wgmma.fence.sync.aligned;\n\
+                   st.global.f32 [%rd1], %f2;\nwgmma.fence.sync.aligned;\n\
                    cp.async.cg.shared.global [%r1], [%rd2], %r2;\nret;\n}\n";
         let r = analyze(src, "t", &opts).expect("analyzes");
         let t = &r.kernels[0].totals;

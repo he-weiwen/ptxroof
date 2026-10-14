@@ -101,6 +101,16 @@ pub fn render(report: &Report) -> String {
                 let _ = writeln!(w, "    {}{count} — {}", u.what, u.reason);
             }
         }
+        if !k.unused.is_empty() {
+            let mut by_opcode: BTreeMap<&str, usize> = BTreeMap::new();
+            for u in &k.unused {
+                *by_opcode.entry(&u.opcode).or_default() += 1;
+            }
+            let list: Vec<String> = (by_opcode.iter())
+                .map(|(o, n)| format!("{o} x{n}"))
+                .collect();
+            let _ = writeln!(w, "  unused, in no total: {}", list.join(", "));
+        }
         if let Some(blocks) = &k.measured {
             render_measured(w, blocks);
         }
