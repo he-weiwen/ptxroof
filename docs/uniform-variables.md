@@ -167,9 +167,13 @@ pointer (`selp.b64` between two). Summing bases is the largest the
 union can be, and the largest single base the least, so unique bytes
 become a range instead of an assumption:
 
-- A base's pointer is the one 64-bit kernel parameter its symbolic
-  part holds with coefficient 1. A base with none, with more than one,
-  or with a uniform variable of a 64-bit register has no known pointer.
+- A base's pointer is the one 64-bit kernel parameter it names, in its
+  symbolic part with coefficient 1, when it names no other: none in a
+  coefficient (`p + (q − p)·%ctaid.x` meets `q` at CTA 1), no address
+  symbol of a module-scope array, and no uniform variable of a 64-bit
+  register. Any other base has no known pointer. An offset from a
+  pointer is taken to stay in its allocation, as C's pointer
+  provenance has it.
 - At most: the sum of every base's union, today's number.
 - At least: for each pointer, the largest union of a base on it,
   summed over the pointers (different pointers stay disjoint, PLAN's
@@ -180,7 +184,9 @@ become a range instead of an assumption:
   in step U3.
 
 `LoopBytes.unique` becomes a `ByteRange`; the text prints one number
-when its ends agree. Measured under the lit tests' bindings, 20 loops
+when its ends agree. Under `at_most` (an access that may not run),
+both ends are upper bounds, as for `sector_bytes` today:
+`unique <= 16–32 B`. Measured under the lit tests' bindings, 20 loops
 have a footprint; uniform variables leave unique unknown in one, the
 fp8 GEMM's K loop (c_fc and lm_head_dx), where A and B each sit at one
 base on their own pointer, so it becomes exact.
@@ -237,9 +243,13 @@ U4. Overlapping bases, as above. Expected: the fp8 GEMM's K loop exact
     under its bindings; `micro/one_pointer_two_bases.ptx` 16–32 B, its
     PLAN wording narrowed to different pointer parameters; any other
     loop with bases on one pointer explained. Fixture
-    `micro/uniform_bases.ptx`: `p + 64·u` and `p + 64·w` in one loop (a
-    range), `p + 64·u` and `q + 64·u` (exact), and a 64-bit uniform base
-    beside a parameter one (a range).
+    `micro/uniform_bases.ptx`, stores so that no access is unused:
+    `p + 64·u` and `p + 64·w` in one loop (a range), the same under a
+    guard on a parameter (`<=` both ends), `p + 64·u` and `q + 64·u`
+    (exact), `p + 64·u` at two constant offsets that overlap (one base,
+    exact), `p + (q − p)·%ctaid.x` beside `q`, a 64-bit uniform base
+    beside `p`, and a module-scope array beside `p` (ranges), and `u`
+    computed in an outer loop for an inner one (exact for the inner).
 
 PLAN's "uniform(v)" missing-feature entry points here while the steps
 land.
