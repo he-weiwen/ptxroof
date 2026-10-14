@@ -77,8 +77,8 @@ impl ControlFlowGraph {
         }
         ControlFlowGraph {
             blocks,
-            call_sites: Vec::new(),
-            unresolved_branches: Vec::new(),
+            call_sites: self.call_sites.clone(),
+            unresolved_branches: self.unresolved_branches.clone(),
         }
     }
 
