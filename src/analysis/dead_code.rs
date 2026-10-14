@@ -7,7 +7,10 @@
 //! follows each read of a live instruction to the definitions that may
 //! reach it; a guarded definition also reads the value it keeps where its
 //! guard is false, unless every thread reads the guard as true, and one
-//! that never runs reads only that.
+//! that never runs reads only that. An instruction that is not pure may
+//! also read what it writes (`wgmma`'s accumulator under `scale-d`, PTX
+//! ISA §9.7.16.5.2), and a statement the parser does not read, the carry
+//! flag.
 
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
@@ -103,10 +106,15 @@ fn reads(module: &Module, stmt: &Stmt, guard: Option<bool>) -> Vec<Register> {
                 );
                 regs.extend(i.predicate.map(|p| Register::Named(p.reg)));
                 regs.extend(reads_cc(module, i).then_some(Register::Cc));
+                if !pure(module, i) {
+                    regs.extend(writes(module, stmt));
+                }
             }
             regs
         }
-        Stmt::Unparsed { registers, .. } => registers.iter().map(|&r| Register::Named(r)).collect(),
+        Stmt::Unparsed { registers, .. } => (registers.iter().map(|&r| Register::Named(r)))
+            .chain([Register::Cc])
+            .collect(),
         _ => Vec::new(),
     }
 }

@@ -11,8 +11,8 @@ expression: "format!(\"{head}\\n{out}\")"
 54	mov.b32
 3	mov.pred
 269	mov.u16
-580	mov.u32
-16	mov.u64
+577	mov.u32
+14	mov.u64
 4	mul.lo.s32
 2	mul.wide.s32
 1	mul.wide.u32
@@ -20,7 +20,6 @@ expression: "format!(\"{head}\\n{out}\")"
 1	selp.b16
 1	setp.ne.u32
 
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:66	_fwd_kernel_flash_decode_stage1_padding	mov.u64
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:74	_fwd_kernel_flash_decode_stage1_padding	mov.u64
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:375	_fwd_kernel_flash_decode_stage1_padding	mov.u32
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:418	_fwd_kernel_flash_decode_stage1_padding	mov.u32
@@ -530,7 +529,6 @@ tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kern
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:60	_causal_conv1d_fwd_kernel	mov.u32
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:84	_causal_conv1d_fwd_kernel	mov.u32
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:179	_causal_conv1d_fwd_kernel	mov.u16
-tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx:89	_stage1_tma	mov.u64
 tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx:97	_stage1_tma	mov.u64
 tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx:499	_stage1_tma	mov.u32
 tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx:542	_stage1_tma	mov.u32
@@ -978,14 +976,11 @@ tests/fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx:1250	rmsnorm_stats_kernel	mo
 tests/fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx:1291	rmsnorm_stats_kernel	mad.wide.s32
 tests/fixtures/micro/address_operands.ptx:27	micro_address_operands	mov.u32
 tests/fixtures/micro/address_operands.ptx:32	micro_address_operands	mov.u32
-tests/fixtures/micro/barrier_red.ptx:23	micro_barrier_red	mov.u32
-tests/fixtures/micro/call_returns.ptx:29	micro_call_returns	mov.u32
 tests/fixtures/micro/chain_start.ptx:30	micro_chain_start	mov.u32
 tests/fixtures/micro/counter_vector_write.ptx:20	micro_counter_vector_write	mov.u32
 tests/fixtures/micro/guarded_step.ptx:27	micro_guarded_step	setp.ne.u32
 tests/fixtures/micro/scoped_family.ptx:23	micro_scoped_family	mov.u32
 tests/fixtures/micro/scoped_variable.ptx:23	micro_scoped_variable	mul.wide.u32
-tests/fixtures/micro/tcgen05_outputs.ptx:25	micro_tcgen05_outputs	mov.u32
 tests/fixtures/micro/unified_load.ptx:21	micro_unified_load	mov.u32
 tests/fixtures/micro/vector_def.ptx:24	micro_vector_def	mov.u32
 tests/fixtures/micro/vector_register.ptx:24	micro_vector_register	ld.global.v2.b32
