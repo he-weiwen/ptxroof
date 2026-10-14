@@ -885,9 +885,7 @@ impl<'a> KernelReportBuilder<'a> {
                 Some(l) => &b.forest.get(l).latches,
                 None => &exit_blocks,
             };
-            if !doms.is_reachable(x) {
-                b.sets.blocks[x.0 as usize].pred = Pred::False;
-            } else if always(x, targets) {
+            if always(x, targets) {
                 bm.qualifier = CountQualifier::Exact;
             }
         }
@@ -1960,6 +1958,30 @@ mod tests {
             .expect("reqntid gives a launch");
         assert_eq!(cta.bytes["global"].load.expr, "128");
         assert!(!cta.bytes["global"].load.at_most);
+    }
+
+    #[test]
+    fn a_launch_shape_leaves_the_unused_instructions_alone() {
+        // The store's block is reached only through two branches no
+        // thread takes, so the load it alone reads is unused, with or
+        // without a launch shape ptxas never sees.
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r1, [%rd1];\n\
+                   mov.u32 %r9, %tid.x;\nmov.pred %p1, 0;\nsetp.lt.u32 %p2, %r9, 4;\n\
+                   @%p2 bra $L__B;\n@%p1 bra $L__S;\nbra.uni $L__E;\n\
+                   $L__B:\n@%p1 bra $L__S;\nbra.uni $L__E;\n\
+                   $L__S:\nst.global.u32 [%rd1], %r1;\n$L__E:\nret;\n}\n";
+        let unused = |launch| {
+            let opts = AnalyzeOptions {
+                launch,
+                ..Default::default()
+            };
+            let r = analyze(src, "t", &opts).expect("analyzes");
+            (r.kernels[0].unused.iter().map(|u| u.opcode.clone())).collect::<Vec<_>>()
+        };
+        assert!(unused(None).contains(&"ld.global.u32".to_owned()));
+        assert_eq!(unused(None), unused(Some([32, 1, 1])));
     }
 
     #[test]

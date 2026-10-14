@@ -9,6 +9,7 @@
 //! is an unknown selector, and the block's counts stay bounds; one the
 //! same for every thread empties or keeps whole warps.
 
+use crate::analysis::control_flow::dominators;
 use crate::analysis::control_flow::loops::LoopForest;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
@@ -717,6 +718,13 @@ pub(crate) fn thread_sets(
                 Pred::False => dead_edges.push((b, taken)),
                 _ => {}
             }
+        }
+    }
+    let doms = dominators(&cfg.without(&dead_edges));
+    let mut blocks = blocks;
+    for (b, set) in blocks.iter_mut().enumerate() {
+        if !doms.is_reachable(BlockId(b as u32)) {
+            set.pred = Pred::False;
         }
     }
     ThreadSets {
