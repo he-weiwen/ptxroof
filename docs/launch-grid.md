@@ -59,18 +59,22 @@ loaded values, refused traces, loop counters and uniform values.
 
 ## Design
 
+Revised after codex's review of `d5cc825`.
+
 ### Inputs
 
-`analyze --grid x,y,z`, conflicting with `--ncu` as `--launch` does;
-`--ncu` takes its record's `grid`. `analyze` binds `%nctaid.x`, `.y`
-and `.z` in the kernel's bindings, beside `%ntid`. The tracer reads
-them already: `%nctaid` is a symbol bound by name, and `bound` gives
-`%ctaid` the range [0, n − 1] (`src/analysis/scalar/trace.rs:972`), so
-the wrap check of 16- and 32-bit arithmetic covers `%ctaid` (PLAN,
+`analyze --grid x,y,z`, each at least 1, conflicting with `--ncu` as
+`--launch` does; `--ncu` takes its record's `grid`. `analyze` binds
+`%nctaid.x`, `.y` and `.z` in the kernel's bindings, beside `%ntid`.
+The tracer reads them already: `%nctaid` is a symbol bound by name,
+and `bound` gives `%ctaid` the range [0, n − 1]
+(`src/analysis/scalar/trace.rs:972`), so the wrap checks of 16- and
+32-bit arithmetic, `cvt` and signed `bfe` cover `%ctaid` (PLAN,
 "Integer arithmetic is taken not to wrap": "`%ctaid` (no grid is
-bound)"). The compile-time pass of the dead-code analysis keeps
-`.reqntid` alone. The report shows the grid beside the block size;
-`LaunchInfo` gains `grid`.
+bound)"). Uniformity, `per_lane` and the report's trip matching do not
+read the bindings. The compile-time pass of the dead-code analysis
+keeps `.reqntid` alone. The report echoes the grid beside the
+bindings.
 
 ### G0: a variable beside its floor
 
@@ -79,8 +83,26 @@ bound)"). The compile-time pass of the dead-code analysis keeps
 `c₁·x + c₂·⌊x/d⌋ + c₃·(x mod d) = (c₁·d + c₂)·q + (c₁ + c₃)·r`, `q`
 over `⌊lo/d⌋..⌊hi/d⌋` and `r` over `0..d−1` (`lo mod d..hi mod d`
 when `q` is one value). The group's range is the intersection of that
-and the per-term range, both bounds. Divisors that differ, and nested
-floors, stay per term.
+and the per-term range, both bounds. Divisors that differ stay per
+term. `offsets_fit` (`src/analysis/memory_footprint.rs:24`) bounds
+the partial sums of an address's evaluation in `i64`, which the joint
+range does not (`2^60·x − 2^61·⌊x/2⌋` is at most 2^60, `2^60·x` is
+not), so it sums each term's own range instead.
+
+### Before G2: two fixes in thread selectors
+
+- `condition` traces a `setp`'s operands permissively, so a guarded
+  write is read as its new value (`trace.rs:555`). An existing wrong
+  output: `%r3 = 100; @%p1 mov %r3, %tid.x; setp.lt %p2, %r3, 32` with
+  `%p1` a test of a parameter reads `%tid.x < 32`, 32 threads, where
+  ptxas selects 100 unless the parameter is 0
+  (`SEL R0, R5, 0x64, !P0`). The operands are traced strictly, as the
+  constant path already is; the new `%ctaid` comparisons, their
+  folding and their substitution rely on it.
+- `tally` tries each lane an `elect.sync` may elect, but when every
+  such lane is only possibly active, no lane may be: `Elect(Uniform)`
+  alone counts exactly one lane per warp. It also counts the warp with
+  no leader.
 
 ### G2: comparisons with `%ctaid`
 
@@ -99,34 +121,45 @@ and remainders, when the grid is bound. The type check uses
 A lane's value is then the interval `L(tid) + U`; the comparison is
 `Yes` when it holds at both ends, `No` at neither, `Maybe` otherwise
 (`eq`/`ne` by whether 0 lies in it), so `tally` counts the lanes in at
-every CTA as certain and those in at some CTA as possible. A
-`Constraint` whose `U` varies is not `exact`; it is `lane_exact` when
-it has no `%tid` term, as `Uniform` is.
+every CTA as certain and those in at some CTA as possible: bounds,
+which correlations between comparisons can loosen. A `Constraint`
+whose `U` varies is not `exact`; it is `lane_exact` when it has no
+`%tid` term, as `Uniform` is.
 
 ### G3: counts per launch
 
 `ThreadSet::launch(shape, grid)` gives the threads and warps of the
-whole launch, when every leaf of the predicate is decided at a given
-CTA (no `Unknown` or `Uniform`), else none. It enumerates the CTAs
-over the axes the predicate's `U`s use and multiplies by the others.
-For each comparison with `U` it precomputes `L`'s least and greatest
-value over the block; at a CTA, the comparison either holds on every
-lane, on none, or depends on the lane, and the CTAs are grouped by
-that and, in the last case, by `U`'s value. Each group's lanes are
-counted once at one of its CTAs. More than 2^24 CTAs on the used axes
-gives none.
+whole launch, or none. It enumerates the CTAs over the axes the
+predicate's `U`s use and multiplies by the others. For each comparison
+with `U` it precomputes `L`'s least and greatest value over the block;
+at a CTA, the comparison either holds on every lane, on none, or
+depends on the lane, and the CTAs are grouped by that and, in the last
+case, by `U`'s value. Two CTAs of a group give every comparison the
+same truth on every lane. Each group is counted once, at one of its
+CTAs, with its `%ctaid` terms substituted (`Pred::at_cta`), and the
+launch count exists only when every group's count is exact: no
+`Unknown` or `Uniform` leaf, and no `elect.sync` with several
+candidate leaders. Threads and warps are summed per group. None past
+2^24 CTAs on the used axes, past 2^26 lane evaluations over the groups
+that depend on the lane, or when a product overflows `u64`.
 
 The builder computes it once per block set and per guarded
 instruction. The ncu comparison predicts trips × launch threads where
-it exists, exact unless the chain or `.maxntid` makes it a bound.
+the launch count exists and the set has a condition, which is what
+`explained` requires today; it stays a bound where the chain is
+conditional, where the block size is a `.maxntid`, and for a predicated
+instruction whose guard is not in the set (a branch).
 
 ### G4: totals per launch
 
 With a block shape and a grid, `totals_per_launch` aggregates as per
 CTA, each block and guarded instruction at its launch threads and
 warps where `launch` gives them, and otherwise at its per-CTA count
-times the CTAs, a bound where that is one. The text prints it after
-the per-CTA totals.
+times the CTAs, a bound where that is one. A trip count the solver
+reads holds no `%ctaid` (`trip_counts.rs:222`, the latch condition
+must be in the loop's counter alone), so a resolved multiplier is the
+same for every CTA; a block under a loop whose trip count is not read,
+`trips(…)`, may differ by CTA and is unknown per launch.
 
 ### Not in this plan
 
@@ -140,13 +173,21 @@ Each step diffs every fixture's text and JSON output, with and without
 the records, against the previous commit and explains each change.
 
 G0. Joint range of a variable, its floor and its remainder by one
-    divisor. Unit tests.
-G1. `--grid`, the record's grid, `%nctaid` bound, `LaunchInfo.grid`.
-    Fixture: a 32-bit product of `%ctaid.x` that wraps under the grid
-    given and is read without it.
-G2. Comparisons with `%ctaid`. Fixture: `%tid.x + 64·%ctaid.x < n`
-    under a grid whose last CTA is partial, and a `%ctaid`-only branch;
+    divisor; `offsets_fit` per term. Unit tests (negative ranges, a
+    partial sum past `i64`); `micro/expanded_rem.ptx`,
+    `(%tid.x − 32·⌊%tid.x/32⌋)·2^26` in a block of 1024, read today as
+    "`mul.lo.s32` leaves 32 bits".
+S1. Strict operands in `condition`. `micro/guarded_selector.ptx`.
+S2. `elect.sync` with no certain candidate. Unit test.
+G1. `--grid`, the record's grid, `%nctaid` bound. Fixture: a 32-bit
+    product of `%ctaid.x` that wraps under one grid and not another.
+G2. Comparisons with `%ctaid`. Fixtures: `%tid.x + 64·%ctaid.x < n`
+    under a grid whose last CTA is partial; each of the six
+    comparisons; a `%ctaid`-only branch folded and one not;
+    `and`/`or`/`not` of a lane and a `%ctaid` comparison; a block of
+    two rows with partial warps; no grid (today's output).
     `b200-mixed-index-guard.test` becomes exact per CTA.
 G3. Counts per launch in the ncu comparison. The norope store's
-    prediction becomes 589,824.
-G4. Totals per launch.
+    prediction becomes 589,824. Unit tests at the budgets and an
+    election.
+G4. Totals per launch, with a loop whose trip count is not read.
