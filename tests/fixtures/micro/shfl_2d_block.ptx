@@ -1,0 +1,31 @@
+//
+// HAND-WRITTEN: in a 48x2 block, each thread stores at param_0 plus 4
+// times lane 0's %tid.x, read by `shfl.sync.idx`. A warp is 32
+// consecutive thread indices %tid.x + %tid.y * %ntid.x (PTX ISA §3.1;
+// §9.7.16.1, warp-rank), so warp 1 is (32..47, 0) and (0..15, 1), and
+// all its lanes store at param_0 + 128; warp 2 is (16..47, 1), at
+// param_0 + 64: one sector per warp (ptxas 13.4, sm_89:
+// `SHFL.IDX PT, R2, R5, RZ, 0x1f`, `IMAD.WIDE.U32 R2, R2, R3, c[0x0][0x160]`,
+// `STG.E [R2.64], R5`, R5 = %tid.x, R3 = 4). The tracer reads lane 0's
+// %tid.x as 32 * floor(%tid.x / 32), as in rows of 32 threads.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_shfl_2d_block(
+	.param .u64 micro_shfl_2d_block_param_0
+)
+.reqntid 48, 2, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_2d_block_param_0];
+	mov.u32 	%r1, %tid.x;
+	shfl.sync.idx.b32 	%r2, %r1, 0, 31, -1;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

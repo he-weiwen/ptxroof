@@ -85,6 +85,16 @@ its shared writes and instruction counts remain counted
   keeps the tracer's documented assumption
   (`src/analysis/scalar/trace.rs`, module doc). A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
+- **`shfl.sync.idx` is read as if warps were rows of 32 `%tid.x`**,
+  whatever the block shape: a warp is 32 consecutive
+  `%tid.x + %tid.y·%ntid.x + %tid.z·%ntid.x·%ntid.y` (PTX ISA §3.1,
+  §9.7.16.1), so in a block of more than one row whose `%ntid.x` is no
+  multiple of 32 the lane read is another thread's. In
+  `micro/shfl_2d_block.ptx` (`.reqntid 48, 2, 1`) every lane of a warp
+  stores at lane 0's `%tid.x` (warp 2's lane 0 is thread (16, 1),
+  param_0 + 64; ptxas 13.4); the store reads
+  `[128 * ⌊%tid.x/32⌋ + param_0]`, `warp: 1–2 sectors`. `%laneid` is
+  read only in a block of one row.
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
