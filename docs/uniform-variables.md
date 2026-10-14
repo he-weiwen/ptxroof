@@ -138,8 +138,8 @@ definition the variable is invariant.
 
 A loop footprint counts every address holding a uniform variable as an
 unread address: requested bytes only, unique and sector bytes unknown
-(step 23 of the refactor). Taking such addresses into the per-base
-intervals needs a rule for bases that may overlap; see "Open".
+(step 23 of the refactor), until step U4 reads those defined outside
+the loop; see "Overlapping bases".
 
 ### Construction order
 
@@ -154,26 +154,36 @@ there instead of building their own.
 Trip counts and thread selectors in uniform variables; a load from a
 uniform address as uniform; lane-dependent swizzles.
 
-## Open: overlapping bases (the owner's decision)
+## Overlapping bases (U4, the owner's choice)
 
 A loop footprint unions intervals per base, the address without its
 lane and counter terms, and sums different bases. PLAN states that as
 "different pointer parameters are disjoint"; the code also sums one
-pointer at different symbolic offsets, `param_5 − 8·param_1` and
-`param_5 − 6·param_1` in k1's main loop. A uniform variable can make
-two bases coincide (`p + u` and `p + 64·%ctaid.x` when
-`u = 64·%ctaid.x`), and a 64-bit one can hide a pointer (`selp.b64`
-between two). Measured: with uniform variables defined outside the
-loop, 8 loops would read every address (6 with each base on its own
-pointer parameter, 2 with one pointer at several bases); most have
-symbolic trip counts, so they need `--bind` to report bytes. Options:
+pointer at bases that differ in a parameter
+(`micro/one_pointer_two_bases.ptx`: 32 B where n = 0 gives 16 B). A
+uniform variable can make two bases coincide (`p + u` and
+`p + 64·%ctaid.x` when `u = 64·%ctaid.x`), and a 64-bit one can hide a
+pointer (`selp.b64` between two). Summing bases is the largest the
+union can be, and the largest single base the least, so unique bytes
+become a range instead of an assumption:
 
-1. Keep "Loop footprints" above (no U3).
-2. Sum bases on different pointer parameters only when every uniform
-   variable in them is at most 32 bits; any two bases on one pointer
-   that differ in a uniform term make unique bytes unknown.
-3. Treat uniform variables as the code treats parameters today, and
-   list it in PLAN.
+- A base's pointer is the one 64-bit kernel parameter its symbolic
+  part holds with coefficient 1. A base with none, with more than one,
+  or with a uniform variable of a 64-bit register has no known pointer.
+- At most: the sum of every base's union, today's number.
+- At least: for each pointer, the largest union of a base on it,
+  summed over the pointers (different pointers stay disjoint, PLAN's
+  assumption), and no less than the largest union of a base with no
+  known pointer.
+- A uniform variable defined outside the loop is part of its base, as a
+  parameter is; one defined in the loop leaves the address unread, as
+  in step U3.
+
+`LoopBytes.unique` becomes a `ByteRange`; the text prints one number
+when its ends agree. Measured under the lit tests' bindings, 20 loops
+have a footprint; uniform variables leave unique unknown in one, the
+fp8 GEMM's K loop (c_fc and lm_head_dx), where A and B each sit at one
+base on their own pointer, so it becomes exact.
 
 ## Steps, one commit each
 
@@ -222,6 +232,14 @@ U3. `Var::Uniform` in addresses: `trace_address` and its strict second
     - `u − u` of one uniform value: the address without it; `u − w` of
       two: both terms;
     - two uniform values written on one PTX line: `@106.1`, `@106.2`.
+
+U4. Overlapping bases, as above. Expected: the fp8 GEMM's K loop exact
+    under its bindings; `micro/one_pointer_two_bases.ptx` 16–32 B, its
+    PLAN wording narrowed to different pointer parameters; any other
+    loop with bases on one pointer explained. Fixture
+    `micro/uniform_bases.ptx`: `p + 64·u` and `p + 64·w` in one loop (a
+    range), `p + 64·u` and `q + 64·u` (exact), and a 64-bit uniform base
+    beside a parameter one (a range).
 
 PLAN's "uniform(v)" missing-feature entry points here while the steps
 land.
