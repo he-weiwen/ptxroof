@@ -1207,9 +1207,7 @@ impl<'a> KernelReportBuilder<'a> {
             .find(|d| {
                 let prefix = self.module.interner.resolve(d.prefix);
                 match d.count {
-                    Some(_) => name
-                        .strip_prefix(prefix)
-                        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+                    Some(n) => crate::ptx::parse::parser::member(name, prefix, n).is_some(),
                     None => name == prefix,
                 }
             })
@@ -2240,6 +2238,34 @@ mod tests {
         assert_eq!(
             address("1073741824"),
             Some("4 * uniform(%r1@$L__LOOP) + param_0".to_owned())
+        );
+    }
+
+    /// `%r10` is a 64-bit `selp` of 0 and `q − p`, declared after a
+    /// 32-bit `%r<2>` that does not hold it: `p + %r10` may be `q`.
+    #[test]
+    fn a_wide_uniform_offset_names_no_pointer() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u64 k_param_1\n)\n\
+                   .reqntid 32, 1, 1\n{\n.reg .pred %p<3>;\n.reg .b32 %r<2>;\n\
+                   .reg .b64 %r10;\n.reg .b32 %s<8>;\n.reg .b64 %rd<8>;\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u64 %rd2, [k_param_1];\n\
+                   mov.u32 %s1, %ctaid.x;\nsetp.eq.u32 %p2, %s1, 0;\n\
+                   sub.s64 %rd7, %rd2, %rd1;\nselp.b64 %r10, 0, %rd7, %p2;\n\
+                   mov.u32 %s2, %tid.x;\nmov.u32 %s3, 0;\n$L__LOOP:\n\
+                   mad.lo.s32 %s4, %s3, 32, %s2;\nmul.wide.u32 %rd3, %s4, 4;\n\
+                   add.s64 %rd4, %rd1, %r10;\nadd.s64 %rd5, %rd4, %rd3;\n\
+                   st.global.u32 [%rd5], %s2;\nadd.s64 %rd6, %rd2, %rd3;\n\
+                   st.global.u32 [%rd6], %s2;\nadd.s32 %s3, %s3, 1;\n\
+                   setp.lt.u32 %p1, %s3, 4;\n@%p1 bra $L__LOOP;\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        let b = r.kernels[0].loops[0].global_bytes_per_cta.clone().unwrap();
+        assert_eq!(
+            b.unique,
+            Some(ByteRange {
+                min: 512,
+                max: 1024
+            })
         );
     }
 

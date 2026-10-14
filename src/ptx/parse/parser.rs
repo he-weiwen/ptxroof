@@ -1071,7 +1071,7 @@ fn declares(interner: &Interner, decls: &[RegDecl], name: &str) -> bool {
 
 /// `name`'s index in `.reg prefix<count>`, which declares `prefix0` to
 /// `prefix{count-1}` spelled in decimal.
-fn member(name: &str, prefix: &str, count: u32) -> Option<u32> {
+pub(crate) fn member(name: &str, prefix: &str, count: u32) -> Option<u32> {
     let i: u32 = name.strip_prefix(prefix)?.parse().ok()?;
     (i < count && name.len() == prefix.len() + i.to_string().len()).then_some(i)
 }
