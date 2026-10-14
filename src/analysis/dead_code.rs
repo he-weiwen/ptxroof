@@ -6,7 +6,8 @@
 //! "a memory instruction with no synchronization", the default). Liveness
 //! follows each read of a live instruction to the definitions that may
 //! reach it; a guarded definition also reads the value it keeps where its
-//! guard is false, and one that never runs reads only that.
+//! guard is false, unless every thread reads the guard as true, and one
+//! that never runs reads only that.
 
 use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
@@ -14,18 +15,20 @@ use crate::analysis::register_effects::{reads_cc, registers, split_operands, wri
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, Stmt};
 use crate::ssa::{RegisterSsa, Value};
 
-/// Per statement, whether it is an instruction that runs (`never` is
-/// false) and is not live.
+/// Per statement, whether it is an instruction that runs and is not
+/// live. `guard` tells, per statement, `Some(false)` when it never runs,
+/// `Some(true)` when every thread that reaches it reads its guard as
+/// true, `None` when not known.
 pub fn unused(
     module: &Module,
     kernel: &Kernel,
     ssa: &RegisterSsa,
-    never: impl Fn(usize) -> bool,
+    guard: impl Fn(usize) -> Option<bool>,
 ) -> Vec<bool> {
     let n = kernel.stmts.len();
     let mut work: Vec<usize> = (0..n)
         .filter(|&s| match &kernel.stmts[s] {
-            Stmt::Instr(i) => !never(s) && !pure(module, i),
+            Stmt::Instr(i) => guard(s) != Some(false) && !pure(module, i),
             Stmt::Unparsed { .. } => true,
             _ => false,
         })
@@ -33,7 +36,7 @@ pub fn unused(
     let mut live = vec![false; n];
     work.iter().for_each(|&s| live[s] = true);
     while let Some(s) = work.pop() {
-        for reg in reads(module, &kernel.stmts[s], never(s)) {
+        for reg in reads(module, &kernel.stmts[s], guard(s)) {
             for v in ssa
                 .value_before(s, reg)
                 .map(|v| ssa.sources(v))
@@ -49,7 +52,7 @@ pub fn unused(
         }
     }
     (0..n)
-        .map(|s| matches!(kernel.stmts[s], Stmt::Instr(_)) && !never(s) && !live[s])
+        .map(|s| matches!(kernel.stmts[s], Stmt::Instr(_)) && guard(s) != Some(false) && !live[s])
         .collect()
 }
 
@@ -81,16 +84,17 @@ fn pure(module: &Module, instr: &Instr) -> bool {
     }
 }
 
-/// The registers statement `stmt` reads: a guarded one also the values
-/// it keeps, and only those when it never runs.
-fn reads(module: &Module, stmt: &Stmt, never: bool) -> Vec<Register> {
+/// The registers statement `stmt`, whose guard reads as `guard`, reads:
+/// a guarded one also the values it keeps, and only those when it never
+/// runs.
+fn reads(module: &Module, stmt: &Stmt, guard: Option<bool>) -> Vec<Register> {
     match stmt {
         Stmt::Instr(i) => {
             let mut regs = match i.predicate {
-                Some(_) => writes(module, stmt),
-                None => Vec::new(),
+                Some(_) if guard != Some(true) => writes(module, stmt),
+                _ => Vec::new(),
             };
-            if !never {
+            if guard != Some(false) {
                 let (_, read) = split_operands(module, i);
                 regs.extend(
                     read.iter()
@@ -115,9 +119,9 @@ mod tests {
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
-    /// The unused instructions of `body`, as text; `never` names the
-    /// mnemonic of the one statement that runs on no thread.
-    fn unused_in(body: &str, never: Option<&str>) -> Vec<String> {
+    /// The unused instructions of `body`, as text; `decided` gives the
+    /// guard of the statements with those opcodes.
+    fn unused_in(body: &str, decided: &[(&str, bool)]) -> Vec<String> {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
              .visible .entry k(\n.param .u64 k_param_0\n)\n{{\n\
@@ -132,8 +136,8 @@ mod tests {
             Stmt::Instr(i) => m.opcode(i),
             _ => String::new(),
         };
-        let never = |s: usize| never.is_some_and(|n| text(s) == n);
-        let flags = unused(&m, k, &t.ssa, never);
+        let guard = |s: usize| decided.iter().find(|d| text(s) == d.0).map(|d| d.1);
+        let flags = unused(&m, k, &t.ssa, guard);
         (0..flags.len()).filter(|&s| flags[s]).map(text).collect()
     }
 
@@ -142,14 +146,14 @@ mod tests {
         let body = "add.s32 %r2, %r1, 1;\nmul.lo.s32 %r3, %r1, 2;\n\
                     ld.global.u32 %r4, [%rd1];\nld.volatile.global.u32 %r5, [%rd1];\n\
                     st.global.u32 [%rd1], %r2;";
-        assert_eq!(unused_in(body, None), ["mul.lo.s32", "ld.global.u32"]);
+        assert_eq!(unused_in(body, &[]), ["mul.lo.s32", "ld.global.u32"]);
     }
 
     #[test]
     fn a_guarded_write_keeps_its_old_value_and_guard_live() {
         let body = "setp.lt.u32 %p1, %r1, 16;\nmov.u32 %r2, 7;\n@%p1 mov.u32 %r2, %r1;\n\
                     st.global.u32 [%rd1], %r2;";
-        assert_eq!(unused_in(body, None), Vec::<String>::new());
+        assert_eq!(unused_in(body, &[]), Vec::<String>::new());
     }
 
     #[test]
@@ -157,7 +161,7 @@ mod tests {
         let body = "mov.u32 %r2, %r1;\nadd.s64 %rd2, %rd1, 64;\nmov.pred %p1, 0;\n\
                     @%p1 ld.global.u32 %r2, [%rd2];\nst.global.u32 [%rd1], %r2;";
         assert_eq!(
-            unused_in(body, Some("ld.global.u32")),
+            unused_in(body, &[("ld.global.u32", false)]),
             ["add.s64", "mov.pred"]
         );
     }
@@ -167,6 +171,14 @@ mod tests {
         let body = "mov.u32 %r2, 0;\nmov.u32 %r3, 0;\n$L__L:\nadd.s32 %r2, %r2, 1;\n\
                     add.s32 %r3, %r3, 1;\nsetp.lt.u32 %p1, %r3, 8;\n@%p1 bra $L__L;\n\
                     st.global.u32 [%rd1], %r1;";
-        assert_eq!(unused_in(body, None), ["mov.u32", "add.s32"]);
+        assert_eq!(unused_in(body, &[]), ["mov.u32", "add.s32"]);
+    }
+
+    #[test]
+    fn a_guard_every_thread_reads_as_true_keeps_no_old_value() {
+        let body = "mov.u32 %r2, 0;\nmov.pred %p1, -1;\n@%p1 mov.u32 %r2, %r1;\n\
+                    st.global.u32 [%rd1], %r2;";
+        assert_eq!(unused_in(body, &[]), Vec::<String>::new());
+        assert_eq!(unused_in(body, &[("mov.u32", true)]), ["mov.u32"]);
     }
 }
