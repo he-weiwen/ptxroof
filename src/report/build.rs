@@ -37,7 +37,7 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
-use crate::analysis::thread_participation::{ThreadSet, ThreadSets, thread_sets};
+use crate::analysis::thread_participation::{Pred, ThreadSet, ThreadSets, thread_sets};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
@@ -1212,6 +1212,9 @@ impl<'a> KernelReportBuilder<'a> {
             let (threads, warps, block_at_most, _) =
                 resolve(&self.sets.blocks[bm.block.0 as usize]);
             for instruction in &bm.instructions {
+                if self.sets.never(bm.block, instruction.provenance) {
+                    continue;
+                }
                 let kind = instructions
                     .entry(instruction_kind(&instruction.classified))
                     .or_default();
@@ -1230,6 +1233,9 @@ impl<'a> KernelReportBuilder<'a> {
                 instruction_total.add(threads, warps, &mult, block_at_most);
             }
             for m in &bm.measurements {
+                if self.sets.never(bm.block, m.provenance) {
+                    continue;
+                }
                 let (threads, at_most) = if self.sets.guards.contains_key(&m.provenance) {
                     let (threads, _, at_most, explained) =
                         resolve(&self.sets.of(bm.block, m.provenance));
@@ -1458,7 +1464,9 @@ impl<'a> KernelReportBuilder<'a> {
                 let l = &self.forest.loops[i];
                 let mut weight = CountAccumulator::default();
                 for &b in &l.blocks {
-                    let instrs = self.blocks[b.0 as usize].class_counts.total as i64;
+                    let instrs = (self.blocks[b.0 as usize].instructions.iter())
+                        .filter(|i| !self.sets.never(b, i.provenance))
+                        .count() as i64;
                     let mut mult = SymExpr::Const(1);
                     for &cl in &self.chain(b) {
                         mult = SymExpr::mul(mult, self.trip_exprs[cl.0 as usize].clone());
@@ -1474,6 +1482,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let key = weight.bind(&approx).as_const().unwrap_or(i64::MAX);
                 (i, self.display[i].clone(), weight, key)
             })
+            .filter(|e| e.2.as_const() != Some(0))
             .collect();
         entries.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.1.cmp(&b.1)));
         entries
@@ -1495,7 +1504,7 @@ impl<'a> KernelReportBuilder<'a> {
         let mut unknown_ops: BTreeMap<String, u64> = BTreeMap::new();
         let mut unquantified: BTreeMap<String, u64> = BTreeMap::new();
         for bm in &self.blocks {
-            for m in &bm.measurements {
+            for m in (bm.measurements.iter()).filter(|m| !self.sets.never(bm.block, m.provenance)) {
                 match m.kind {
                     MeasureKind::UnknownOps { mnemonic } => {
                         *unknown_ops.entry(mnemonic.name().to_owned()).or_default() += m.count;
@@ -1516,6 +1525,7 @@ impl<'a> KernelReportBuilder<'a> {
         let unparsed: u64 = self
             .blocks
             .iter()
+            .filter(|b| self.sets.blocks[b.block.0 as usize].pred != Pred::False)
             .map(|b| b.class_counts.unparsed as u64)
             .sum();
         if unparsed > 0 {
@@ -1540,7 +1550,10 @@ impl<'a> KernelReportBuilder<'a> {
             });
         }
         for (i, t) in self.trip_info.trips.iter().enumerate() {
-            if let Err(reason) = t {
+            let header = self.forest.loops[i].header;
+            if let Err(reason) = t
+                && self.sets.blocks[header.0 as usize].pred != Pred::False
+            {
                 out.push(UnknownEntry {
                     what: format!("loop {}", self.display[i]),
                     count: None,

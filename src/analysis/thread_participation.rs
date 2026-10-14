@@ -657,6 +657,12 @@ impl ThreadSets {
             None => block.clone(),
         }
     }
+
+    /// Whether no thread executes statement `stmt` of block `b`.
+    pub fn never(&self, b: BlockId, stmt: usize) -> bool {
+        self.blocks[b.0 as usize].pred == Pred::False
+            || self.guards.get(&stmt) == Some(&Pred::False)
+    }
 }
 
 pub(crate) fn thread_sets(

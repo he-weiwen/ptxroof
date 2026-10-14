@@ -20,7 +20,8 @@ coefficients are bound; per
 block and per guarded instruction, which threads of the CTA run it
 when the selecting branches and the guard are thread-index
 comparisons, `%laneid` in a one-dimensional block, or constants
-(rmsnorm's loads under `mov.pred %p2, 0` run on no thread), combined with
+(rmsnorm's loads under `mov.pred %p2, 0` run on no thread and count in
+no total, per thread or per CTA), combined with
 `and`, `or` and `not`, or `elect.sync`'s one lane per warp, so
 per-CTA totals count each on its own threads
 (`micro/guards.ptx`, `micro/elect.ptx`), and which lanes of a warp

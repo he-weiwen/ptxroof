@@ -11,8 +11,10 @@ CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
 CHECK: warp: 16–17 sectors (ideal 16)
 CHECK: global load 16 B on 0 threads in 0 warps (no thread)             warp: 0 sectors (ideal 0)
 CHECK: flops = 534  (f32 534)
-CHECK: global bytes: load <= 396 B, store <= 140 B
-CHECK: AI(global) >= 1.0037313432835822 flop/B
+# Per thread the dead vectors count nothing either: 18 live 16 B and
+# 2 live 4 B loads, plus the guarded `atom`'s 4 B.
+CHECK: global bytes: load <= 300 B, store <= 108 B
+CHECK: AI(global) >= 1.3186274509803921 flop/B
 # Per CTA the live loads and stores measure 37888 B and 12320 B (the
 # ncu record's LDG and STG executions); the `<=` and 4 B are the one
 # guarded `atom`.
