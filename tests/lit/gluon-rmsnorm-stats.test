@@ -1,14 +1,22 @@
 # Residual RMSNorm pass 1: one block, no branches. The flops are exact;
-# the loads and stores are masked (`@%p`), so the byte totals are upper
-# bounds and AI(global) is a lower bound. Nothing unknown.
+# the loads and stores are masked (`@%p`), so the per-thread byte totals
+# are upper bounds and AI(global) is a lower bound. Nothing unknown.
 RUN: %ptxroof analyze %fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx | FileCheck "%s"
 CHECK: kernel rmsnorm_stats_kernel
 CHECK: $L__func_begin0  gluon_norm.py:37-64    1146  (end)
 CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
-# The guard is `mov.pred %p1, -1`: uniform, so every lane counts.
+# The masks are constants: `mov.pred %p1, -1` keeps every lane, and the
+# fourth vector of each row under `mov.pred %p2, 0` runs on no thread
+# (ptxas emits no SASS for those lines, rmsnorm_stats_kernel.sm_89.ncu.json).
 CHECK: warp: 16–17 sectors (ideal 16)
+CHECK: global load 16 B on 0 threads in 0 warps (no thread)             warp: 0 sectors (ideal 0)
 CHECK: flops = 534  (f32 534)
 CHECK: global bytes: load <= 396 B, store <= 140 B
 CHECK: AI(global) >= 1.0037313432835822 flop/B
+# Per CTA the live loads and stores measure 37888 B and 12320 B (the
+# ncu record's LDG and STG executions); the `<=` and 4 B are the one
+# guarded `atom`.
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load <= 37892 B, store <= 12324 B
 CHECK: unknowns: none
 CHECK: coverage: instructions_classified 100.0% (1146/1146)

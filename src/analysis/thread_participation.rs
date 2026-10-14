@@ -16,6 +16,7 @@ use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::HashMap;
@@ -602,6 +603,16 @@ impl PredicateReader<'_> {
                 };
                 (p, ca || cb)
             }
+            // PTX ISA §4.5.3: an integer constant as a predicate is False
+            // when zero and True otherwise.
+            (Opcode::Mov, ["pred"], [_, a]) => match self.module.operand(*a) {
+                Operand::Immediate(t) => match parse_int(self.module.interner.resolve(*t)) {
+                    Some(0) => (Pred::False, false),
+                    Some(_) => (Pred::True, false),
+                    None => (Pred::Unknown, false),
+                },
+                _ => (Pred::Unknown, false),
+            },
             (Opcode::Not, ["pred"], [_, a]) => match reg(*a) {
                 Some(a) => {
                     let (p, cut) = self.read(a, def, depth);

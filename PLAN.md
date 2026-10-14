@@ -19,12 +19,14 @@ need, over the lanes that execute it, once the block shape and the parameters in
 coefficients are bound; per
 block and per guarded instruction, which threads of the CTA run it
 when the selecting branches and the guard are thread-index
-comparisons, `%laneid` in a one-dimensional block, combined with
+comparisons, `%laneid` in a one-dimensional block, or constants
+(rmsnorm's loads under `mov.pred %p2, 0` run on no thread), combined with
 `and`, `or` and `not`, or `elect.sync`'s one lane per warp, so
 per-CTA totals count each on its own threads
 (`micro/guards.ptx`, `micro/elect.ptx`), and which lanes of a warp
 run it when the rest of the condition is the same for every thread
-(rmsnorm's `mov.pred %p1, -1` guard: `warp: 16–17 sectors`); and per loop
+(`micro/carry_uniform.ptx`'s branch on a carry from two parameters:
+`warp: 4–5 sectors`); and per loop
 with a numeric trip count, the global bytes one CTA
 requests over the loop's own blocks, the bytes of the sectors those
 requests touch, and the distinct bytes it touches.
