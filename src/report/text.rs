@@ -24,6 +24,9 @@ pub fn render(report: &Report) -> String {
             .collect();
         let _ = writeln!(w, "bindings: {}", binds.join(", "));
     }
+    if let Some([x, y, z]) = report.grid {
+        let _ = writeln!(w, "grid: {x}x{y}x{z} CTAs");
+    }
 
     for k in &report.kernels {
         let _ = writeln!(w);

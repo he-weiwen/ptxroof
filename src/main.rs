@@ -45,9 +45,12 @@ enum Command {
         /// defaults to .reqntid/.maxntid when the kernel carries one
         #[arg(long)]
         launch: Option<String>,
-        /// A launch recorded by tools/ncu/measure.py: its block shape and
-        /// integer parameters stand for --launch and --bind
-        #[arg(long, conflicts_with_all = ["bind", "launch"])]
+        /// Launch grid dimensions `x,y,z`, in CTAs
+        #[arg(long)]
+        grid: Option<String>,
+        /// A launch recorded by tools/ncu/measure.py: its grid, block shape
+        /// and integer parameters stand for --grid, --launch and --bind
+        #[arg(long, conflicts_with_all = ["bind", "launch", "grid"])]
         ncu: Option<PathBuf>,
         /// Print the parsed module in canonical PTX form and exit
         #[arg(long)]
@@ -72,6 +75,7 @@ fn run() -> anyhow::Result<ExitCode> {
         json,
         bind,
         launch,
+        grid,
         ncu,
         dump_ast,
     } = cli.command;
@@ -90,13 +94,22 @@ fn run() -> anyhow::Result<ExitCode> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(anyhow::Error::msg)?;
     let launch = launch
-        .map(|s| parse_launch(&s))
+        .map(|s| parse_dims("--launch", &s))
         .transpose()
         .map_err(anyhow::Error::msg)?;
+    let grid = grid
+        .map(|s| parse_dims("--grid", &s))
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
+    anyhow::ensure!(
+        !grid.is_some_and(|g| g.contains(&0)),
+        "--grid: every dimension is at least 1"
+    );
     let ncu = ncu.map(|path| read_record(&path)).transpose()?;
     let opts = ptxroof::report::AnalyzeOptions {
         bindings: ncu.as_ref().map_or(bindings, |r| r.bindings()),
         launch: ncu.as_ref().map(|r| r.block).or(launch),
+        grid: ncu.as_ref().map(|r| r.grid).or(grid),
         ncu,
     };
     let report = ptxroof::report::analyze(&source, &input.display().to_string(), &opts)
@@ -126,17 +139,17 @@ fn read_record(path: &Path) -> anyhow::Result<ptxroof::report::measured::NcuReco
 }
 
 /// `x,y,z` (y/z default to 1).
-fn parse_launch(text: &str) -> Result<[u32; 3], String> {
+fn parse_dims(flag: &str, text: &str) -> Result<[u32; 3], String> {
     let mut dims = [1u32; 3];
     let parts: Vec<&str> = text.split(',').collect();
     if parts.is_empty() || parts.len() > 3 {
-        return Err(format!("--launch `{text}`: expected x,y,z"));
+        return Err(format!("{flag} `{text}`: expected x,y,z"));
     }
     for (slot, part) in dims.iter_mut().zip(&parts) {
         *slot = part
             .trim()
             .parse()
-            .map_err(|_| format!("--launch `{text}`: `{part}` is not a number"))?;
+            .map_err(|_| format!("{flag} `{text}`: `{part}` is not a number"))?;
     }
     Ok(dims)
 }

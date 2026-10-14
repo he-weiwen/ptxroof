@@ -75,6 +75,7 @@ fn no_unused_instruction_has_sass_in_any_record() {
         let opts = AnalyzeOptions {
             bindings: record.bindings(),
             launch: Some(record.block),
+            grid: Some(record.grid),
             ncu: Some(record),
         };
         let report = analyze(&src, &ptx.display().to_string(), &opts).expect("fixture analyzes");

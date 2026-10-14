@@ -26,6 +26,9 @@ pub struct Report {
     pub input: String,
     /// `--bind` values, echoed (bet 4: inputs are visible).
     pub bindings: Vec<Binding>,
+    /// `--grid`, echoed: the launch's CTAs per axis.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grid: Option<[u32; 3]>,
     pub kernels: Vec<KernelReport>,
     pub coverage: BTreeMap<String, Fraction>,
 }

@@ -103,6 +103,8 @@ pub struct AnalyzeOptions {
     /// `--launch x,y,z`; `None` = default to `.reqntid`/`.maxntid`
     /// when the kernel carries one.
     pub launch: Option<[u32; 3]>,
+    /// `--grid x,y,z`, the launch's CTAs per axis.
+    pub grid: Option<[u32; 3]>,
     pub ncu: Option<NcuRecord>,
 }
 
@@ -124,9 +126,18 @@ pub fn analyze(
 
     for kernel in &module.kernels {
         let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings_echo)?;
-        // The block shape, when it is the launch's: --launch, else .reqntid.
-        if let Some([x, y, z]) = opts.launch.or(kernel.reqntid) {
-            for (reg, n) in SpecialVector::Ntid.components().into_iter().zip([x, y, z]) {
+        // The block shape, when it is the launch's: --launch, else
+        // .reqntid; the grid, when given.
+        let shapes = [
+            (SpecialVector::Ntid, opts.launch.or(kernel.reqntid)),
+            (SpecialVector::Nctaid, opts.grid),
+        ];
+        for (vector, dims) in shapes {
+            for (reg, n) in vector
+                .components()
+                .into_iter()
+                .zip(dims.into_iter().flatten())
+            {
                 bind_map.insert(reg.name(), i64::from(n));
             }
         }
@@ -156,6 +167,7 @@ pub fn analyze(
     Ok(Report {
         input: input_name.to_owned(),
         bindings: bindings_echo,
+        grid: opts.grid,
         kernels,
         coverage,
     })

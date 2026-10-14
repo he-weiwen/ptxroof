@@ -379,6 +379,7 @@ fn json_report_identities_hold() {
         let opts = AnalyzeOptions {
             bindings: record.bindings(),
             launch: Some(record.block),
+            grid: Some(record.grid),
             ncu: Some(record),
         };
         runs.push((

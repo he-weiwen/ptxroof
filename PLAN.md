@@ -92,12 +92,13 @@ its shared writes and instruction counts remain counted
   unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
   or `bfe` result, and an integer `cvt`'s source and destination, are
   refused when the value's range, over constants, the block shape
-  `.reqntid` or `--launch` gives, and constant trip counts, leaves the
-  type (`micro/mul_wrap.ptx`: `mul.lo.s32` of 2^30 and 4, the same for
-  every thread, so its address reads `uniform(%r2@24)`;
-  `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` + 2^32); one through
-  a parameter, `%ctaid` (no grid is bound) or a symbolic trip count
-  keeps the tracer's documented assumption
+  `.reqntid` or `--launch` gives, the grid `--grid` gives, and constant
+  trip counts, leaves the type (`micro/mul_wrap.ptx`: `mul.lo.s32` of
+  2^30 and 4, the same for every thread, so its address reads
+  `uniform(%r2@24)`; `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` +
+  2^32; `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`); one
+  through a parameter, `%ctaid` with no grid given or a symbolic trip
+  count keeps the tracer's documented assumption
   (`src/analysis/scalar/trace.rs`, module doc). A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
 - **`shfl.sync.idx` is read as if warps were rows of 32 `%tid.x`**,
@@ -457,8 +458,9 @@ One line each, with the trigger that would start it.
   must still assemble to the recorded SASS (`b200-sass.test`, under
   ptxas 13.4 only). `ci.sh` does not re-measure them with
   `measure.py --check`, which would launch on zeroed inputs.
-  `analyze --ncu RECORD` takes the record's block shape and `u32`
-  and `i32` parameters for `--launch` and `--bind`, and refuses a record whose
+  `analyze --ncu RECORD` takes the record's grid, block shape and
+  `u32` and `i32` parameters for `--grid`, `--launch` and `--bind`, and
+  refuses a record whose
   lines are not the PTX's (`tests/lit/k5-ncu-stale.test`), and
   gives each block a verdict (`kernels[].measured`): a line whose
   `CountConstraint` is not `Free` and whose SASS is one opcode must

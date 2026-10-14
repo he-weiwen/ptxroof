@@ -1,0 +1,19 @@
+# 2^24·%ctaid.x in a mul.lo.u32 keeps its low 32 bits, so from CTA 256
+# on it wraps. With no grid, %ctaid is taken not to wrap (PLAN); a grid
+# of 256 CTAs keeps the product below 2^32 and the address is read; one
+# of 257 does not, and the product, the same for every thread of a CTA,
+# is read as a uniform variable.
+RUN: %ptxroof analyze %fixtures/micro/grid_wrap.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/grid_wrap.ptx --grid 256 | FileCheck --check-prefix=FITS "%s"
+RUN: %ptxroof analyze %fixtures/micro/grid_wrap.ptx --grid 257,1,1 | FileCheck --check-prefix=WRAPS "%s"
+RUN: not %ptxroof analyze %fixtures/micro/grid_wrap.ptx --grid 0 2>&1 | FileCheck --check-prefix=ZERO "%s"
+FREE-NOT: grid:
+FREE: st.global.u32  global store 4 B  warp: 4–5 sectors (ideal 4)
+FREE-SAME: [4 * %tid.x + 67108864 * %ctaid.x + param_0]
+FITS: grid: 256x1x1 CTAs
+FITS: st.global.u32  global store 4 B  warp: 4–5 sectors (ideal 4)
+FITS-SAME: [4 * %tid.x + 67108864 * %ctaid.x + param_0]
+WRAPS: grid: 257x1x1 CTAs
+WRAPS: st.global.u32  global store 4 B  warp: 4–5 sectors (ideal 4)
+WRAPS-SAME: [4 * %tid.x + 4 * uniform(%r3@25) + param_0]
+ZERO: ptxroof: --grid: every dimension is at least 1
