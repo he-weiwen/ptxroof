@@ -734,8 +734,10 @@ pub(crate) fn thread_sets(
     }
 }
 
-/// The `setp` at `def` as `a − b cmp 0` over the thread index, when it
-/// compares two such forms as integers: an `lt`, `le`, `gt` or `ge`
+/// The `setp` at `def` as `a − b cmp 0` over the thread index, its
+/// operands read under the tracer's bindings (`--bind`, the block
+/// shape), when it compares two such forms as integers: an `lt`, `le`,
+/// `gt` or `ge`
 /// only when both lie in the range of its type, [0, 2^width) or
 /// [−2^(width−1), 2^(width−1)), on every thread, an `eq` or `ne` only
 /// when `a − b` lies in (−2^width, 2^width), so that it is zero
@@ -771,8 +773,11 @@ fn condition(
     if ops.len() != 3 {
         return None;
     }
-    let a = tracer.trace_operand(ops[1], def, None, 0).ok()?;
-    let b = tracer.trace_operand(ops[2], def, None, 0).ok()?;
+    let bound = |op| {
+        let x = tracer.trace_operand(op, def, None, 0).ok()?;
+        Some(tracer.bindings.map_or(x.clone(), |m| x.bind(m)))
+    };
+    let (a, b) = (bound(ops[1])?, bound(ops[2])?);
     let form = a.clone() - b.clone();
     let fits = |x: &Affine, min: i128, end: i128| {
         (x.range(&any_block)).is_some_and(|(lo, hi)| min <= lo && hi < end)

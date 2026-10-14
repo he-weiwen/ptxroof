@@ -1,0 +1,12 @@
+# A store guarded on %tid.x < n: ptxas stores on the threads below n.
+# Unbound, n leaves the guard an unknown selector, a bound of all 64
+# threads; bound to 48, the comparison reads under the binding and the
+# store runs on 48 threads, 192 B per CTA.
+RUN: %ptxroof analyze %fixtures/micro/guard_bound_param.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/guard_bound_param.ptx --bind 1:n=48 | FileCheck --check-prefix=BOUND "%s"
+FREE: st.global.u32  global store 4 B (predicated)  warp: <= 5 sectors (ideal 4)  [4 * %tid.x + param_0]
+FREE: totals per CTA [static]:
+FREE: global bytes: load 0 B, store <= 256 B
+BOUND: st.global.u32  global store 4 B on 48 threads in 2 warps (%tid.x < 48)
+BOUND: totals per CTA [static]:
+BOUND: global bytes: load 0 B, store 192 B

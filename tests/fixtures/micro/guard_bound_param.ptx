@@ -1,0 +1,29 @@
+//
+// HAND-WRITTEN: a store guarded on %tid.x < n, n a parameter: thread t
+// stores when t < n (ptxas 13.4, sm_89: `ISETP.GE.U32.AND P0, PT, R5,
+// c[0x0][0x168], PT`, `@P0 EXIT`, `STG.E [R2.64], R5`), so 48 of the 64
+// threads with n = 48.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_guard_bound_param(
+	.param .u64 micro_guard_bound_param_param_0,
+	.param .u32 micro_guard_bound_param_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_guard_bound_param_param_0];
+	ld.param.u32 	%r1, [micro_guard_bound_param_param_1];
+	mov.u32 	%r2, %tid.x;
+	setp.lt.u32 	%p1, %r2, %r1;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r2;
+	ret;
+}
