@@ -2,18 +2,19 @@
 # per warp-iteration, 4 warps, so 3072 warp mma per CTA; times the
 # launch's 768 CTAs that is 2,359,296, Nsight Compute's
 # sm__inst_executed_pipe_tensor for this launch (PLAN.md, hardware
-# cross-check). The bound comes from the loop's conditional entry.
+# cross-check). At K = 768 the branch around the K loop is decided, so
+# the loop is always entered and the counts are exact.
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx --bind 10:K=768 | FileCheck "%s"
 CHECK: kernel fp8_gemm_kernel
 CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
 CHECK: tensor fp8                                                64
 CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     64
-CHECK: tensor fp8                                             <= 768
-CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32  <= 768
+CHECK: tensor fp8                                                768
+CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     768
 # At K = 768 the path for a K too short for the loop, $L__BB0_1 (129
 # instructions), runs on no thread; the record executes it 0 times.
 CHECK: totals per CTA [static]:
 CHECK: instructions = <= 331008, warp instructions = <= 10344
-CHECK: tensor fp8                                              <= 98304  <= 3072
-CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32   <= 98304  <= 3072
-CHECK: tensor flops = <= 25165824  (fp8 <= 25165824)
+CHECK: tensor fp8                                                 98304     3072
+CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32      98304     3072
+CHECK: tensor flops = 25165824  (fp8 25165824)

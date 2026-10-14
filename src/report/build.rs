@@ -21,8 +21,8 @@
 //! below that loop, which is why a guarded kernel still has exact
 //! per-iteration numbers — the altitude where the verdict lives.
 
-use crate::analysis::control_flow::loop_forest;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::analysis::control_flow::{dominators, loop_forest};
 use crate::analysis::instruction_counts::classify::{
     ArithKind, ClassifiedInstruction, Direction, InstructionCategory, Pipe, Precision, Space,
 };
@@ -868,6 +868,32 @@ impl<'a> KernelReportBuilder<'a> {
             AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
         let uniformity = tracer.uniformity();
         b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer, uniformity);
+        let doms = dominators(&b.cfg.without(&b.sets.dead_edges));
+        let always = |x: BlockId, targets: &[BlockId]| {
+            let mut live = (targets.iter())
+                .filter(|&&t| doms.is_reachable(t))
+                .peekable();
+            live.peek().is_some() && live.all(|&t| doms.dominates(x, t))
+        };
+        for bm in &mut b.blocks {
+            let x = bm.block;
+            let targets = match b.forest.block_loop[x.0 as usize] {
+                Some(l) => &b.forest.get(l).latches,
+                None => &exit_blocks,
+            };
+            if !doms.is_reachable(x) {
+                b.sets.blocks[x.0 as usize].pred = Pred::False;
+            } else if always(x, targets) {
+                bm.qualifier = CountQualifier::Exact;
+            }
+        }
+        for (i, l) in b.forest.loops.iter().enumerate() {
+            let targets = match l.parent {
+                Some(p) => &b.forest.get(p).latches,
+                None => &exit_blocks,
+            };
+            b.cond_entry[i] &= !always(l.header, targets);
+        }
         let (accesses, access_forms) = b.accesses_by_scope(&tracer, uniformity);
         b.accesses = accesses;
         b.access_forms = access_forms;

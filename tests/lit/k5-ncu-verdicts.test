@@ -1,11 +1,13 @@
 # k5 at M=N=K=256 against its Nsight Compute record, block by block.
 # The epilogue is confirmed: each fma.rn.f32 line is one FFMA per
-# execution and executes 64 threads x 16 CTAs = 1024 times. The K loop's
-# blocks stay consistent: its fma.rn.f32 and bar.sync lines equal the
-# prediction, but the loop sits behind the branch on K, so every count
-# in it is a bound. $L__BB0_5, the path for K < 1, is a bound that the
-# record's 0 does not exceed. Per block: instructions, those with SASS,
-# and those whose count agrees with the prediction.
+# execution and executes 64 threads x 16 CTAs = 1024 times. At K = 256
+# the branch on K never takes $L__BB0_5, the path for K < 1, so the K
+# loop is always entered and its blocks are confirmed too ($L__BB0_3's
+# 14 differing lines are address arithmetic ptxas hoists out of the
+# loop and ld.shared.u16 it merges into LDS.64); $L__BB0_5 runs on no
+# thread, and its one line with SASS executes 0 times. Per block:
+# instructions, those with SASS, and those whose count agrees with the
+# prediction.
 RUN: %ptxroof analyze %fixtures/k5/k5.sm_89.ptx --ncu %fixtures/k5/k5.sm_89.256.ncu.json --json | %check-report "%s"
 {
   "kernels": [
@@ -13,9 +15,9 @@ RUN: %ptxroof analyze %fixtures/k5/k5.sm_89.ptx --ncu %fixtures/k5/k5.sm_89.256.
       "measured": [
         {"name": "<block 0>", "verdict": "consistent", "instructions": 10, "with_sass": 7, "agreeing": 6},
         {"name": "<block 1>", "verdict": "consistent", "instructions": 74, "with_sass": 5, "agreeing": 1},
-        {"name": "$L__BB0_2", "verdict": "consistent", "instructions": 155, "with_sass": 119, "agreeing": 117},
-        {"name": "$L__BB0_3", "verdict": "consistent", "instructions": 111, "with_sass": 97, "agreeing": 96},
-        {"name": "<block 4>", "verdict": "consistent", "instructions": 8, "with_sass": 7, "agreeing": 5},
+        {"name": "$L__BB0_2", "verdict": "confirmed", "instructions": 155, "with_sass": 119, "agreeing": 117},
+        {"name": "$L__BB0_3", "verdict": "confirmed", "instructions": 111, "with_sass": 97, "agreeing": 83},
+        {"name": "<block 4>", "verdict": "confirmed", "instructions": 8, "with_sass": 7, "agreeing": 5},
         {"name": "<block 5>", "verdict": "consistent", "instructions": 1, "with_sass": 1, "agreeing": 1},
         {"name": "$L__BB0_5", "verdict": "consistent", "instructions": 64, "with_sass": 1, "agreeing": 1},
         {"name": "$L__BB0_6", "verdict": "confirmed", "instructions": 412, "with_sass": 400, "agreeing": 366}

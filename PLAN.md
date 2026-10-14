@@ -260,11 +260,6 @@ its shared writes and instruction counts remain counted
   pointers `cudaMalloc` aligned to 256 B. A 16-byte access on a
   pointer does not narrow the range of a 2-byte access on the same
   pointer.
-- **A loop behind a branch on parameters is a bound even when
-  `--bind` decides the branch.** k5 at K=256: per CTA,
-  `fma.rn.f32 <= 1052672`, and its record measures exactly 16 CTAs
-  times that; the K loop's blocks are `consistent`, not `confirmed`
-  (`tests/lit/k5-ncu-verdicts.test`).
 - **No arithmetic intensity over sector bytes.** A loop's sector
   bytes cover its own blocks while its flops sit in nested loops
   (k5's K loop: 98,304 B in sectors, no flops of its own).
