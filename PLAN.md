@@ -61,10 +61,12 @@ its shared writes and instruction counts remain counted
   load overwrote is a bound, `<= 9 sectors`), refuses an element of a
   multi-element `ld.param` vector rather than reading the parameter's
   bits, and does not model guarded definitions: a branch
-  or guard comparing such a value is checked against the uniformity
-  analysis only when the comparison is free of the thread index
-  (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads exactly), and
-  an address through one is read as the last write. A form the
+  or guard comparing a value written under a guard is an unknown
+  selector (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads
+  exactly), even where every write agrees
+  (`micro/guarded_selector.ptx`: in its second kernel 32 threads store,
+  the report says `store <= 256 B`), and an address through one is
+  read as the last write. A form the
   register-effects decoder does not decode, a sub-operation it does
   not list (none in the corpus,
   `tests/register_effects_corpus.rs`), is taken to write every register

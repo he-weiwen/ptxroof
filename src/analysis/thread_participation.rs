@@ -735,15 +735,16 @@ pub(crate) fn thread_sets(
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, its
-/// operands read under the tracer's bindings (`--bind`, the block
+/// operands read strictly (a write under a guard is refused, not taken
+/// as the value) under the tracer's bindings (`--bind`, the block
 /// shape), when it compares two such forms as integers: an `lt`, `le`,
 /// `gt` or `ge`
 /// only when both lie in the range of its type, [0, 2^width) or
 /// [−2^(width−1), 2^(width−1)), on every thread, an `eq` or `ne` only
 /// when `a − b` lies in (−2^width, 2^width), so that it is zero
 /// exactly when it is zero modulo 2^width. A form free of the thread
-/// index whose comparison the uniformity analysis finds divergent was
-/// read wrong (through a guarded write), and is none.
+/// index whose comparison the uniformity analysis finds divergent is
+/// none.
 fn condition(
     module: &Module,
     kernel: &Kernel,
@@ -774,7 +775,7 @@ fn condition(
         return None;
     }
     let bound = |op| {
-        let x = tracer.trace_operand(op, def, None, 0).ok()?;
+        let x = (tracer.strictly(|| tracer.trace_operand(op, def, None, 0))).ok()?;
         Some(tracer.bindings.map_or(x.clone(), |m| x.bind(m)))
     };
     let (a, b) = (bound(ops[1])?, bound(ops[2])?);
