@@ -391,8 +391,8 @@ impl ThreadSet {
     /// Per warp, the fewest and the most lanes in the set, folded by
     /// `per_warp`. An elected lane is unspecified (PTX ISA §9.7.14.15
     /// promises only that the same leader is elected every time), so
-    /// every active lane is tried as the leader and the range covers
-    /// those choices.
+    /// every active lane is tried as the leader, and no leader when no
+    /// lane is certainly active, and the range covers those choices.
     fn tally(&self, shape: [u32; 3], per_warp: impl Fn(u32, u32) -> (u32, u32)) -> Option<Counted> {
         if !self.pred.has_condition() {
             return None;
@@ -417,26 +417,22 @@ impl ThreadSet {
                 }
                 (yes, maybe)
             };
-            let candidates: Vec<i64> = match self.pred.elect_active() {
-                Some(active) => lanes
-                    .clone()
-                    .filter(|&l| active.eval(lane_of(l, shape), shape) != Tri::No)
-                    .collect(),
-                None => Vec::new(),
-            };
-            let (min, max) = if self.pred.elect_active().is_none() {
-                let (yes, maybe) = lanes_as(Leader::Lowest);
-                (yes, yes + maybe)
-            } else if candidates.is_empty() {
-                let (yes, maybe) = lanes_as(Leader::Nobody);
-                (yes, yes + maybe)
-            } else {
-                candidates
-                    .iter()
-                    .map(|&k| lanes_as(Leader::Lane(k)))
-                    .fold((u32::MAX, 0), |(min, max), (yes, maybe)| {
-                        (min.min(yes), max.max(yes + maybe))
-                    })
+            let (min, max) = match self.pred.elect_active() {
+                None => {
+                    let (yes, maybe) = lanes_as(Leader::Lowest);
+                    (yes, yes + maybe)
+                }
+                Some(active) => {
+                    let state = |l| active.eval(lane_of(l, shape), shape);
+                    let certain = lanes.clone().any(|l| state(l) == Tri::Yes);
+                    (lanes.clone().filter(|&l| state(l) != Tri::No))
+                        .map(Leader::Lane)
+                        .chain((!certain).then_some(Leader::Nobody))
+                        .map(lanes_as)
+                        .fold((u32::MAX, 0), |(min, max), (yes, maybe)| {
+                            (min.min(yes), max.max(yes + maybe))
+                        })
+                }
             };
             let (min, max) = per_warp(min, max);
             certain += min;
@@ -992,7 +988,22 @@ mod tests {
             pred: Pred::Elect(Box::new(upper.or(Pred::Unknown))),
         };
         assert!(!hedged.exact());
-        assert_eq!(hedged.count([128, 1, 1]), Some(exact(4)));
+        // Warp 0 may have no active lane, so no leader.
+        assert_eq!(
+            hedged.count([128, 1, 1]),
+            Some(Counted {
+                certain: 3,
+                possible: 4
+            })
+        );
+        let maybe = Pred::Elect(Box::new(Pred::Uniform));
+        let range = |certain, possible| Some(Counted { certain, possible });
+        assert_eq!(set_of(maybe.clone()).count([64, 1, 1]), range(0, 2));
+        assert_eq!(set_of(!maybe).count([64, 1, 1]), range(62, 64));
+    }
+
+    fn set_of(pred: Pred) -> ThreadSet {
+        ThreadSet { pred }
     }
 
     #[test]
