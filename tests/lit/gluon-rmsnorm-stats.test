@@ -10,6 +10,9 @@ CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
 # (ptxas emits no SASS for those lines, rmsnorm_stats_kernel.sm_89.ncu.json).
 CHECK: warp: 16–17 sectors (ideal 16)
 CHECK: global load 16 B on 0 threads in 0 warps (no thread)             warp: 0 sectors (ideal 0)
+# 1146 instructions, of which 1041 count: not the 8 accesses under
+# %p2 or the 97 unused (mostly the default values of the masked loads).
+CHECK: instructions = 1041 live of 1146
 CHECK: flops = 534  (f32 534)
 # Per thread the dead vectors count nothing either: 18 live 16 B and
 # 2 live 4 B loads, plus the guarded `atom`'s 4 B.

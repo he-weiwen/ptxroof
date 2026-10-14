@@ -1254,6 +1254,7 @@ impl<'a> KernelReportBuilder<'a> {
         let mut conversions = CountAccumulator::default();
         let mut instructions: BTreeMap<String, InstructionAccumulator> = BTreeMap::new();
         let mut instruction_total = IssueAccumulator::default();
+        let mut instruction_all = IssueAccumulator::default();
         for s in ["global", "shared", "local"] {
             bytes.insert(s, Default::default());
         }
@@ -1262,10 +1263,14 @@ impl<'a> KernelReportBuilder<'a> {
             let Some((mult, chain_at_most)) = self.multiplier(bm.block, below) else {
                 continue;
             };
+            if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
+                continue;
+            }
             let resolve = |set: &ThreadSet| self.executing(bm, set, chain_at_most, cta);
             let (threads, warps, block_at_most, _) =
                 resolve(&self.sets.blocks[bm.block.0 as usize]);
             for instruction in &bm.instructions {
+                instruction_all.add(threads, warps, &mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
                     continue;
                 }
@@ -1385,6 +1390,11 @@ impl<'a> KernelReportBuilder<'a> {
             ai_global,
             unrolled_source_lines: self.unrolled_lines(below),
             instructions: InstructionCounts {
+                all: Some(instruction_all.threads.count())
+                    .filter(|all| *all != instruction_total.threads.count()),
+                all_warps: (instruction_all.threads.count() != instruction_total.threads.count())
+                    .then(|| instruction_all.warps())
+                    .flatten(),
                 total: instruction_total.threads.count(),
                 warps: instruction_total.warps(),
                 by_kind: instructions

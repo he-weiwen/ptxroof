@@ -36,7 +36,9 @@ runs but whose results nothing with an effect reads (LLVM's ADCE over
 the register SSA, `src/analysis/dead_code.rs`) counts in no total and
 no loop footprint, and is listed as unused: ptxas emits no SASS for
 any of the 954 such instructions in kernels with an Nsight Compute
-record (`tests/dead_code_corpus.rs`).
+record (`tests/dead_code_corpus.rs`). Where these and the instructions
+under a guard no thread passes are left out, an instruction total
+reads `live of` the count with them (rmsnorm: `1041 live of 1146`).
 Text and JSON views of the same tree. Counts are static: per-thread
 unless labeled per-CTA or per-warp, as requested by the PTX; nothing
 is measured (README). Each instruction has one category and independent

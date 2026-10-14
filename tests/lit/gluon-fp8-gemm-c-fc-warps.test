@@ -13,9 +13,10 @@ CHECK: tensor fp8                                                768
 CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     768
 # At K = 768 the path for a K too short for the loop, $L__BB0_1 (129
 # instructions), runs on no thread; the record executes it 0 times.
-# Two default-value movs nothing reads count in no total either.
+# Two default-value movs nothing reads count in no total either; the
+# count with them follows the live one.
 CHECK: totals per CTA [static]:
-CHECK: instructions = <= 330752, warp instructions = <= 10336
+CHECK: instructions = <= 330752 live of <= 331008, warp instructions = <= 10336 live of <= 10344
 CHECK: tensor fp8                                                 98304     3072
 CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32      98304     3072
 CHECK: tensor flops = 25165824  (fp8 25165824)

@@ -382,6 +382,13 @@ pub struct InstructionCounts {
     /// execution. Per-CTA totals only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warps: Option<Count>,
+    /// Every instruction of the blocks that run, those under a guard no
+    /// thread passes and the unused ones included, when that differs
+    /// from `total`; `all_warps` likewise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all: Option<Count>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_warps: Option<Count>,
     /// Keys are the report's kind labels: "tensor f16", "cuda-core
     /// f32", "sfu f32", "global load 16 B", "global -> shared copy
     /// 16 B", "global atomic 4 B", "integer arithmetic", "compare /

@@ -515,17 +515,21 @@ fn render_instructions(w: &mut String, pad: &str, i: &InstructionCounts) {
     if i.total.expr == "0" {
         return;
     }
+    let of = |live: &Count, all: Option<&Count>| match all {
+        Some(all) => format!("{} live of {}", count(live, ""), count(all, "")),
+        None => count(live, ""),
+    };
     match &i.warps {
         Some(warps) => {
             let _ = writeln!(
                 w,
                 "{pad}instructions = {}, warp instructions = {}",
-                count(&i.total, ""),
-                count(warps, "")
+                of(&i.total, i.all.as_ref()),
+                of(warps, i.all_warps.as_ref())
             );
         }
         None => {
-            let _ = writeln!(w, "{pad}instructions = {}", count(&i.total, ""));
+            let _ = writeln!(w, "{pad}instructions = {}", of(&i.total, i.all.as_ref()));
         }
     }
     let by_count = |a: &Count, b: &Count| rank(&b.expr).cmp(&rank(&a.expr));
