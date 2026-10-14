@@ -337,7 +337,7 @@ its shared writes and instruction counts remain counted
   tool's 16384 fp8 flops per thread per K iteration times 12
   iterations, 128 threads and 768 CTAs; `sm__inst_executed_pipe_tensor`
   = 2,359,296 = 64 `mma` per warp-iteration likewise, the tool's
-  `<= 3072` warp `mma` per CTA at K=768 times 768 CTAs
+  3072 warp `mma` per CTA at K=768 times 768 CTAs
   (`gluon-fp8-gemm-c-fc-warps.test`); l1tex global-load
   bytes (151,191,552) = every `cp.async` byte (150,994,944: two
   prologue stages plus ten of the twelve iterations, the predicated
