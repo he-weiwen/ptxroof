@@ -497,9 +497,12 @@ fn render(e: &SymExpr, ctx: PrintContext) -> String {
                     SymExpr::Prod(fs) => match fs.first() {
                         Some(SymExpr::Const(c)) if *c < 0 && *c != i64::MIN => {
                             let mut pos = fs.clone();
-                            if *c == -1 && pos.len() == 2 {
+                            if *c == -1 {
                                 pos.remove(0);
-                                (true, pos.pop().expect("two factors"))
+                                match pos.len() {
+                                    1 => (true, pos.pop().expect("one factor")),
+                                    _ => (true, SymExpr::Prod(pos)),
+                                }
                             } else {
                                 pos[0] = SymExpr::Const(-c);
                                 (true, SymExpr::Prod(pos))
@@ -739,6 +742,15 @@ mod tests {
         );
         assert_eq!(e.symbols(), ["a", "b"]);
         assert_eq!(E::Const(3).symbols(), Vec::<String>::new());
+    }
+
+    /// A product subtracted prints without a unit coefficient.
+    #[test]
+    fn a_subtracted_product_of_symbols_prints_as_one() {
+        let (p, q) = (E::sym("p"), E::sym("q"));
+        let e = E::sub(E::sym("x"), E::mul(p.clone(), q.clone()));
+        assert_eq!(e.to_string(), "x - p * q");
+        assert_eq!(E::sub(E::sym("x"), p).to_string(), "x - p");
     }
 
     /// Ranges by interval arithmetic, `param_2` in [0, 100], `n` not
