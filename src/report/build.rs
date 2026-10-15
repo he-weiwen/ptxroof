@@ -2058,6 +2058,7 @@ impl<'a> KernelReportBuilder<'a> {
                 Some((p, rest)) => (rest.clone(), self.cta_sum(p)),
                 None => (mult, Some(ctas)),
             };
+            let mut weighted = HashMap::new();
             let mut predictions = Vec::new();
             for i in &bm.instructions {
                 let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
@@ -2075,10 +2076,16 @@ impl<'a> KernelReportBuilder<'a> {
                 // Over the launch, a set counted at every CTA explains its
                 // block as an exact count per CTA does.
                 let (launch, trips, ctas) = match &split {
-                    Some((p, _)) if set.varies_by_cta() => match self.weighted_launch(&set, p) {
-                        Some(n) => (Some(n), trips, 0),
-                        None => (None, None, 0),
-                    },
+                    Some((p, _)) if set.varies_by_cta() => {
+                        let key = guarded.then_some(i.provenance);
+                        match *weighted
+                            .entry(key)
+                            .or_insert_with(|| self.weighted_launch(&set, p))
+                        {
+                            Some(n) => (Some(n), trips, 0),
+                            None => (None, None, 0),
+                        }
+                    }
                     _ => (
                         self.launch(bm.block, i.provenance)
                             .filter(|_| split.is_none()),
@@ -2133,7 +2140,11 @@ impl<'a> KernelReportBuilder<'a> {
                         (false, Some((n, _))) => {
                             trips.and_then(|m| u64::try_from(m).ok()?.checked_mul(n))
                         }
-                        (false, None) => trips.map(|m| (m * threads) as u64 * ctas),
+                        (false, None) => trips.and_then(|m| {
+                            u64::try_from(m.checked_mul(threads)?)
+                                .ok()?
+                                .checked_mul(ctas)
+                        }),
                     },
                     at_most,
                     sectors,
@@ -2746,6 +2757,36 @@ mod tests {
         assert_eq!(store(&k.totals), ("4 * max(param_1, 1)".to_owned(), true));
         let per_cta = k.totals_per_cta.as_ref().expect("a block shape");
         assert_eq!(store(per_cta), ("256 * max(param_1, 1)".to_owned(), false));
+    }
+
+    /// A prediction past u64 is none: 32 threads in each of 2 CTAs run
+    /// 2^62 + %ctaid.x trips, 2^63 + 1 over the grid.
+    #[test]
+    fn an_execution_count_past_u64_is_not_predicted() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %ctaid.x;\n\
+                   cvt.u64.u32 %rd2, %r1;\nadd.s64 %rd3, %rd2, 4611686018427387904;\n\
+                   mov.u64 %rd4, 0;\n$L__L:\nadd.s64 %rd4, %rd4, 1;\nst.global.u32 [%rd1], %r1;\n\
+                   setp.lt.u64 %p1, %rd4, %rd3;\n@%p1 bra $L__L;\nret;\n}\n";
+        let record = NcuRecord {
+            kernel: "k".to_owned(),
+            grid: [2, 1, 1],
+            block: [32, 1, 1],
+            params: vec!["ptr:4".to_owned()],
+            lines: Default::default(),
+        };
+        let opts = AnalyzeOptions {
+            grid: Some([2, 1, 1]),
+            ncu: Some(record),
+            ..Default::default()
+        };
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].loops[0].trips.expr.as_deref(),
+            Some("%ctaid.x + 4611686018427387904")
+        );
+        assert!(r.kernels[0].measured.is_some());
     }
 
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
