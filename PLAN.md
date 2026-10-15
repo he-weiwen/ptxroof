@@ -176,9 +176,11 @@ its shared writes and instruction counts remain counted
   13.4, and on an RTX 4090), read as `trips = -5` and `store -40 B`;
   the same loop against a parameter reads `trips = param_1 - 10`, -5
   with `--bind 1:n=5`. The count is 1 when the loop is entered and 0
-  when a guard skips it, as for nvcc's remainder loop at K = 4096
-  (`k2-bind.test`: `trips = 0`); the trip matcher does not read the
-  guard.
+  when a guard skips it. LLVM's loop guard branch, which skips the loop
+  where its latch condition fails at k = 0, makes the count max(T, 0)
+  (`micro/loop_guard.ptx`: `max(param_1 - 10, 0)`, 0 at n = 5); a guard
+  on another condition, or none, leaves T (`micro_loop_guard_other`:
+  `param_1 - 10`, −2 at n = 8 where the loop runs once).
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason, unless every thread of the CTA computes the part it cannot
   read alike: that part is then a variable, `uniform(%r54@90)`

@@ -102,6 +102,22 @@ impl SymExpr {
         }
     }
 
+    /// The least value with every symbol at 0 or above, where bounded.
+    pub fn least(&self) -> Option<i64> {
+        match self {
+            SymExpr::Const(c) => Some(*c),
+            SymExpr::Sym(_) | SymExpr::Mod(..) => Some(0),
+            SymExpr::Sum(ts) => ts.iter().try_fold(0i64, |s, t| s.checked_add(t.least()?)),
+            SymExpr::Prod(fs) => {
+                (fs.iter()).try_fold(1i64, |p, f| p.checked_mul(f.least().filter(|&l| l >= 0)?))
+            }
+            SymExpr::CeilDiv(e, c) => Some(-e.least()?.checked_neg()?.div_euclid(*c)),
+            SymExpr::FloorDiv(e, c) => e.least().map(|l| l.div_euclid(*c)),
+            SymExpr::Min(a, b) => Some(a.least()?.min(b.least()?)),
+            SymExpr::Max(a, b) => a.least().max(b.least()),
+        }
+    }
+
     pub fn as_const(&self) -> Option<i64> {
         match self {
             SymExpr::Const(c) => Some(*c),
@@ -293,10 +309,13 @@ impl SymExpr {
         }
     }
 
-    /// The greater of `a` and `b`, a constant when both are.
+    /// The greater of `a` and `b`, a constant when both are, and one when
+    /// it is never less than the other constant.
     pub fn max(a: SymExpr, b: SymExpr) -> SymExpr {
         match (a.as_const(), b.as_const()) {
             (Some(x), Some(y)) => SymExpr::Const(x.max(y)),
+            (_, Some(y)) if a.least().is_some_and(|l| l >= y) => a,
+            (Some(x), _) if b.least().is_some_and(|l| l >= x) => b,
             _ => SymExpr::Max(Box::new(a), Box::new(b)),
         }
     }
@@ -665,6 +684,23 @@ mod tests {
         );
         assert_eq!(e.symbols(), ["a", "b"]);
         assert_eq!(E::Const(3).symbols(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn least_values_with_nonnegative_symbols_fold_a_max() {
+        let minus = |e: E, c: i64| E::sub(e, E::Const(c));
+        assert_eq!(E::ceil_div(k(), 8).least(), Some(0));
+        assert_eq!(minus(k(), 10).least(), Some(-10));
+        assert_eq!(E::ceil_div(minus(k(), 128), 128).least(), Some(-1));
+        assert_eq!(E::sub(k(), E::sym("n")).least(), None);
+        let w8a8 = minus(E::max(E::ceil_div(k(), 128), E::Const(2)), 1);
+        assert_eq!(w8a8.least(), Some(1));
+        assert_eq!(E::max(w8a8.clone(), E::Const(1)), w8a8);
+        assert_eq!(
+            E::max(E::ceil_div(k(), 8), E::Const(0)),
+            E::ceil_div(k(), 8)
+        );
+        assert!(matches!(E::max(minus(k(), 10), E::Const(0)), E::Max(..)));
     }
 
     #[test]

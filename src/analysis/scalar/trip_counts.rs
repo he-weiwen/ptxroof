@@ -237,16 +237,99 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     if a1 == i64::MIN {
         return Err("induction step is −2^63, which has no negation".to_owned());
     }
-    let ne = if continue_if_true {
-        cmp == "ne"
+    let cond = if continue_if_true {
+        cmp.as_str()
     } else {
-        cmp == "eq"
+        negate(&cmp)
     };
     let bound = tracer.bindings.and_then(|b| d.base.bind(b).as_const());
-    if ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
+    if cond == "ne" && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
         return Err("latch condition never meets its `!=` bound".to_owned());
     }
-    solve(&cmp, continue_if_true, a1, d.base)
+    let trips = solve(cond, a1, d.base.clone())?;
+    match below_zero(cond, d.base) {
+        Some(at_zero) if guard_test(tracer, id).as_ref() == Some(&at_zero) => {
+            Ok(SymExpr::max(trips, SymExpr::Const(0)))
+        }
+        _ => Ok(trips),
+    }
+}
+
+/// LLVM's loop guard branch (`Loop::getLoopGuardBranch`,
+/// llvm/lib/Analysis/LoopInfo.cpp): the header's one predecessor outside
+/// the loop, or that block's one predecessor, ends in a two-way branch
+/// whose other successor does not reach the header without passing it.
+/// Its test of entering the loop, as `e < 0`.
+fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<SymExpr> {
+    let (cfg, l) = (tracer.cfg, tracer.forest.get(id));
+    let mut outside =
+        (cfg.block(l.header).preds.iter()).filter(|p| l.blocks.binary_search(p).is_err());
+    let (&pre, None) = (outside.next()?, outside.next()) else {
+        return None;
+    };
+    let (g, into) = match (&cfg.block(pre).succs[..], &cfg.block(pre).preds[..]) {
+        ([_, _], _) => (pre, l.header),
+        ([_], &[g]) => (g, pre),
+        _ => return None,
+    };
+    let &[taken, other] = &cfg.block(g).succs[..] else {
+        return None;
+    };
+    let skip = if taken == into { other } else { taken };
+    let in_loop = |b: BlockId| tracer.forest.block_loop[b.0 as usize];
+    if taken == other || in_loop(g) != in_loop(pre) || tracer.path_avoiding(skip, l.header, g) {
+        return None;
+    }
+    let (pos, bra) = tracer.last_instr(g)?;
+    let pred = bra.predicate?;
+    let (def, setp) = tracer.find_setp(g, pos, pred.reg)?;
+    let mods: Vec<&str> = (tracer.module.modifiers(setp).iter())
+        .map(|&m| tracer.module.interner.resolve(m))
+        .collect();
+    let &[_, a, b] = tracer.module.operand_ids(setp.operands) else {
+        return None;
+    };
+    if setp.predicate.is_some()
+        || mods
+            .iter()
+            .any(|m| m.starts_with('f') || m.starts_with("bf"))
+    {
+        return None;
+    }
+    let form =
+        tracer.trace_operand(a, def, None, 0).ok()? - tracer.trace_operand(b, def, None, 0).ok()?;
+    let cmp = *mods.first()?;
+    let cmp = if (taken == into) != pred.negated {
+        cmp
+    } else {
+        negate(cmp)
+    };
+    below_zero(cmp, form.is_invariant().then_some(form.base)?)
+}
+
+/// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
+fn below_zero(cmp: &str, e: SymExpr) -> Option<SymExpr> {
+    let minus = |e: SymExpr| SymExpr::mul(SymExpr::Const(-1), e);
+    Some(match cmp {
+        "lt" => e,
+        "le" => SymExpr::sub(e, SymExpr::Const(1)),
+        "gt" => minus(e),
+        "ge" => SymExpr::sub(minus(e), SymExpr::Const(1)),
+        _ => return None,
+    })
+}
+
+/// The comparison that holds exactly when `cmp` does not.
+fn negate(cmp: &str) -> &str {
+    match cmp {
+        "lt" => "ge",
+        "le" => "gt",
+        "gt" => "le",
+        "ge" => "lt",
+        "ne" => "eq",
+        "eq" => "ne",
+        other => other,
+    }
 }
 
 /// No setp defines the latch predicate: say what does, if anything
@@ -360,25 +443,10 @@ fn predicate_phi_trips(
 
 /// Solve `continue while A1·k + A0 cmp 0` (k = 1, 2, ...) for the
 /// iteration count.
-fn solve(cmp: &str, continue_if_true: bool, a1: i64, a0: SymExpr) -> TripCount {
-    // Normalize to the continue-condition comparison.
-    let cond = if continue_if_true {
-        cmp.to_owned()
-    } else {
-        match cmp {
-            "lt" => "ge",
-            "le" => "gt",
-            "gt" => "le",
-            "ge" => "lt",
-            "ne" => "eq",
-            "eq" => "ne",
-            other => other,
-        }
-        .to_owned()
-    };
+fn solve(cond: &str, a1: i64, a0: SymExpr) -> TripCount {
     let neg = |e: SymExpr| SymExpr::mul(SymExpr::Const(-1), e);
 
-    match cond.as_str() {
+    match cond {
         // D ≠ 0: exits exactly when A1·k = −A0.
         "ne" => {
             if a1 == 0 {
@@ -408,8 +476,8 @@ fn solve(cmp: &str, continue_if_true: bool, a1: i64, a0: SymExpr) -> TripCount {
             _ => Err("loop bound moves away from the exit condition".to_owned()),
         },
         // D > 0 ⇔ −D < 0;   D ≥ 0 ⇔ −D ≤ 0.
-        "gt" => solve("lt", true, -a1, neg(a0)),
-        "ge" => solve("le", true, -a1, neg(a0)),
+        "gt" => solve("lt", -a1, neg(a0)),
+        "ge" => solve("le", -a1, neg(a0)),
         "eq" => Err("loop continues only while values are equal — shape not recognized".to_owned()),
         other => Err(format!("unsupported latch comparison `{other}`")),
     }
@@ -655,6 +723,46 @@ mod tests {
             .find(|(n, _)| n == "$L__O")
             .expect("outer loop");
         assert_eq!(outer.1, Ok(SymExpr::Const(25)));
+    }
+
+    /// LLVM's loop guard: a branch before the loop that skips it when its
+    /// latch condition fails at k = 0 makes the count max(T, 0), however
+    /// it writes the test; a guard on another condition leaves T.
+    #[test]
+    fn a_guard_testing_the_latch_at_zero_clamps_the_count_at_zero() {
+        let trips = |guard: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{guard}\nmov.u32 %r2, 10;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        let clamped = Ok("max(param_0 - 10, 0)".to_owned());
+        assert_eq!(trips("setp.lt.s32 %p1, %r1, 11;\n@%p1 bra $L__E;"), clamped);
+        assert_eq!(trips("setp.le.s32 %p1, %r1, 10;\n@%p1 bra $L__E;"), clamped);
+        assert_eq!(trips("setp.ge.s32 %p1, 10, %r1;\n@%p1 bra $L__E;"), clamped);
+        assert_eq!(
+            trips("setp.gt.s32 %p1, %r1, 10;\n@!%p1 bra $L__E;"),
+            clamped
+        );
+        let unclamped = Ok("param_0 - 10".to_owned());
+        assert_eq!(
+            trips("setp.lt.s32 %p1, %r1, 6;\n@%p1 bra $L__E;"),
+            unclamped
+        );
+        assert_eq!(
+            trips("setp.lt.s32 %p1, %r1, 11;\n@!%p1 bra $L__E;"),
+            unclamped
+        );
+        assert_eq!(
+            trips("setp.lt.f32 %p1, %r1, 11;\n@%p1 bra $L__E;"),
+            unclamped
+        );
+        assert_eq!(trips(""), unclamped);
     }
 
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;

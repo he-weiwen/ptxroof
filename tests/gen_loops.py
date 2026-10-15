@@ -6,11 +6,14 @@ down-counting by a constant step, initialised from a constant or the
 parameter, compared (lt/le/gt/ge/ne, either operand order, either
 branch polarity) against a constant, the parameter, or the parameter
 plus a constant, read after the increment, before it through a copy,
-or through LLVM's two-register form. A Python interpreter of the same
-loop gives the trip count for each binding of the parameter; the tool's
-symbolic count, bound with --bind, must equal it wherever the loop
-actually iterates. A shape the tool refuses is counted as unsupported,
-never as a failure: the property is that it is never wrong.
+or through LLVM's two-register form; some behind LLVM's loop guard,
+which skips the loop when its latch condition fails before the first
+trip. A Python interpreter of the same loop gives the trip count for
+each binding of the parameter; the tool's symbolic count, bound with
+--bind, must equal it wherever the loop actually iterates, and for a
+guarded loop at every binding, 0 where the guard skips it. A shape the
+tool refuses is counted as unsupported, never as a failure: the
+property is that it is never wrong.
 
 Usage: gen_loops.py [--seed N] [--count N] [--bin PATH] [--keep DIR]
 """
@@ -43,6 +46,7 @@ def draw(rng):
         "counter_left": rng.choice([True, False]),
         "negated": rng.choice([True, False]),
         "read": rng.choice(["post", "pre", "two-register"]),
+        "guard": rng.choice([False, True]),
     }
 
 
@@ -59,6 +63,11 @@ def emit(shape):
         body.append(f"add.s32 %r3, %r1, {shape['bound_c']};")
     else:
         body.append(f"mov.u32 %r3, {shape['bound_c']};")
+    if shape.get("guard"):
+        body.append(f"add.s32 %r7, %r2, {-step if shape['read'] == 'pre' else 0};")
+        lhs, rhs = ("%r7", "%r3") if shape["counter_left"] else ("%r3", "%r7")
+        body.append(f"setp.{op}.s32 %p2, {lhs}, {rhs};")
+        body.append(f"@{'' if shape['negated'] else '!'}%p2 bra $L__END;")
     body.append("$L__L:")
     if shape["read"] == "post":
         body += [f"add.s32 %r2, %r2, {step};"]
@@ -74,6 +83,7 @@ def emit(shape):
     if shape["read"] == "two-register":
         body.append("mov.u32 %r2, %r6;")
     body.append(f"@{'!' if shape['negated'] else ''}%p1 bra $L__L;")
+    body.append("$L__END:")
     body.append("ret;")
     return (
         ".version 8.7\n.target sm_80\n.address_size 64\n"
@@ -90,6 +100,10 @@ def simulate(shape, n):
     i = n if shape["init"] == "param" else int(shape["init"])
     bound = {"param": n, "param+c": n + shape["bound_c"], "const": shape["bound_c"]}[shape["bound"]]
     cmp = OPS[shape["op"]]
+    seen = i - step if shape["read"] == "pre" else i
+    a, b = (seen, bound) if shape["counter_left"] else (bound, seen)
+    if shape.get("guard") and cmp(a, b) == shape["negated"]:
+        return 0
     trips = 0
     while trips < SIM_CAP:
         trips += 1
@@ -147,10 +161,10 @@ def main():
             path = (opts.keep or Path(tmp)) / f"gen_{opts.seed}_{k}.ptx"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(ptx)
-            # Only bindings where the loop really iterates: the tool assumes
-            # a guarded, entered loop, and the guard is the kernel's business.
+            # A guarded loop at every binding; an unguarded one only where it
+            # iterates twice, as its first test may fail.
             cases = [(n, simulate(shape, n)) for n in BINDINGS]
-            cases = [(n, t) for n, t in cases if t is not None and t >= 2]
+            cases = [(n, t) for n, t in cases if t is not None and (t >= 2 or shape["guard"])]
             for n, expected in cases:
                 got = tool_trips(opts.bin, path, n)
                 if isinstance(got, int):
@@ -184,7 +198,9 @@ def self_test():
     assert simulate(flipped, 7) == 7
     inverted = {**up, "op": "ge", "negated": True}  # continue while not (i >= n)
     assert simulate(inverted, 7) == 7
-    print("gen_loops --self-test: 5 assertions passed")
+    guarded = {**up, "init": "5", "guard": True}  # skipped where 5 >= n
+    assert [simulate(guarded, n) for n in (3, 7)] == [0, 2]
+    print("gen_loops --self-test: 6 assertions passed")
     return 0
 
 
