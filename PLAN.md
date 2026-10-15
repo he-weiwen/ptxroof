@@ -143,7 +143,7 @@ its shared writes and instruction counts remain counted
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason, unless every thread of the CTA computes the part it cannot
   read alike: that part is then a variable, `uniform(%r54@90)`
-  (`docs/uniform-variables.md`; the grouped tile schedule's
+  (the grouped tile schedule's
   `pid / num_pid_n` in the Gluon fp8 GEMM's global copies, k1's
   remainder loop reading the main loop's final k;
   `micro/uniform_address.ptx`). Not read: xor swizzles of shared
@@ -453,8 +453,9 @@ its shared writes and instruction counts remain counted
 
 - A value the tracer cannot read but every thread of the CTA shares as
   an affine variable, `uniform(v)`, keyed by its register SSA value:
-  addresses and loop footprints read it (`docs/uniform-variables.md`,
-  steps U1–U4); trip counts and thread selectors do not. Register SSA
+  addresses and loop footprints read it (`micro/uniform_address.ptx`,
+  `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`); trip counts
+  and thread selectors do not. Register SSA
   itself
   (`src/ssa.rs`) is what the tracer, the uniformity analysis, trip
   counting and the predicate reader read.

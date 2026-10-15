@@ -114,16 +114,14 @@ methods to the tracer from another module. Trip matching constructs an unbound
 tracer, while report address/thread analysis uses one with parameter bindings.
 These distinct evaluation modes remain explicit.
 
-## Planned SSA addition
+## Register SSA
 
 SSA is a second representation alongside `ptx`. `src/ssa.rs` holds register
 values only: φ placement over the PTX CFG and the value a read sees, built
-from the writes the caller supplies. It has no instructions of its own; the
-answers to the questions below and the migration steps are in
-`docs/reaching-values-refactor.md`. Do not create empty modules or
-placeholder interfaces.
+from the writes the caller supplies. It has no instructions of its own. Do
+not create empty modules or placeholder interfaces.
 
-The intended flow is:
+The flow is:
 
 ```text
 PTX text -> parsed PTX IR -> CFG -> SSA construction -> SSA-based analyses
@@ -131,11 +129,10 @@ PTX text -> parsed PTX IR -> CFG -> SSA construction -> SSA-based analyses
 ```
 
 Keep SSA representation definitions independent of the analyses that consume
-them. SSA construction can use existing dominance information. Initially favor
-preserving PTX block identities where the chosen SSA semantics permit it; decide
-whether SSA needs its own CFG before committing to a shared graph interface.
-If both representations need dominance and loop discovery, separate reusable
-graph algorithms from PTX-specific CFG construction at that time.
+them. SSA construction uses the existing dominance information and keeps the
+PTX CFG and its block identities. If both representations need dominance and
+loop discovery, separate reusable graph algorithms from PTX-specific CFG
+construction at that time.
 
 The tracer, the uniformity analysis, trip counting and thread participation
 read register SSA; `analysis/scalar/recurrences` recognizes loop counters on its
@@ -147,17 +144,21 @@ locations. Instruction/FLOP/byte accounting remains tied to original PTX
 operations; synthetic merge operations must not contribute to those counts.
 Reports should continue attributing derived facts to those original operations.
 
-Before implementing SSA, specify:
+Its semantics:
 
-1. Predicated writes: a false predicate preserves the previous register value.
-2. Loop merges and cyclic value dependencies.
-3. Undefined inputs and unsupported operations, with conservative unknowns.
-4. Whether construction changes the CFG, and how identities map between graphs.
-5. Register SSA scope: memory dependencies require additional reasoning and are
-   not implied by SSA register def-use links.
+1. Predicated writes: a guarded `Result` is a ψ; its old value, which a false
+   predicate preserves, is the value the statement reads from the register.
+2. Loop merges: an `Argument` at the header, whose back-edge values are the
+   values at the end of the latches.
+3. Undefined inputs: `Undef`, kept in φs and refused where a value is
+   interpreted. Unsupported operations: the register-effects decoder's
+   fallback writes, opaque `Result`s.
+4. The CFG is unchanged; values name PTX statements and blocks.
+5. Registers and CC only: no memory, no special registers. Memory
+   dependencies require additional reasoning and are not implied by SSA
+   register def-use links.
 
-These future changes require functional work and are outside this layout-only
-refactor. No generic dataflow framework, new IR, or pass manager is added here.
+No generic dataflow framework, new IR, or pass manager is added.
 
 ## Validation
 
