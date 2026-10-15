@@ -1,0 +1,7 @@
+# Over 536870912x32768x32768 CTAs of 32 threads, 2^64 threads leave
+# i64: the instruction and warp instruction counts over the launch are
+# unknown, but thread 0 of each CTA stores 4 B, 2^61 B in all.
+RUN: %ptxroof analyze %fixtures/micro/lane0_store.ptx --grid 536870912,32768,32768 | FileCheck "%s"
+CHECK: totals per launch [static]:
+CHECK: instructions = 0 + unknown, warp instructions = 0 + unknown
+CHECK: global bytes: load 0 B, store 2305843009213693952 B

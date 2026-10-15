@@ -1414,8 +1414,8 @@ impl<'a> KernelReportBuilder<'a> {
             let unread = ctas.is_some()
                 && (self.chain(bm.block).iter())
                     .any(|l| self.trip_info.trips[l.0 as usize].is_err());
-            let mult = (!unread).then_some(mult);
-            let mult = mult.as_ref();
+            let trips = (!unread).then_some(mult);
+            let trips = trips.as_ref();
             // None when a count over the launch does not fit in i64.
             let resolve = |set: &ThreadSet, stmt: Option<usize>| {
                 let per_cta = self.executing(bm, set, chain_at_most, cta);
@@ -1439,9 +1439,11 @@ impl<'a> KernelReportBuilder<'a> {
                     }
                 }
             };
+            // A block whose count does not fit is unknown, its warps too.
             let block = resolve(&self.sets.blocks[bm.block.0 as usize], None);
-            let mult = mult.filter(|_| block.is_some());
-            let (threads, warps, block_at_most, _) = block.unwrap_or((0, None, false, false));
+            let mult = trips.filter(|_| block.is_some());
+            let (threads, warps, block_at_most, _) =
+                block.unwrap_or((0, Some((0, false)), false, false));
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
@@ -1473,7 +1475,7 @@ impl<'a> KernelReportBuilder<'a> {
                     Some(_) => {
                         match resolve(&self.sets.of(bm.block, m.provenance), Some(m.provenance)) {
                             Some((threads, _, at_most, explained)) => {
-                                (threads, at_most || !explained, mult)
+                                (threads, at_most || !explained, trips)
                             }
                             None => (0, false, None),
                         }
