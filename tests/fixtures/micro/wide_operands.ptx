@@ -1,0 +1,95 @@
+//
+// HAND-WRITTEN: stores at a value that may be negative, or above the
+// signed range, widened by a mul.wide whose type sets how it reads it.
+// ptxas 13.4 (sm_89), R5 = %tid.x.
+//
+// micro_wide_unsigned: mul.wide.u32 of %tid.x − 256 zero-extends it,
+// 2^32 + %tid.x − 256 on threads 0 to 255:
+//   IADD3 R2, R5, -0x100, RZ
+//   IMAD.WIDE.U32 R2, R2, R3, c[0x0][0x160]
+// micro_wide_signed: mul.wide.s32 of the same sign-extends it:
+//   IMAD.WIDE R2, R2, R3, c[0x0][0x160]
+// micro_wide_high: mul.wide.s32 of %tid.x + 0x7fffff00 (add.u32), a
+// negative s32 from %tid.x = 256:
+//   IADD3 R2, R5, 0x7fffff00, RZ
+//   IMAD.WIDE R2, R2, R3, c[0x0][0x160]
+// micro_wide_u16: mul.wide.u16 of neg.s16 of (%tid.x & 1) zero-extends
+// 0xffff on odd threads:
+//   PRMT R0, R0, 0x7710, RZ
+//   SHF.L.U32 R0, R0, 0x2, RZ
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_wide_unsigned(
+	.param .u64 micro_wide_unsigned_param_0
+)
+.reqntid 512, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_wide_unsigned_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s32 	%r2, %r1, -256;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_wide_signed(
+	.param .u64 micro_wide_signed_param_0
+)
+.reqntid 512, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_wide_signed_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s32 	%r2, %r1, -256;
+	mul.wide.s32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_wide_high(
+	.param .u64 micro_wide_high_param_0
+)
+.reqntid 512, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_wide_high_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.u32 	%r2, %r1, 2147483392;
+	mul.wide.s32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_wide_u16(
+	.param .u64 micro_wide_u16_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b16 	%rs<3>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_wide_u16_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 1;
+	cvt.u16.u32 	%rs1, %r2;
+	neg.s16 	%rs2, %rs1;
+	mul.wide.u16 	%r3, %rs2, 4;
+	mul.wide.u32 	%rd2, %r3, 1;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

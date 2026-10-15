@@ -904,6 +904,7 @@ impl<'a> AffineValueTracer<'a> {
             )),
             Opcode::Mul if ops.len() == 3 => {
                 let (a, b) = (arg(1)?, arg(2)?);
+                self.wide_operands(&[&a, &b], instr, &mods)?;
                 if a.is_invariant() {
                     Ok(b.scale(a.base))
                 } else if b.is_invariant() {
@@ -914,6 +915,7 @@ impl<'a> AffineValueTracer<'a> {
             }
             Opcode::Mad if ops.len() == 4 => {
                 let (a, b, c) = (arg(1)?, arg(2)?, arg(3)?);
+                self.wide_operands(&[&a, &b], instr, &mods)?;
                 let prod = if a.is_invariant() {
                     b.scale(a.base)
                 } else if b.is_invariant() {
@@ -994,6 +996,26 @@ impl<'a> AffineValueTracer<'a> {
             }
             _ => None,
         }
+    }
+
+    /// A `.wide` product's operands, which it reads as its type (PTX ISA
+    /// §9.7.1.3, §9.7.1.4): one whose range over the known launch and
+    /// constant trip counts the type does not hold is refused.
+    fn wide_operands(&self, ops: &[&Affine], instr: &Instr, mods: &[&str]) -> Result<(), String> {
+        let Some((_, lo, hi)) = (mods.contains(&"wide"))
+            .then(|| mods.iter().find_map(|m| int_type_range(m)))
+            .flatten()
+        else {
+            return Ok(());
+        };
+        for a in ops {
+            let bound = self.bindings.map_or((*a).clone(), |m| a.bind(m));
+            if (bound.range(&|v| self.bound(v))).is_some_and(|(x, y)| x < lo || y >= hi) {
+                let opcode = self.module.opcode(instr);
+                return Err(format!("`{opcode}` reads a value its type does not hold"));
+            }
+        }
+        Ok(())
     }
 
     /// A 16- or 32-bit `add`, `sub`, `neg`, `mul.lo`, `mad.lo`, `shl` or `bfe`
