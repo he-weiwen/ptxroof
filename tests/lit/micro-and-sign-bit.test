@@ -1,0 +1,22 @@
+# An and-mask that runs up to the bit below the sign bit keeps x itself
+# when x lies in [0, 2^(width−1)). A value whose range reaches below 0 is
+# refused, 32- and 64-bit. A parameter's range is unknown and taken as
+# nonnegative: n − 256 reads as itself, and is refused once n is bound
+# below 256.
+RUN: %ptxroof analyze %fixtures/micro/and_sign_bit.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/and_sign_bit.ptx --bind 1:n=100 | FileCheck --check-prefix=BOUND "%s"
+FREE: kernel micro_and_sign_bit
+FREE: st.global.u32  global store 4 B  warp: 2 sectors (ideal 1)
+FREE-SAME: [64 * ⌊%tid.x/16⌋ + param_0]
+FREE: kernel micro_and_sign_negative
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: and-mask 0x7fffff00 clears bit 31 of a value that may set it
+FREE: kernel micro_and_sign_wide
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: and-mask 0x7fffffffffffff00 clears bit 63 of a value that may set it
+FREE: kernel micro_and_sign_param
+FREE: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+FREE-SAME: [param_0 + 4 * param_1 - 4 * ((param_1 - 256) mod 256) - 1024]
+BOUND: kernel micro_and_sign_param
+BOUND: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+BOUND-SAME: [4 * uniform(%r4@97) + param_0]

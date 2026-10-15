@@ -1,0 +1,102 @@
+//
+// HAND-WRITTEN: stores at an and whose mask runs up to the bit below the
+// sign bit and clears it, nvcc's `& 0x7fffffc0`. ptxas 13.4 (sm_89)
+// keeps each and, R5 = %tid.x.
+//
+// micro_and_sign_bit: %tid.x & 0x7ffffff0, %tid.x below 2^31:
+//   LOP3.LUT R2, R5, 0x7ffffff0, RZ, 0xc0, !PT
+// micro_and_sign_negative: (%tid.x − 256) & 0x7fffff00, which on threads
+// 0 to 255 clears the sign bit of a negative value, 0x7fffff00:
+//   IADD3 R0, R5, -0x100, RZ
+//   LOP3.LUT R0, R0, 0x7fffff00, RZ, 0xc0, !PT
+// micro_and_sign_wide: the same as an and.b64 of the value sign-extended,
+// with 0x7fffffffffffff00:
+//   IADD3 R0, R5, -0x100, RZ
+//   SHF.R.S32.HI R2, RZ, 0x1f, R0
+//   LOP3.LUT R0, R0, 0xffffff00, RZ, 0xc0, !PT
+//   LOP3.LUT R3, R2, 0x7fffffff, RZ, 0xc0, !PT
+// micro_and_sign_param: (n − 256) & 0x7fffff00, n the second parameter,
+// negative for n below 256 (R0 = n):
+//   IADD3 R0, R0, -0x100, RZ
+//   LOP3.LUT R0, R0, 0x7fffff00, RZ, 0xc0, !PT
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_and_sign_bit(
+	.param .u64 micro_and_sign_bit_param_0,
+	.param .u32 micro_and_sign_bit_param_1
+)
+.reqntid 512, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_sign_bit_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 2147483632;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_sign_negative(
+	.param .u64 micro_and_sign_negative_param_0,
+	.param .u32 micro_and_sign_negative_param_1
+)
+.reqntid 512, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_sign_negative_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s32 	%r2, %r1, -256;
+	and.b32 	%r3, %r2, 2147483392;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_sign_wide(
+	.param .u64 micro_and_sign_wide_param_0,
+	.param .u32 micro_and_sign_wide_param_1
+)
+.reqntid 512, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [micro_and_sign_wide_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s32 	%r2, %r1, -256;
+	cvt.s64.s32 	%rd2, %r2;
+	and.b64 	%rd3, %rd2, 9223372036854775552;
+	shl.b64 	%rd4, %rd3, 2;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r1;
+	ret;
+}
+
+.visible .entry micro_and_sign_param(
+	.param .u64 micro_and_sign_param_param_0,
+	.param .u32 micro_and_sign_param_param_1
+)
+.reqntid 512, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_sign_param_param_0];
+	ld.param.u32 	%r1, [micro_and_sign_param_param_1];
+	mov.u32 	%r2, %tid.x;
+	add.s32 	%r3, %r1, -256;
+	and.b32 	%r4, %r3, 2147483392;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}

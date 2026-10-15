@@ -674,8 +674,10 @@ impl<'a> AffineValueTracer<'a> {
                     _ => return Err("and-mask with two non-constant operands".to_owned()),
                 };
                 // A contiguous run of ones from bit `low` up to bit `top`:
-                // x mod 2^top − x mod 2^low, and x itself above the register
-                // width in the nonneg domain.
+                // x mod 2^top − x mod 2^low, and x itself when the run
+                // reaches the register's top bit; one that stops just below
+                // it keeps x for x in [0, 2^(width−1)), and in the nonneg
+                // domain when x's range is unknown.
                 let width = if mods.iter().any(|m| m.ends_with("64")) {
                     64
                 } else {
@@ -693,7 +695,17 @@ impl<'a> AffineValueTracer<'a> {
                         .modulo_const(1i64 << k)
                         .ok_or_else(|| refuse(&x, id, "mod"))
                 };
+                let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
+                let range = bound.range(&|v| self.bound(v));
                 let hi = if top >= width - 1 {
+                    if top == width - 1
+                        && range.is_some_and(|(lo, hi)| lo < 0 || hi >> (width - 1) != 0)
+                    {
+                        let bit = width - 1;
+                        return Err(format!(
+                            "and-mask {konst:#x} clears bit {bit} of a value that may set it"
+                        ));
+                    }
                     affine.clone()
                 } else {
                     modulo(affine.clone(), top)?

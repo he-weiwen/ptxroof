@@ -108,6 +108,18 @@ its shared writes and instruction counts remain counted
   count keeps the tracer's documented assumption
   (`src/analysis/scalar/trace.rs`, module doc). A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
+- **An and-mask that clears the sign bit keeps a value of unknown range
+  as itself.** Up to the bit below the sign bit (nvcc's
+  `& 0x7fffffc0`) the and is read as the value itself where its range
+  lies in [0, 2^(width−1)), and refused where the range reaches outside
+  it (`micro/and_sign_bit.ptx`: `(%tid.x − 256) & 0x7fffff00`, "clears
+  bit 31 of a value that may set it"). A value through a parameter or
+  `%ctaid` with no grid given has no range and keeps the tracer's
+  documented assumption: `micro_and_sign_param`'s `(n − 256) &
+  0x7fffff00` reads `[param_0 + 4 * param_1 - 4 * ((param_1 - 256) mod
+  256) - 1024]`, where for n below 256 the and is 0x7fffff00 and the
+  store 2^33 bytes higher; with `--bind 1:n=100` it is refused, and the
+  address a uniform variable.
 - **`shfl.sync.idx` is read as if warps were rows of 32 `%tid.x`**,
   whatever the block shape: a warp is 32 consecutive
   `%tid.x + %tid.y·%ntid.x + %tid.z·%ntid.x·%ntid.y` (PTX ISA §3.1,
