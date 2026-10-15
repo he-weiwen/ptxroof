@@ -237,6 +237,15 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     if a1 == i64::MIN {
         return Err("induction step is −2^63, which has no negation".to_owned());
     }
+    let ne = if continue_if_true {
+        cmp == "ne"
+    } else {
+        cmp == "eq"
+    };
+    let bound = tracer.bindings.and_then(|b| d.base.bind(b).as_const());
+    if ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
+        return Err("latch condition never meets its `!=` bound".to_owned());
+    }
     solve(&cmp, continue_if_true, a1, d.base)
 }
 
@@ -471,6 +480,21 @@ mod tests {
         assert_eq!(latch(0, 2, 5), never);
         assert_eq!(latch(6, 2, 4), never);
         assert_eq!(latch(4, -2, 0), Ok("2".to_owned()));
+        // A bound the bindings make a constant is checked at its value.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nmax.s32 %r3, %r1, 1;\nmov.u32 %r2, 0;\n\
+             $L__L:\nadd.s32 %r2, %r2, 2;\nsetp.ne.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;",
+        );
+        let at = |n: i64| {
+            let bound = [("param_0".to_owned(), n)].into_iter().collect();
+            trips_under(&src, &bound)[0]
+                .1
+                .clone()
+                .map(|t| t.bind(&bound).to_string())
+        };
+        assert_eq!(at(6), Ok("3".to_owned()));
+        assert_eq!(at(5), never);
     }
 
     /// The two-trip shape with each of its writes guarded: the lanes the
