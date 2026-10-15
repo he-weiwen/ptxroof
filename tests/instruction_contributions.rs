@@ -8,7 +8,8 @@ use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
 use ptxroof::analysis::memory_footprint::CountRange;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
-use ptxroof::report::schema::{ByteRange, ContributionDetails, InstructionVariant};
+use ptxroof::report::measured::{NcuLine, NcuRecord};
+use ptxroof::report::schema::{ByteRange, ContributionDetails, Count, InstructionVariant};
 use ptxroof::report::{AnalyzeOptions, analyze, text};
 
 fn source(body: &str) -> String {
@@ -399,6 +400,79 @@ fn a_src_size_register_reads_at_most_cp_size() {
     assert_eq!(read(0).get("at_most"), None);
     assert_eq!(read(1)["at_most"], true);
     assert_eq!(copies[1]["issued"]["expr"], "64");
+    let load = &report.kernels[0].totals_per_cta.as_ref().unwrap().bytes["global"].load;
+    assert_eq!((load.expr.as_str(), load.at_most), ("2048", true));
+}
+
+/// Each guard against each ignore-src, per CTA of 64 threads: a 16-byte
+/// copy reads its source on the threads it runs on whose ignore-src is
+/// false, a loaded mask a bound, and writes shared memory on all it runs
+/// on. It issues on the block's threads; under a guard no thread passes
+/// it is in no live count and predicts no execution.
+#[test]
+fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
+    let guards = [
+        ("", ""),
+        ("mov.pred %p3, 1;", "@%p3 "),
+        ("mov.pred %p3, 0;", "@%p3 "),
+        ("setp.lt.u32 %p3, %r1, 48;", "@%p3 "),
+    ];
+    let ignores = [
+        "mov.pred %p2, 0;",
+        "mov.pred %p2, -1;",
+        "setp.ge.u32 %p2, %r1, 16;",
+        "ld.global.u32 %r5, [%rd1];\nsetp.eq.u32 %p2, %r5, 0;",
+    ];
+    let reads = ["1024", "0", "256", "<= 1280"];
+    let global = [reads, reads, ["0"; 4], ["768", "0", "256", "<= 1024"]];
+    let (shared, predicted) = (["1024", "1024", "0", "768"], [64, 64, 0, 48]);
+    let count = |c: &Count| format!("{}{}", if c.at_most { "<= " } else { "" }, c.expr);
+    for (g, (def, guard)) in guards.into_iter().enumerate() {
+        for (i, ignore) in ignores.into_iter().enumerate() {
+            let setup =
+                format!("mul.wide.u32 %rd2, %r1, 16;\nadd.s64 %rd3, %rd1, %rd2;\n{ignore}\n{def}");
+            let copy = format!("{guard}cp.async.cg.shared.global [%r4], [%rd3], 16, %p2;");
+            let src = ignore_src_kernel("k", &setup, &copy);
+            let line = src.lines().position(|l| l == copy).unwrap() as u32 + 1;
+            let measured = NcuLine {
+                ptx: copy,
+                sass: [("LDGSTS.E.BYPASS.128".to_owned(), 1)].into(),
+                executions: 1 << 20,
+                l2_theoretical_sectors_global: None,
+                l2_theoretical_sectors_global_ideal: None,
+                global_access_sizes: Vec::new(),
+            };
+            let record = NcuRecord {
+                kernel: "k".to_owned(),
+                grid: [1, 1, 1],
+                block: [64, 1, 1],
+                params: vec!["ptr:1024".to_owned(), "u32:0".to_owned()],
+                lines: [(line, measured)].into(),
+            };
+            let opts = AnalyzeOptions {
+                grid: Some([1, 1, 1]),
+                ncu: Some(record),
+                ..Default::default()
+            };
+            let report = analyze(&src, "matrix", &opts).unwrap();
+            let kernel = &report.kernels[0];
+            let cta = kernel.totals_per_cta.as_ref().unwrap();
+            let cell = (g, i);
+            assert_eq!(count(&cta.bytes["global"].load), global[g][i], "{cell:?}");
+            assert_eq!(count(&cta.bytes["shared"].store), shared[g], "{cell:?}");
+            let copies = cta.instructions.by_kind.get("global -> shared copy 16 B");
+            let live = copies.map(|c| c.total.expr.as_str());
+            assert_eq!(live, (g != 2).then_some("64"), "{cell:?}");
+            if g == 2 {
+                let all = cta.instructions.all.as_ref().map(|c| c.expr.as_str());
+                assert_eq!(all, Some(if i == 3 { "896" } else { "832" }), "{cell:?}");
+            }
+            let lines: Vec<u64> = (kernel.measured.as_ref().unwrap().iter())
+                .flat_map(|b| b.differing.iter().map(|d| d.predicted))
+                .collect();
+            assert_eq!(lines, [predicted[g]], "{cell:?}");
+        }
+    }
 }
 
 /// An ignore-src that is always true reads on no thread: no sectors.

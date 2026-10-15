@@ -97,4 +97,6 @@ pub struct Measurement {
     /// Statement index into the owning kernel's `stmts` — provenance
     /// for diagnostics and the report verifier.
     pub provenance: usize,
+    /// The contribution's memory operand, as in [`Contribution`].
+    pub memory_operand: Option<usize>,
 }

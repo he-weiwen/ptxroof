@@ -1580,7 +1580,7 @@ impl<'a> KernelReportBuilder<'a> {
             };
             // None when a count over the launch does not fit in i64; with
             // the trips it is counted over where they are its own.
-            let resolve = |set: &ThreadSet, stmt: Option<usize>| {
+            let resolve = |set: &ThreadSet, launch: Option<(u64, u64)>| {
                 if cta.is_some()
                     && split.is_none()
                     && !unread
@@ -1599,7 +1599,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let counted = match &split {
                     Some((p, _)) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
                     Some(_) => None,
-                    None => self.launches.get(&(bm.block, stmt)).copied(),
+                    None => launch,
                 };
                 match counted {
                     Some((t, w)) => {
@@ -1619,7 +1619,10 @@ impl<'a> KernelReportBuilder<'a> {
                 }
             };
             // A block whose count does not fit is unknown, its warps too.
-            let block = resolve(&self.sets.blocks[bm.block.0 as usize], None);
+            let block = resolve(
+                &self.sets.blocks[bm.block.0 as usize],
+                self.launches.get(&(bm.block, None)).copied(),
+            );
             let mult = (block.as_ref()).and_then(|(_, own)| own.clone().or_else(|| trips.cloned()));
             let mult = mult.as_ref();
             let (threads, warps, block_at_most, _) =
@@ -1650,20 +1653,31 @@ impl<'a> KernelReportBuilder<'a> {
                 if !self.counted(bm.block, m.provenance) {
                     continue;
                 }
-                let (threads, at_most, mult) = match self.sets.guards.get(&m.provenance) {
-                    Some(Pred::True) => (threads, block_at_most, mult.cloned()),
-                    Some(_) => {
-                        match resolve(&self.sets.of(bm.block, m.provenance), Some(m.provenance)) {
-                            Some(((threads, _, at_most, explained), own)) => (
-                                threads,
-                                at_most || !explained,
-                                own.or_else(|| trips.cloned()),
-                            ),
-                            None => (0, false, None),
+                let p = m.provenance;
+                let source = m.memory_operand == Some(1) && self.sets.sources.contains_key(&p);
+                let (threads, at_most, mult) =
+                    match self.sets.guard(p, m.memory_operand.unwrap_or(0)) {
+                        Some(Pred::True) => (threads, block_at_most, mult.cloned()),
+                        Some(Pred::False) => continue,
+                        Some(_) => {
+                            let (set, launch) = match source {
+                                true => (self.sets.of_access(bm.block, p, 1), None),
+                                false => (
+                                    self.sets.of(bm.block, p),
+                                    self.launches.get(&(bm.block, Some(p))).copied(),
+                                ),
+                            };
+                            match resolve(&set, launch) {
+                                Some(((threads, _, at_most, explained), own)) => (
+                                    threads,
+                                    at_most || !explained,
+                                    own.or_else(|| trips.cloned()),
+                                ),
+                                None => (0, false, None),
+                            }
                         }
-                    }
-                    None => (threads, block_at_most || m.predicated, mult.cloned()),
-                };
+                        None => (threads, block_at_most || m.predicated, mult.cloned()),
+                    };
                 let n = (m.count as i64).checked_mul(threads);
                 let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
                 let mult = mult.as_ref();

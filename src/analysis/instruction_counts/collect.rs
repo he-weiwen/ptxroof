@@ -115,6 +115,7 @@ pub fn collect(
                     count: c.count,
                     predicated,
                     provenance,
+                    memory_operand: c.memory_operand,
                 }));
                 instructions.push(InstructionRecord {
                     opcode: module.opcode(instr),

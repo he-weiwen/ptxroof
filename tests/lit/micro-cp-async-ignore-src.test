@@ -2,8 +2,14 @@
 # copy's global row counts the lanes whose ignore-src is false, under
 # the copy's own guard, and its shared row the lanes that run it. The
 # cache-hinted copy's ignore-src compares the CTA index with a
-# parameter, so without the grid its row is a bound.
+# parameter, so without the grid its row is a bound. The global load
+# bytes per CTA count the reading lanes: 256 + 64 + 128 B, and at most
+# 64 lanes of 16 B for the cache-hinted copy; the shared store counts
+# every lane that runs a copy, 2752 B. Under the record, per launch,
+# that copy still counts 64 lanes per CTA, 2 CTAs, a bound (PLAN.md,
+# Wrong output), where the four lines measure 68 L2 sectors, 2176 B.
 RUN: %ptxroof analyze %fixtures/micro/cp_async_ignore_src.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/cp_async_ignore_src.ptx --ncu %fixtures/micro/cp_async_ignore_src.ncu.json | FileCheck --check-prefix=NCU "%s"
 CHECK: <block 0>  cp.async.cg.shared.global                 shared store 16 B                                                                                         [16 * %tid.x + buf]
 CHECK-NEXT: <block 0>  cp.async.cg.shared.global                 global load 16 B on 16 threads in 1 warp (%tid.x < 16)                 warp: 8–9 sectors (ideal 8)        [16 * %tid.x + param_0]
 CHECK-NEXT: <block 0>  cp.async.ca.shared.global                 shared store 4 B on 48 threads in 2 warps (%tid.x < 48)                                                   [4 * %tid.x + buf + 1024]
@@ -12,3 +18,9 @@ CHECK-NEXT: <block 0>  cp.async.ca.shared.global                 shared store 8 
 CHECK-NEXT: <block 0>  cp.async.ca.shared.global                 global load 8 B on 16 threads in 1 warp (%tid.x < 16)                  warp: 4–5 sectors (ideal 4)        [8 * %tid.x + param_0 + 2048]
 CHECK-NEXT: <block 0>  cp.async.cg.shared.global.L2::cache_hint  shared store 16 B                                                                                         [16 * %tid.x + buf + 3072]
 CHECK-NEXT: <block 0>  cp.async.cg.shared.global.L2::cache_hint  global load 16 B (predicated)                                          warp: <= 17 sectors (ideal <= 16)  [16 * %tid.x + 1024 * %ctaid.x + param_0 + 4096]
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load <= 1472 B, store 0 B
+CHECK: shared bytes: load 0 B, store 2752 B
+NCU: totals per launch [static]:
+NCU: global bytes: load <= 2944 B, store 0 B
+NCU: shared bytes: load 0 B, store 5504 B
