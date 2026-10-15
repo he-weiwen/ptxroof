@@ -371,6 +371,36 @@ fn a_source_read_at_mixed_residues_by_unknown_lanes_has_no_footprint() {
     );
 }
 
+/// A src-size register reads at most cp-size (PTX ISA §9.7.9.26.3.1):
+/// beside a copy that reads its 16 B under the same opcode, its row and
+/// its variant read `<= 16 B`, in text and JSON, and the two variants
+/// stay apart.
+#[test]
+fn a_src_size_register_reads_at_most_cp_size() {
+    let at = "mul.wide.u32 %rd2, %r1, 16;\nadd.s64 %rd3, %rd1, %rd2;";
+    let copy = "cp.async.cg.shared.global [%r4], [%rd3], 16;\n\
+                cp.async.cg.shared.global [%r4+1024], [%rd3+1024], 16, %r9;";
+    let src = ignore_src_kernel("partial_src_size", at, copy);
+    let report = analyze(&src, "partial", &AnalyzeOptions::default()).unwrap();
+    let rendered = text::render(&report);
+    assert!(rendered.contains("global load <= 16 B (predicated)"));
+    assert!(rendered.contains("global load 16 B; shared store 16 B"));
+    assert!(rendered.contains("global load <= 16 B; shared store 16 B"));
+    let json = serde_json::to_value(&report).unwrap();
+    let kernel = &json["kernels"][0];
+    let rows: Vec<_> = (kernel["accesses"].as_array().unwrap().iter())
+        .filter(|a| a["space"] == "global")
+        .map(|a| (a.get("bytes_at_most").is_some(), a["predicated"] == true))
+        .collect();
+    assert_eq!(rows, [(false, false), (true, true)]);
+    let copies = &kernel["totals_per_cta"]["instructions"]["by_kind"]["global -> shared copy 16 B"]
+        ["contribution_variants"]["cp.async.cg.shared.global"];
+    let read = |v: usize| copies[v]["contributions_per_execution"][0].clone();
+    assert_eq!(read(0).get("at_most"), None);
+    assert_eq!(read(1)["at_most"], true);
+    assert_eq!(copies[1]["issued"]["expr"], "64");
+}
+
 /// An ignore-src that is always true reads on no thread: no sectors.
 #[test]
 fn a_source_every_thread_ignores_is_read_by_none() {

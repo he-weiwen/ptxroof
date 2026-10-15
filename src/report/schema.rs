@@ -302,6 +302,9 @@ pub struct Access {
     /// Bytes per thread per execution, when the instruction states them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u32>,
+    /// `bytes` is the most one execution moves.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bytes_at_most: bool,
     /// A predicate, or for a `cp.async`'s source a src-size register,
     /// makes this operand's access conditional beyond its block: the
     /// instruction's guard, or the copy's ignore-src.
@@ -449,6 +452,9 @@ pub enum ContributionDetails {
         space: String,
         direction: String,
         count: u64,
+        /// `count` is the most one execution moves.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        at_most: bool,
     },
     UnquantifiedBytes {
         space: String,

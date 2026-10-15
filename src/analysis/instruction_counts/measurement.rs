@@ -6,7 +6,9 @@
 //! tensor families) contributes its warp total divided by the 32
 //! lanes that issue it, so every count adds up per thread. Loop trip
 //! multiplication happens at report aggregation (PR 12); until then
-//! everything is per-execution and the constants stay exact.
+//! everything is per-execution and the constants stay exact, but for
+//! a `cp.async` read whose src-size is a register: at most cp-size, its
+//! `at_most` set (PTX ISA §9.7.9.26.3.1).
 //!
 //! Honesty is in the kinds: an instruction that moves statically
 //! unquantifiable bytes becomes `UnquantifiedBytes` (an op count with
@@ -57,6 +59,8 @@ pub struct Contribution {
     /// Index among the instruction's memory operands (not all operands).
     /// Read and write contributions of an atomic reference the same operand.
     pub memory_operand: Option<usize>,
+    /// `count` is the most one execution moves.
+    pub at_most: bool,
 }
 
 impl Contribution {
@@ -65,6 +69,7 @@ impl Contribution {
             kind,
             count,
             memory_operand: None,
+            at_most: false,
         }
     }
 
@@ -77,6 +82,7 @@ impl Contribution {
             kind,
             count,
             memory_operand: Some(operand),
+            at_most: false,
         }
     }
 }

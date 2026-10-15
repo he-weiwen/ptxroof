@@ -68,13 +68,11 @@ its shared writes and instruction counts remain counted
   warp that runs the copy (`micro/cp_async_ignore_src.ptx`: `load 2752
   B` per CTA and 5504 B over the launch, where an RTX 4090 measures 68
   L2 sectors, 2176 B; its lines 36, 42 and 47 predict `32–36`, `8–12`
-  and `16–20` sectors where it measures 16, 4 and 8). A src-size
-  register's read is annotated as cp-size, where a lane reads at most
-  that (`micro/cp_async_src_size.ptx`: `global load 16 B (predicated)`,
-  and `load 1024 B` per CTA where 16 of 64 lanes read,
-  `tests/lit/micro-cp-async-src-size.test`). Triton writes its masked
-  loads this way: 319 such `cp.async` in 16 B200 fixtures, 13,489 in the
-  census.
+  and `16–20` sectors where it measures 16, 4 and 8;
+  `micro/cp_async_src_size.ptx`: `load 1024 B` per CTA where 16 of 64
+  lanes read, `tests/lit/micro-cp-async-src-size.test`). Triton writes
+  its masked loads this way: 319 such `cp.async` in 16 B200 fixtures,
+  13,489 in the census.
 - **Register effects are incomplete.** The affine tracer records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as

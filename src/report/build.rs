@@ -326,8 +326,9 @@ impl KernelReportBuilder<'_> {
                     .copied()
                     .filter(|&id| matches!(module.operand(id), Operand::Memory { .. }))
                     .collect();
-                let classified =
-                    crate::analysis::instruction_counts::classify::classify(module, instr);
+                let classified = crate::analysis::instruction_counts::classify::classify_in(
+                    module, kernel, instr,
+                );
                 // Pair memory contributions by their explicit operand association.
                 // An atomic has one address with read+write; a copy has two addresses.
                 let mut accesses: BTreeMap<(usize, Space, Option<u32>), (bool, bool)> =
@@ -508,6 +509,8 @@ impl KernelReportBuilder<'_> {
                         space: space.key().to_owned(),
                         direction: direction.to_owned(),
                         bytes,
+                        bytes_at_most: (classified.contributions.iter())
+                            .any(|c| c.at_most && c.memory_operand == Some(i)),
                         predicated: guard.is_some(),
                         threads: threads.clone(),
                         address,
@@ -754,6 +757,7 @@ fn contribution_details(c: &Contribution) -> ContributionDetails {
             space: space.key().to_owned(),
             direction: direction_key(direction).to_owned(),
             count,
+            at_most: c.at_most,
         },
         MeasureKind::UnquantifiedBytes { space, direction } => {
             ContributionDetails::UnquantifiedBytes {

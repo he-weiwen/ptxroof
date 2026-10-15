@@ -435,7 +435,11 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
     let cols: Vec<[String; 6]> = rows
         .iter()
         .map(|a| {
-            let bytes = a.bytes.map(|b| format!(" {b} B")).unwrap_or_default();
+            let bound = if a.bytes_at_most { "<= " } else { "" };
+            let bytes = a
+                .bytes
+                .map(|b| format!(" {bound}{b} B"))
+                .unwrap_or_default();
             let pred = match (&a.threads, a.predicated) {
                 (Some(t), _) => format!(" on {}", threads_phrase(t)),
                 (None, true) => " (predicated)".to_owned(),
@@ -646,7 +650,11 @@ fn contribution_text(c: &ContributionDetails) -> String {
             space,
             direction,
             count,
-        } => format!("{space} {direction} {count} B"),
+            at_most,
+        } => {
+            let bound = if *at_most { "<= " } else { "" };
+            format!("{space} {direction} {bound}{count} B")
+        }
         ContributionDetails::UnquantifiedBytes { space, direction } => {
             format!("{space} {direction} ? B")
         }
