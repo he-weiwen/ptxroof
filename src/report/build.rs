@@ -2516,6 +2516,35 @@ mod tests {
         assert!(k.accesses[0].reuse.is_empty());
     }
 
+    /// A max of a parameter scaling the thread index divides once the
+    /// parameter is bound: `(max(n, 1)·%tid.x) >> 2` at n = 2 is
+    /// ⌊%tid.x/2⌋, and its `rem` by 4 is 2·(%tid.x mod 2).
+    #[test]
+    fn a_bound_max_coefficient_divides() {
+        let opts = AnalyzeOptions {
+            bindings: vec![parse_bind("1:n=2").expect("binding")],
+            ..Default::default()
+        };
+        let src = |reduce: &str| {
+            format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r1, [k_param_1];\n\
+                 max.s32 %r2, %r1, 1;\nmov.u32 %r3, %tid.x;\nmul.lo.s32 %r4, %r2, %r3;\n\
+                 {reduce}\nmul.wide.u32 %rd2, %r5, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                 st.global.u32 [%rd3], %r5;\nret;\n}}\n"
+            )
+        };
+        let address = |reduce: &str| {
+            let r = analyze(&src(reduce), "t", &opts).expect("analyzes");
+            r.kernels[0].accesses[0].address.clone()
+        };
+        let shifted = Some("4 * ⌊%tid.x/2⌋ + param_0".to_owned());
+        assert_eq!(address("shr.u32 %r5, %r4, 2;"), shifted);
+        let rem = Some("8 * (%tid.x mod 2) + param_0".to_owned());
+        assert_eq!(address("rem.u32 %r5, %r4, 4;"), rem);
+    }
+
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
     /// read but uniform, so each warp's lanes are still known.
     /// §10.32: `%dynamic_smem_size` is set "for the CTA … at launch time",

@@ -193,6 +193,12 @@ impl<'a> AffineValueTracer<'a> {
         self
     }
 
+    /// `f` of `a`, or of `a` under the bindings where `f` needs a
+    /// coefficient the bindings make a constant.
+    fn reduced(&self, a: &Affine, f: impl Fn(Affine) -> Option<Affine>) -> Option<Affine> {
+        f(a.clone()).or_else(|| f(a.bind(self.bindings?)))
+    }
+
     /// A constant, after the bindings if there are any.
     pub(crate) fn constant(&self, a: &Affine) -> Option<i64> {
         match self.bindings {
@@ -695,8 +701,7 @@ impl<'a> AffineValueTracer<'a> {
                     .find_map(|m| m.strip_prefix('b')?.parse::<u32>().ok())
                     .unwrap_or(32);
                 let modulo = |x: Affine, k: u32| -> Result<Affine, String> {
-                    x.clone()
-                        .modulo_const(1i64 << k)
+                    (self.reduced(&x, |x| x.modulo_const(1i64 << k)))
                         .ok_or_else(|| refuse(&x, id, "mod"))
                 };
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
@@ -730,7 +735,7 @@ impl<'a> AffineValueTracer<'a> {
                             63 => {
                                 return Err(format!("and-mask {konst:#x} keeps bit 63 without 62"));
                             }
-                            _ => (hi.clone().align_down(1i64 << low))
+                            _ => (self.reduced(&hi, |x| x.align_down(1i64 << low)))
                                 .ok_or_else(|| refuse(&hi, id, "mod"))?,
                         };
                     bits &= u64::MAX.checked_shl(top).unwrap_or(0);
@@ -771,13 +776,9 @@ impl<'a> AffineValueTracer<'a> {
                 if signed || !(0..63).contains(&pos) || !(1..63).contains(&len) {
                     return Err(format!("bfe at {pos} of {len} bits"));
                 }
-                let shifted = a
-                    .clone()
-                    .div_const(1i64 << pos)
+                let shifted = (self.reduced(&a, |x| x.div_const(1i64 << pos)))
                     .ok_or_else(|| refuse(&a, id, "bit field"))?;
-                shifted
-                    .clone()
-                    .modulo_const(1i64 << len)
+                (self.reduced(&shifted, |x| x.modulo_const(1i64 << len)))
                     .ok_or_else(|| refuse(&shifted, id, "bit field"))
             }
             Opcode::Shl if ops.len() == 3 => {
@@ -815,9 +816,7 @@ impl<'a> AffineValueTracer<'a> {
                     if !(0..63).contains(&c) {
                         return Err(format!("shift by {c} is out of range"));
                     }
-                    return v
-                        .clone()
-                        .div_const(1i64 << c)
+                    return (self.reduced(&v, |x| x.div_const(1i64 << c)))
                         .ok_or_else(|| refuse(&v, id, "shift"));
                 }
                 let signed_width = mods.iter().find_map(|m| match *m {
@@ -853,9 +852,9 @@ impl<'a> AffineValueTracer<'a> {
                     return Err(format!("{} by a non-constant divisor", mnemonic.name()));
                 };
                 let result = if mnemonic == Opcode::Div {
-                    a.clone().div_const(d)
+                    self.reduced(&a, |x| x.div_const(d))
                 } else {
-                    a.clone().modulo_const(d)
+                    self.reduced(&a, |x| x.modulo_const(d))
                 };
                 result.ok_or_else(|| refuse(&a, id, "division"))
             }
