@@ -2894,6 +2894,47 @@ mod tests {
         assert!(r.kernels[0].loops[0].accesses[0].sectors_at_most);
     }
 
+    /// Wrong output (PLAN.md): a per-trip launch count past u64, 32
+    /// threads of 3 CTAs on 2^58 - 1 of 2^58 trips, predicts 0 executions
+    /// rather than none.
+    #[test]
+    fn a_per_trip_launch_count_past_u64_predicts_zero() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u64 %rd2, 0;\n$L__H:\n\
+                   add.s64 %rd2, %rd2, 1;\nsetp.ge.u64 %p1, %rd2, 288230376151711744;\n\
+                   @%p1 bra $L__T;\nbar.sync 0;\n$L__T:\n\
+                   setp.lt.u64 %p2, %rd2, 288230376151711744;\n@%p2 bra $L__H;\nret;\n}\n";
+        let line = |ptx: &str| crate::report::measured::NcuLine {
+            ptx: ptx.to_owned(),
+            sass: [("BAR.SYNC.DEFER_BLOCKING".to_owned(), 1)]
+                .into_iter()
+                .collect(),
+            executions: 5,
+            l2_theoretical_sectors_global: None,
+            l2_theoretical_sectors_global_ideal: None,
+            global_access_sizes: Vec::new(),
+        };
+        let record = NcuRecord {
+            kernel: "k".to_owned(),
+            grid: [3, 1, 1],
+            block: [32, 1, 1],
+            params: vec!["ptr:4".to_owned()],
+            lines: [(15, line("bar.sync 0;"))].into_iter().collect(),
+        };
+        let opts = AnalyzeOptions {
+            grid: Some([3, 1, 1]),
+            ncu: Some(record),
+            ..Default::default()
+        };
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let measured = r.kernels[0].measured.as_ref().expect("a record");
+        let predicted: Vec<u64> = (measured.iter())
+            .flat_map(|b| b.differing.iter().map(|l| l.predicted))
+            .collect();
+        assert_eq!(predicted, [0]);
+    }
+
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
     /// read but uniform, so each warp's lanes are still known.
     /// §10.32: `%dynamic_smem_size` is set "for the CTA … at launch time",

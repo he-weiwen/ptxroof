@@ -107,6 +107,11 @@ its shared writes and instruction counts remain counted
   measures 6,268,416, 16 more per CTA; ptxas predicates the block's two
   `LDGSTS` (`@!P0`) rather than branching around them
   (`gluon-counter-guard.test`).
+- **An ncu prediction counted trip by trip past u64 predicts 0.** Where
+  the threads a loop counter selects, summed over the trips and times
+  the CTAs, leave u64, the line predicts 0 executions instead of none
+  (`a_per_trip_launch_count_past_u64_predicts_zero`: 32 threads of 3
+  CTAs on 2^58 − 1 of 2^58 trips).
 - **A predicated `ret` or `exit` is read as falling through.** The CFG
   gives its block one successor, the next block, so what follows counts
   on every thread, exactly (`micro/predicated_exit.ptx`: the store
@@ -432,6 +437,13 @@ its shared writes and instruction counts remain counted
   unique bytes times CTAs.
 
 ### Producers and validation
+
+- **A launch count past the lane budget is rejected late.**
+  `ThreadSet::weighted_launch` counts a group of CTAs' threads when it
+  first meets the group, so a set whose CTAs form more groups than 2^26
+  lane evaluations allow tallies every group's lanes before it returns
+  none: the `spread` case of `a_launch_sums_each_cta_s_threads_and_warps`,
+  65,537 groups of 1,024 lanes, evaluates about 134 million predicates.
 
 - **The frontend is not panic-free for arbitrary UTF-8.** An input file
   containing only `é` causes `ptxroof analyze` to exit with a panic:
