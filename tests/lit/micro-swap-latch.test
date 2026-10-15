@@ -1,0 +1,6 @@
+# A latch on registers whose header φs read each other: the search for
+# the reason its trip count is not read visits each register once and
+# ends, where it recursed until the stack overflowed (13 census kernels).
+RUN: %ptxroof analyze %fixtures/micro/swap_latch.ptx | FileCheck "%s"
+CHECK: loop $L__BB0_1 ($L__BB0_1)
+CHECK-NEXT: trips = unknown: latch condition depends on %r2, carried around an enclosing loop

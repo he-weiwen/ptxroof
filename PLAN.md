@@ -390,13 +390,6 @@ its shared writes and instruction counts remain counted
 
 ### Producers and validation
 
-- **The affine tracer can overflow the stack.** 14 of the census's
-  2,837 sm_100a kernels abort (`missed-opt-census/art/sm100v3/00846.ptx`:
-  `thread 'main' has overflowed its stack`): `obstacle` meets a merged
-  register and calls `obstacle_of_any_def`, which starts a new visited
-  set, so a loop-carried value recurses without end
-  (`src/analysis/scalar/trace.rs`).
-
 - **The frontend is not panic-free for arbitrary UTF-8.** An input file
   containing only `é` causes `ptxroof analyze` to exit with a panic:
   `end byte index 1 is not a char boundary`. The byte-oriented lexer

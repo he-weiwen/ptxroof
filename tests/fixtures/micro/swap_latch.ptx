@@ -1,0 +1,33 @@
+//
+// HAND-WRITTEN: a loop that swaps %r1 and %r2 through %r3 each trip and
+// exits once %r1 is 0: two trips. Each register's header φ reads the
+// other's, so the search for why the latch cannot be read meets %r1 again
+// through %r2 and %r3. ptxas 13.4 (sm_89) keeps the loop:
+// `ISETP.NE.U32.AND P0, PT, R0, RZ, PT`, `STG.E [R2.64], R5`,
+// `@P0 BRA 0x60`.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_swap_latch(
+	.param .u64 micro_swap_latch_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_swap_latch_param_0];
+	mov.u32 	%r1, 0;
+	mov.u32 	%r2, 1;
+$L__BB0_1:
+	st.global.u32 	[%rd1], %r1;
+	mov.u32 	%r3, %r1;
+	mov.u32 	%r1, %r2;
+	mov.u32 	%r2, %r3;
+	setp.ne.u32 	%p1, %r1, 0;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}

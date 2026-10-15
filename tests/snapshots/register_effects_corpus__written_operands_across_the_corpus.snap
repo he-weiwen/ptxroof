@@ -28,7 +28,7 @@ barrier.sync	0	71
 bfe.s32	1	40
 bfe.u32	1	144
 bfi.b32	1	1
-bra	0	384
+bra	0	385
 bra.uni	0	296
 brx.idx	0	2
 call	1	1
@@ -95,7 +95,7 @@ ld.param.f32	1	20
 ld.param.s32	1	36
 ld.param.u16	1	1
 ld.param.u32	1	68
-ld.param.u64	1	200
+ld.param.u64	1	201
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -139,7 +139,7 @@ mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	107
 mov.u16	1	293
-mov.u32	1	1230
+mov.u32	1	1235
 mov.u64	1	51
 mul.f32	1	1805
 mul.hi.s32	1	1
@@ -174,7 +174,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	32
 rem.s64	1	10
 rem.u32	1	8
-ret	0	217
+ret	0	218
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	800
@@ -216,7 +216,7 @@ setp.ne.b32	1	90
 setp.ne.b64	1	26
 setp.ne.s32	1	10
 setp.ne.s64	1	1
-setp.ne.u32	1	7
+setp.ne.u32	1	8
 setp.ne.u64	1	1
 shfl.sync.bfly.b32	1	1357
 shfl.sync.idx.b32	1	52
@@ -233,7 +233,7 @@ st.global.b32	0	197
 st.global.b64	0	9
 st.global.f32	0	15
 st.global.u16	0	198
-st.global.u32	0	178
+st.global.u32	0	179
 st.global.u64	0	1
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2

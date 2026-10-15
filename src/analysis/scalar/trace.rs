@@ -157,8 +157,17 @@ impl<'a> AffineValueTracer<'a> {
 
     /// A merged value: the obstacle on any of its definitions' chains.
     pub(crate) fn obstacle_of_any_def(&self, reg: Symbol, id: Option<LoopId>) -> Option<String> {
-        let mut seen = HashSet::new();
-        seen.insert(reg);
+        self.defs_obstacle(reg, id, &mut HashSet::from([reg]))
+    }
+
+    /// The obstacle on any of `reg`'s definitions' chains, through
+    /// registers not yet `seen`.
+    fn defs_obstacle(
+        &self,
+        reg: Symbol,
+        id: Option<LoopId>,
+        seen: &mut HashSet<Symbol>,
+    ) -> Option<String> {
         self.writes
             .get(&Register::Named(reg))?
             .iter()
@@ -167,7 +176,7 @@ impl<'a> AffineValueTracer<'a> {
                     return None;
                 };
                 (split_operands(self.module, instr).1.iter())
-                    .find_map(|&op| self.operand_obstacle(op, d, id, &mut seen))
+                    .find_map(|&op| self.operand_obstacle(op, d, id, seen))
             })
     }
 
@@ -1128,7 +1137,7 @@ impl<'a> AffineValueTracer<'a> {
         }
         let def = match self.ssa.value_before(pos, Register::Named(reg)) {
             Some(Value::Result { op, .. }) => op,
-            Some(Value::Argument { .. }) => return self.obstacle_of_any_def(reg, id),
+            Some(Value::Argument { .. }) => return self.defs_obstacle(reg, id, seen),
             Some(Value::Undef(_)) | None => return None,
         };
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
