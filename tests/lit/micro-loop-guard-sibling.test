@@ -1,0 +1,19 @@
+# A guard skipping two consecutive loops is the second loop's entry
+# when the first leaves only through its latch: micro_loop_guard_sibling
+# counts the second loop per execution of the guard, its store total
+# exact. In micro_loop_guard_sibling_exit the first loop also exits to
+# the end, so the second loop's count and totals are not the guard's.
+# On an RTX 4090 at n = 20 the second loop's store requests 10 L2
+# sectors, as predicted.
+RUN: %ptxroof analyze %fixtures/micro/loop_guard_sibling.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/loop_guard_sibling.ptx --ncu %fixtures/micro/loop_guard_sibling.ncu.json | FileCheck --check-prefix=REC "%s"
+CHECK-LABEL: kernel micro_loop_guard_sibling
+CHECK: trips = max(param_1 - 10, 0)
+CHECK: totals [static]:
+CHECK: st.global.u32{{ +}}max(param_1 - 10, 0){{$}}
+CHECK-LABEL: kernel micro_loop_guard_sibling_exit
+CHECK: trips = param_1 - 10
+CHECK: totals [static]:
+CHECK: st.global.u32{{ +}}<= param_1 - 10{{$}}
+REC-LABEL: kernel micro_loop_guard_sibling
+REC: measured L2 sectors of global accesses: 1 lines agree (1 exact, 0 within a range, 0 within a bound), 0 differ

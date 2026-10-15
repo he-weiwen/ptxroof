@@ -274,13 +274,14 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, B
 }
 
 /// LLVM's loop guard branch (`Loop::getLoopGuardBranch`,
-/// llvm/lib/Analysis/LoopInfo.cpp): the header's one predecessor outside
-/// the loop, or that block's one predecessor, lies in the loop's parent
-/// and ends in a two-way branch whose other successor does not reach the
-/// header without passing it. That block, and its test of entering the
-/// loop, read from the `setp` that reaches its branch predicate, as
-/// `e < 0`; `!=` and `==` of a side never negative as `>` and
-/// `<=`.
+/// llvm/lib/Analysis/LoopInfo.cpp): above the header's one predecessor
+/// outside the loop, through blocks of one predecessor and one successor
+/// and loops left only through their one latch, the first block, which
+/// must lie in the loop's parent and end in a two-way branch whose other
+/// successor does not reach the header without passing it. That block,
+/// and its test of entering the loop, read from the `setp` that reaches
+/// its branch predicate, as `e < 0`; `!=` and `==` of a side never
+/// negative as `>` and `<=`.
 fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, SymExpr)> {
     let (cfg, l) = (tracer.cfg, tracer.forest.get(id));
     let mut outside =
@@ -288,11 +289,17 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, Sy
     let (&pre, None) = (outside.next()?, outside.next()) else {
         return None;
     };
-    let (g, into) = match (&cfg.block(pre).succs[..], &cfg.block(pre).preds[..]) {
-        ([_, _], _) => (pre, l.header),
-        ([_], &[g]) => (g, pre),
-        _ => return None,
-    };
+    let (mut g, mut into) = (pre, l.header);
+    loop {
+        (g, into) = match (&cfg.block(g).succs[..], &cfg.block(g).preds[..]) {
+            ([_], &[p]) => (p, g),
+            ([_, _], _) => match sibling_entry(tracer, g, into) {
+                Some(entry) => entry,
+                None => break,
+            },
+            _ => break,
+        };
+    }
     let &[taken, other] = &cfg.block(g).succs[..] else {
         return None;
     };
@@ -346,6 +353,28 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, Sy
         _ => (cmp, e),
     };
     Some((g, below_zero(cmp, e)?))
+}
+
+/// The one block entering loop S from outside, and S's header, where `g`
+/// is S's one latch and `g → into` its one exit edge.
+fn sibling_entry(
+    tracer: &AffineValueTracer<'_>,
+    g: BlockId,
+    into: BlockId,
+) -> Option<(BlockId, BlockId)> {
+    let s = tracer.forest.get(tracer.forest.block_loop[g.0 as usize]?);
+    let inside = |b: &BlockId| s.blocks.binary_search(b).is_ok();
+    let exits = (s.blocks.iter())
+        .flat_map(|&b| tracer.cfg.block(b).succs.iter().map(move |&t| (b, t)))
+        .filter(|(_, t)| !inside(t));
+    if s.latches != [g] || !exits.eq([(g, into)]) {
+        return None;
+    }
+    let mut outside = (tracer.cfg.block(s.header).preds.iter()).filter(|p| !inside(p));
+    let (&q, None) = (outside.next()?, outside.next()) else {
+        return None;
+    };
+    Some((q, s.header))
 }
 
 /// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
@@ -920,6 +949,31 @@ mod tests {
              setp.le.s64 %p1, %rd1, 1;\n@%p1 bra $L__L;\nret;",
         );
         assert!(trips_of(&src)[0].1.is_ok());
+    }
+
+    /// The guard may lie several blocks above the loop, each of one
+    /// predecessor and one successor; a join between them hides it.
+    #[test]
+    fn a_guard_above_a_chain_of_blocks_is_the_loops_entry() {
+        let entry = |join: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{join}\n$L__G:\n\
+                     setp.lt.s32 %p1, %r1, 11;\n@%p1 bra $L__E;\n\
+                     mov.u32 %r2, 10;\nbra.uni $L__B;\n$L__B:\nmov.u32 %r5, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            assert_eq!(loops[0].0, "$L__L");
+            (loops[0].1.clone().unwrap_or_default(), loops[0].2.clone())
+        };
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        assert_eq!(entry(""), at("max(param_0 - 10, 0)", "<block 0>"));
+        let join = "mov.u32 %r2, 10;\nsetp.eq.s32 %p3, %r1, 3;\n@%p3 bra $L__B;";
+        assert_eq!(entry(join), at("param_0 - 10", "$L__L"));
     }
 
     /// A guard skipping a loop from 0 below n where `n == 0` tests its
