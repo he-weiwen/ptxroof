@@ -27,6 +27,7 @@ use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 
 /// One condition `form cmp 0` over the thread index and, with the grid
@@ -706,8 +707,22 @@ impl ThreadSet {
                             }
                         })
                         .collect();
-                    let n = &mut groups.entry(key).or_insert((Some(0u64), c)).0;
-                    *n = n.zip(weight(c)).and_then(|(n, w)| n.checked_add(w));
+                    let group = match groups.entry(key) {
+                        Entry::Occupied(e) => e.into_mut(),
+                        Entry::Vacant(e) => {
+                            let at = ThreadSet {
+                                pred: self.pred.at_cta(c),
+                            };
+                            let (t, w) = (at.count(shape)?, at.warps(shape)?);
+                            if t.certain != t.possible || w.certain != w.possible {
+                                return None;
+                            }
+                            e.insert((0u64, t.certain, w.certain))
+                        }
+                    };
+                    if group.1 > 0 {
+                        group.0 = group.0.checked_add(weight(c)?)?;
+                    }
                     if groups.len() as u64 > LANE_BUDGET / threads.len() as u64 {
                         return None;
                     }
@@ -715,17 +730,9 @@ impl ThreadSet {
             }
         }
         let (mut sum_t, mut sum_w) = (0u64, 0u64);
-        for (k, c) in groups.into_values() {
-            let at = ThreadSet {
-                pred: self.pred.at_cta(c),
-            };
-            let (t, w) = (at.count(shape)?, at.warps(shape)?);
-            if t.certain != t.possible || w.certain != w.possible {
-                return None;
-            }
-            let k = if t.certain == 0 { 0 } else { k? };
-            sum_t = sum_t.checked_add(u64::from(t.certain).checked_mul(k)?)?;
-            sum_w = sum_w.checked_add(u64::from(w.certain).checked_mul(k)?)?;
+        for (k, t, w) in groups.into_values() {
+            sum_t = sum_t.checked_add(u64::from(t).checked_mul(k)?)?;
+            sum_w = sum_w.checked_add(u64::from(w).checked_mul(k)?)?;
         }
         Some((sum_t.checked_mul(rest)?, sum_w.checked_mul(rest)?))
     }
@@ -1694,7 +1701,7 @@ mod tests {
     /// weight c holds 0·0 + 2·1 + 4·2 + 6·3 threads; a weight on the y
     /// axis, which no comparison reads, enumerates it too; a weight that
     /// does not evaluate leaves no count, unless only at CTA 0, where the
-    /// set holds no thread.
+    /// set holds no thread, and stops at the first CTA that holds one.
     #[test]
     fn a_weighted_launch_counts_each_cta_its_weight_times() {
         let below = ThreadSet {
@@ -1719,6 +1726,13 @@ mod tests {
             launch([4, 1, 1], [true, false, false], &past_zero),
             Some((12, 3))
         );
+        let calls = std::cell::Cell::new(0);
+        let fails = |_: [i64; 3]| {
+            calls.set(calls.get() + 1);
+            None
+        };
+        assert_eq!(launch([1 << 16, 1, 1], [true, false, false], &fails), None);
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]
