@@ -1201,38 +1201,32 @@ impl<'a> KernelReportBuilder<'a> {
         (threads, warps, at_most, explained)
     }
 
-    /// The threads and warps that run statement `stmt` of block `bm`, or
-    /// the block with `None`, and whether they are a bound: per thread,
+    /// The threads and warps that run block `bm`, or with `guard` the
+    /// statement it guards, and whether they are a bound: per thread,
     /// per CTA with `cta`, and over the launch with `ctas` too, at the
-    /// launch's own count where the grid gives one. A guard every thread
-    /// reads as true is no guard. `None` when a count does not fit in i64.
+    /// launch's own count where the grid gives one. `None` when a count
+    /// does not fit in i64.
     fn running(
         &self,
         bm: &BlockMeasurements,
-        stmt: Option<usize>,
+        guard: Option<usize>,
         chain_at_most: bool,
         cta: Option<&LaunchInfo>,
         ctas: Option<u64>,
     ) -> Option<Running> {
         let b = bm.block;
-        let guard = stmt.filter(|s| self.sets.guards.get(s).is_some_and(|g| *g != Pred::True));
         let set = match guard {
             Some(s) => self.sets.of(b, s),
             None => self.sets.blocks[b.0 as usize].clone(),
         };
-        let branch = stmt.is_some_and(|s| {
-            !self.sets.guards.contains_key(&s)
-                && matches!(&self.kernel.stmts[s], Stmt::Instr(i) if i.predicate.is_some())
-        });
         let (threads, warps, at_most, explained) = match (ctas, self.launches.get(&(b, guard))) {
-            (None, _) => self.executing(bm, &set, chain_at_most, cta),
             (Some(_), Some(&(t, w))) => {
                 let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
                 let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
                 (t, Some((w, bound)), bound, true)
             }
-            (Some(n), None) => {
-                let n = i64::try_from(n).ok()?;
+            (n, _) => {
+                let n = i64::try_from(n.unwrap_or(1)).ok()?;
                 let (t, w, at_most, explained) = self.executing(bm, &set, chain_at_most, cta);
                 let w = match w {
                     Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
@@ -1241,11 +1235,30 @@ impl<'a> KernelReportBuilder<'a> {
                 (t.checked_mul(n)?, w, at_most, explained)
             }
         };
-        Some((
-            threads,
-            warps,
-            at_most || guard.is_some() && !explained || branch,
-        ))
+        Some((threads, warps, at_most || guard.is_some() && !explained))
+    }
+
+    /// Statement `stmt` of block `bm`: it runs as the block's `running`
+    /// unless a guard not every thread reads as true selects its own
+    /// threads, and a predicated branch is a bound.
+    fn statement(
+        &self,
+        bm: &BlockMeasurements,
+        stmt: usize,
+        block: Option<Running>,
+        chain_at_most: bool,
+        cta: Option<&LaunchInfo>,
+        ctas: Option<u64>,
+    ) -> Option<Running> {
+        match self.sets.guards.get(&stmt) {
+            Some(g) if *g != Pred::True => self.running(bm, Some(stmt), chain_at_most, cta, ctas),
+            Some(_) => block,
+            None => {
+                let branch =
+                    matches!(&self.kernel.stmts[stmt], Stmt::Instr(i) if i.predicate.is_some());
+                block.map(|(t, w, at_most)| (t, w, at_most || branch))
+            }
+        }
     }
 
     /// Aggregate over blocks; `below` = aggregate within this loop
@@ -1318,11 +1331,11 @@ impl<'a> KernelReportBuilder<'a> {
                 if !self.counted(bm.block, m.provenance) {
                     continue;
                 }
-                let (threads, at_most, mult) =
-                    match self.running(bm, Some(m.provenance), chain_at_most, cta, ctas) {
-                        Some((threads, _, at_most)) => (threads, at_most, trips),
-                        None => (0, false, None),
-                    };
+                let run = self.statement(bm, m.provenance, block, chain_at_most, cta, ctas);
+                let (threads, at_most, mult) = match run {
+                    Some((threads, _, at_most)) => (threads, at_most, trips),
+                    None => (0, false, None),
+                };
                 let n = (m.count as i64).checked_mul(threads);
                 let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
                 match m.kind {
@@ -1748,13 +1761,15 @@ impl<'a> KernelReportBuilder<'a> {
             let Some((mult, chain_at_most)) = self.multiplier(bm.block, None) else {
                 continue;
             };
+            let block =
+                ctas.and_then(|n| self.running(bm, None, chain_at_most, Some(cta), Some(n)));
             let mut predictions = Vec::new();
             for i in &bm.instructions {
                 let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
                     continue;
                 };
                 let run = ctas.and_then(|n| {
-                    self.running(bm, Some(i.provenance), chain_at_most, Some(cta), Some(n))
+                    self.statement(bm, i.provenance, block, chain_at_most, Some(cta), Some(n))
                 });
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
