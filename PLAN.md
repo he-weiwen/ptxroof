@@ -559,7 +559,9 @@ One line each, with the trigger that would start it.
   one PTX global access also compares its L2 sectors and their ideal
   over the launch, the sectors per warp request times the warps with a
   lane that runs it, a range over the address's alignment
-  (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`); not
+  (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`; the
+  text report counts the lines that agree and prints those that differ,
+  none in the Gluon records, `tests/lit/gluon-ncu.test`); not
   compared: a generic access, a line whose count is unknown, and the
   B200 records. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed.

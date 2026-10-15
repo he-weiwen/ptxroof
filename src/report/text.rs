@@ -168,6 +168,37 @@ fn render_measured(w: &mut String, blocks: &[MeasuredBlock]) {
             );
         }
     }
+    let checked: Vec<&MeasuredSectors> = blocks.iter().flat_map(|b| &b.sectors).collect();
+    if checked.is_empty() {
+        return;
+    }
+    let count = |f: &dyn Fn(&MeasuredSectors) -> bool| checked.iter().filter(|s| f(s)).count();
+    let _ = writeln!(
+        w,
+        "  measured L2 sectors of global accesses: {} lines agree ({} exact, {} within a range, \
+         {} within a bound), {} differ",
+        count(&|s| s.agrees),
+        count(&|s| s.agrees && !s.at_most && s.predicted.min == s.predicted.max),
+        count(&|s| s.agrees && !s.at_most && s.predicted.min < s.predicted.max),
+        count(&|s| s.agrees && s.at_most),
+        count(&|s| !s.agrees),
+    );
+    let range = |c: SectorCount, at_most: bool| match (at_most, c.min == c.max) {
+        (true, _) => format!("<= {}", c.max),
+        (false, true) => c.min.to_string(),
+        (false, false) => format!("{}–{}", c.min, c.max),
+    };
+    for s in checked.iter().filter(|s| !s.agrees) {
+        let _ = writeln!(
+            w,
+            "    line {}: predicted {} (ideal {}), measured {} (ideal {})",
+            s.line,
+            range(s.predicted, s.at_most),
+            range(s.ideal, s.at_most),
+            s.measured,
+            s.measured_ideal
+        );
+    }
 }
 
 /// One margin string per block row drawing every non-fallthrough edge

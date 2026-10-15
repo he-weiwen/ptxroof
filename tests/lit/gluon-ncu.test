@@ -1,5 +1,6 @@
 # Every Gluon kernel against its Nsight Compute record (regen.sh): no
-# block's predicted count is contradicted by the measured one.
+# block's predicted count is contradicted by the measured one, and no
+# line's global L2 sectors differ from the measured ones.
 RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_post_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_post_kernel.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_pre_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_pre_kernel.sm_89.ncu.json | FileCheck "%s"
@@ -14,3 +15,4 @@ RUN: %ptxroof analyze %fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx --ncu %fixt
 RUN: %ptxroof analyze %fixtures/gluon/rope_norm_kernel.sm_89.ptx --ncu %fixtures/gluon/rope_norm_kernel.sm_89.ncu.json | FileCheck "%s"
 CHECK: measured (predicated-on thread instructions executed over the launch):
 CHECK-NOT: contradicted
+CHECK: measured L2 sectors of global accesses: {{[0-9]+}} lines agree ({{.*}}), 0 differ
