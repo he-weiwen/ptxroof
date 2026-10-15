@@ -167,8 +167,15 @@ its shared writes and instruction counts remain counted
   `micro_uniform_div_lanes`); an and-mask's run of bits whose remainder
   the affine form does not hold, of a form whose offset is no multiple
   of its modulus (`micro/and_runs.ptx`'s `micro_and_offset`,
-  `(%tid.x − 4) & 0x46`: "in a mod"), or a 64-bit mask's run that starts
-  at bit 63 (`micro_and_bit63`); values loaded
+  `(%tid.x − 4) & 0x46`: "in a mod") or a negative coefficient, but for
+  a value of 0 or −1 under a mask below the sign bit
+  (`micro/and_bit_select.ptx`; refused with the sign bit,
+  `micro_and_select_sign`, and for −(%tid.x & 3),
+  `micro_and_select_two_bits`), or a 64-bit mask's run that starts at
+  bit 63 (`micro/and_runs.ptx`'s `micro_and_bit63`); the bit select by a
+  signed `bfe` of one bit (`micro/and_bit_select.ptx`'s
+  `micro_and_select_bfe`: "bfe at 2 of 1 bits"; 1,227 census rows stop
+  at a one-bit signed `bfe`); values loaded
   from memory (the cross-entropy's target gather: "depends on a value
   loaded from memory, behind `selp.b64`"); an `or` whose sides may
   both set a bit, by the bits the affine forms bound (`Affine::may_set`):
@@ -176,7 +183,11 @@ its shared writes and instruction counts remain counted
   `128·⌊%tid.x/32⌋ | 16·%tid.x`: "or whose sides may both set bit 7"),
   or one side's bits unknown, a parameter not bound
   (`micro_or_param`) or a value that may be negative
-  (`micro/or_negative.ptx`); a division by a constant that is no power
+  (`micro/or_negative.ptx`), or bounded by more bits than it sets: a
+  term c·v with v of 0 or 1 sets c's bits, `may_set` all from c's lowest
+  to its highest (`micro/and_bit_select.ptx`'s `micro_and_select_or`,
+  `2080·(%tid.x mod 2) | 128·⌊(%tid.x mod 16)/8⌋`: "or whose sides may
+  both set bit 7", where ptxas adds them); a division by a constant that is no power
   of two, which LLVM writes as `mul.hi` by a magic number and a shift
   (`micro/magic_div.ptx`: "`mul.hi.u32` keeps a product's upper half";
   sglang `bmm_kernel_persistent`'s `/ 148` leaves its trip count

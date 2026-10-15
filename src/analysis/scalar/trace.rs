@@ -692,6 +692,11 @@ impl<'a> AffineValueTracer<'a> {
                 let range = bound.range(&|v| self.bound(v));
                 let all = konst as u64 & u64::MAX >> (64 - width);
                 let (mut bits, mut sum) = (all, Affine::invariant(SymExpr::Const(0)));
+                // A value of 0 or −1, all ones, keeps none or all of the
+                // mask: −mask·v, alike signed and unsigned below the sign bit.
+                if range.is_some_and(|(lo, hi)| lo >= -1 && hi <= 0) && all >> (width - 1) == 0 {
+                    return Ok(affine.scale(SymExpr::Const(-(all as i64))));
+                }
                 while bits != 0 {
                     let low = bits.trailing_zeros();
                     let top = low + (bits >> low).trailing_ones();

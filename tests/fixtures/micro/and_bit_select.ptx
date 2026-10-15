@@ -1,0 +1,306 @@
+//
+// HAND-WRITTEN: stores at an and of a mask with −(x & 1), the bit select
+// Triton writes before a shared-memory xor swizzle: −(x & 1) is 0 or −1,
+// all ones, and the and none or all of the mask. ptxas 13.4 (sm_89).
+//
+// micro_and_select: −(%tid.x & 1) & 576; ptxas keeps the three steps,
+// R5 = %tid.x:
+//   LOP3.LUT R0, R5, 0x1, RZ, 0xc0, !PT
+//   IADD3 R0, -R0, RZ, RZ
+//   LOP3.LUT R2, R0, 0x240, RZ, 0xc0, !PT
+// micro_and_select_wide: the same in 64 bits, neg.s64 and and.b64; ptxas
+// keeps the low word:
+//   LOP3.LUT R0, R5, 0x1, RZ, 0xc0, !PT
+//   IMAD.MOV R0, RZ, RZ, -R0
+//   LOP3.LUT R0, R0, 0x240, RZ, 0xc0, !PT
+// micro_and_select_sign: −(%tid.x & 1) & 0x80000040, a mask with the
+// sign bit:
+//   LOP3.LUT R2, R0, 0x80000040, RZ, 0xc0, !PT
+// micro_and_select_two_bits: −(%tid.x & 3) & 576, a value of 0 to −3:
+//   LOP3.LUT R0, R5, 0x3, RZ, 0xc0, !PT
+//   IADD3 R0, -R0, RZ, RZ
+//   LOP3.LUT R2, R0, 0x240, RZ, 0xc0, !PT
+// micro_and_select_grid: −(%ctaid.x & 1) & 576, UR4 = %ctaid.x:
+//   ULOP3.LUT UR4, UR4, 0x1, URZ, 0xc0, !UPT
+//   IADD3 R2, RZ, -UR4, RZ
+//   LOP3.LUT R2, R2, 0x240, RZ, 0xc0, !PT
+// micro_and_select_or: (−(%tid.x & 1) & 2080) | ((%tid.x & 8) << 4), bits
+// 5 and 11 or bit 7; ptxas adds them:
+//   LOP3.LUT R0, R0, 0x820, RZ, 0xc0, !PT
+//   IMAD R3, R3, 0x10, R0
+// micro_and_select_bfe: the bit select by a signed bfe of bit 2, 0 or −1,
+// and 4160:
+//   SHF.R.S32.HI R0, RZ, 0x2, R5
+//   SGXT R0, R0, 0x1
+//   LOP3.LUT R0, R0, 0x1040, RZ, 0xc0, !PT
+// micro_and_select_widened: the select in 16 bits, widened by mul.wide.u16
+// to 65535 on odd threads, & 65537 keeping 1:
+//   PRMT R2, R0, 0x7710, RZ
+//   LOP3.LUT R2, R2, 0x1, RZ, 0xc0, !PT
+// micro_and_select_b16: and.b16 of the 16-bit select with 65537, which
+// the and's 16 bits make 1:
+//   PRMT R0, R0, 0x7710, RZ
+//   IMAD.SHL.U32 R0, R0, 0x4, RZ
+//   LOP3.LUT R2, R0, 0x4, RZ, 0xe2, !PT
+// micro_and_select_b16_sign: and.b16 with 0x7fffffff, all 16 bits, then
+// mul.wide.s16, −4 on odd threads:
+//   LOP3.LUT R0, R0, 0xffff, RZ, 0xc0, !PT
+//   PRMT R0, R0, 0x9910, RZ
+//   IMAD.SHL.U32 R0, R0, 0x4, RZ
+// micro_and_select_min: in a block of one thread 2·%tid.x − 1 is −1, and
+// & 2^62 keeps 2^62; ptxas folds the address:
+//   UIADD3.X UR5, UR5, 0x40000000, URZ, UP0, !UPT
+// micro_and_select_divided: div.u32 by 2 of 2·(%tid.x & 1) − 2, which is
+// 0x7fffffff on even threads, sign-extended and & 2^32: 0 on every
+// thread, so none stores; ptxas tests the high word:
+//   IMAD.HI R3, R3, 0x1, RZ
+//   LOP3.LUT P0, RZ, R3, 0x1, RZ, 0xc0, !PT
+//   @!P0 EXIT
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_and_select(
+	.param .u64 micro_and_select_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 1;
+	neg.s32 	%r3, %r2;
+	and.b32 	%r4, %r3, 576;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_wide(
+	.param .u64 micro_and_select_wide_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_and_select_wide_param_0];
+	mov.u32 	%r1, %tid.x;
+	cvt.u64.u32 	%rd2, %r1;
+	and.b64 	%rd3, %rd2, 1;
+	neg.s64 	%rd4, %rd3;
+	and.b64 	%rd5, %rd4, 576;
+	shl.b64 	%rd6, %rd5, 2;
+	add.s64 	%rd7, %rd1, %rd6;
+	st.global.u32 	[%rd7], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_sign(
+	.param .u64 micro_and_select_sign_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_sign_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 1;
+	neg.s32 	%r3, %r2;
+	and.b32 	%r4, %r3, -2147483584;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_two_bits(
+	.param .u64 micro_and_select_two_bits_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_two_bits_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 3;
+	neg.s32 	%r3, %r2;
+	and.b32 	%r4, %r3, 576;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_grid(
+	.param .u64 micro_and_select_grid_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_grid_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %ctaid.x;
+	and.b32 	%r3, %r2, 1;
+	neg.s32 	%r4, %r3;
+	and.b32 	%r5, %r4, 576;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_or(
+	.param .u64 micro_and_select_or_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<8>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_or_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 1;
+	neg.s32 	%r3, %r2;
+	and.b32 	%r4, %r3, 2080;
+	and.b32 	%r5, %r1, 8;
+	shl.b32 	%r6, %r5, 4;
+	or.b32 	%r7, %r6, %r4;
+	mul.wide.u32 	%rd2, %r7, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_bfe(
+	.param .u64 micro_and_select_bfe_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_bfe_param_0];
+	mov.u32 	%r1, %tid.x;
+	bfe.s32 	%r2, %r1, 2, 1;
+	and.b32 	%r3, %r2, 4160;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_widened(
+	.param .u64 micro_and_select_widened_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b16 	%rs<3>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_widened_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 1;
+	cvt.u16.u32 	%rs1, %r2;
+	neg.s16 	%rs2, %rs1;
+	mul.wide.u16 	%r3, %rs2, 1;
+	and.b32 	%r4, %r3, 65537;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_b16(
+	.param .u64 micro_and_select_b16_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b16 	%rs<4>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_b16_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 1;
+	cvt.u16.u32 	%rs1, %r2;
+	neg.s16 	%rs2, %rs1;
+	and.b16 	%rs3, %rs2, 65537;
+	mul.wide.u16 	%r3, %rs3, 4;
+	cvt.u64.u32 	%rd2, %r3;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_b16_sign(
+	.param .u64 micro_and_select_b16_sign_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b16 	%rs<4>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_b16_sign_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 1;
+	cvt.u16.u32 	%rs1, %r2;
+	neg.s16 	%rs2, %rs1;
+	and.b16 	%rs3, %rs2, 2147483647;
+	mul.wide.s16 	%r3, %rs3, 4;
+	cvt.s64.s32 	%rd2, %r3;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_min(
+	.param .u64 micro_and_select_min_param_0
+)
+.reqntid 1, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<7>;
+
+	ld.param.u64 	%rd1, [micro_and_select_min_param_0];
+	mov.u32 	%r1, %tid.x;
+	cvt.u64.u32 	%rd2, %r1;
+	shl.b64 	%rd3, %rd2, 1;
+	add.s64 	%rd4, %rd3, -1;
+	and.b64 	%rd5, %rd4, 4611686018427387904;
+	add.s64 	%rd6, %rd1, %rd5;
+	st.global.u32 	[%rd6], %r1;
+	ret;
+}
+
+.visible .entry micro_and_select_divided(
+	.param .u64 micro_and_select_divided_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_select_divided_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 1;
+	shl.b32 	%r3, %r2, 1;
+	add.s32 	%r4, %r3, -2;
+	div.u32 	%r5, %r4, 2;
+	mul.wide.s32 	%rd2, %r5, 1;
+	and.b64 	%rd3, %rd2, 4294967296;
+	setp.ne.u64 	%p1, %rd3, 0;
+	@%p1 st.global.u32 	[%rd1], %r1;
+	ret;
+}

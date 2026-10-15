@@ -1,0 +1,51 @@
+# An and of a mask with a value of 0 or −1 is −mask times the value: the
+# bit select −(%tid.x & 1) & 576 is 576·(%tid.x mod 2), 32- and 64-bit.
+# A mask with the sign bit and a value below −1 stay unknown; %ctaid.x's
+# bit needs the grid for its range, and is a uniform variable without it.
+# An or of the select with another bit takes 2080·(%tid.x mod 2) to set
+# bits 5 to 11, and a select by a signed bfe is not read. A 16-bit −1
+# widened by mul.wide.u16 is refused; an and.b16 takes its mask's 16
+# bits; −2^63 as a coefficient prints whole. A select of a value that
+# div.u32 reads as 0x7fffffff, not −1, is no select: the division is
+# refused and its guard a bound.
+RUN: %ptxroof analyze %fixtures/micro/and_bit_select.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/and_bit_select.ptx --grid 4,1,1 | FileCheck --check-prefix=GRID "%s"
+FREE: kernel micro_and_select
+FREE: st.global.u32  global store 4 B  warp: 2 sectors (ideal 1)
+FREE-SAME: [2304 * (%tid.x mod 2) + param_0]
+FREE: kernel micro_and_select_wide
+FREE: st.global.u32  global store 4 B  warp: 2 sectors (ideal 1)
+FREE-SAME: [2304 * (%tid.x mod 2) + param_0]
+FREE: kernel micro_and_select_sign
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: depends on special register (%tid.x mod 2), in a mod
+FREE: kernel micro_and_select_two_bits
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: depends on special register (%tid.x mod 4), in a mod
+FREE: kernel micro_and_select_grid
+FREE: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+FREE-SAME: [4 * uniform(%r5@154) + param_0]
+FREE: kernel micro_and_select_or
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: or whose sides may both set bit 7
+FREE: kernel micro_and_select_bfe
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: bfe at 2 of 1 bits
+GRID: kernel micro_and_select_grid
+GRID: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+GRID-SAME: [2304 * (%ctaid.x mod 2) + param_0]
+FREE: kernel micro_and_select_widened
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: `mul.wide.u16` reads a value its type does not hold
+FREE: kernel micro_and_select_b16
+FREE: st.global.u32  global store 4 B  warp: 1–2 sectors (ideal 1)
+FREE-SAME: [4 * (%tid.x mod 2) + param_0]
+FREE: kernel micro_and_select_b16_sign
+FREE: st.global.u32  global store 4 B  warp: 1–2 sectors (ideal 1)
+FREE-SAME: [-4 * (%tid.x mod 2) + param_0]
+FREE: kernel micro_and_select_min
+FREE: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+FREE-SAME: [(-9223372036854775808) * %tid.x + param_0 + 4611686018427387904]
+FREE: kernel micro_and_select_divided
+FREE: st.global.u32  global store 4 B (predicated)  warp: <= 1 sector (ideal 1)
+FREE-SAME: [param_0]
