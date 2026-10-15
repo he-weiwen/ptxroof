@@ -1201,7 +1201,8 @@ pub(crate) fn thread_sets(
 /// when `a − b` lies in (−2^width, 2^width), so that it is zero
 /// exactly when it is zero modulo 2^width. A form free of the thread
 /// index whose comparison the uniformity analysis finds divergent is
-/// none, unless it is a loop counter's, one value at each trip.
+/// none, unless it is a loop counter's compared within its type, one
+/// value at each trip.
 fn condition(
     module: &Module,
     kernel: &Kernel,
@@ -1276,7 +1277,7 @@ fn condition(
         });
     }
     let lanes = form.terms.keys().any(depends_on_lane);
-    let trip = per_trip(tracer, &form, def);
+    let trip = per_trip(tracer, &form, def).filter(|_| comparable(&a, &b));
     if !lanes && trip.is_none() && !uniformity.is_uniform_def(def) {
         None
     } else if on_lane_only(&form) && comparable(&a, &b) {
@@ -1286,9 +1287,7 @@ fn condition(
             cta: None,
             trip: None,
         }))
-    } else if let Some(trip) = trip
-        && comparable(&a, &b)
-    {
+    } else if let Some(trip) = trip {
         Some(Pred::Cmp(Constraint {
             form,
             cmp,

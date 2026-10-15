@@ -2876,6 +2876,24 @@ mod tests {
         assert_eq!((store.expr.as_str(), store.at_most), ("2048", true));
     }
 
+    /// `a < b` as `s32` with `a = b + k`, `b = %tid.x + 2^31 - 16`: the
+    /// difference is the counter alone, but `b` leaves the type, so the
+    /// lanes differ (lane 15 alone at k = 1) and a warp's sectors under
+    /// the guard are a bound.
+    #[test]
+    fn a_counter_difference_past_its_type_is_no_per_trip_comparison() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n\
+                   add.u32 %r2, %r1, 2147483632;\nmul.wide.u32 %rd2, %r1, 4;\n\
+                   add.s64 %rd3, %rd1, %rd2;\nmov.u32 %r3, 0;\n$L__L:\nadd.u32 %r3, %r3, 1;\n\
+                   add.u32 %r4, %r2, %r3;\nsetp.lt.s32 %p1, %r4, %r2;\n\
+                   @%p1 st.global.u32 [%rd3], %r3;\nsetp.lt.u32 %p2, %r3, 4;\n\
+                   @%p2 bra $L__L;\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        assert!(r.kernels[0].loops[0].accesses[0].sectors_at_most);
+    }
+
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
     /// read but uniform, so each warp's lanes are still known.
     /// §10.32: `%dynamic_smem_size` is set "for the CTA … at launch time",
