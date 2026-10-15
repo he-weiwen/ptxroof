@@ -540,6 +540,10 @@ struct PerRequest {
 /// Per statement, its global access's sectors.
 type PerRequests = HashMap<usize, PerRequest>;
 
+/// The threads that run a statement, its warps with whether they are a
+/// bound, and whether the threads are.
+type Running = (i64, Option<(i64, bool)>, bool);
+
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
 
@@ -1408,6 +1412,53 @@ impl<'a> KernelReportBuilder<'a> {
         (threads, warps, at_most, explained)
     }
 
+    /// The threads and warps that run statement `stmt` of block `bm`, or
+    /// the block with `None`, and whether they are a bound: per thread,
+    /// per CTA with `cta`, and over the launch with `ctas` too, at the
+    /// launch's own count where the grid gives one. A guard every thread
+    /// reads as true is no guard. `None` when a count does not fit in i64.
+    fn running(
+        &self,
+        bm: &BlockMeasurements,
+        stmt: Option<usize>,
+        chain_at_most: bool,
+        cta: Option<&LaunchInfo>,
+        ctas: Option<u64>,
+    ) -> Option<Running> {
+        let b = bm.block;
+        let guard = stmt.filter(|s| self.sets.guards.get(s).is_some_and(|g| *g != Pred::True));
+        let set = match guard {
+            Some(s) => self.sets.of(b, s),
+            None => self.sets.blocks[b.0 as usize].clone(),
+        };
+        let branch = stmt.is_some_and(|s| {
+            !self.sets.guards.contains_key(&s)
+                && matches!(&self.kernel.stmts[s], Stmt::Instr(i) if i.predicate.is_some())
+        });
+        let (threads, warps, at_most, explained) = match (ctas, self.launches.get(&(b, guard))) {
+            (None, _) => self.executing(bm, &set, chain_at_most, cta),
+            (Some(_), Some(&(t, w))) => {
+                let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
+                let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
+                (t, Some((w, bound)), bound, true)
+            }
+            (Some(n), None) => {
+                let n = i64::try_from(n).ok()?;
+                let (t, w, at_most, explained) = self.executing(bm, &set, chain_at_most, cta);
+                let w = match w {
+                    Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
+                    None => None,
+                };
+                (t.checked_mul(n)?, w, at_most, explained)
+            }
+        };
+        Some((
+            threads,
+            warps,
+            at_most || guard.is_some() && !explained || branch,
+        ))
+    }
+
     /// Aggregate over blocks; `below` = aggregate within this loop
     /// (multipliers stop there), `None` = whole kernel. With
     /// `cta`, every per-thread count additionally scales by the CTA's
@@ -1448,34 +1499,10 @@ impl<'a> KernelReportBuilder<'a> {
                     .any(|l| self.trip_info.trips[l.0 as usize].is_err());
             let trips = (!unread).then_some(mult);
             let trips = trips.as_ref();
-            // None when a count over the launch does not fit in i64.
-            let resolve = |set: &ThreadSet, stmt: Option<usize>| {
-                let per_cta = self.executing(bm, set, chain_at_most, cta);
-                let Some(n) = ctas else {
-                    return Some(per_cta);
-                };
-                let n = i64::try_from(n).ok()?;
-                match self.launches.get(&(bm.block, stmt)) {
-                    Some(&(t, w)) => {
-                        let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
-                        let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
-                        Some((t, Some((w, bound)), bound, true))
-                    }
-                    None => {
-                        let (threads, warps, at_most, explained) = per_cta;
-                        let warps = match warps {
-                            Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
-                            None => None,
-                        };
-                        Some((threads.checked_mul(n)?, warps, at_most, explained))
-                    }
-                }
-            };
             // A block whose count does not fit is unknown, its warps too.
-            let block = resolve(&self.sets.blocks[bm.block.0 as usize], None);
+            let block = self.running(bm, None, chain_at_most, cta, ctas);
             let mult = trips.filter(|_| block.is_some());
-            let (threads, warps, block_at_most, _) =
-                block.unwrap_or((0, Some((0, false)), false, false));
+            let (threads, warps, block_at_most) = block.unwrap_or((0, Some((0, false)), false));
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
@@ -1502,18 +1529,11 @@ impl<'a> KernelReportBuilder<'a> {
                 if !self.counted(bm.block, m.provenance) {
                     continue;
                 }
-                let (threads, at_most, mult) = match self.sets.guards.get(&m.provenance) {
-                    Some(Pred::True) => (threads, block_at_most, mult),
-                    Some(_) => {
-                        match resolve(&self.sets.of(bm.block, m.provenance), Some(m.provenance)) {
-                            Some((threads, _, at_most, explained)) => {
-                                (threads, at_most || !explained, trips)
-                            }
-                            None => (0, false, None),
-                        }
-                    }
-                    None => (threads, block_at_most || m.predicated, mult),
-                };
+                let (threads, at_most, mult) =
+                    match self.running(bm, Some(m.provenance), chain_at_most, cta, ctas) {
+                        Some((threads, _, at_most)) => (threads, at_most, trips),
+                        None => (0, false, None),
+                    };
                 let n = (m.count as i64).checked_mul(threads);
                 let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
                 match m.kind {
