@@ -768,6 +768,16 @@ impl<'a> AffineValueTracer<'a> {
             }
             Opcode::Shr if ops.len() == 3 => {
                 let v = arg(1)?;
+                // PTX ISA §9.7.8.9: "Signed shifts fill with the sign bit,
+                // unsigned and untyped shifts fill with 0", of the value as
+                // the type reads it.
+                if let Some(&ty) = mods.iter().find(|m| int_type_range(m).is_some())
+                    && let Some((_, lo, hi)) = int_type_range(ty)
+                    && !self.within(&v, if ty.starts_with('s') { lo } else { 0 }, hi)
+                {
+                    let opcode = self.module.opcode(instr);
+                    return Err(format!("`{opcode}` reads a value its type does not hold"));
+                }
                 let Some(c) = self.constant(&arg(2)?) else {
                     return Err("shift by a non-constant amount".to_owned());
                 };
@@ -787,9 +797,10 @@ impl<'a> AffineValueTracer<'a> {
                     _ => None,
                 });
                 // PTX ISA §9.7.8.9 (shr): "Signed shifts fill with the sign
-                // bit" — in this tracer's nonnegative domain that bit is 0,
-                // so shifting it down is nvcc's `x / 2^n` sign fix-up.
-                if signed_width == Some(c + 1) {
+                // bit" — in this tracer's nonnegative domain that bit is 0
+                // unless the value is known negative, so shifting it down is
+                // nvcc's `x / 2^n` sign fix-up.
+                if signed_width == Some(c + 1) && self.within(&v, 0, i128::MAX) {
                     return Ok(Affine::invariant(SymExpr::Const(0)));
                 }
                 if (0..63).contains(&c) {
@@ -799,8 +810,16 @@ impl<'a> AffineValueTracer<'a> {
                 }
             }
             Opcode::Div | Opcode::Rem if ops.len() == 3 => {
-                let a = arg(1)?;
-                let Some(d) = self.constant(&arg(2)?).filter(|&d| d > 0) else {
+                let (a, b) = (arg(1)?, arg(2)?);
+                // PTX ISA §9.7.1.10: a negative number's remainder, and so
+                // the quotient's rounding, is machine-dependent.
+                if let Some((_, _, hi)) = mods.iter().find_map(|m| int_type_range(m))
+                    && !(self.within(&a, 0, hi) && self.within(&b, 0, hi))
+                {
+                    let opcode = self.module.opcode(instr);
+                    return Err(format!("`{opcode}` of a value that may be negative"));
+                }
+                let Some(d) = self.constant(&b).filter(|&d| d > 0) else {
                     return Err(format!("{} by a non-constant divisor", mnemonic.name()));
                 };
                 let result = if mnemonic == Opcode::Div {
@@ -1009,13 +1028,19 @@ impl<'a> AffineValueTracer<'a> {
             return Ok(());
         };
         for a in ops {
-            let bound = self.bindings.map_or((*a).clone(), |m| a.bind(m));
-            if (bound.range(&|v| self.bound(v))).is_some_and(|(x, y)| x < lo || y >= hi) {
+            if !self.within(a, lo, hi) {
                 let opcode = self.module.opcode(instr);
                 return Err(format!("`{opcode}` reads a value its type does not hold"));
             }
         }
         Ok(())
+    }
+
+    /// `a`'s range over the known launch and constant trip counts lies in
+    /// [lo, hi), or is unknown.
+    fn within(&self, a: &Affine, lo: i128, hi: i128) -> bool {
+        let bound = self.bindings.map_or(a.clone(), |m| a.bind(m));
+        (bound.range(&|v| self.bound(v))).is_none_or(|(x, y)| lo <= x && y < hi)
     }
 
     /// A 16- or 32-bit `add`, `sub`, `neg`, `mul.lo`, `mad.lo`, `shl` or `bfe`

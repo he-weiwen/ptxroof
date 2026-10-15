@@ -1,0 +1,119 @@
+//
+// HAND-WRITTEN: stores at a division, remainder or right shift of a value
+// that may be negative, which the instruction's type reads.
+// ptxas 13.4 (sm_89), R5 = %tid.x.
+//
+// micro_div_unsigned: div.u32 by 8 of 8·%tid.x − 256, which is
+// 2^32 + 8·%tid.x − 256 on threads 0 to 31:
+//   LEA R0, R5, 0xffffff00, 0x3
+//   IMAD.HI.U32 R3, R3, R0, RZ
+// micro_shr_unsigned: shr.u32 by 3 of the same:
+//   LEA R0, R5, 0xffffff00, 0x3
+//   SHF.R.U32.HI R0, RZ, 0x3, R0
+// micro_rem_signed: rem.s32 by 16 of %tid.x − 256, whose remainder takes
+// the dividend's sign, −15 to 0:
+//   IADD3 R0, R5, -0x100, RZ
+//   @!P1 IADD3 R3, -R3, RZ, RZ
+// micro_shr_signed_high: shr.s32 by 8 of %tid.x + 0x7fffff00 (add.u32),
+// negative as s32 from %tid.x = 256, which the shift fills with ones:
+//   IADD3 R0, R5, 0x7fffff00, RZ
+//   SHF.R.S32.HI R0, RZ, 0x8, R0
+// micro_shr_sign_negative: shr.s32 by 31 of the constant −5, −1; ptxas
+// folds the store to param_0 − 4:
+//   STG.E [R2.64+-0x4], R5
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_div_unsigned(
+	.param .u64 micro_div_unsigned_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_div_unsigned_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 3;
+	add.s32 	%r3, %r2, -256;
+	div.u32 	%r4, %r3, 8;
+	mul.wide.s32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shr_unsigned(
+	.param .u64 micro_shr_unsigned_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shr_unsigned_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 3;
+	add.s32 	%r3, %r2, -256;
+	shr.u32 	%r4, %r3, 3;
+	mul.wide.s32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_rem_signed(
+	.param .u64 micro_rem_signed_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_rem_signed_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s32 	%r2, %r1, -256;
+	rem.s32 	%r3, %r2, 16;
+	mul.wide.s32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shr_signed_high(
+	.param .u64 micro_shr_signed_high_param_0
+)
+.reqntid 512, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shr_signed_high_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.u32 	%r2, %r1, 2147483392;
+	shr.s32 	%r3, %r2, 8;
+	mul.wide.s32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shr_sign_negative(
+	.param .u64 micro_shr_sign_negative_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shr_sign_negative_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, -5;
+	shr.s32 	%r3, %r2, 31;
+	mul.wide.s32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

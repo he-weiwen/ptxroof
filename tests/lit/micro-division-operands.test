@@ -1,0 +1,22 @@
+# Division, remainder and right shift read their operand as their type:
+# a negative number's quotient and remainder are machine-dependent (PTX
+# ISA §9.7.1.10) and an unsigned shift fills with zeros (§9.7.8.9), so
+# div.u32, shr.u32 and rem.s32 of a value that may be negative are
+# refused, and shr.s32 of a value above the s32 range; shr.s32 by 31 of
+# the constant −5 is −1.
+RUN: %ptxroof analyze %fixtures/micro/division_operands.ptx | FileCheck "%s"
+CHECK: kernel micro_div_unsigned
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: `div.u32` of a value that may be negative
+CHECK: kernel micro_shr_unsigned
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: `shr.u32` reads a value its type does not hold
+CHECK: kernel micro_rem_signed
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: `rem.s32` of a value that may be negative
+CHECK: kernel micro_shr_signed_high
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: `shr.s32` reads a value its type does not hold
+CHECK: kernel micro_shr_sign_negative
+CHECK: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+CHECK-SAME: [param_0 - 4]
