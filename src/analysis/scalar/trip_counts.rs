@@ -839,10 +839,7 @@ mod tests {
              $L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
         );
         let err = trips_of(&src)[0].1.clone().unwrap_err();
-        assert_eq!(
-            err,
-            "or with a value below 0x2 on a value not known to have those bits clear"
-        );
+        assert_eq!(err, "or whose sides may both set bit 0");
     }
 
     #[test]

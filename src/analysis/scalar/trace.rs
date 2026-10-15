@@ -688,39 +688,17 @@ impl<'a> AffineValueTracer<'a> {
                     .ok_or_else(|| refuse(&hi, id, "mod"))
             }
             Opcode::Or if ops.len() == 3 => {
-                // LLVM writes an add as `or` when no bits can overlap: every
-                // part of one side is a multiple of a power of two above
-                // the other side's largest value.
+                // LLVM writes an add as `or` when no bit is set on both
+                // sides (its `or disjoint`, which PTX does not keep).
                 let (a, b) = (arg(1)?, arg(2)?);
-                // The bounded side: a constant, or a form of moduli whose
-                // largest value is known.
-                let bound = |x: &Affine| self.constant(x).or_else(|| x.max_value());
-                let below = |small: &Affine, big: &Affine| -> Result<(), String> {
-                    let max = bound(small)
-                        .ok_or_else(|| "or of two values neither of known range".to_owned())?;
-                    // Its least value, the base under its mod terms: a
-                    // negative one sets every bit above its own.
-                    let least = self.constant(small).or(small.base.as_const());
-                    if least.is_none_or(|least| least < 0) || max < 0 {
-                        return Err("or with a value that may be negative".to_owned());
-                    }
-                    let bits = 64 - (max as u64).leading_zeros();
-                    if bits > 62 {
-                        return Err(format!("or with {max:#x}, no power of two above it"));
-                    }
-                    let m = 1i64 << bits;
-                    big.clone().div_exact(m).map(|_| ()).ok_or_else(|| {
-                        format!(
-                            "or with a value below {m:#x} on a value not known to have those bits clear"
-                        )
-                    })
-                };
-                match below(&b, &a) {
-                    Ok(()) => Ok(a + b),
-                    Err(why) => match below(&a, &b) {
-                        Ok(()) => Ok(a + b),
-                        Err(other) => Err(if bound(&b).is_some() { why } else { other }),
-                    },
+                let bound = |x: &Affine| self.bindings.map_or(x.clone(), |m| x.bind(m));
+                let largest = |v: &Var| self.bound(v).map(|(_, hi)| hi);
+                match bound(&a).may_set(&largest) & bound(&b).may_set(&largest) {
+                    0 => Ok(a + b),
+                    both => Err(format!(
+                        "or whose sides may both set bit {}",
+                        both.trailing_zeros()
+                    )),
                 }
             }
             Opcode::Bfe if ops.len() == 4 => {

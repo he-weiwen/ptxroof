@@ -151,12 +151,13 @@ its shared writes and instruction counts remain counted
   `micro_uniform_div_lanes`); masks that are not
   one run of bits (the attention backward's dQ stores, `0xdc`); values loaded
   from memory (the cross-entropy's target gather: "depends on a value
-  loaded from memory, behind `selp.b64`"); an
-  `or` read as an add only when one side's largest value is below a
-  power of two the other side is a multiple of, not by the bits each
-  side can set (rope_norm's `or.b32 %r106, %r104, 16` on
-  `64·%ctaid.x + (⌊%tid.x/8⌋ mod 16)`: "or with a value below 0x20";
-  k14's C stores: "or of two values neither of known range").
+  loaded from memory, behind `selp.b64`"); an `or` whose sides may
+  both set a bit, by the bits the affine forms bound (`Affine::may_set`):
+  a bitwise or that is no add (`micro/or_disjoint.ptx`'s
+  `128·⌊%tid.x/32⌋ | 16·%tid.x`: "or whose sides may both set bit 7"),
+  or one side's bits unknown, a parameter not bound
+  (`micro_or_param`) or a value that may be negative
+  (`micro/or_negative.ptx`).
 - **Offsets past 2^62 bytes are not counted**: an access whose lane
   offsets over the block, or whose loop's shifts over its trips, reach
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes

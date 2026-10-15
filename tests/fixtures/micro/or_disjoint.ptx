@@ -1,0 +1,157 @@
+//
+// HAND-WRITTEN: stores at param_0 plus 4 times an or, in blocks of 128.
+// Where no bit can be set on both sides the or is their sum.
+//
+// micro_or_rope: (64·%ctaid.x + (⌊%tid.x/8⌋ mod 16)) | 16, rope_norm's:
+// the left side sets bits 0 to 3 and from 6 up.
+// micro_or_uniform: (64·u + (%tid.x mod 16)) | 16, u = %ctaid.x / n
+// (div.s32), of either sign: a multiple of 64 leaves bits 0 to 5 to
+// %tid.x mod 16.
+// micro_or_ctaids: (4096·%ctaid.x + 4096·%ctaid.y + 64·(⌊%tid.x/64⌋ mod
+// 2)) | 128.
+// micro_or_wide: or.b64 of 64·%ctaid.x and 32.
+// micro_or_param: (16·%tid.x) | n, a sum when n is below 16.
+// micro_or_overlap: 128·⌊%tid.x/32⌋ | 16·%tid.x, both setting bit 7 at
+// %tid.x = 40: no sum, and ptxas keeps the or (R5 = %tid.x):
+//   SHF.R.U32.HI R0, RZ, 0x5, R5
+//   IMAD.SHL.U32 R3, R5, 0x10, RZ
+//   SHF.L.U32 R0, R0, 0x7, RZ
+//   LOP3.LUT R3, R0, R3, RZ, 0xfc, !PT
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_or_rope(
+	.param .u64 micro_or_rope_param_0,
+	.param .u32 micro_or_rope_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<8>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_or_rope_param_0];
+	mov.u32 	%r1, %tid.x;
+	shr.u32 	%r2, %r1, 3;
+	and.b32 	%r3, %r2, 15;
+	mov.u32 	%r4, %ctaid.x;
+	shl.b32 	%r5, %r4, 6;
+	or.b32 	%r6, %r5, %r3;
+	or.b32 	%r7, %r6, 16;
+	mul.wide.u32 	%rd2, %r7, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_or_uniform(
+	.param .u64 micro_or_uniform_param_0,
+	.param .u32 micro_or_uniform_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<9>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_or_uniform_param_0];
+	ld.param.u32 	%r1, [micro_or_uniform_param_1];
+	mov.u32 	%r2, %ctaid.x;
+	div.s32 	%r3, %r2, %r1;
+	shl.b32 	%r4, %r3, 6;
+	mov.u32 	%r5, %tid.x;
+	and.b32 	%r6, %r5, 15;
+	add.s32 	%r7, %r4, %r6;
+	or.b32 	%r8, %r7, 16;
+	mul.wide.s32 	%rd2, %r8, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r5;
+	ret;
+}
+
+.visible .entry micro_or_ctaids(
+	.param .u64 micro_or_ctaids_param_0,
+	.param .u32 micro_or_ctaids_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<12>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_or_ctaids_param_0];
+	mov.u32 	%r1, %ctaid.x;
+	mov.u32 	%r2, %ctaid.y;
+	shl.b32 	%r3, %r1, 12;
+	shl.b32 	%r4, %r2, 12;
+	add.s32 	%r5, %r3, %r4;
+	mov.u32 	%r6, %tid.x;
+	shr.u32 	%r7, %r6, 6;
+	and.b32 	%r8, %r7, 1;
+	shl.b32 	%r9, %r8, 6;
+	add.s32 	%r10, %r5, %r9;
+	or.b32 	%r11, %r10, 128;
+	mul.wide.u32 	%rd2, %r11, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r6;
+	ret;
+}
+
+.visible .entry micro_or_wide(
+	.param .u64 micro_or_wide_param_0,
+	.param .u32 micro_or_wide_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [micro_or_wide_param_0];
+	mov.u32 	%r1, %ctaid.x;
+	mov.u32 	%r2, %tid.x;
+	mul.wide.u32 	%rd2, %r1, 64;
+	or.b64 	%rd3, %rd2, 32;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r2;
+	ret;
+}
+
+.visible .entry micro_or_param(
+	.param .u64 micro_or_param_param_0,
+	.param .u32 micro_or_param_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_or_param_param_0];
+	ld.param.u32 	%r1, [micro_or_param_param_1];
+	mov.u32 	%r2, %tid.x;
+	shl.b32 	%r3, %r2, 4;
+	or.b32 	%r4, %r3, %r1;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_or_overlap(
+	.param .u64 micro_or_overlap_param_0,
+	.param .u32 micro_or_overlap_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_or_overlap_param_0];
+	mov.u32 	%r1, %tid.x;
+	shr.u32 	%r2, %r1, 5;
+	shl.b32 	%r3, %r2, 7;
+	shl.b32 	%r4, %r1, 4;
+	or.b32 	%r5, %r3, %r4;
+	mul.wide.u32 	%rd2, %r5, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

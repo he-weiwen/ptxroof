@@ -353,6 +353,86 @@ impl Affine {
     }
 }
 
+impl Affine {
+    /// The bits a value of the form may set, in two's complement. For
+    /// every k: the bits from k up, and those of the remainder, the terms
+    /// whose coefficients are not known multiples of 2^k and the base
+    /// modulo 2^k, when it lies below 2^k, the rest being a multiple of
+    /// 2^k that leaves the low k bits to it; and the whole form's bits
+    /// when it is a bounded nonnegative sum. `largest` gives a
+    /// variable's greatest value.
+    pub fn may_set(&self, largest: &dyn Fn(&Var) -> Option<i64>) -> u64 {
+        let all: Vec<_> = self.terms.iter().collect();
+        let mut set = (self.base.as_const())
+            .and_then(|b| bits(&all, b, largest))
+            .unwrap_or(u64::MAX);
+        for k in 1..63 {
+            let p = 1i64 << k;
+            let base = match self.base.as_const() {
+                Some(c) => c.rem_euclid(p),
+                None if self.base.divisible_by(p) => 0,
+                None => continue,
+            };
+            let rest: Vec<_> = all
+                .iter()
+                .copied()
+                .filter(|(_, c)| !c.divisible_by(p))
+                .collect();
+            if let Some(r) = bits(&rest, base, largest)
+                && r >> k == 0
+            {
+                set &= r | (u64::MAX << k);
+            }
+        }
+        set
+    }
+}
+
+/// The bits a sum of `terms` and `base` may set, when the base is
+/// nonnegative and each term a positive constant times a variable that
+/// is never negative and has a greatest value: a term's from its
+/// coefficient's lowest set bit to its greatest value's highest. Where
+/// no two terms' bits meet the sum carries nothing and sets their
+/// union; else from the lowest bit any sets up to the greatest sum's.
+fn bits(
+    terms: &[(&Var, &SymExpr)],
+    base: i64,
+    largest: &dyn Fn(&Var) -> Option<i64>,
+) -> Option<u64> {
+    let upto = |n: u128| match 128 - n.leading_zeros() {
+        len if len >= 64 => u64::MAX,
+        len => (1u64 << len) - 1,
+    };
+    let base = u64::try_from(base).ok()?;
+    let (mut masks, mut total) = (vec![base], u128::from(base));
+    for &(v, c) in terms {
+        let c = u64::try_from(c.as_const()?).ok().filter(|&c| c > 0)?;
+        let top = u128::from(c) * u128::from(u64::try_from(greatest(v, largest)?).ok()?);
+        total = total.checked_add(top)?;
+        masks.push(upto(top) & (u64::MAX << c.trailing_zeros()));
+    }
+    let union = masks.iter().fold(0, |a, m| a | m);
+    if masks.iter().map(|m| m.count_ones()).sum::<u32>() == union.count_ones() {
+        return Some(union);
+    }
+    let low = (masks.iter().filter(|&&m| m != 0))
+        .map(|m| m.trailing_zeros())
+        .min();
+    Some(upto(total) & (u64::MAX << low.unwrap_or(0)))
+}
+
+/// A variable's greatest value when it is never negative: a mod's
+/// modulus less one, a floor's operand's over its divisor, an index's
+/// or a counter's from `largest`; a uniform variable's sign is unknown.
+fn greatest(v: &Var, largest: &dyn Fn(&Var) -> Option<i64>) -> Option<i64> {
+    match v {
+        Var::Mod(_, m) => Some(m - 1),
+        Var::Div(x, d) => Some(greatest(x, largest)?.div_euclid(*d)),
+        Var::Tid(_) | Var::Ctaid(_) | Var::Iter(_) => largest(v),
+        Var::Uniform(_) => None,
+    }
+}
+
 /// The range of `Σ c·t` over terms `t` that are `x`, `⌊x/d⌋` or
 /// `x mod d`: each term's range summed, and, when the floors and
 /// remainders share one divisor `d`, no wider than the range of
@@ -474,6 +554,61 @@ mod tests {
         // Two divisors stay per term.
         let e = Affine::var(x()) + floor(4).scale(c(-4)) + floor(8);
         assert_eq!(e.range(&grid(0, 15)), Some((-12, 16)));
+    }
+
+    #[test]
+    fn may_set_takes_the_low_bits_from_the_bounded_part() {
+        let c = |k| SymExpr::Const(k);
+        let tid = || Var::Tid(Axis::X);
+        let modulo = |m| Affine::var(Var::Mod(Box::new(tid()), m));
+        let floor = |d| Affine::var(Var::Div(Box::new(tid()), d));
+        let block = |v: &Var| matches!(v, Var::Tid(_)).then_some(127);
+        // rope_norm's 64·%ctaid.x + (⌊%tid.x/8⌋ mod 16): bits 0–3 and 6 up.
+        let rope = Affine::var(Var::Ctaid(Axis::X)).scale(c(64))
+            + Affine::var(Var::Mod(Box::new(Var::Div(Box::new(tid()), 8)), 16));
+        assert_eq!(rope.may_set(&block), !0x30);
+        // A multiple of 64 of any sign, and a base below 0.
+        let signed = Affine::var(Var::Iter(LoopId(0))).scale(c(-64))
+            + modulo(16)
+            + Affine::invariant(c(-64));
+        assert_eq!(signed.may_set(&block), !0x30);
+        // Disjoint terms add as an or; others carry.
+        assert_eq!((modulo(4) + modulo(4).scale(c(4))).may_set(&block), 0xf);
+        assert_eq!((modulo(4) + floor(32)).may_set(&block), 0x7);
+        // 128·⌊%tid.x/32⌋ and 16·%tid.x below 128 share bits 7 and 8.
+        assert_eq!(floor(32).scale(c(128)).may_set(&block), 0x180);
+        assert_eq!(Affine::var(tid()).scale(c(16)).may_set(&block), 0x7f0);
+        // A parameter's bits are unknown, a negative constant's all high.
+        assert_eq!(
+            Affine::invariant(SymExpr::sym("param_0")).may_set(&block),
+            u64::MAX
+        );
+        assert_eq!(Affine::invariant(c(-4)).may_set(&block), !0x3);
+        assert_eq!(Affine::invariant(c(0)).may_set(&block), 0);
+        // A symbolic coefficient known a multiple of 64.
+        let p = SymExpr::mul(c(64), SymExpr::sym("param_1"));
+        assert_eq!(
+            (Affine::var(Var::Ctaid(Axis::X)).scale(p) + modulo(16)).may_set(&block),
+            !0x30
+        );
+        // A uniform value's remainder is bounded, its floor is not.
+        let u = || {
+            Box::new(Var::Uniform(crate::ssa::Value::Undef(
+                crate::ptx::ir::Register::Cc,
+            )))
+        };
+        assert_eq!(Affine::var(Var::Mod(u(), 8)).may_set(&block), 0x7);
+        assert_eq!(
+            (Affine::var(Var::Div(u(), 8)) + modulo(2)).may_set(&block),
+            u64::MAX
+        );
+        // Greatest values whose sum leaves u128.
+        let huge = |v: Var| Affine::var(v).scale(c(i64::MAX));
+        let wide = huge(tid())
+            + huge(Var::Tid(Axis::Y))
+            + huge(Var::Tid(Axis::Z))
+            + huge(Var::Ctaid(Axis::X));
+        assert_eq!(wide.may_set(&|_| Some(i64::MAX)), u64::MAX);
     }
 
     #[test]

@@ -1,0 +1,31 @@
+# An or is read as a sum when no bit can be set on both sides, by the
+# bits each affine form may set: the low bits a part that is a multiple
+# of 2^k leaves to a bounded remainder, and the bits a bounded sum spans.
+# A bitwise or that is no sum, and an or with an unbound parameter, stay
+# unknown; bound to 1, the parameter is below 16·%tid.x's lowest bit.
+RUN: %ptxroof analyze %fixtures/micro/or_disjoint.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/or_disjoint.ptx --bind 1:n=1 | FileCheck --check-prefix=BOUND "%s"
+FREE: kernel micro_or_rope
+FREE: st.global.u32  global store 4 B  warp: 1–2 sectors (ideal 1)
+FREE-SAME: [256 * %ctaid.x + 4 * (⌊%tid.x/8⌋ mod 16) + param_0 + 64]
+FREE: kernel micro_or_uniform
+FREE: st.global.u32  global store 4 B  warp: 2–3 sectors (ideal 2)
+FREE-SAME: [4 * (%tid.x mod 16) + 256 * uniform(%r3@60) + param_0 + 64]
+FREE: kernel micro_or_ctaids
+FREE: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+FREE-SAME: [16384 * %ctaid.x + 16384 * %ctaid.y + 256 * (⌊%tid.x/64⌋ mod 2) + param_0 + 512]
+FREE: kernel micro_or_wide
+FREE: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+FREE-SAME: [64 * %ctaid.x + param_0 + 32]
+FREE: kernel micro_or_param
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: or whose sides may both set bit 4
+FREE: kernel micro_or_overlap
+FREE: st.global.u32  global store 4 B
+FREE-SAME: unknown: or whose sides may both set bit 7
+BOUND: kernel micro_or_param
+BOUND: st.global.u32  global store 4 B  warp: 32 sectors (ideal 4)
+BOUND-SAME: [64 * %tid.x + param_0 + 4]
+BOUND: kernel micro_or_overlap
+BOUND: st.global.u32  global store 4 B
+BOUND-SAME: unknown: or whose sides may both set bit 7
