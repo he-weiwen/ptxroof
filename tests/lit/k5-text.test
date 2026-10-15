@@ -1,7 +1,10 @@
 # k5 text report (PR 12): tile loop ceildiv trips, AI(global) = 32 at
 # the steady-state tile altitude, the un-unrolled dot loop with
 # constant trips 8, and line aggregation recovering the fully-unrolled
-# register-tile loops (8 copies of line 55, 64 of line 60).
+# register-tile loops (8 copies of line 55, 64 of line 60). The tile
+# loop's guard `K == 0` skips it where its latch fails at k = 0, `0 < K`,
+# so the loop is counted per execution of the guard and its totals are
+# exact.
 RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx | FileCheck "%s"
 CHECK: kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(
 CHECK: blocks (program order; loops are named by their header block):
@@ -37,4 +40,6 @@ CHECK: trips = 8
 CHECK: unrolled source lines: 5_2d_blocktiling.cuh:55 x8, 5_2d_blocktiling.cuh:57 x8, 5_2d_blocktiling.cuh:60 x64
 CHECK: 5_2d_blocktiling.cuh:55  ld.shared.u16  shared load 2 B    [2 * k[5_2d_blocktiling.cuh:53] + 128 * ⌊%tid.x/8⌋ + As - 2]         k[5_2d_blocktiling.cuh:53]: +2 B/iter, k[5_2d_blocktiling.cuh:39]: invariant
 CHECK: 5_2d_blocktiling.cuh:57  ld.shared.u16  shared load 2 B    [128 * k[5_2d_blocktiling.cuh:53] + 16 * (%tid.x mod 8) + Bs - 128]  k[5_2d_blocktiling.cuh:53]: +128 B/iter, k[5_2d_blocktiling.cuh:39]: invariant
+CHECK: totals [static]:
+CHECK: global bytes: load 32 * ⌈param_2/8⌉ + 128 B, store 128 B
 CHECK: coverage: loop_trips_resolved 100.0% (2/2)

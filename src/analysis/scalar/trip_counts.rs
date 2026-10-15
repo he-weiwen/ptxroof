@@ -273,7 +273,8 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, B
 /// the loop, or that block's one predecessor, lies in the loop's parent
 /// and ends in a two-way branch whose other successor does not reach the
 /// header without passing it. That block, and its test of entering the
-/// loop, as `e < 0`.
+/// loop, as `e < 0`; `!=` and `==` of a side never negative as `>` and
+/// `<=`.
 fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, SymExpr)> {
     let (cfg, l) = (tracer.cfg, tracer.forest.get(id));
     let mut outside =
@@ -318,10 +319,23 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, Sy
     } else {
         negate(cmp)
     };
-    Some((
-        g,
-        below_zero(cmp, form.is_invariant().then_some(form.base)?)?,
-    ))
+    let e = form.is_invariant().then_some(form.base)?;
+    let nonneg = |e: &SymExpr| e.least().is_some_and(|l| l >= 0);
+    let (cmp, e) = match cmp {
+        "ne" | "eq" => {
+            let e = if nonneg(&e) {
+                e
+            } else {
+                SymExpr::mul(SymExpr::Const(-1), e)
+            };
+            (
+                if cmp == "ne" { "gt" } else { "le" },
+                nonneg(&e).then_some(e)?,
+            )
+        }
+        _ => (cmp, e),
+    };
+    Some((g, below_zero(cmp, e)?))
 }
 
 /// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
@@ -524,6 +538,19 @@ mod tests {
             .into_iter()
             .zip(info.trips)
             .map(|(n, t)| (n.display, t))
+            .collect()
+    }
+
+    /// Every loop's name, count and the block the count is per execution of.
+    fn entries_of(src: &str) -> Vec<(String, Result<String, String>, String)> {
+        let m = parse(src).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let names = loop_names(&m, k, &cfg, &f);
+        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
+        (names.into_iter().zip(info.trips).zip(info.entries))
+            .map(|((n, t), e)| (n.display, t.map(|t| t.to_string()), cfg.block_name(&m, e)))
             .collect()
     }
 
@@ -797,27 +824,73 @@ mod tests {
                      @%p2 bra $L__L;\n$L__E:\nret;"
                 ),
             );
-            let m = parse(&src).expect("test source parses");
-            let k = &m.kernels[0];
-            let cfg = build_cfg(&m, k);
-            let f = loop_forest(&cfg);
-            let names = loop_names(&m, k, &cfg, &f);
-            let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
-            let at = |b: BlockId| cfg.block(b).label.map(|l| m.interner.resolve(l).to_owned());
-            (names.into_iter().zip(info.trips).zip(info.entries))
-                .map(|((n, t), e)| (n.display, t.map(|t| t.to_string()), at(e)))
-                .collect::<Vec<_>>()
+            entries_of(&src)
         };
         let guard = entries("mov.u32 %r2, 10;\nbra.uni $L__G;\n$L__S:\nbra.uni $L__E;\n$L__G:");
         assert_eq!(guard[0].1, Ok("max(param_0 - 10, 0)".to_owned()));
-        assert_eq!(guard[0].2, Some("$L__G".to_owned()));
+        assert_eq!(guard[0].2, "$L__G");
         let sibling = entries(
             "$L__S:\nadd.s32 %r3, %r3, 1;\nsetp.eq.s32 %p3, %r3, 7;\n@%p3 bra $L__E;\n\
              mov.u32 %r2, 10;",
         );
         let l = sibling.iter().find(|(n, ..)| n == "$L__L").expect("loop L");
         assert_eq!(l.1, Ok("param_0 - 10".to_owned()));
-        assert_eq!(l.2, Some("$L__L".to_owned()));
+        assert_eq!(l.2, "$L__L");
+    }
+
+    /// A guard skipping a loop from 0 below n where `n == 0` tests its
+    /// latch at k = 0, `0 < n`, as n is never negative; one where `n != 0`
+    /// or `n == 5` does not.
+    #[test]
+    fn a_guard_n_ne_0_tests_0_lt_n() {
+        let entry = |guard: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];
+{guard}
+$L__P:
+mov.u32 %r2, 0;
+                     $L__L:
+add.s32 %r2, %r2, 8;
+setp.lt.u32 %p2, %r2, %r1;
+                     @%p2 bra $L__L;
+$L__E:
+ret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            assert_eq!(loops[0].1, Ok("⌈param_0/8⌉".to_owned()));
+            loops[0].2.clone()
+        };
+        assert_eq!(
+            entry(
+                "setp.eq.s32 %p1, %r1, 0;
+@%p1 bra $L__E;"
+            ),
+            "<block 0>"
+        );
+        assert_eq!(
+            entry(
+                "setp.ne.s32 %p1, 0, %r1;
+@!%p1 bra $L__E;"
+            ),
+            "<block 0>"
+        );
+        assert_eq!(
+            entry(
+                "setp.ne.s32 %p1, %r1, 0;
+@%p1 bra $L__E;"
+            ),
+            "$L__L"
+        );
+        assert_eq!(
+            entry(
+                "setp.eq.s32 %p1, %r1, 5;
+@%p1 bra $L__E;"
+            ),
+            "$L__L"
+        );
     }
 
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;
