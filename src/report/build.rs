@@ -1559,7 +1559,6 @@ impl<'a> KernelReportBuilder<'a> {
                     Some(_) => None,
                     None => self.launches.get(&(bm.block, stmt)).copied(),
                 };
-                let n = i64::try_from(per_launch?).ok()?;
                 match counted {
                     Some((t, w)) => {
                         let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
@@ -1567,6 +1566,7 @@ impl<'a> KernelReportBuilder<'a> {
                         Some((t, Some((w, bound)), bound, true))
                     }
                     None => {
+                        let n = i64::try_from(per_launch?).ok()?;
                         let (threads, warps, at_most, explained) = per_cta;
                         let warps = match warps {
                             Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
@@ -2688,8 +2688,9 @@ mod tests {
     /// distance into a positive count: `k != 2 - %ctaid.x` by 1 is
     /// unknown with CTA 2, whose counter never meets 0, and by 2 with CTA
     /// 1; two nested loops of `1 - 2 * %ctaid.x` trips are unknown with
-    /// CTA 1, though the product of their counts is 1 there. Past 2^24
-    /// CTAs on the axes read it is unknown too.
+    /// CTA 1, though the product of their counts is 1 there. A guard
+    /// skipping CTA 0, where `k != %ctaid.x` never meets its bound, leaves
+    /// 1 + 2 + 3 trips. Past 2^24 CTAs on the axes read it is unknown.
     #[test]
     fn a_count_over_the_cta_index_is_summed_over_the_grid() {
         let store = |body: &str, grid: [u32; 3]| {
@@ -2732,6 +2733,10 @@ mod tests {
                       setp.ne.u32 %p2, %r8, %r3;\n@%p2 bra $L__O;";
         assert_eq!(store(nested, [1, 1, 1]), known("128"));
         assert_eq!(store(nested, [2, 1, 1]), unknown);
+        let guarded = "setp.lt.s32 %p3, %r1, 1;\n@%p3 bra $L__E;\nmov.u32 %r2, 0;\n\
+                       $L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                       setp.ne.u32 %p1, %r2, %r1;\n@%p1 bra $L__L;\n$L__E:";
+        assert_eq!(store(guarded, [4, 1, 1]), known("768"));
         let both = one("add.s32 %r3, %r1, %r6;", 1, "lt");
         assert_eq!(store(&both, [8192, 4096, 1]), unknown);
     }

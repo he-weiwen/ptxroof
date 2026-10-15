@@ -577,7 +577,8 @@ impl ThreadSet {
     }
 
     /// The same with CTA `c` counted `weight(c)` times, the weight
-    /// reading the axes `read`.
+    /// reading the axes `read`; a CTA where the set holds no thread needs
+    /// none.
     pub fn weighted_launch(
         &self,
         shape: [u32; 3],
@@ -627,8 +628,8 @@ impl ThreadSet {
                             }
                         })
                         .collect();
-                    let n = &mut groups.entry(key).or_insert((0u64, c)).0;
-                    *n = n.checked_add(weight(c)?)?;
+                    let n = &mut groups.entry(key).or_insert((Some(0u64), c)).0;
+                    *n = n.zip(weight(c)).and_then(|(n, w)| n.checked_add(w));
                     if groups.len() as u64 > LANE_BUDGET / threads.len() as u64 {
                         return None;
                     }
@@ -644,6 +645,7 @@ impl ThreadSet {
             if t.certain != t.possible || w.certain != w.possible {
                 return None;
             }
+            let k = if t.certain == 0 { 0 } else { k? };
             sum_t = sum_t.checked_add(u64::from(t.certain).checked_mul(k)?)?;
             sum_w = sum_w.checked_add(u64::from(w.certain).checked_mul(k)?)?;
         }
@@ -1408,7 +1410,8 @@ mod tests {
     /// Weighted, CTA c counts `weight(c)` times: t < 2c over 4 CTAs with
     /// weight c holds 0·0 + 2·1 + 4·2 + 6·3 threads; a weight on the y
     /// axis, which no comparison reads, enumerates it too; a weight that
-    /// does not evaluate leaves no count.
+    /// does not evaluate leaves no count, unless only at CTA 0, where the
+    /// set holds no thread.
     #[test]
     fn a_weighted_launch_counts_each_cta_its_weight_times() {
         let below = ThreadSet {
@@ -1428,6 +1431,11 @@ mod tests {
             Some((36, 9))
         );
         assert_eq!(launch([4, 1, 1], [true, false, false], &|_| None), None);
+        let past_zero = |c: [i64; 3]| (c[0] > 0).then_some(1);
+        assert_eq!(
+            launch([4, 1, 1], [true, false, false], &past_zero),
+            Some((12, 3))
+        );
     }
 
     #[test]
