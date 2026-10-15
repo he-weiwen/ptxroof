@@ -34,7 +34,7 @@
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::loop_names::LoopName;
-use crate::analysis::scalar::affine::Var;
+use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -232,8 +232,7 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     let Some(coeff) = d.terms.get(&k) else {
         return Err("latch condition does not involve an induction variable".to_owned());
     };
-    let a1 = coeff
-        .as_const()
+    let a1 = (tracer.constant(&Affine::invariant(coeff.clone())))
         .ok_or_else(|| "induction step is not a constant".to_owned())?;
     if a1 == i64::MIN {
         return Err("induction step is −2^63, which has no negation".to_owned());
@@ -417,12 +416,16 @@ mod tests {
 
     /// Trips of every loop in a one-kernel source, by display name.
     fn trips_of(src: &str) -> Vec<(String, TripCount)> {
+        trips_under(src, &HashMap::new())
+    }
+
+    fn trips_under(src: &str, bindings: &HashMap<String, i64>) -> Vec<(String, TripCount)> {
         let m = parse(src).expect("test source parses");
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
+        let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
         names
             .into_iter()
             .zip(info.trips)
@@ -556,6 +559,65 @@ mod tests {
             trips[0].1.as_ref().unwrap_err(),
             "%r3 is unwritten on some path"
         );
+    }
+
+    /// PTX ISA §9.7.1.13, §9.7.1.14: a min or max of invariants is one
+    /// too; a `.relu` one, or one of a value its type does not read, is
+    /// no bound.
+    #[test]
+    fn a_min_or_max_bound_is_symbolic() {
+        let bound = |minmax: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{minmax}\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\n\
+                     setp.lt.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        let ok = |s: &str| Ok(s.to_owned());
+        assert_eq!(bound("max.s32 %r3, %r1, 2;"), ok("max(param_0, 2)"));
+        assert_eq!(bound("min.s32 %r3, 2, %r1;"), ok("min(2, param_0)"));
+        assert_eq!(bound("min.u32 %r3, %r1, 8;"), ok("min(param_0, 8)"));
+        assert_eq!(bound("mov.u32 %r4, 5;\nmin.s32 %r3, %r4, 8;"), ok("5"));
+        assert_eq!(
+            bound("mov.u32 %r4, -1;\nmin.u32 %r3, %r4, 8;"),
+            Err("`min.u32` of a value its type does not hold".to_owned())
+        );
+        assert_eq!(
+            bound("min.relu.s32 %r3, %r1, 8;"),
+            Err("value defined by unsupported instruction `min`".to_owned())
+        );
+    }
+
+    /// Under the bindings a min or max is checked and stepped by its
+    /// value: `bfe.s32` of 8 bits of max(n, 1) at n = 128 is −128 (PTX ISA
+    /// §9.7.1.20), and a step of max(n, 1) at n = 4 is 4.
+    #[test]
+    fn a_bound_min_or_max_is_read_at_its_value() {
+        let trips = |body: &str, n: Option<i64>| {
+            let bound: HashMap<String, i64> =
+                n.map(|n| ("param_0".to_owned(), n)).into_iter().collect();
+            let t = trips_under(&kernel_with(N_PARAM, body), &bound)[0]
+                .1
+                .clone();
+            t.map(|t| t.bind(&bound).to_string())
+        };
+        let bfe = "ld.param.u32 %r1, [k_param_0];\nmax.u32 %r2, %r1, 1;\n\
+                   bfe.s32 %r3, %r2, 0, 8;\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+                   setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;";
+        assert_eq!(trips(bfe, None), Ok("max(param_0, 1)".to_owned()));
+        assert_eq!(trips(bfe, Some(100)), Ok("100".to_owned()));
+        let leaves = Err("bfe of 8 bits leaves them".to_owned());
+        assert_eq!(trips(bfe, Some(128)), leaves);
+        let step = "ld.param.u32 %r1, [k_param_0];\nmax.s32 %r2, %r1, 1;\nmov.u32 %r4, 0;\n\
+                    $L__L:\nadd.s32 %r4, %r4, %r2;\nsetp.lt.s32 %p1, %r4, 1024;\n\
+                    @%p1 bra $L__L;\nret;";
+        let varies = Err("induction step is not a constant".to_owned());
+        assert_eq!(trips(step, None), varies);
+        assert_eq!(trips(step, Some(4)), Ok("256".to_owned()));
     }
 
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;
@@ -1008,18 +1070,29 @@ mod tests {
              setp.ne.s32 %p2, %r4, 0;\n@%p2 bra $L__R;\n\
              ret;\n}\n.file 1 \"kern.cu\"\n",
         );
-        let m = parse(&src).expect("parses");
-        let k = &m.kernels[0];
-        let cfg = build_cfg(&m, k);
-        let f = loop_forest(&cfg);
-        let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
-        assert_eq!(info.unroll_pairs.len(), 1, "{:?}", info);
-        assert_eq!(info.unroll_pairs[0].factor, 4);
-        let main = info.unroll_pairs[0].main;
-        assert_eq!(
-            info.trips[main.0 as usize].as_ref().unwrap().to_string(),
-            "(param_0 - param_0 mod 4) / 4"
+        let pairs = |src: &str, bindings: &HashMap<String, i64>| {
+            let m = parse(src).expect("parses");
+            let k = &m.kernels[0];
+            let cfg = build_cfg(&m, k);
+            let f = loop_forest(&cfg);
+            let names = loop_names(&m, k, &cfg, &f);
+            let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
+            let main = info.unroll_pairs.first().map(|p| {
+                let trips = info.trips[p.main.0 as usize].as_ref();
+                (p.factor, trips.unwrap().to_string())
+            });
+            (info.unroll_pairs.len(), main)
+        };
+        let free = HashMap::new();
+        let shape = |x: &str| (1, Some((4, format!("({x} - {x} mod 4) / 4"))));
+        assert_eq!(pairs(&src, &free), shape("param_0"));
+        // A min-bounded pair keeps its shape under the bindings.
+        let src = src.replace(
+            "ld.param.u32 %r1, [k_param_0];",
+            "ld.param.u32 %r0, [k_param_0];\nmin.s32 %r1, %r0, 8;",
         );
+        let bound = [("param_0".to_owned(), 100)].into_iter().collect();
+        assert_eq!(pairs(&src, &free), shape("min(param_0, 8)"));
+        assert_eq!(pairs(&src, &bound), shape("min(param_0, 8)"));
     }
 }

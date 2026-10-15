@@ -762,11 +762,9 @@ impl<'a> AffineValueTracer<'a> {
                 let signed = mods.iter().any(|m| m.starts_with('s'));
                 if signed && pos == 0 {
                     let half = 1i128 << (len.clamp(1, 64) - 1);
-                    return match a.range(&|v| self.bound(v)) {
-                        Some((lo, hi)) if lo < -half || hi >= half => {
-                            Err(format!("bfe of {len} bits leaves them"))
-                        }
-                        _ => Ok(a),
+                    return match self.within(&a, -half, half) {
+                        false => Err(format!("bfe of {len} bits leaves them")),
+                        true => Ok(a),
                     };
                 }
                 if signed || !(0..63).contains(&pos) || !(1..63).contains(&len) {
@@ -929,22 +927,26 @@ impl<'a> AffineValueTracer<'a> {
                 a.map_vars(lane)
                     .ok_or_else(|| "shfl.idx of a value not a function of %tid.x".to_owned())
             }
-            Opcode::Min | Opcode::Max if ops.len() == 3 => {
-                // A clamp of two constants (after bindings) is a constant.
+            // PTX ISA §9.7.1.13, §9.7.1.14: one integer type, compared as
+            // that type reads both operands; `.relu` and the packed types
+            // are other operations.
+            Opcode::Min | Opcode::Max
+                if ops.len() == 3 && mods.len() == 1 && int_type_range(mods[0]).is_some() =>
+            {
                 let (a, b) = (arg(1)?, arg(2)?);
-                match (self.constant(&a), self.constant(&b)) {
-                    (Some(x), Some(y)) => Ok(Affine::invariant(SymExpr::Const(
-                        if mnemonic == Opcode::Min {
-                            x.min(y)
-                        } else {
-                            x.max(y)
-                        },
-                    ))),
-                    _ if a.is_invariant() && b.is_invariant() => {
-                        Err(format!("{} of values not both constant", mnemonic.name()))
-                    }
-                    _ => Err(refuse(&(a + b), id, mnemonic.name())),
+                if !(a.is_invariant() && b.is_invariant()) {
+                    return Err(refuse(&(a + b), id, mnemonic.name()));
                 }
+                if let Some((_, lo, hi)) = int_type_range(mods[0])
+                    && !(self.within(&a, lo, hi) && self.within(&b, lo, hi))
+                {
+                    let opcode = self.module.opcode(instr);
+                    return Err(format!("`{opcode}` of a value its type does not hold"));
+                }
+                Ok(Affine::invariant(match mnemonic {
+                    Opcode::Min => SymExpr::min(a.base, b.base),
+                    _ => SymExpr::max(a.base, b.base),
+                }))
             }
             // PTX ISA §9.7.1.3, §9.7.1.4: `.hi` keeps the product's upper
             // half, which the affine form does not hold.

@@ -107,13 +107,16 @@ its shared writes and instruction counts remain counted
   `[4 * %tid.x + param_0]`, where ptxas takes it from the load.
 - **Integer arithmetic is taken not to wrap where its range is
   unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
-  or `bfe` result, and an integer `cvt`'s source and destination, are
+  or `bfe` result, and an integer `cvt`'s source and destination, or a
+  `min` or `max`'s operands, are
   refused when the value's range, over constants, the block shape
   `.reqntid` or `--launch` gives, the grid `--grid` gives, and constant
   trip counts, leaves the type (`micro/mul_wrap.ptx`: `mul.lo.s32` of
   2^30 and 4, the same for every thread, so its address reads
   `uniform(%r2@24)`; `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` +
-  2^32; `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`); one
+  2^32; `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`;
+  `micro/trip_max.ptx`: `min.u32` of n − 4 under `--bind 1:n=2`, where
+  the loop runs 8 trips, unbound `min(param_1 - 4, 8)`); one
   through a parameter, `%ctaid` with no grid given or a symbolic trip
   count keeps the tracer's documented assumption
   (`src/analysis/scalar/trace.rs`, module doc). A conversion to or from
@@ -270,20 +273,16 @@ its shared writes and instruction counts remain counted
   causal loops, bounded by the CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. Bounds the
-  tracer does not read, by the loop's source line: a `max` of
-  non-constants (b200 `scaled_mm_kernel`, `:100`;
-  `_w8a8_block_fp8_matmul`, `:90`; under their records the latch is
-  traced with the parameters, 63 and 55 trips,
-  `b200-trips-bound.test`), a division by a parameter not bound
-  (`micro/trip_div_param.ptx` reads with `--bind`), a float
-  immediate and an `and.pred` latch predicate (sol-study census
+  tracer does not read, by the loop's source line: a division by a
+  parameter not bound (`micro/trip_div_param.ptx` reads with `--bind`),
+  a float immediate and an `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`).
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 771 have a trip count: 1,445 are mbarrier waits
-  and 411 read loaded values, 240 depend on `%ctaid` (grid-stride
-  loops, per-CTA row ranges, causal and persistent tile loops), 75
-  `max`/`min`, 1 unpack, 20 atomics, 20 divisions, 17 multi-exit.
+  inferred arguments), 845 have a trip count: 1,445 are mbarrier waits
+  and 411 read loaded values, 241 depend on `%ctaid` (grid-stride
+  loops, per-CTA row ranges, causal and persistent tile loops), 1
+  unpack, 20 atomics, 20 divisions, 17 multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
