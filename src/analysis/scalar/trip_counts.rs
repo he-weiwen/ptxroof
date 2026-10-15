@@ -363,17 +363,30 @@ fn below_zero(cmp: &str, e: SymExpr) -> Option<SymExpr> {
 /// `±⌊x/d⌋ + b < 0` or `±⌈x/d⌉ + b < 0` as the same test of x, as
 /// ⌊x/d⌋ ≤ m ⇔ x < (m + 1)·d and ⌈x/d⌉ ≤ m ⇔ x ≤ m·d for d > 0.
 fn undivided(e: SymExpr) -> SymExpr {
-    let b = i128::from(e.const_part());
-    let (s, rest) = SymExpr::split_const(SymExpr::sub(e.clone(), SymExpr::Const(e.const_part())));
-    let (x, k) = match (rest, s) {
-        (SymExpr::FloorDiv(x, d), 1) => (x, b * i128::from(d)),
-        (SymExpr::FloorDiv(x, d), -1) => (x, (b + 1) * i128::from(d) - 1),
-        (SymExpr::CeilDiv(x, d), 1) => (x, (b + 1) * i128::from(d) - 1),
-        (SymExpr::CeilDiv(x, d), -1) => (x, b * i128::from(d)),
+    let terms = match &e {
+        SymExpr::Sum(ts) => ts.clone(),
+        other => vec![other.clone()],
+    };
+    let (consts, rest): (Vec<_>, Vec<_>) = terms.into_iter().partition(|t| t.as_const().is_some());
+    let [rest] = &rest[..] else {
+        return e;
+    };
+    let b: i128 = (consts.iter())
+        .filter_map(SymExpr::as_const)
+        .map(i128::from)
+        .sum();
+    let (x, k) = match SymExpr::split_const(rest.clone()) {
+        (1, SymExpr::FloorDiv(x, d)) => (*x, b * i128::from(d)),
+        (-1, SymExpr::FloorDiv(x, d)) => (
+            SymExpr::mul(SymExpr::Const(-1), *x),
+            (b + 1) * i128::from(d) - 1,
+        ),
+        (1, SymExpr::CeilDiv(x, d)) => (*x, (b + 1) * i128::from(d) - 1),
+        (-1, SymExpr::CeilDiv(x, d)) => (SymExpr::mul(SymExpr::Const(-1), *x), b * i128::from(d)),
         _ => return e,
     };
     match i64::try_from(k) {
-        Ok(k) => SymExpr::add(SymExpr::mul(SymExpr::Const(s), *x), SymExpr::Const(k)),
+        Ok(k) => SymExpr::add(x, SymExpr::Const(k)),
         Err(_) => e,
     }
 }
@@ -893,6 +906,20 @@ mod tests {
             entry("setp.lt.s32 %p1, %r1, 5;"),
             at("param_0 - 10", "$L__L")
         );
+    }
+
+    /// A latch whose test at k = 0 is a sum of constants past i64, left
+    /// unfolded (`i = −(2^63 − 1); do i += 2^63 − 1 while i <= 1`), is
+    /// compared with a guard without overflow.
+    #[test]
+    fn a_latch_test_past_i64_at_zero_is_compared_unfolded() {
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u64 %rd1, -9223372036854775807;\n\
+             $L__L:\nadd.s64 %rd1, %rd1, 9223372036854775807;\n\
+             setp.le.s64 %p1, %rd1, 1;\n@%p1 bra $L__L;\nret;",
+        );
+        assert!(trips_of(&src)[0].1.is_ok());
     }
 
     /// A guard skipping a loop from 0 below n where `n == 0` tests its
