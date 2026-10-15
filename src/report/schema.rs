@@ -318,6 +318,8 @@ pub struct Access {
     /// threads are a bound, so is this: the most any warp touches.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
+    /// `sectors_per_request` and `ideal_sectors_per_request` are each the
+    /// most any warp touches.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sectors_at_most: bool,
     /// The fewest sectors the distinct bytes the executing lanes touch

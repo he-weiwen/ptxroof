@@ -7,8 +7,8 @@ RUN: %ptxroof analyze %fixtures/micro/guards.ptx | FileCheck "%s"
 CHECK: kernel micro_guards
 CHECK: |    <block 1>  (no line info)       1  63 in 2 warps (not (%tid.x == 0 and %tid.x < 32))  $L__BB0_2
 CHECK: block size: 64 threads, 2 warps (64x1x1 from .reqntid)
-CHECK: <block 0>  ld.global.f32     global load 4 B                                                        warp: 4–5 sectors (ideal 4)    [4 * %tid.x + param_0]
-CHECK: <block 0>  ld.global.f32     global load 4 B on 1 thread in 1 warp (%tid.x == 0 and %tid.x < 32)    warp: 1 sector (ideal 1)       [4 * %tid.x + param_0 + 512]
+CHECK: <block 0>  ld.global.f32     global load 4 B                                                        warp: 4–5 sectors (ideal 4)     [4 * %tid.x + param_0]
+CHECK: <block 0>  ld.global.f32     global load 4 B on 1 thread in 1 warp (%tid.x == 0 and %tid.x < 32)    warp: 1 sector (ideal 1)        [4 * %tid.x + param_0 + 512]
 CHECK: totals per CTA [static]:
 CHECK: global store 8 B      127
 CHECK: st.global.b64        63

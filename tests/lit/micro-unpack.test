@@ -31,5 +31,5 @@ CHECK: st.global.u32  global store 4 B
 CHECK-SAME: warp: 1 sector (ideal 1)
 CHECK-SAME: [param_0]
 CHECK: st.global.u32  global store 4 B (predicated)
-CHECK-SAME: warp: <= 1 sector (ideal 1)
+CHECK-SAME: warp: <= 1 sector (ideal <= 1)
 CHECK: global bytes: load 0 B, store <= 8 B
