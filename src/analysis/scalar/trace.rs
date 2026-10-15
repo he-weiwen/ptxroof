@@ -698,8 +698,11 @@ impl<'a> AffineValueTracer<'a> {
                 let below = |small: &Affine, big: &Affine| -> Result<(), String> {
                     let max = bound(small)
                         .ok_or_else(|| "or of two values neither of known range".to_owned())?;
-                    if max < 0 {
-                        return Err(format!("or with a negative value {max:#x}"));
+                    // Its least value, the base under its mod terms: a
+                    // negative one sets every bit above its own.
+                    let least = self.constant(small).or(small.base.as_const());
+                    if least.is_none_or(|least| least < 0) || max < 0 {
+                        return Err("or with a value that may be negative".to_owned());
                     }
                     let bits = 64 - (max as u64).leading_zeros();
                     if bits > 62 {

@@ -1,0 +1,35 @@
+//
+// HAND-WRITTEN: an or of 16·%ctaid.x with (%tid.x mod 16) − 4, which is
+// negative on lanes 0 to 3 of every 16. A negative value has every bit
+// above its low four set in two's complement, so there the or is that
+// value, −4 to −1, not 16·%ctaid.x plus it; the store is at param_0 plus
+// 4 times the or. ptxas 13.4 (sm_89) keeps the or (0xfc), R5 = %tid.x,
+// UR4 = 16·%ctaid.x:
+//   LOP3.LUT R0, R5, 0xf, RZ, 0xc0, !PT
+//   IADD3 R0, R0, -0x4, RZ
+//   LOP3.LUT R0, R0, UR4, RZ, 0xfc, !PT
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_or_negative(
+	.param .u64 micro_or_negative_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_or_negative_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 15;
+	add.s32 	%r3, %r2, -4;
+	mov.u32 	%r4, %ctaid.x;
+	shl.b32 	%r5, %r4, 4;
+	or.b32 	%r6, %r5, %r3;
+	mul.wide.s32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
