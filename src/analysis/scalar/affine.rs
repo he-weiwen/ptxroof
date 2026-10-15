@@ -7,7 +7,7 @@
 //! read latch conditions, addresses, and branch conditions in this form.
 
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::scalar::symexpr::SymExpr;
+use crate::analysis::scalar::symexpr::{SymExpr, product};
 use crate::ptx::ir::{Element, SpecialReg, SpecialVector};
 use crate::ssa::Value;
 use std::collections::BTreeMap;
@@ -334,21 +334,36 @@ impl Affine {
         Some(max)
     }
 
-    /// The least and the greatest value of the form when its base and
-    /// coefficients are constants and `bound` gives every variable's
-    /// least and greatest value; `None` when one is unbounded, the whole
-    /// `i128` line when a partial sum leaves it.
+    /// The least and the greatest value of the form when `bound` gives
+    /// every variable's least and greatest value, and a `%ctaid` symbol's
+    /// as its variable's, and no other symbol is left; `None` when one is
+    /// unbounded, the whole `i128` line when a partial sum leaves it.
     pub fn range(&self, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
-        let base = i128::from(self.base.as_const()?);
+        let sym = |s: &str| {
+            let axis = match s.strip_prefix("%ctaid.")? {
+                "x" => Axis::X,
+                "y" => Axis::Y,
+                "z" => Axis::Z,
+                _ => return None,
+            };
+            bound(&Var::Ctaid(axis))
+        };
+        let mut range = Some(self.base.range(&sym)?);
         let mut groups: BTreeMap<&Var, Vec<(&Var, i128)>> = BTreeMap::new();
         for (v, c) in &self.terms {
             let x = match v {
                 Var::Div(x, _) | Var::Mod(x, _) => x,
                 _ => v,
             };
-            (groups.entry(x).or_default()).push((v, i128::from(c.as_const()?)));
+            match c.as_const() {
+                Some(c) => (groups.entry(x).or_default()).push((v, i128::from(c))),
+                None => {
+                    let (lo, hi) = var_range(v, bound)?;
+                    let (a, b) = product(c.range(&sym)?, (i128::from(lo), i128::from(hi)));
+                    range = range.and_then(|(x, y)| Some((x.checked_add(a)?, y.checked_add(b)?)));
+                }
+            }
         }
-        let mut range = Some((base, base));
         for (x, terms) in &groups {
             let (a, b) = group_range(x, terms, bound)?;
             range = range.and_then(|(lo, hi)| Some((lo.checked_add(a)?, hi.checked_add(b)?)));

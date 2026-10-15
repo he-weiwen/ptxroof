@@ -170,7 +170,10 @@ pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCoun
 type Counted = (SymExpr, BlockId, Option<(SymExpr, i64)>);
 
 fn counted_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
-    tracer.without_fallback(|| tracer.strictly(|| latch_trips(tracer, id)))
+    let outer = tracer.cta_symbols.replace(true);
+    let counted = tracer.without_fallback(|| tracer.strictly(|| latch_trips(tracer, id)));
+    tracer.cta_symbols.set(outer);
+    counted
 }
 
 fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
@@ -408,7 +411,7 @@ fn exits_some(tracer: &AffineValueTracer<'_>, b: BlockId) -> bool {
 /// `a` with its terms in the CTA index as symbols of its base: `%ctaid`
 /// is the CTA's identifier, one value per CTA, never negative (PTX ISA
 /// §10.6).
-fn per_cta(mut a: Affine) -> Affine {
+pub(crate) fn per_cta(mut a: Affine) -> Affine {
     fn symbol(v: &Var) -> Option<SymExpr> {
         match v {
             Var::Ctaid(_) => Some(SymExpr::sym(v.to_string())),
@@ -1062,6 +1065,48 @@ mod tests {
         assert_eq!(entry(exit), unguarded);
         assert_eq!(entry(&sibling("")), entered);
         assert_eq!(entry(&sibling(exit)), unguarded);
+    }
+
+    /// A latch's `min` or `max` of the CTA index is one value per CTA, a
+    /// row range's `min(16·%ctaid.y + 16, n) - 16·%ctaid.y`; ranged over
+    /// the grid, a `max.u32(%ctaid.x, 1)` shifted by 31, or times
+    /// `%ctaid.x` and shifted, leaves 32 bits with 3 CTAs.
+    #[test]
+    fn a_latch_min_or_max_of_the_cta_index_is_one_per_cta() {
+        let trips = |bound: &str, grid: Option<i64>| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r2, %ctaid.x;\nmov.u32 %r6, %ctaid.y;\n\
+                     {bound}\nmov.u32 %r8, 0;\n$L__L:\nadd.s32 %r8, %r8, 1;\n\
+                     setp.lt.u32 %p1, %r8, %r9;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            let grid = grid
+                .into_iter()
+                .flat_map(|n| [("%nctaid.x".to_owned(), n), ("%nctaid.y".to_owned(), 1)]);
+            let bindings = grid.collect();
+            trips_under(&src, &bindings)[0]
+                .1
+                .clone()
+                .map(|t| t.to_string())
+        };
+        let rows = "shl.b32 %r3, %r6, 4;\nadd.s32 %r4, %r3, 16;\nmin.u32 %r5, %r4, %r1;\n\
+                    sub.s32 %r9, %r5, %r3;";
+        let read = "max(min(16 * %ctaid.y + 16, param_0) - 16 * %ctaid.y, 1)";
+        assert_eq!(trips(rows, None), Ok(read.to_owned()));
+        let shifted = "max.u32 %r3, %r2, 1;\nshl.b32 %r9, %r3, 31;";
+        assert!(trips(shifted, None).is_ok());
+        assert_eq!(
+            trips(shifted, Some(3)),
+            Err("`shl.b32` leaves 32 bits".to_owned())
+        );
+        let times = "max.u32 %r3, %r2, 1;\nmul.lo.u32 %r4, %r3, %r2;\nshl.b32 %r9, %r4, 31;";
+        assert!(trips(times, None).is_ok());
+        assert_eq!(
+            trips(times, Some(3)),
+            Err("`shl.b32` leaves 32 bits".to_owned())
+        );
     }
 
     /// A guard skipping a loop from 0 below n where `n == 0` tests its

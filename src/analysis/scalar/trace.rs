@@ -18,7 +18,7 @@ use crate::analysis::register_effects::{self, registers, split_operands};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::recurrences::{Recurrence, Step, recurrences};
 use crate::analysis::scalar::symexpr::SymExpr;
-use crate::analysis::scalar::trip_counts::loop_trips;
+use crate::analysis::scalar::trip_counts::{loop_trips, per_cta};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{
@@ -58,6 +58,9 @@ pub(crate) struct AffineValueTracer<'a> {
     /// Tracing an address that does not read otherwise: a uniform read
     /// the trace cannot interpret is a `Var::Uniform`.
     fallback: Cell<bool>,
+    /// Reading a latch: a `min` or `max` holds its operands' CTA-index
+    /// terms as symbols, one value per CTA.
+    pub(crate) cta_symbols: Cell<bool>,
 }
 
 impl<'a> AffineValueTracer<'a> {
@@ -125,6 +128,7 @@ impl<'a> AffineValueTracer<'a> {
             bindings: None,
             uniformity: OnceCell::new(),
             fallback: Cell::new(false),
+            cta_symbols: Cell::new(false),
         }
     }
 
@@ -933,7 +937,10 @@ impl<'a> AffineValueTracer<'a> {
             Opcode::Min | Opcode::Max
                 if ops.len() == 3 && mods.len() == 1 && int_type_range(mods[0]).is_some() =>
             {
-                let (a, b) = (arg(1)?, arg(2)?);
+                let (a, b) = match self.cta_symbols.get() {
+                    true => (per_cta(arg(1)?), per_cta(arg(2)?)),
+                    false => (arg(1)?, arg(2)?),
+                };
                 if !(a.is_invariant() && b.is_invariant()) {
                     return Err(refuse(&(a + b), id, mnemonic.name()));
                 }

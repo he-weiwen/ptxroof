@@ -263,10 +263,10 @@ its shared writes and instruction counts remain counted
 ### Reported as unknowns
 
 - **A block under a loop whose trip count is not read is unknown in
-  the totals per launch**, as its trips may differ by CTA: ds2 rope's
-  loop, whose latch reads `%ctaid.y` through a `min`, moves
-  `16640·trips` B per CTA and `+ unknown` per launch
-  (`b200-launch-totals.test`). Under a count that reads the CTA index
+  the totals per launch**, as its trips may differ by CTA
+  (`micro_loop_guard_sibling_exit`'s first loop, with two exit edges:
+  `bar.sync <= 320 + unknown` under `micro/loop_guard_sibling.ncu.json`'s
+  grid). Under a count that reads the CTA index
   a block is counted over the launch as the count summed over the
   grid, CTA by CTA where which of its threads run varies by CTA
   (`micro/cta_trips.ptx`: 192 and 224 barriers over 4 CTAs, as
@@ -284,8 +284,8 @@ its shared writes and instruction counts remain counted
   that combines its comparison with a predicate
   (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
   compares floats (`micro/latch_float.ptx`: "latch condition compares
-  floating-point values"), a bound through a `min`, `max`, `selp` or
-  shift of the CTA index, the mbarrier spin-waits
+  floating-point values"), a bound through a `selp` or shift of the
+  CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. Bounds the
   tracer does not read, by the loop's source line: a division by a
@@ -294,11 +294,10 @@ its shared writes and instruction counts remain counted
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`).
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 898 have a trip count: 1,445 are mbarrier waits
-  and 411 read loaded values, 94 depend on `%ctaid` (54 through a
-  `min` or `max`, 15 a `selp`, 7 a shift; per-CTA row ranges), 93 are
-  grid-stride loops, 1 unpack, 20 atomics, 20 divisions, 17
-  multi-exit.
+  inferred arguments), 953 have a trip count: 1,445 are mbarrier waits
+  and 411 read loaded values, 40 depend on `%ctaid` (15 through a
+  `selp`, 7 a shift), 93 are grid-stride loops, 1 unpack, 20 atomics,
+  20 divisions, 17 multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,

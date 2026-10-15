@@ -118,6 +118,47 @@ impl SymExpr {
         }
     }
 
+    /// The least and the greatest value, every symbol within `sym`'s
+    /// bounds; `None` where one has none. Bounds past `i128` saturate.
+    pub fn range(&self, sym: &dyn Fn(&str) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
+        let pair = |x: &SymExpr, y: &SymExpr| Some((x.range(sym)?, y.range(sym)?));
+        Some(match self {
+            SymExpr::Const(c) => (i128::from(*c), i128::from(*c)),
+            SymExpr::Sym(s) => sym(s).map(|(a, b)| (i128::from(a), i128::from(b)))?,
+            SymExpr::Sum(ts) => ts.iter().try_fold((0i128, 0i128), |(lo, hi), t| {
+                let (a, b) = t.range(sym)?;
+                Some((lo.saturating_add(a), hi.saturating_add(b)))
+            })?,
+            SymExpr::Prod(fs) => {
+                (fs.iter()).try_fold((1, 1), |r, f| Some(product(r, f.range(sym)?)))?
+            }
+            SymExpr::FloorDiv(e, c) => {
+                let (a, b) = e.range(sym)?;
+                (a.div_euclid(i128::from(*c)), b.div_euclid(i128::from(*c)))
+            }
+            SymExpr::CeilDiv(e, c) => {
+                let up = |x: i128| -(x.saturating_neg().div_euclid(i128::from(*c)));
+                let (a, b) = e.range(sym)?;
+                (up(a), up(b))
+            }
+            SymExpr::Mod(e, c) => {
+                let (c, (a, b)) = (i128::from(*c), e.range(sym)?);
+                match a.div_euclid(c) == b.div_euclid(c) {
+                    true => (a.rem_euclid(c), b.rem_euclid(c)),
+                    false => (0, c - 1),
+                }
+            }
+            SymExpr::Min(x, y) => {
+                let ((a, b), (c, d)) = pair(x, y)?;
+                (a.min(c), b.min(d))
+            }
+            SymExpr::Max(x, y) => {
+                let ((a, b), (c, d)) = pair(x, y)?;
+                (a.max(c), b.max(d))
+            }
+        })
+    }
+
     pub fn as_const(&self) -> Option<i64> {
         match self {
             SymExpr::Const(c) => Some(*c),
@@ -407,6 +448,20 @@ enum PrintContext {
     DivOrModLeft,
 }
 
+/// The product of two ranges, saturating past `i128`.
+pub fn product((a, b): (i128, i128), (c, d): (i128, i128)) -> (i128, i128) {
+    let p = [
+        a.saturating_mul(c),
+        a.saturating_mul(d),
+        b.saturating_mul(c),
+        b.saturating_mul(d),
+    ];
+    (
+        p.into_iter().min().unwrap_or(0),
+        p.into_iter().max().unwrap_or(0),
+    )
+}
+
 impl fmt::Display for SymExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", render(self, PrintContext::Top))
@@ -684,6 +739,34 @@ mod tests {
         );
         assert_eq!(e.symbols(), ["a", "b"]);
         assert_eq!(E::Const(3).symbols(), Vec::<String>::new());
+    }
+
+    /// Ranges by interval arithmetic, `param_2` in [0, 100], `n` not
+    /// bounded; a product past i128 saturates.
+    #[test]
+    fn ranges_over_bounded_symbols() {
+        let sym = |s: &str| (s == "param_2").then_some((0, 100));
+        let row = E::sub(
+            E::min(
+                E::add(E::mul(E::Const(16), k()), E::Const(16)),
+                E::Const(64),
+            ),
+            k(),
+        );
+        assert_eq!(row.range(&sym), Some((-84, 64)));
+        assert_eq!(E::ceil_div(k(), 8).range(&sym), Some((0, 13)));
+        assert_eq!(
+            E::floor_div(E::sub(k(), E::Const(1)), 8).range(&sym),
+            Some((-1, 12))
+        );
+        assert_eq!(E::modulo(k(), 64).range(&sym), Some((0, 63)));
+        assert_eq!(E::max(k(), E::Const(1)).range(&sym), Some((1, 100)));
+        assert_eq!(E::add(k(), E::sym("n")).range(&sym), None);
+        let huge = E::mul(E::Const(i64::MAX), E::mul(k(), E::sym("param_2")));
+        assert_eq!(
+            huge.range(&|_| Some((i64::MIN, i64::MAX))).map(|r| r.1),
+            Some(i128::MAX)
+        );
     }
 
     #[test]
