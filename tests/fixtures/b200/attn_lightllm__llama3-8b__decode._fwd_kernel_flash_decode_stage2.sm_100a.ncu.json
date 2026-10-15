@@ -18,7 +18,7 @@
   "55": {"ptx": "mov.u32 %r10, %tid.x;", "sass": {"S2R": 1}, "executions": 262144},
   "56": {"ptx": "and.b32 %r3, %r10, 127;", "sass": {"LOP3.LUT": 1}, "executions": 262144},
   "58": {"ptx": "mad.wide.u32 %rd3, %r1, 4, %rd4;", "sass": {"LDCU.64": 2, "ULEA": 1, "ULEA.HI.X": 1}, "executions": 1048576},
-  "64": {"ptx": "ld.global.b32 { %r9 }, [ %rd3 + 0 ];", "sass": {"MOV": 2, "LDG.E": 1}, "executions": 786432},
+  "64": {"ptx": "ld.global.b32 { %r9 }, [ %rd3 + 0 ];", "sass": {"MOV": 2, "LDG.E": 1}, "executions": 786432, "l2_theoretical_sectors_global": 8192, "l2_theoretical_sectors_global_ideal": 8192, "global_access_sizes": [32]},
   "70": {"ptx": "add.s32 %r14, %r9, 255;", "sass": {"IADD3": 1}, "executions": 262144},
   "72": {"ptx": "shr.s32 %r16, %r14, 31;", "sass": {"SHF.R.S32.HI": 1}, "executions": 262144},
   "74": {"ptx": "add.s32 %r18, %r14, %r17;", "sass": {"LEA.HI": 1}, "executions": 262144},
@@ -34,8 +34,8 @@
   "99": {"ptx": "mad.wide.s32 %rd11, %r24, 4, %rd6;", "sass": {"LDCU.64": 1, "ULEA": 1, "ULEA.HI.X.SX32": 1}, "executions": 786432},
   "105": {"ptx": "mov.b32 %r41, %r42;", "sass": {"MOV": 6, "IMAD.U32": 1, "PLOP3.LUT": 1, "BRA": 1}, "executions": 2359296},
   "109": {"ptx": "mad.wide.s32 %rd7, %r39, 2, %rd1;", "sass": {"LEA": 8, "LEA.HI.X.SX32": 8}, "executions": 8388608},
-  "115": {"ptx": "ld.global.b16 { %rs1 }, [ %rd7 + 0 ];", "sass": {"LDG.E.U16": 8}, "executions": 4194304},
-  "123": {"ptx": "ld.global.b32 { %r25 }, [ %rd11 + 0 ];", "sass": {"LDG.E": 8}, "executions": 4194304},
+  "115": {"ptx": "ld.global.b16 { %rs1 }, [ %rd7 + 0 ];", "sass": {"LDG.E.U16": 8}, "executions": 4194304, "l2_theoretical_sectors_global": 262144, "l2_theoretical_sectors_global_ideal": 262144, "global_access_sizes": [16, 16, 16, 16]},
+  "123": {"ptx": "ld.global.b32 { %r25 }, [ %rd11 + 0 ];", "sass": {"LDG.E": 8}, "executions": 4194304, "l2_theoretical_sectors_global": 131072, "l2_theoretical_sectors_global_ideal": 131072, "global_access_sizes": [32, 32, 32, 32]},
   "127": {"ptx": "max.f32 %r5, %r25, %r40;", "sass": {"FMNMX": 8}, "executions": 4194304},
   "129": {"ptx": "sub.rn.f32 %r26, %r40, %r5;", "sass": {"FADD": 8}, "executions": 4194304},
   "131": {"ptx": "mul.rn.f32 %r27, %r26, 0f3FB8AA3B;", "sass": {"FMUL": 8}, "executions": 4194304},
@@ -61,7 +61,7 @@
   "164": {"ptx": "mad.wide.u32 %rd8, %r3, 2, %rd10;", "sass": {"LEA": 1, "LEA.HI.X": 1}, "executions": 524288},
   "166": {"ptx": "div.full.f32 %r38, %r42, %r41;", "sass": {"FSETP.GT.AND": 1, "FSETP.GEU.AND": 1, "FMUL": 5, "MUFU.RCP": 1}, "executions": 1048576},
   "168": {"ptx": "cvt.rn.bf16.f32 %rs2, %r38;", "sass": {"F2FP.BF16.F32.PACK_AB": 1}, "executions": 262144},
-  "171": {"ptx": "st.global.b16 [ %rd8 + 0 ], { %rs2 };", "sass": {"STG.E.U16": 1}, "executions": 262144},
+  "171": {"ptx": "st.global.b16 [ %rd8 + 0 ], { %rs2 };", "sass": {"STG.E.U16": 1}, "executions": 262144, "l2_theoretical_sectors_global": 16384, "l2_theoretical_sectors_global_ideal": 16384, "global_access_sizes": [16]},
   "175": {"ptx": "ret;", "sass": {"EXIT": 1, "BRA": 1, "NOP": 15}, "executions": 262144}
  }
 }

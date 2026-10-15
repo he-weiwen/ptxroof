@@ -68,7 +68,9 @@ its shared writes and instruction counts remain counted
   CTA where Nsight Compute measures 8 sectors over the launch,
   `tests/lit/micro-cp-async-src-size.test`). Triton writes its masked
   loads this way: 319 such `cp.async` in 16 B200 fixtures, 13,489 in the
-  census.
+  census. In the B200 records 24 of them measure fewer L2 sectors than
+  the predicted range, in four kernels (`ssd_pass_tlrange`'s line 469:
+  predicted 655,360–696,320, measured 593,920).
 - **Register effects are incomplete.** The affine tracer records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
@@ -406,6 +408,14 @@ its shared writes and instruction counts remain counted
 
 ### Producers and validation
 
+- **The L2 sector comparison assumes a global load's SASS runs as often
+  as its PTX statement.** ptxas may run it less often: in
+  `tma_best_Q64N64w8s3._stage1_tma`, line 544's one `LDG.E.EL` measures
+  655,360 executions and 20,480 sectors where its loop iteration runs
+  2,424,832 times (line 501's load in the same iteration measures
+  2,424,832), so the line differs from the predicted 75,776 sectors;
+  `_fwd_kernel_flash_decode_stage1_padding`'s line 420 likewise
+  measures 38,912 of 75,776.
 - **The frontend is not panic-free for arbitrary UTF-8.** An input file
   containing only `é` causes `ptxroof analyze` to exit with a panic:
   `end byte index 1 is not a char boundary`. The byte-oriented lexer
@@ -548,10 +558,11 @@ One line each, with the trigger that would start it.
   instruction Nsight Compute's L2 theoretical sectors, their ideal and
   each such SASS's access size (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
   every Gluon kernel's first launch, `tests/fixtures/gluon/*.ncu.json`).
-  The B200 records (`tests/fixtures/b200/*.ncu.json`), which have no
-  sectors, come from
+  The B200 records (`tests/fixtures/b200/*.ncu.json`) come from
   sol-study's reports instead: `import_reports.py` attributes their
-  per-SASS counts to PTX lines through the same `.loc` recompile under
+  per-SASS counts and sectors to PTX lines, leaving out a TMA
+  instruction, whose access size the report omits and whose sectors it
+  counts as 0, through the same `.loc` recompile under
   Triton's ptxas command, and takes each launch's parameters from a
   replay of the report's own command as the B200, matched by SASS and
   grid, with `i64:`, `i1:` and `tensormap:128` for the parameters of a
@@ -577,9 +588,9 @@ One line each, with the trigger that would start it.
   lane that runs it, a range over the address's alignment
   (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`; the
   text report counts the lines that agree and prints those that differ,
-  none in the Gluon records, `tests/lit/gluon-ncu.test`); not
-  compared: a generic access, a line whose count is unknown, and the
-  B200 records. `ci.sh` measures every record again on the GPU it
+  none in the Gluon records, `tests/lit/gluon-ncu.test`, 26 in the B200
+  records, all listed under Known limitations); not compared: a generic
+  access and a line whose count is unknown. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.

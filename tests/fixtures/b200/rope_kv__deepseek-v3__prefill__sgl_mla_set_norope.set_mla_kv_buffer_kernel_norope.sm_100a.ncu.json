@@ -22,14 +22,14 @@
   "52": {"ptx": "setp.lt.u32 %p1, %r11, 576;", "sass": {"ISETP.GE.U32.AND": 1}, "executions": 1048576},
   "56": {"ptx": "griddepcontrol.wait ;", "sass": {"ACQBULK": 1}, "executions": 1048576},
   "60": {"ptx": "mad.wide.u32 %rd2, %r5, 8, %rd7;", "sass": {"LDCU.64": 1, "ULEA": 1, "ULEA.HI.X": 1}, "executions": 3145728},
-  "66": {"ptx": "ld.global.b64 { %rd1 }, [ %rd2 + 0 ];", "sass": {"MOV": 1, "IMAD.U32": 1, "LDG.E.64": 1}, "executions": 3145728},
+  "66": {"ptx": "ld.global.b64 { %rd1 }, [ %rd2 + 0 ];", "sass": {"MOV": 1, "IMAD.U32": 1, "LDG.E.64": 1}, "executions": 3145728, "l2_theoretical_sectors_global": 32768, "l2_theoretical_sectors_global_ideal": 32768, "global_access_sizes": [64]},
   "70": {"ptx": "mad.lo.s64 %rd8, %rd1, 1152, %rd5;", "sass": {"LDC.64": 1, "IMAD": 1, "IMAD.WIDE.U32": 1, "IMAD.IADD": 1}, "executions": 4194304},
   "72": {"ptx": "add.s64 %rd4, %rd8, %rd9;", "sass": {"IMAD.WIDE.U32": 1}, "executions": 1048576},
   "74": {"ptx": "mul.lo.s32 %r12, %r5, 576;", "sass": {"UIMAD": 1}, "executions": 1048576},
   "76": {"ptx": "mad.wide.s32 %rd10, %r12, 2, %rd6;", "sass": {"LDCU.64": 2, "UIMAD": 1, "UIADD3": 1, "ULEA.HI.X.SX32": 1}, "executions": 5242880},
   "77": {"ptx": "add.s64 %rd3, %rd10, %rd9;", "sass": {"IMAD.U32": 1, "MOV": 1, "IMAD.WIDE.U32": 1}, "executions": 3145728},
-  "88": {"ptx": "@%p1 ld.global.v4.b32 { %r1, %r2, %r3, %r4 }, [ %rd3 + 0 ];", "sass": {"CS2R": 2, "LDG.E.128": 1}, "executions": 2686976},
-  "93": {"ptx": "@%p1 st.global.v4.b32 [ %rd4 + 0 ], { %r1, %r2, %r3, %r4 };", "sass": {"STG.E.128": 1}, "executions": 589824},
+  "88": {"ptx": "@%p1 ld.global.v4.b32 { %r1, %r2, %r3, %r4 }, [ %rd3 + 0 ];", "sass": {"CS2R": 2, "LDG.E.128": 1}, "executions": 2686976, "l2_theoretical_sectors_global": 294912, "l2_theoretical_sectors_global_ideal": 294912, "global_access_sizes": [128]},
+  "93": {"ptx": "@%p1 st.global.v4.b32 [ %rd4 + 0 ], { %r1, %r2, %r3, %r4 };", "sass": {"STG.E.128": 1}, "executions": 589824, "l2_theoretical_sectors_global": 294912, "l2_theoretical_sectors_global_ideal": 294912, "global_access_sizes": [128]},
   "99": {"ptx": "griddepcontrol.launch_dependents ;", "sass": {"PREEXIT": 1}, "executions": 1048576},
   "103": {"ptx": "ret;", "sass": {"EXIT": 1, "BRA": 1, "NOP": 12}, "executions": 1048576}
  }

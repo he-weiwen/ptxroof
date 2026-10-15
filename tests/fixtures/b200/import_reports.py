@@ -2,7 +2,10 @@
 """Writes a fixture for each kernel launch of the sol-study B200 Nsight
 Compute reports that reports.txt selects: its PTX with a provenance header,
 and a tools/ncu/measure.py record of the report's predicated-on thread
-instructions executed per PTX line.
+instructions executed per PTX line and, on a line with a global memory
+instruction, the L2 sectors they request, the ideal number and each such
+instruction's access size in bits. A TMA instruction, whose access size the
+report leaves out and whose sectors it counts as 0, is not one.
 
 A report's kernel is matched to the PTX it ran by SASS and block size among
 the study's Triton caches, nearest its own run first, and to its launch by
@@ -54,15 +57,18 @@ def report_kernels(rep):
         head, body = block.split("\n", 1)
         assert head.startswith(f'"{name}"'), (rep, name, head)
         rows = table(body)
-        executed = rows[0].index("Predicated-On Thread Instructions Executed")
+        column = {c: i for i, c in enumerate(rows[0])}
         instrs = [r for r in rows[1:] if r and r[0].startswith("0x")]
+        in_global = lambda r: "Global" in re.findall(r"\w+", r[column["Address Space"]]) and r[column["Access Size"]].isdigit()
+        sectors = ("L2 Theoretical Sectors Global", "L2 Theoretical Sectors Global Ideal", "Access Size")
         yield {
             "id": row[col["ID"]],
             "kernel": name,
             "grid": [int(n) for n in re.findall(r"\d+", row[col["Grid Size"]])],
             "block": [int(n) for n in re.findall(r"\d+", row[col["Block Size"]])],
             "sass": sass.normalize([r[1] for r in instrs], int(instrs[0][0], 16)),
-            "executed": [int(r[executed]) for r in instrs],
+            "executed": [int(r[column["Predicated-On Thread Instructions Executed"]]) for r in instrs],
+            "global": [in_global(r) and [int(r[column[c]]) for c in sectors] for r in instrs],
         }
 
 
@@ -196,13 +202,18 @@ def import_reports(sol, corpus, launches_path, out):
                     assert got == k["sass"], f"{source_ptx.name} of {name} assembles to other SASS than the report's"
                 attributed = line_of_each_instruction(bin_dir / "nvdisasm", tmp / "out.cubin")
             lines, ptx_lines = {}, text.split("\n")
-            for n, instr, executed in zip(attributed, k["sass"], k["executed"], strict=True):
+            for n, instr, executed, access in zip(attributed, k["sass"], k["executed"], k["global"], strict=True):
                 if n is None:
                     continue
                 line = lines.setdefault(str(n), {"ptx": " ".join(ptx_lines[n - 1].split()), "sass": {}, "executions": 0})
                 op = re.sub(r"^@!?U?P\w+\s+", "", instr).split()[0]
                 line["sass"][op] = line["sass"].get(op, 0) + 1
                 line["executions"] += executed
+                if access:
+                    requested, ideal, bits = access
+                    line["l2_theoretical_sectors_global"] = line.get("l2_theoretical_sectors_global", 0) + requested
+                    line["l2_theoretical_sectors_global_ideal"] = line.get("l2_theoretical_sectors_global_ideal", 0) + ideal
+                    line.setdefault("global_access_sizes", []).append(bits)
             for n in timing_dependent(text):
                 if str(n) in lines:
                     lines[str(n)]["timing_dependent"] = True
