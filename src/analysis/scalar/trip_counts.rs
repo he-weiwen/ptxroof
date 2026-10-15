@@ -242,7 +242,7 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, B
     }) {
         return Err("latch condition compares floating-point values".to_owned());
     }
-    let d = a - b; // D = A − B; condition is `D cmp 0`
+    let d = per_cta(a - b); // D = A − B; condition is `D cmp 0`
 
     // D(k) = A1·k + A0 in this loop's iteration number alone.
     let k = Var::Iter(id);
@@ -335,8 +335,9 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, Sy
     {
         return None;
     }
-    let form =
-        tracer.trace_operand(a, def, None, 0).ok()? - tracer.trace_operand(b, def, None, 0).ok()?;
+    let form = per_cta(
+        tracer.trace_operand(a, def, None, 0).ok()? - tracer.trace_operand(b, def, None, 0).ok()?,
+    );
     let cmp = *mods.first()?;
     let cmp = if (taken == into) != pred.negated {
         cmp
@@ -389,6 +390,29 @@ fn sibling_entry(
 /// falling through.
 fn exits_some(tracer: &AffineValueTracer<'_>, b: BlockId) -> bool {
     (tracer.last_instr(b)).is_some_and(|(_, i)| matches!(i.mnemonic, Opcode::Ret | Opcode::Exit))
+}
+
+/// `a` with its terms in the CTA index as symbols of its base: `%ctaid`
+/// is the CTA's identifier, one value per CTA, never negative (PTX ISA
+/// §10.6).
+fn per_cta(mut a: Affine) -> Affine {
+    fn symbol(v: &Var) -> Option<SymExpr> {
+        match v {
+            Var::Ctaid(_) => Some(SymExpr::sym(v.to_string())),
+            Var::Div(v, d) => symbol(v).map(|e| SymExpr::floor_div(e, *d)),
+            Var::Mod(v, m) => symbol(v).map(|e| SymExpr::modulo(e, *m)),
+            _ => None,
+        }
+    }
+    for (v, c) in std::mem::take(&mut a.terms) {
+        match symbol(&v) {
+            Some(e) => a.base = SymExpr::add(a.base, SymExpr::mul(c, e)),
+            None => {
+                a.terms.insert(v, c);
+            }
+        }
+    }
+    a
 }
 
 /// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
@@ -1361,15 +1385,15 @@ mod tests {
     #[test]
     fn the_reason_is_the_obstacle_behind_unread_arithmetic() {
         // LLVM writes m_start + 127 as `or` on a value with zero low bits;
-        // the bound still comes from the CTA index, and that is the reason.
+        // the CTA index one value per CTA, the bound is read.
         let src = kernel_with(
             N_PARAM,
             "mov.u32 %r1, %ctaid.x;\nshl.b32 %r2, %r1, 7;\nor.b32 %r3, %r2, 127;\n\
              mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
              setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
         );
-        let err = trips_of(&src)[0].1.clone().unwrap_err();
-        assert!(err.contains("special register %ctaid.x"), "{err}");
+        let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
+        assert_eq!(trips, Ok("128 * %ctaid.x + 127".to_owned()));
         // A loaded bound behind `bfe` is a loaded bound.
         let src = kernel_with(
             ".param .u64 k_param_0",

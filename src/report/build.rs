@@ -1414,7 +1414,8 @@ impl<'a> KernelReportBuilder<'a> {
     /// `ctas` too, over the launch: a block or guarded instruction at its
     /// threads and warps over the grid where they are counted, else at
     /// its count per CTA times the CTAs; one under a loop whose trip
-    /// count is not read is unknown, its trips perhaps differing by CTA.
+    /// count is not read, or reads the CTA index, is unknown, its trips
+    /// perhaps differing by CTA.
     fn aggregates(
         &self,
         below: Option<LoopId>,
@@ -1443,8 +1444,11 @@ impl<'a> KernelReportBuilder<'a> {
                 continue;
             }
             let unread = ctas.is_some()
-                && (self.chain(bm.block).iter())
-                    .any(|l| self.trip_info.trips[l.0 as usize].is_err());
+                && (self.chain(bm.block).iter()).any(|l| {
+                    self.trip_info.trips[l.0 as usize].is_err()
+                        || (self.trip_exprs[l.0 as usize].symbols().iter())
+                            .any(|s| s.starts_with("%ctaid"))
+                });
             let trips = (!unread).then_some(mult);
             let trips = trips.as_ref();
             // None when a count over the launch does not fit in i64.

@@ -262,22 +262,26 @@ its shared writes and instruction counts remain counted
 
 ### Reported as unknowns
 
-- **A block under a loop whose trip count is not read is unknown in
-  the totals per launch**, as its trips may differ by CTA: ds2 rope's
-  loop, whose latch reads `%ctaid.y`, moves `16640·trips` B per CTA
-  and `+ unknown` per launch (`b200-launch-totals.test`).
+- **A block under a loop whose trip count is not read, or reads the
+  CTA index, is unknown in the totals per launch**, as its trips may
+  differ by CTA: ds2 rope's loop, whose latch reads `%ctaid.y` through
+  a `min`, moves `16640·trips` B per CTA and `+ unknown` per launch
+  (`b200-launch-totals.test`); `micro/cta_trips.ptx`'s causal loop
+  meets `32 * %ctaid.x` barriers per CTA and `0 + unknown` per launch,
+  where on an RTX 4090 with 4 CTAs it meets 192.
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unroll main+remainder pair, LLVM's two-register counter and its
   predicate-phi two-trip loop. Not recognised, reported as
-  `trips = unknown`: grid-stride loops (special registers),
-  data-dependent bounds, multi-exit loops, inner loops bounded by an
+  `trips = unknown`: grid-stride loops without `--grid`, whose step is
+  `%nctaid.x` ("induction step is not a constant"), data-dependent
+  bounds, multi-exit loops, inner loops bounded by an
   enclosing loop's counter (`micro/triangular.ptx`), a latch `setp`
   that combines its comparison with a predicate
   (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
   compares floats (`micro/latch_float.ptx`: "latch condition compares
-  floating-point values"), and the attention kernels'
-  causal loops, bounded by the CTA index, the mbarrier spin-waits
+  floating-point values"), a bound through a `min`, `max`, `selp` or
+  shift of the CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. Bounds the
   tracer does not read, by the loop's source line: a division by a
@@ -286,10 +290,11 @@ its shared writes and instruction counts remain counted
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`).
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 845 have a trip count: 1,445 are mbarrier waits
-  and 411 read loaded values, 241 depend on `%ctaid` (grid-stride
-  loops, per-CTA row ranges, causal and persistent tile loops), 1
-  unpack, 20 atomics, 20 divisions, 17 multi-exit.
+  inferred arguments), 898 have a trip count: 1,445 are mbarrier waits
+  and 411 read loaded values, 94 depend on `%ctaid` (54 through a
+  `min` or `max`, 15 a `selp`, 7 a shift; per-CTA row ranges), 93 are
+  grid-stride loops, 1 unpack, 20 atomics, 20 divisions, 17
+  multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,

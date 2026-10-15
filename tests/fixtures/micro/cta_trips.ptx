@@ -1,0 +1,38 @@
+//
+// HAND-WRITTEN: a causal loop, CTA c running c trips: the guard skips
+// CTA 0, where the latch `k < %ctaid.x` fails at k = 0, and each
+// other CTA stores its trip number to its own word and meets a barrier
+// per trip. ptxas 13.4 -arch=sm_89 keeps the guard (`ISETP.GE.AND P0,
+// PT, R4, 0x1, PT` then `@!P0 EXIT`) and the loop rolled around its
+// `BAR.SYNC.DEFER_BLOCKING`. On an RTX 4090 with 4 CTAs the barrier
+// runs 0 + 1 + 2 + 3 times per thread (micro/cta_trips.ncu.json).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_cta_trips(
+	.param .u64 micro_cta_trips_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_cta_trips_param_0];
+	mov.u32 	%r1, %ctaid.x;
+	setp.lt.s32 	%p1, %r1, 1;
+	@%p1 bra 	$L__BB0_3;
+	mul.wide.u32 	%rd2, %r1, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	mov.u32 	%r2, 0;
+$L__BB0_2:
+	add.s32 	%r2, %r2, 1;
+	st.global.u32 	[%rd3], %r2;
+	bar.sync 	0;
+	setp.lt.u32 	%p2, %r2, %r1;
+	@%p2 bra 	$L__BB0_2;
+$L__BB0_3:
+	ret;
+}

@@ -84,13 +84,9 @@ fn two_register_counter_is_an_induction_variable() {
 
 #[test]
 fn attention_trip_reasons_are_pinned() {
-    // Causal bounds depend on the CTA index, behind `bfe`, `div` and `or`
-    // the tracer does not read; the reason is the index.
+    // A causal bound reads the CTA index, one value per CTA.
     let (trips, _) = info_of("gluon/attn_bwd_kernel.sm_89.ptx");
-    assert_eq!(
-        trips,
-        ["unknown: latch condition depends on special register %ctaid.x"]
-    );
+    assert_eq!(trips, ["ok: param_13 / 64 - %ctaid.x"]);
     for f in [
         "gluon/attn_bwd_pre_kernel.sm_89.ptx",
         "gluon/attn_bwd_post_kernel.sm_89.ptx",
