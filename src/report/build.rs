@@ -315,11 +315,14 @@ impl KernelReportBuilder<'_> {
             .components()
             .map(|reg| bind_map.get(&reg.name()).map(|&v| v as u32).unwrap_or(0));
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
-        for (bid, block) in cfg.blocks.iter_enumerated() {
+        for bm in &self.blocks {
+            let bid = bm.block;
             let scope = forest.block_loop[bid.0 as usize];
-            for (si, stmt) in kernel.stmts[block.start..block.end].iter().enumerate() {
-                let Stmt::Instr(instr) = stmt else { continue };
-                let pos = block.start + si;
+            for record in &bm.instructions {
+                let pos = record.provenance;
+                let Stmt::Instr(instr) = &kernel.stmts[pos] else {
+                    continue;
+                };
                 let set = self.sets.of(bid, pos);
                 let guard_exact = self.sets.guards.get(&pos).is_none_or(|g| {
                     let alone = ThreadSet { pred: g.clone() };
@@ -341,8 +344,7 @@ impl KernelReportBuilder<'_> {
                     .copied()
                     .filter(|&id| matches!(module.operand(id), Operand::Memory { .. }))
                     .collect();
-                let classified =
-                    crate::analysis::instruction_counts::classify::classify(module, instr);
+                let classified = &record.classified;
                 // Pair memory contributions by their explicit operand association.
                 // An atomic has one address with read+write; a copy has two addresses.
                 let mut accesses: BTreeMap<(usize, Space, Option<u32>), (bool, bool)> =
