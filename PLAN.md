@@ -277,10 +277,11 @@ its shared writes and instruction counts remain counted
   immediate and an `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`).
-  Over the census's 2,997 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 758 have a trip count: 1,437 are mbarrier waits
-  and 408 read loaded values, 242 grid-stride, 73 `max`/`min`, 1
-  unpack, 20 atomics, 19 divisions, 15 multi-exit.
+  Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
+  inferred arguments), 771 have a trip count: 1,445 are mbarrier waits
+  and 411 read loaded values, 240 depend on `%ctaid` (grid-stride
+  loops, per-CTA row ranges, causal and persistent tile loops), 75
+  `max`/`min`, 1 unpack, 20 atomics, 20 divisions, 17 multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
