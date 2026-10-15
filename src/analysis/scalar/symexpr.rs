@@ -245,12 +245,14 @@ impl SymExpr {
         }
         match e.as_const() {
             Some(v) => SymExpr::Const(v.div_euclid(c) + i64::from(v.rem_euclid(c) != 0)),
+            None if e.divisible_by(c) => SymExpr::floor_div(e, c),
             None => SymExpr::CeilDiv(Box::new(e), c),
         }
     }
 
-    /// `e / c` rounding toward −∞; `c` must be positive. Two identities
-    /// fold: `⌊(x + c − 1)/c⌋ = ⌈x/c⌉` and `⌊k·c·x / c⌋ = k·x`.
+    /// `e / c` rounding toward −∞; `c` must be positive. Three identities
+    /// fold: `⌊(x + c − 1)/c⌋ = ⌈x/c⌉`, `⌊k·c·x / c⌋ = k·x`, and a sum of
+    /// multiples of c divided term by term.
     pub fn floor_div(e: SymExpr, c: i64) -> SymExpr {
         assert!(c > 0, "floor_div by non-positive constant is a matcher bug");
         if c == 1 {
@@ -266,6 +268,10 @@ impl SymExpr {
                     .expect("Sum invariant: ≥ 2 terms");
                 SymExpr::ceil_div(rest, c)
             }
+            SymExpr::Sum(terms) if terms.iter().all(|t| t.divisible_by(c)) => (terms.into_iter())
+                .map(|t| SymExpr::floor_div(t, c))
+                .reduce(SymExpr::add)
+                .expect("Sum invariant: ≥ 2 terms"),
             SymExpr::Prod(factors) if matches!(factors.first(), Some(SymExpr::Const(k)) if k % c == 0) =>
             {
                 let mut rest = factors.into_iter();
@@ -544,6 +550,15 @@ mod tests {
             E::floor_div(E::mul(E::Const(6), k()), 4),
             E::FloorDiv(..)
         ));
+        // A sum of multiples divides term by term (scaled_mm's
+        // `(128·max(⌈K/128⌉, 2) − 128)/128`); a multiple's ceiling is exact.
+        let m = E::max(E::ceil_div(k(), 128), E::Const(2));
+        let scaled = E::sub(E::mul(E::Const(128), m.clone()), E::Const(128));
+        assert_eq!(E::floor_div(scaled, 128), E::sub(m, E::Const(1)));
+        assert_eq!(E::ceil_div(E::mul(E::Const(128), k()), 128), k());
+        let off = E::add(E::mul(E::Const(128), k()), E::Const(64));
+        assert!(matches!(E::floor_div(off.clone(), 128), E::FloorDiv(..)));
+        assert!(matches!(E::ceil_div(off, 128), E::CeilDiv(..)));
     }
 
     #[test]
