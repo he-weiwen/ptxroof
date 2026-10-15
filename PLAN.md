@@ -54,22 +54,18 @@ convention (`tests/instruction_contributions.rs`). A `cp.async` with immediate
 source size zero has zero global sectors per request and over the loop;
 its shared writes and instruction counts remain counted
 (`zero_source_copy_has_no_global_sectors_but_keeps_shared_writes` in that test).
+A `cp.async` reads its source only on the threads whose ignore-src
+predicate is false (PTX ISA §9.7.9.26.3.1), read as a guard is: its
+global row, sectors per warp, loop footprint, global load bytes and
+sector comparison count those threads, and its shared store the
+threads that execute it (`micro/cp_async_ignore_src.ptx`, RTX 4090:
+2176 B over the launch, its four lines' 68 measured L2 sectors). With a
+src-size register it reads at most cp-size: `global load <= 16 B`.
 
 ## Known limitations
 
 ### Wrong output
 
-- **The sector comparison counts every warp that runs a `cp.async`.**
-  A copy reads its source only on the lanes whose ignore-src is false
-  (PTX ISA §9.7.9.26.3.1); its row, its sectors per warp and the global
-  load bytes count those lanes, but the comparison with Nsight Compute
-  counts each warp that runs the copy as a request
-  (`micro/cp_async_ignore_src.ptx` under its RTX 4090 record: lines 36,
-  42 and 47 predict `32–36`, `8–12` and `16–20` L2 sectors where it
-  measures 16, 4 and 8, though its launch totals read `load 2176 B`,
-  the four lines' 68 measured sectors; `micro-cp-async-ignore-src.test`).
-  Triton writes its masked loads this way: 319 such `cp.async` in 16
-  B200 fixtures, 13,489 in the census.
 - **Register effects are incomplete.** The affine tracer records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
@@ -386,7 +382,27 @@ its shared writes and instruction counts remain counted
   parameter not bound (`micro/counter_guard.ptx`'s mask `64·k +
   %tid.x < n` without `--bind`), the CTA index, or a second counter, it
   is an unknown selector. The census counts by
-  cause are in the message of commit `ccf8220`.
+  cause are in the message of commit `ccf8220`. Sectors per warp under
+  such a comparison count every lane it holds at some CTA:
+  `micro/cp_async_ignore_src.ptx` line 55 reads its source on 80
+  threads over the launch, exactly, with sectors `<= 51`, where 40 are
+  measured.
+- **A `cp.async` whose ignore-src is not read counts cp-size on every
+  thread that runs it, as a bound.**
+  - Census (13,489 in 300 kernels, sm_100a, no bindings): 479 read
+    nothing (a constant true ignore-src), 285 all, 9 on a thread-index
+    condition, 58 on a loop counter trip by trip, 901 on one the same
+    for every thread, 213 partly (212 in loops), 11,544 not at all
+    (4,175 in loops).
+  - B200 fixtures (319 in 16 kernels): without their records none is
+    read exactly (74 the same for every thread, 245 not read). With
+    them: 84 read all, 48 on a thread-index condition, 34 trip by trip,
+    40 partly, 113 not at all (49 in loops).
+
+  A src-size register is a bound on which threads read and how much
+  (`micro/cp_async_src_size.ptx`: `global load <= 16 B (predicated)
+  warp: <= 17 sectors`, `load <= 1024 B`, where 16 lanes read 8
+  sectors; `micro-cp-async-src-size.test`).
 
 ### Presentation
 

@@ -475,6 +475,48 @@ fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
     }
 }
 
+/// An ignore-src the same for every thread but not read, a comparison of
+/// an unbound parameter, may leave every warp unread: the copy's sectors
+/// over the launch are a bound, `<= 34 (ideal <= 32)`, within which a
+/// record's 0 falls.
+#[test]
+fn a_uniform_ignore_src_predicts_a_bound_of_sectors() {
+    let setup = "mul.wide.u32 %rd2, %r1, 16;\nadd.s64 %rd3, %rd1, %rd2;\nsetp.lt.u32 %p1, %r9, 5;";
+    let copy = "cp.async.cg.shared.global [%r4], [%rd3], 16, %p1;";
+    let src = ignore_src_kernel("k", setup, copy);
+    let line = src.lines().position(|l| l == copy).unwrap() as u32 + 1;
+    let measured = NcuLine {
+        ptx: copy.to_owned(),
+        sass: [("LDGSTS.E.BYPASS.128".to_owned(), 1)].into(),
+        executions: 64,
+        l2_theoretical_sectors_global: Some(0),
+        l2_theoretical_sectors_global_ideal: Some(0),
+        global_access_sizes: vec![128],
+    };
+    let record = NcuRecord {
+        kernel: "k".to_owned(),
+        grid: [1, 1, 1],
+        block: [64, 1, 1],
+        params: vec!["ptr:1024".to_owned(), "u32:7".to_owned()],
+        lines: [(line, measured)].into(),
+    };
+    let opts = AnalyzeOptions {
+        grid: Some([1, 1, 1]),
+        ncu: Some(record),
+        ..Default::default()
+    };
+    let report = analyze(&src, "uniform", &opts).unwrap();
+    let blocks = report.kernels[0].measured.as_ref().unwrap();
+    let [sectors] = &blocks[0].sectors[..] else {
+        panic!("one line compared");
+    };
+    let predicted = (sectors.predicted.max, sectors.ideal.max);
+    assert_eq!(
+        (predicted, sectors.at_most, sectors.agrees),
+        ((34, 32), true, true)
+    );
+}
+
 /// An ignore-src that is always true reads on no thread: no sectors.
 #[test]
 fn a_source_every_thread_ignores_is_read_by_none() {

@@ -24,3 +24,4 @@ CHECK: shared bytes: load 0 B, store 2752 B
 NCU: totals per launch [static]:
 NCU: global bytes: load 2176 B, store 0 B
 NCU: shared bytes: load 0 B, store 5504 B
+NCU: measured L2 sectors of global accesses: 4 lines agree (0 exact, 3 within a range, 1 within a bound), 0 differ

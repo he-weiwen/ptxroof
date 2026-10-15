@@ -2148,30 +2148,32 @@ impl<'a> KernelReportBuilder<'a> {
                 // Over the launch, a set counted at every CTA explains its
                 // block as an exact count per CTA does, and one a loop
                 // counter selects as its sum over the trips.
-                let per_trip = split.is_none().then(|| self.per_trip(bm.block, &set, None));
-                let (launch, trips, ctas) = match (&split, per_trip.flatten()) {
-                    (_, Some((t, w, rest))) => {
-                        let n = ctas.unwrap_or(0);
-                        let counted = t.checked_mul(n).zip(w.checked_mul(n));
-                        (counted, rest.as_const().filter(|_| alone), 0)
-                    }
-                    (Some((p, _)), None) if set.varies_by_cta() => {
-                        let key = guarded.then_some(i.provenance);
-                        match *weighted
-                            .entry(key)
-                            .or_insert_with(|| self.weighted_launch(&set, p))
-                        {
-                            Some(n) => (Some(n), trips, 0),
-                            None => (None, None, 0),
+                let over = |set: &ThreadSet, launch: Option<(u64, u64)>, weighted| {
+                    let per_trip = split.is_none().then(|| self.per_trip(bm.block, set, None));
+                    match (per_trip.flatten(), weighted) {
+                        (Some((t, w, rest)), _) => {
+                            let n = ctas.unwrap_or(0);
+                            let counted = t.checked_mul(n).zip(w.checked_mul(n));
+                            (counted, rest.as_const().filter(|_| alone), 0)
                         }
+                        (None, Some(Some(n))) => (Some(n), trips, 0),
+                        (None, Some(None)) => (None, None, 0),
+                        (None, None) => (
+                            launch.filter(|_| split.is_none()),
+                            trips.filter(|_| ctas.is_some()),
+                            ctas.unwrap_or(0),
+                        ),
                     }
-                    _ => (
-                        self.launch(bm.block, i.provenance)
-                            .filter(|_| split.is_none()),
-                        trips.filter(|_| ctas.is_some()),
-                        ctas.unwrap_or(0),
-                    ),
                 };
+                let stmt_weighted = match &split {
+                    Some((p, _)) if set.varies_by_cta() => Some(
+                        *(weighted.entry(guarded.then_some(i.provenance)))
+                            .or_insert_with(|| self.weighted_launch(&set, p)),
+                    ),
+                    _ => None,
+                };
+                let (launch, trips, ctas) =
+                    over(&set, self.launch(bm.block, i.provenance), stmt_weighted);
                 let at_most = !never
                     && match launch {
                         Some(_) => {
@@ -2184,14 +2186,29 @@ impl<'a> KernelReportBuilder<'a> {
                                 || (instr.predicate.is_some() && !(holds || guarded && explained))
                         }
                     };
-                // Warps with a lane that runs it: each requests its sectors.
-                let requests = match (never, launch) {
+                // Warps with a lane that reads its global operand: each
+                // requests its sectors.
+                let reading = self.sets.sources.contains_key(&i.provenance).then(|| {
+                    let set = self.sets.of_access(bm.block, i.provenance, 1);
+                    let (_, w, _, explained) = self.executing(bm, &set, chain_at_most, Some(cta));
+                    let weighted = match &split {
+                        Some((p, _)) if set.varies_by_cta() => Some(self.weighted_launch(&set, p)),
+                        _ => None,
+                    };
+                    let launch = self.source_launches.get(&i.provenance).copied();
+                    let w = w.map(|(n, bound)| (n, bound || !explained));
+                    (over(&set, launch, weighted), w)
+                });
+                let ((reads, read_trips, read_ctas), read_warps) =
+                    reading.unwrap_or(((launch, trips, ctas), warps));
+                let requests = match (never, reads) {
                     (true, _) => alone.then_some((0, false)),
-                    (false, Some((_, w))) => {
-                        trips.and_then(|m| Some((u64::try_from(m).ok()?.checked_mul(w)?, false)))
-                    }
-                    (false, None) => trips.zip(warps).and_then(|(m, (w, bound))| {
-                        let n = u64::try_from(m.checked_mul(w)?).ok()?.checked_mul(ctas)?;
+                    (false, Some((_, w))) => read_trips
+                        .and_then(|m| Some((u64::try_from(m).ok()?.checked_mul(w)?, false))),
+                    (false, None) => read_trips.zip(read_warps).and_then(|(m, (w, bound))| {
+                        let n = u64::try_from(m.checked_mul(w)?)
+                            .ok()?
+                            .checked_mul(read_ctas)?;
                         Some((n, bound))
                     }),
                 };
