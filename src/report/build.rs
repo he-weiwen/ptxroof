@@ -1930,7 +1930,7 @@ impl<'a> KernelReportBuilder<'a> {
         lines: &LineIndex,
         cta: &LaunchInfo,
     ) -> Vec<MeasuredBlock> {
-        let ctas: u64 = record.grid.iter().map(|&d| u64::from(d)).product();
+        let ctas = (record.grid.iter()).try_fold(1u64, |n, &d| n.checked_mul(d.into()));
         let mut per_line: HashMap<u32, usize> = HashMap::new();
         for stmt in &self.kernel.stmts {
             if let Stmt::Instr(i) = stmt {
@@ -1979,7 +1979,7 @@ impl<'a> KernelReportBuilder<'a> {
                         trips.and_then(|m| Some((u64::try_from(m).ok()?.checked_mul(w)?, false)))
                     }
                     (false, None) => trips.zip(warps).and_then(|(m, (w, bound))| {
-                        let n = u64::try_from(m.checked_mul(w)?).ok()?.checked_mul(ctas)?;
+                        let n = u64::try_from(m.checked_mul(w)?).ok()?.checked_mul(ctas?)?;
                         Some((n, bound))
                     }),
                 };
@@ -2007,7 +2007,11 @@ impl<'a> KernelReportBuilder<'a> {
                         (false, Some((n, _))) => {
                             trips.and_then(|m| u64::try_from(m).ok()?.checked_mul(n))
                         }
-                        (false, None) => trips.map(|m| (m * threads) as u64 * ctas),
+                        (false, None) => trips.and_then(|m| {
+                            u64::try_from(m.checked_mul(threads)?)
+                                .ok()?
+                                .checked_mul(ctas?)
+                        }),
                     },
                     at_most,
                     sectors,
@@ -2795,5 +2799,45 @@ mod tests {
                 .any(|e| e.what.contains("$L__MISSING") && e.what.contains("branch")),
             "expected an unknown naming the unresolved branch target, got {u:?}"
         );
+    }
+
+    /// A launch of 2^31 − 1 by 65535 by 65535 CTAs, CUDA's largest grid,
+    /// of 32 threads: its stores over the launch pass 2^64, so the
+    /// record's line has no prediction instead of a wrapped one.
+    #[test]
+    fn a_count_over_the_launch_past_u64_has_no_prediction() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+            .visible .entry k(.param .u64 k_param_0)\n{\n\
+            .reg .f32 %f<2>;\n.reg .b64 %rd<2>;\n\
+            ld.param.u64 %rd1, [k_param_0];\n\
+            st.global.f32 [%rd1], %f1;\n\
+            ret;\n}\n";
+        let line = crate::report::measured::NcuLine {
+            ptx: "st.global.f32 [%rd1], %f1;".into(),
+            sass: [("STG.E".to_owned(), 1)].into(),
+            executions: 32,
+            l2_theoretical_sectors_global: Some(1),
+            l2_theoretical_sectors_global_ideal: Some(1),
+            global_access_sizes: vec![32],
+            global_executions: Some(32),
+        };
+        let record = NcuRecord {
+            kernel: "k".into(),
+            grid: [2147483647, 65535, 65535],
+            block: [32, 1, 1],
+            params: vec!["ptr:4".into()],
+            lines: [(9, line)].into(),
+        };
+        let opts = AnalyzeOptions {
+            launch: Some(record.block),
+            grid: Some(record.grid),
+            ncu: Some(record),
+            ..Default::default()
+        };
+        let report = analyze(src, "k.ptx", &opts).expect("analyzes");
+        let blocks = report.kernels[0].measured.as_ref().expect("measured");
+        assert_eq!(blocks[0].with_sass, 1);
+        assert_eq!(blocks[0].agreeing, 0);
+        assert!(blocks[0].differing.is_empty() && blocks[0].sectors.is_empty());
     }
 }

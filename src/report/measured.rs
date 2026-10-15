@@ -97,7 +97,7 @@ impl NcuRecord {
                 continue;
             };
             out.with_sass += 1;
-            if let Some(s) = &p.sectors
+            if let (Some(s), Some(predicted)) = (&p.sectors, p.executions)
                 && let (Some(requested), Some(ideal), Some(ran)) = (
                     measured.l2_theoretical_sectors_global,
                     measured.l2_theoretical_sectors_global_ideal,
@@ -107,9 +107,7 @@ impl NcuRecord {
                 && measured.global_access_sizes.iter().all(|&b| b == s.bits)
             {
                 let within = |n: u64, c: SectorCount| n <= c.max && (s.at_most || c.min <= n);
-                let runs = p
-                    .executions
-                    .is_some_and(|e| ran == e || p.at_most && ran <= e);
+                let runs = ran == predicted || p.at_most && ran <= predicted;
                 let outcome = match (
                     runs,
                     within(requested, s.requested) && within(ideal, s.ideal),
