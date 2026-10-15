@@ -302,10 +302,14 @@ pub struct Access {
     /// Bytes per thread per execution, when the instruction states them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u32>,
-    /// The instruction is guarded.
+    /// A predicate, or for a `cp.async`'s source a src-size register,
+    /// makes this operand's access conditional beyond its block: the
+    /// instruction's guard, or the copy's ignore-src.
     pub predicated: bool,
-    /// The threads the guard selects, when it is a thread-index
-    /// condition; the bytes and footprint count those threads.
+    /// The threads that access this operand, when a thread-index
+    /// condition selects them: the guard's, and on a `cp.async`'s source
+    /// those whose ignore-src is false; the footprint counts those
+    /// threads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub threads: Option<ThreadsInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]

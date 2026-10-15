@@ -320,22 +320,6 @@ impl KernelReportBuilder<'_> {
             for (si, stmt) in kernel.stmts[block.start..block.end].iter().enumerate() {
                 let Stmt::Instr(instr) = stmt else { continue };
                 let pos = block.start + si;
-                let set = self.sets.of(bid, pos);
-                let guard_exact = self.sets.guards.get(&pos).is_none_or(|g| {
-                    let alone = ThreadSet { pred: g.clone() };
-                    alone
-                        .count(shape)
-                        .map_or(g.exact(), |c| c.certain == c.possible)
-                });
-                let conditional = (self.blocks[bid.0 as usize].qualifier == CountQualifier::AtMost
-                    || !set.lane_exact())
-                    && set.count(shape).is_none_or(|c| c.certain != c.possible);
-                let threads = self
-                    .sets
-                    .guards
-                    .contains_key(&pos)
-                    .then(|| self.threads_info(&set))
-                    .flatten();
                 let mem_ops: Vec<_> = module
                     .operand_ids(instr.operands)
                     .iter()
@@ -381,6 +365,19 @@ impl KernelReportBuilder<'_> {
                     if space == Space::Param {
                         continue;
                     }
+                    let set = self.sets.of_access(bid, pos, i);
+                    let guard = self.sets.guard(pos, i);
+                    let guard_exact = guard.as_ref().is_none_or(|g| {
+                        let alone = ThreadSet { pred: g.clone() };
+                        alone
+                            .count(shape)
+                            .map_or(g.exact(), |c| c.certain == c.possible)
+                    });
+                    let conditional = (self.blocks[bid.0 as usize].qualifier
+                        == CountQualifier::AtMost
+                        || !set.lane_exact())
+                        && set.count(shape).is_none_or(|c| c.certain != c.possible);
+                    let threads = guard.is_some().then(|| self.threads_info(&set)).flatten();
                     let Operand::Memory { base, offset, .. } = module.operand(mem_ops[i]) else {
                         continue;
                     };
@@ -511,7 +508,7 @@ impl KernelReportBuilder<'_> {
                         space: space.key().to_owned(),
                         direction: direction.to_owned(),
                         bytes,
-                        predicated: instr.predicate.is_some(),
+                        predicated: guard.is_some(),
                         threads: threads.clone(),
                         address,
                         unknown,

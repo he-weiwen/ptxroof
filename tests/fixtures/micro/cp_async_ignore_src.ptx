@@ -1,0 +1,58 @@
+//
+// HAND-WRITTEN: cp.async with an ignore-src predicate, Triton's masked
+// load (PTX ISA §9.7.9.26.3.1: "If the source data is ignored then zeros
+// will be copied to destination dst"). Each copy writes cp-size bytes on
+// every lane it runs on and reads them only where ignore-src is false:
+// lanes 0..15 of the 16-byte copy, the 4-byte copy under a guard of
+// lanes 0..47, and the 8-byte copy; the cache-hinted 16-byte copy reads
+// where 64·%ctaid.x + %tid.x < param_1.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_cp_async_ignore_src(
+	.param .u64 micro_cp_async_ignore_src_param_0,
+	.param .u32 micro_cp_async_ignore_src_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<7>;
+	.reg .b32 	%r<16>;
+	.reg .b64 	%rd<12>;
+	.shared .align 16 .b8 buf[4096];
+
+	ld.param.u64 	%rd1, [micro_cp_async_ignore_src_param_0];
+	ld.param.u32 	%r1, [micro_cp_async_ignore_src_param_1];
+	mov.u32 	%r2, %tid.x;
+	mov.u32 	%r3, %ctaid.x;
+	mov.u32 	%r4, buf;
+	setp.lt.u32 	%p1, %r2, 16;
+	not.pred 	%p2, %p1;
+	mul.wide.u32 	%rd2, %r2, 16;
+	add.s64 	%rd3, %rd1, %rd2;
+	shl.b32 	%r5, %r2, 4;
+	add.s32 	%r6, %r4, %r5;
+	cp.async.cg.shared.global [ %r6 + 0 ], [ %rd3 + 0 ], 0x10, %p2;
+	setp.lt.u32 	%p3, %r2, 48;
+	mul.wide.u32 	%rd4, %r2, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	shl.b32 	%r7, %r2, 2;
+	add.s32 	%r8, %r4, %r7;
+	@%p3 cp.async.ca.shared.global [ %r8 + 1024 ], [ %rd5 + 1024 ], 0x4, %p2;
+	mul.wide.u32 	%rd6, %r2, 8;
+	add.s64 	%rd7, %rd1, %rd6;
+	shl.b32 	%r9, %r2, 3;
+	add.s32 	%r10, %r4, %r9;
+	cp.async.ca.shared.global [ %r10 + 2048 ], [ %rd7 + 2048 ], 0x8, %p2;
+	shl.b32 	%r11, %r3, 6;
+	add.s32 	%r12, %r11, %r2;
+	setp.lt.u32 	%p4, %r12, %r1;
+	not.pred 	%p5, %p4;
+	mul.wide.u32 	%rd8, %r12, 16;
+	add.s64 	%rd9, %rd1, %rd8;
+	createpolicy.fractional.L2::evict_first.b64 	%rd10, 1.0;
+	cp.async.cg.shared.global.L2::cache_hint [ %r6 + 3072 ], [ %rd9 + 4096 ], 0x10, %p5, %rd10;
+	cp.async.wait_all;
+	ret;
+}

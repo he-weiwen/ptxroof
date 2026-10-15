@@ -5,6 +5,7 @@ use ptxroof::analysis::instruction_counts::classify::{
 };
 use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
+use ptxroof::analysis::memory_footprint::CountRange;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
 use ptxroof::report::schema::{ByteRange, ContributionDetails, InstructionVariant};
@@ -284,4 +285,107 @@ L:
             );
         }
     }
+}
+
+/// A `.reqntid 64` kernel that copies 16 B per thread with `copy`, after
+/// `setup`; `%r1` holds the thread index and `%r4` the shared address.
+fn ignore_src_kernel(name: &str, setup: &str, copy: &str) -> String {
+    format!(
+        ".version 8.7\n.target sm_89\n.address_size 64\n\
+         .visible .entry {name}(.param .u64 k_param_0, .param .u32 k_param_1)\n\
+         .reqntid 64, 1, 1\n{{\n\
+         .reg .pred %p<4>;\n.reg .b32 %r<10>;\n.reg .b64 %rd<8>;\n\
+         .shared .align 16 .b8 buf[1024];\n\
+         ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r9, [k_param_1];\n\
+         mov.u32 %r1, %tid.x;\nmov.u32 %r2, buf;\nshl.b32 %r3, %r1, 4;\n\
+         add.s32 %r4, %r2, %r3;\n{setup}\n{copy}\ncp.async.wait_all;\nret;\n}}\n"
+    )
+}
+
+/// A `cp.async` reads its source only where its ignore-src is false
+/// (PTX ISA §9.7.9.26.3.1). Over 4 trips, a copy 16 of 64 lanes read and
+/// one whose ignore-src compares a parameter, the same for every thread,
+/// request at most 4 × (16 + 64) × 16 B; the shared row is not
+/// predicated, the source rows are.
+#[test]
+fn a_loop_footprint_counts_the_lanes_that_may_read_a_copy_s_source() {
+    let setup = "setp.lt.u32 %p1, %r1, 16;\nnot.pred %p2, %p1;\nsetp.lt.u32 %p3, %r9, 7;\n\
+                 mov.u32 %r5, 0;";
+    let copy = "$L__LOOP:\nshl.b32 %r6, %r5, 6;\nadd.s32 %r7, %r6, %r1;\n\
+                mul.wide.u32 %rd2, %r7, 16;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                cp.async.cg.shared.global [%r4], [%rd3], 16, %p2;\n\
+                cp.async.cg.shared.global [%r4], [%rd3+65536], 16, %p3;\n\
+                add.s32 %r5, %r5, 1;\nsetp.lt.u32 %p1, %r5, 4;\n@%p1 bra $L__LOOP;";
+    let src = ignore_src_kernel("loop_ignore_src", setup, copy);
+    let report = analyze(&src, "loop", &AnalyzeOptions::default()).unwrap();
+    let node = &report.kernels[0].loops[0];
+    let bytes = node.global_bytes_per_cta.as_ref().unwrap();
+    assert_eq!(bytes.requested, 5120);
+    assert_eq!(
+        bytes.unique,
+        Some(ByteRange {
+            min: 5120,
+            max: 5120
+        })
+    );
+    let sectors = bytes.sector_bytes.as_ref().unwrap();
+    assert_eq!(
+        (sectors.min, sectors.max, bytes.at_most),
+        (5120, 5504, true)
+    );
+    let flags: Vec<(&str, bool)> = (node.accesses.iter())
+        .map(|a| (a.space.as_str(), a.predicated))
+        .collect();
+    let expected = [("shared", false), ("global", true)];
+    assert_eq!(flags, [expected, expected].concat());
+}
+
+/// Lanes 8 B apart read 16 B where ignore-src is false. The even lanes,
+/// one residue modulo 16, touch 8–9 sectors per warp; where a loaded
+/// value decides, the lanes that may read differ modulo 16 and the
+/// footprint is unknown, not a bound.
+#[test]
+fn a_source_read_at_mixed_residues_by_unknown_lanes_has_no_footprint() {
+    let copy = "cp.async.cg.shared.global [%r4], [%rd3], 16, %p1;";
+    let at = "mul.wide.u32 %rd2, %r1, 8;\nadd.s64 %rd3, %rd1, %rd2;\n";
+    let source = |name: &str, setup: &str| {
+        let src = ignore_src_kernel(name, &format!("{at}{setup}"), copy);
+        let report = analyze(&src, name, &AnalyzeOptions::default()).unwrap();
+        (report.kernels[0].accesses.iter())
+            .find(|a| a.space == "global" && a.opcode.starts_with("cp.async"))
+            .cloned()
+            .unwrap()
+    };
+    let odd = source("odd", "and.b32 %r5, %r1, 1;\nsetp.eq.u32 %p1, %r5, 1;");
+    let range = |min, max| Some(CountRange { min, max });
+    assert_eq!(odd.sectors_per_request, range(8, 9));
+    assert_eq!(odd.threads.and_then(|t| t.count), Some(32));
+    let loaded = source(
+        "loaded",
+        "ld.global.u32 %r5, [%rd3];\nsetp.eq.u32 %p1, %r5, 1;",
+    );
+    assert!(loaded.predicated && loaded.sectors_per_request.is_none());
+    assert_eq!(
+        loaded.footprint_unknown.as_deref(),
+        Some("lane addresses differ modulo the 16 B access size")
+    );
+}
+
+/// An ignore-src that is always true reads on no thread: no sectors.
+#[test]
+fn a_source_every_thread_ignores_is_read_by_none() {
+    let at = "mul.wide.u32 %rd2, %r1, 16;\nadd.s64 %rd3, %rd1, %rd2;\nmov.pred %p1, -1;";
+    let copy = "cp.async.cg.shared.global [%r4], [%rd3], 16, %p1;";
+    let src = ignore_src_kernel("never", at, copy);
+    let report = analyze(&src, "never", &AnalyzeOptions::default()).unwrap();
+    let global = (report.kernels[0].accesses.iter())
+        .find(|a| a.space == "global")
+        .unwrap();
+    let none = Some(CountRange { min: 0, max: 0 });
+    assert_eq!(global.sectors_per_request, none);
+    let threads = global.threads.as_ref().unwrap();
+    assert_eq!(
+        (threads.condition.as_str(), threads.count),
+        ("no thread", Some(0))
+    );
 }

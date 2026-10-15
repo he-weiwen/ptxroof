@@ -60,12 +60,18 @@ its shared writes and instruction counts remain counted
 ### Wrong output
 
 - **A `cp.async` that may read fewer bytes than cp-size counts
-  cp-size.** With a register src-size or an ignore-src predicate (PTX
-  ISA §9.7.9.26.3.1) a lane may read fewer bytes and zero-fill the
-  rest, but the access row's sectors per warp and the global bytes count
-  cp-size on every lane (`micro/cp_async_src_size.ptx`: 16 of 64 lanes
-  read, the report says `16–17 sectors` per warp and `load 1024 B` per
-  CTA where Nsight Compute measures 8 sectors over the launch,
+  cp-size in its totals.** With an ignore-src predicate or a register
+  src-size (PTX ISA §9.7.9.26.3.1) a lane may read none or fewer bytes
+  and zero-fill the rest. The global row and its sectors per warp count
+  the lanes whose ignore-src is false, but the global load bytes count
+  cp-size on every executing thread, and the sector comparison every
+  warp that runs the copy (`micro/cp_async_ignore_src.ptx`: `load 2752
+  B` per CTA and 5504 B over the launch, where an RTX 4090 measures 68
+  L2 sectors, 2176 B; its lines 36, 42 and 47 predict `32–36`, `8–12`
+  and `16–20` sectors where it measures 16, 4 and 8). A src-size
+  register's read is annotated as cp-size, where a lane reads at most
+  that (`micro/cp_async_src_size.ptx`: `global load 16 B (predicated)`,
+  and `load 1024 B` per CTA where 16 of 64 lanes read,
   `tests/lit/micro-cp-async-src-size.test`). Triton writes its masked
   loads this way: 319 such `cp.async` in 16 B200 fixtures, 13,489 in the
   census.
@@ -400,6 +406,10 @@ its shared writes and instruction counts remain counted
   special register %ctaid.x" (34 in `tma_best`, 24 in
   `bmm_kernel_persistent`), not that a join of two values stopped the
   trace.
+- **A thread-index condition that holds on every thread still
+  prints.** Under its record b200 scaled_mm's copies outside the K loop
+  read their sources `on 128 threads in 4 warps (16 * (%tid.x mod 8) <
+  7936)`, every thread of the block (`b200-every-thread-condition.test`).
 - Per-thread totals of a warp-specialized kernel are `<=` the sum of
   its partitions, since a thread runs one of them: the `threads` column
   of the block table says which threads run each block (`128
