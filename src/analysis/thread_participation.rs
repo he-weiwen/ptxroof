@@ -17,13 +17,14 @@
 
 use crate::analysis::control_flow::dominators;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::analysis::instruction_counts::classify::cp_async_size_operand;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ptx::ir::{FundamentalType, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
@@ -1099,6 +1100,10 @@ impl PredicateReader<'_> {
 pub struct ThreadSets {
     pub blocks: Vec<ThreadSet>,
     pub guards: HashMap<usize, Pred>,
+    /// Per `cp.async` whose src-size or ignore-src is a register, the
+    /// threads that read its source, memory operand 1: those whose
+    /// ignore-src is false; with a src-size register, unknown.
+    pub sources: HashMap<usize, Pred>,
     /// The edges no thread follows: the other way out of a branch
     /// every thread takes the same way.
     pub dead_edges: Vec<(BlockId, BlockId)>,
@@ -1112,6 +1117,28 @@ impl ThreadSets {
         match self.guards.get(&stmt) {
             Some(guard) => ThreadSet {
                 pred: block.pred.clone().and(guard.clone()),
+            },
+            None => block.clone(),
+        }
+    }
+
+    /// The guard on memory operand `operand` of statement `stmt`: its
+    /// own, and on a `cp.async`'s source that its ignore-src is false.
+    pub fn guard(&self, stmt: usize, operand: usize) -> Option<Pred> {
+        let own = self.guards.get(&stmt).cloned();
+        match (operand, self.sources.get(&stmt)) {
+            (1, Some(read)) => Some(own.unwrap_or(Pred::True).and(read.clone())),
+            _ => own,
+        }
+    }
+
+    /// The threads that access memory operand `operand` of statement
+    /// `stmt` of block `b`.
+    pub fn of_access(&self, b: BlockId, stmt: usize, operand: usize) -> ThreadSet {
+        let block = &self.blocks[b.0 as usize];
+        match self.guard(stmt, operand) {
+            Some(guard) => ThreadSet {
+                pred: block.pred.clone().and(guard),
             },
             None => block.clone(),
         }
@@ -1177,6 +1204,25 @@ pub(crate) fn thread_sets(
             }
         }
     }
+    let mut sources = HashMap::new();
+    for (pos, stmt) in kernel.stmts.iter().enumerate() {
+        let Stmt::Instr(instr) = stmt else { continue };
+        let Some(op) = cp_async_size_operand(module, instr) else {
+            continue;
+        };
+        let Operand::Register(r) = module.operand(op) else {
+            continue;
+        };
+        let b = tracer.block_of(pos);
+        let read = match kernel.register_type(module, *r) {
+            Some(FundamentalType::Pred) => !(reader.of(*r, pos, 0))
+                .in_loops(&|l| forest.get(l).blocks.binary_search(&b).is_ok()),
+            _ => Pred::Unknown,
+        };
+        if read != Pred::True {
+            sources.insert(pos, read);
+        }
+    }
     let doms = dominators(&cfg.without(&dead_edges));
     let mut blocks = blocks;
     for (b, set) in blocks.iter_mut().enumerate() {
@@ -1187,6 +1233,7 @@ pub(crate) fn thread_sets(
     ThreadSets {
         blocks,
         guards,
+        sources,
         dead_edges,
     }
 }
@@ -1849,5 +1896,107 @@ mod tests {
         assert!(!set(Pred::Uniform.or(lanes())).lane_exact());
         assert!(!set(!(Pred::Uniform.and(lanes()))).lane_exact());
         assert!(set(Pred::Elect(Box::new(Pred::Uniform.and(lanes())))).lane_exact());
+    }
+
+    /// Per `cp.async` of `body`, in order: the threads that read its
+    /// source as stored, and its guards on memory operands 0 and 1.
+    /// `%r1` holds the thread index.
+    fn copies(body: &str) -> Vec<(Option<Pred>, Option<Pred>, Option<Pred>)> {
+        use crate::analysis::control_flow::loop_forest;
+        use crate::ptx::cfg::build_cfg;
+        use crate::ptx::parse::parser::parse;
+        let src = format!(
+            ".version 8.7\n.target sm_80\n.address_size 64\n\
+             .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 64, 1, 1\n{{\n\
+             .reg .pred %p<8>;\n.reg .b32 %r<8>;\n.reg .b64 %rd<4>;\n\
+             ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n{body}\nret;\n}}\n"
+        );
+        let m = parse(&src).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let forest = loop_forest(&cfg);
+        let t = AffineValueTracer::new(&m, k, &cfg, &forest);
+        let sets = thread_sets(&m, k, &cfg, &forest, &t, t.uniformity());
+        let copy =
+            |s: usize| matches!(&k.stmts[s], Stmt::Instr(i) if m.opcode(i).starts_with("cp.async"));
+        (0..k.stmts.len())
+            .filter(|&s| copy(s))
+            .map(|s| {
+                (
+                    sets.sources.get(&s).cloned(),
+                    sets.guard(s, 0),
+                    sets.guard(s, 1),
+                )
+            })
+            .collect()
+    }
+
+    /// A `cp.async` reads its source where its ignore-src is false (PTX
+    /// ISA §9.7.9.26.3.1), read like a guard: the fourth operand, or
+    /// under `.L2::cache_hint` the one before the policy. A src-size
+    /// register is unknown; a constant false ignore-src stores nothing,
+    /// a true one no thread. A guarded copy's source is under both.
+    #[test]
+    fn a_cp_async_reads_its_source_where_ignore_src_is_false() {
+        let text = |p: &Option<Pred>| p.clone().and_then(|pred| ThreadSet { pred }.render());
+        let copy = |def: &str, form: &str, tail: &str| {
+            format!("{def}\ncp.async.cg.shared.global{form} [%r2], [%rd1], 16{tail};")
+        };
+        let ignore = "setp.lt.u32 %p1, %r1, 16;\nnot.pred %p2, %p1;";
+        let below = Some("%tid.x < 16".to_owned());
+        for body in [
+            copy(ignore, "", ", %p2"),
+            copy(ignore, ".L2::cache_hint", ", %p2, %rd2"),
+        ] {
+            let [(read, own, source)] = &copies(&body)[..] else {
+                panic!("one copy");
+            };
+            assert_eq!(
+                (text(read), own, text(source)),
+                (below.clone(), &None, below.clone())
+            );
+        }
+        for body in [
+            copy("", "", ""),
+            copy("", "", ", 8"),
+            copy("", ".L2::cache_hint", ", %rd2"),
+            copy("mov.pred %p2, 0;", "", ", %p2"),
+        ] {
+            assert_eq!(copies(&body), [(None, None, None)], "{body}");
+        }
+        let unknown = Some(Pred::Unknown);
+        let size = copies(&copy("", "", ", %r3"));
+        assert_eq!(size, [(unknown.clone(), None, unknown)]);
+        let never = Some(Pred::False);
+        let all = copies(&copy("mov.pred %p2, -1;", "", ", %p2"));
+        assert_eq!(all, [(never.clone(), None, never)]);
+        let guarded = format!(
+            "{ignore}\nsetp.lt.u32 %p3, %r1, 48;\n\
+             @%p3 cp.async.ca.shared.global [%r2], [%rd1], 4, %p2;"
+        );
+        let [(_, own, source)] = &copies(&guarded)[..] else {
+            panic!("one copy");
+        };
+        assert_eq!(text(own).as_deref(), Some("%tid.x < 48"));
+        assert_eq!(text(source).as_deref(), Some("%tid.x < 48 and %tid.x < 16"));
+    }
+
+    /// An ignore-src comparing a loop counter reads per trip at a copy in
+    /// the loop, as a guard does, and as the same for every thread after
+    /// it.
+    #[test]
+    fn an_ignore_src_on_a_loop_counter_is_read_in_its_loop() {
+        let body = "mov.u32 %r5, 0;\n$L__L:\nadd.s32 %r5, %r5, 1;\nsetp.lt.u32 %p6, %r5, 3;\n\
+                    cp.async.cg.shared.global [%r2], [%rd1], 16, %p6;\n\
+                    setp.lt.u32 %p7, %r5, 4;\n@%p7 bra $L__L;\n\
+                    cp.async.cg.shared.global [%r2], [%rd1], 16, %p6;";
+        let [(Some(inside), ..), (after, ..)] = &copies(body)[..] else {
+            panic!("two copies, the first read");
+        };
+        assert!(
+            matches!(inside, Pred::Cmp(c) if c.trip.is_some()),
+            "{inside:?}"
+        );
+        assert_eq!(after, &Some(Pred::Uniform));
     }
 }

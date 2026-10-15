@@ -565,11 +565,14 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
 /// A `cp.async`'s src-size or ignore-src operand, the one after cp-size;
 /// with `.L2::cache_hint` the last operand is the cache policy (PTX ISA
 /// §9.7.9.26.3.1).
-fn cp_async_size_operand(module: &Module, instr: &Instr) -> Option<OperandId> {
-    let hint =
-        (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "L2::cache_hint");
+pub fn cp_async_size_operand(module: &Module, instr: &Instr) -> Option<OperandId> {
+    let mods = module.modifiers(instr);
+    let has = |name: &str| mods.iter().any(|&m| module.interner.resolve(m) == name);
+    if instr.mnemonic != Opcode::Cp || !has("async") || has("bulk") || has("reduce") {
+        return None;
+    }
     let ops = module.operand_ids(instr.operands);
-    (ops.len() == 4 + usize::from(hint)).then(|| ops[3])
+    (ops.len() == 4 + usize::from(has("L2::cache_hint"))).then(|| ops[3])
 }
 
 /// FP precision + packed-lane multiplier from type modifiers.
