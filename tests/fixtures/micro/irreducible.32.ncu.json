@@ -11,7 +11,7 @@
  "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",
  "lines": {
   "22": {"ptx": "ld.param.u64 %rd1, [micro_irreducible_param_0];", "sass": {"IMAD.MOV.U32": 1}, "executions": 32},
-  "25": {"ptx": "ld.global.f32 %f3, [%rd2];", "sass": {"MOV": 1, "IMAD.MOV.U32": 1, "ULDC.64": 1, "LDG.E": 1}, "executions": 128},
+  "25": {"ptx": "ld.global.f32 %f3, [%rd2];", "sass": {"MOV": 1, "IMAD.MOV.U32": 1, "ULDC.64": 1, "LDG.E": 1}, "executions": 128, "l2_theoretical_sectors_global": 1, "l2_theoretical_sectors_global_ideal": 1, "global_access_sizes": [32]},
   "27": {"ptx": "setp.gt.s32 %p1, %r1, 16;", "sass": {"IMAD.MOV.U32": 1, "ISETP.GT.AND": 1}, "executions": 64},
   "28": {"ptx": "@%p1 bra $L__BB0_B;", "sass": {"MOV": 1, "BRA": 1}, "executions": 32},
   "31": {"ptx": "fma.rn.f32 %f3, %f3, %f3, 0f3F800000;", "sass": {"FFMA": 1}, "executions": 320},
@@ -19,7 +19,7 @@
   "36": {"ptx": "add.s32 %r3, %r3, 2;", "sass": {"IADD3": 1}, "executions": 320},
   "37": {"ptx": "setp.lt.s32 %p2, %r3, %r1;", "sass": {"ISETP.GT.AND": 1, "ISETP.GE.AND": 1}, "executions": 352},
   "38": {"ptx": "@%p2 bra $L__BB0_A;", "sass": {"BRA": 2, "MOV": 1}, "executions": 320},
-  "40": {"ptx": "st.global.f32 [%rd2], %f3;", "sass": {"STG.E": 1}, "executions": 32},
+  "40": {"ptx": "st.global.f32 [%rd2], %f3;", "sass": {"STG.E": 1}, "executions": 32, "l2_theoretical_sectors_global": 1, "l2_theoretical_sectors_global_ideal": 1, "global_access_sizes": [32]},
   "41": {"ptx": "ret;", "sass": {"EXIT": 1, "BRA": 1, "NOP": 11}, "executions": 32}
  }
 }

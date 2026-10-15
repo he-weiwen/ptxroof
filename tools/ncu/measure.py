@@ -7,7 +7,10 @@ launch.c's u32:/i32:/f32:/ptr: forms. Every instruction
 gets a .loc naming its own line of the PTX file, which must assemble to
 the original's SASS. The record is rewritten with the GPU and tools,
 and per PTX line that has SASS: the line's text, the SASS opcodes ptxas
-attributed to it, and their predicated-on thread instructions executed.
+attributed to it, and their predicated-on thread instructions executed;
+on a line with a global memory instruction also the L2 sectors they
+request, the ideal number, and each such instruction's access size in
+bits.
 Lines of a loop that branches back on an mbarrier test_wait or try_wait
 result are marked timing_dependent. With --check the record is measured
 again on the GPU it names, if this is that GPU, and must not change but
@@ -75,16 +78,27 @@ def sass(cubin):
 
 
 def per_line(table):
+    """Nsight Compute's memory_l2_theoretical_sectors_global is the "theoretical number of sectors
+    requested in L2 from global memory instructions", its _ideal "assuming each not predicated-off
+    thread performed the operation" (Profiling Guide, Source Counters)."""
     rows = list(csv.reader(table.splitlines()))
     head = next(i for i, r in enumerate(rows) if r[:1] == ["Line No"])
-    executed = rows[head].index("Predicated-On Thread Instructions Executed")
+    column = {c: i for i, c in enumerate(rows[head])}
+    executed = column["Predicated-On Thread Instructions Executed"]
+    in_global = lambda r: "Address Space" in column and "Global" in re.findall(r"\w+", r[column["Address Space"]])
     lines = {}
     for r in rows[head + 1 :]:
         if r[0]:
             line = lines[r[0]] = {"ptx": " ".join(r[1].split()), "sass": {}, "executions": int(r[executed])}
+            if in_global(r):
+                line["l2_theoretical_sectors_global"] = int(r[column["L2 Theoretical Sectors Global"]])
+                line["l2_theoretical_sectors_global_ideal"] = int(r[column["L2 Theoretical Sectors Global Ideal"]])
+                line["global_access_sizes"] = []
         elif r[2].startswith("0x"):
             op = re.sub(r"^@!?U?P\w+\s+", "", r[3].strip()).split()[0]
             line["sass"][op] = line["sass"].get(op, 0) + 1
+            if in_global(r):
+                line["global_access_sizes"].append(int(r[column["Access Size"]]))
     return lines
 
 

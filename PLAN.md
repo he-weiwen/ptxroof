@@ -528,9 +528,12 @@ One line each, with the trigger that would start it.
 - Nsight Compute import beside the static columns: started 2026-10-06.
   `tools/ncu/measure.py` records one launch per PTX line, the SASS
   ptxas attributes to the line and their predicated-on thread
-  instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
+  instructions executed, and on a line with a global memory
+  instruction Nsight Compute's L2 theoretical sectors, their ideal and
+  each such SASS's access size (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
   every Gluon kernel's first launch, `tests/fixtures/gluon/*.ncu.json`).
-  The B200 records (`tests/fixtures/b200/*.ncu.json`) come from
+  The B200 records (`tests/fixtures/b200/*.ncu.json`), which have no
+  sectors, come from
   sol-study's reports instead: `import_reports.py` attributes their
   per-SASS counts to PTX lines through the same `.loc` recompile under
   Triton's ptxas command, and takes each launch's parameters from a
