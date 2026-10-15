@@ -1991,6 +1991,11 @@ impl<'a> KernelReportBuilder<'a> {
             let Some((mult, chain_at_most)) = self.multiplier(bm.block, None) else {
                 continue;
             };
+            let summed = self.per_cta_trips(bm.block);
+            let (mult, ctas) = match summed {
+                true => (self.summed_trips(bm.block), 1),
+                false => (Some(mult), ctas),
+            };
             let mut predictions = Vec::new();
             for i in &bm.instructions {
                 let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
@@ -2004,10 +2009,11 @@ impl<'a> KernelReportBuilder<'a> {
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
                 let never = !self.counted(bm.block, i.provenance);
-                let trips = mult.as_const().filter(|_| alone);
+                let trips = (mult.as_ref().and_then(SymExpr::as_const))
+                    .filter(|_| alone && !(summed && set.varies_by_cta()));
                 // Over the launch, a set counted at every CTA explains its
                 // block as an exact count per CTA does.
-                let launch = self.launch(bm.block, i.provenance);
+                let launch = self.launch(bm.block, i.provenance).filter(|_| !summed);
                 let at_most = !never
                     && match launch {
                         Some(_) => {

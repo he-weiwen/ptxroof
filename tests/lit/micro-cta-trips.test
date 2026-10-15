@@ -18,3 +18,5 @@ SUM-LABEL: kernel micro_cta_trips_unguarded
 SUM: trips = max(%ctaid.x, 1)
 SUM: totals per launch [static]:
 SUM: bar.sync{{ +}}224{{ +}}7{{$}}
+SUM: $L__BB1_1  confirmed
+SUM: measured L2 sectors of global accesses: 1 lines agree (1 exact, 0 within a range, 0 within a bound), 0 differ
