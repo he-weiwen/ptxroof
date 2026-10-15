@@ -2,7 +2,9 @@
 # and its <block 4> only on those whose counter passes line 957's
 # `setp.ge.u64 %p3, %rd55, %rd2`: 510 trips x 256 threads x 96 CTAs =
 # 12,533,760, as Nsight Compute measures. The guard compares the loop
-# counter, so the block's count stays a bound over all 512 trips.
+# counter, read per trip as `k < 511`, but the block's count stays a
+# bound over all 512 trips.
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx --ncu %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json | FileCheck "%s"
+CHECK: <block 4>{{ +}}gluon_fp8.py:201{{ +}}16  <= 256 in <= 8 warps (k[gluon_fp8.py:173] < 511)
 CHECK: <block 4>        consistent    16 instructions, 10 with SASS, 8 agreeing
 CHECK: line 973: bar.sync 0;  predicted <= 12582912, measured 12533760  (BAR.SYNC.DEFER_BLOCKING x1) [tested]

@@ -364,10 +364,11 @@ its shared writes and instruction counts remain counted
   Triton builds from `pid·BLOCK + arange` leave what they guard a bound
   (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
   is an unknown selector too (`micro/guards.ptx`: the store total stays
-  a bound). A comparison with a loop counter is not read per trip
-  (`fp8_gemm_kernel.lm_head_dx`'s `<block 4>` runs on 510 of its loop's
-  512 trips, 12,533,760 times as its record measures, and reads
-  `<= 12582912`, `gluon-counter-guard.test`). The census counts by
+  a bound). A comparison with the counter of a loop holding the block,
+  its trip count a constant, is read per trip but counted over all of
+  its trips as a bound (`fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `(k <
+  511)`, runs on 510 of its loop's 512 trips, 12,533,760 times as its
+  record measures, and reads `<= 12582912`, `gluon-counter-guard.test`). The census counts by
   cause are in the message of commit `ccf8220`.
 
 ### Presentation

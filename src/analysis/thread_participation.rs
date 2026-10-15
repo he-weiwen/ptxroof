@@ -7,15 +7,16 @@
 //! counted by enumeration over the block shape. With the grid bound, a
 //! comparison may hold the CTA index too: each thread is then in at
 //! every CTA, at none, or at some, and the counts are bounds where CTAs
-//! differ. A predicate that involves anything else (a parameter, a
-//! loop counter, a loaded value) is an unknown selector, and the
-//! block's counts stay bounds; one the same for every thread empties or
-//! keeps whole warps. So is a branch off the chain that decides whether
+//! differ. A comparison with the counter of a loop holding the block,
+//! its current trip's, decides a thread only where every trip agrees.
+//! A predicate that involves anything else (a parameter, a loaded
+//! value) is an unknown selector, and the block's counts stay bounds;
+//! one the same for every thread empties or keeps whole warps. So is a branch off the chain that decides whether
 //! the block runs: a path from a chain branch that reaches the block and
 //! also leaves its scope around it.
 
 use crate::analysis::control_flow::dominators;
-use crate::analysis::control_flow::loops::LoopForest;
+use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
 use crate::analysis::scalar::symexpr::SymExpr;
@@ -31,12 +32,15 @@ use std::collections::{BTreeMap, HashMap};
 /// One condition `form cmp 0` over the thread index and, with the grid
 /// bound, the CTA index: `cta` is the least and greatest value of the
 /// form's `%ctaid` terms over the launch's CTAs, `None` when it has
-/// none.
+/// none. `trip` names the loop whose counter, its current trip's, the
+/// form holds instead, and the least and greatest value of its term
+/// over the loop's trips.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constraint {
     pub form: Affine,
     pub cmp: String,
     pub cta: Option<(i128, i128)>,
+    pub trip: Option<(LoopId, (i128, i128))>,
 }
 
 /// The condition under which a thread executes an instruction: the
@@ -101,6 +105,7 @@ impl std::ops::Not for Pred {
                 form: c.form,
                 cmp: negate(&c.cmp).to_owned(),
                 cta: c.cta,
+                trip: c.trip,
             }),
             Pred::Not(p) => *p,
             p => Pred::Not(Box::new(p)),
@@ -141,6 +146,7 @@ impl Pred {
             Pred::Cmp(c) => {
                 let x = at(&c.form, tid);
                 let (lo, hi) = c.cta.map_or((x, x), |(a, b)| (x + a, x + b));
+                let (lo, hi) = c.trip.map_or((lo, hi), |(_, (a, b))| (lo + a, hi + b));
                 decide(&c.cmp, lo, hi)
             }
             Pred::Elect(active) => match leader {
@@ -189,6 +195,7 @@ impl Pred {
                     },
                     cmp: k.cmp.clone(),
                     cta: None,
+                    trip: None,
                 })
             }
             Pred::Elect(p) => Pred::Elect(at(p)),
@@ -225,7 +232,7 @@ impl Pred {
     pub fn exact(&self) -> bool {
         match self {
             Pred::True | Pred::False => true,
-            Pred::Cmp(c) => c.cta.is_none(),
+            Pred::Cmp(c) => c.cta.is_none() && c.trip.is_none(),
             Pred::Unknown | Pred::Uniform => false,
             Pred::Elect(p) | Pred::Not(p) => p.exact(),
             Pred::And(a, b) | Pred::Or(a, b) => a.exact() && b.exact(),
@@ -233,18 +240,40 @@ impl Pred {
     }
 
     /// Which lanes of a warp are in the set is known whenever any is:
-    /// a uniform unknown, or a comparison of the CTA index alone, only
-    /// ever empties the set, which a conjunction or an election keeps
-    /// and a disjunction or a negation does not.
+    /// a uniform unknown, or a comparison of the CTA index or a loop
+    /// counter alone, only ever empties the set, which a conjunction or
+    /// an election keeps and a disjunction or a negation does not.
     pub fn lane_exact(&self) -> bool {
         match self {
             Pred::True | Pred::False | Pred::Uniform => true,
-            Pred::Cmp(c) => c.cta.is_none() || !c.form.terms.keys().any(depends_on_lane),
+            Pred::Cmp(c) => {
+                (c.cta.is_none() && c.trip.is_none()) || !c.form.terms.keys().any(depends_on_lane)
+            }
             Pred::Unknown => false,
             Pred::Elect(p) => p.lane_exact(),
             Pred::Not(p) => p.exact(),
             Pred::And(a, b) => a.lane_exact() && b.lane_exact(),
             Pred::Or(a, b) => a.exact() && b.exact(),
+        }
+    }
+
+    /// The predicate where it is used in blocks of the loops `inside`
+    /// accepts: a comparison with another loop's counter is not its
+    /// current trip's there, and selects as an unknown.
+    fn in_loops(self, inside: &dyn Fn(LoopId) -> bool) -> Pred {
+        let at = |p: Box<Pred>| Box::new(p.in_loops(inside));
+        match self {
+            Pred::Cmp(c) if c.trip.is_some_and(|(l, _)| !inside(l)) => {
+                match c.form.terms.keys().any(depends_on_lane) {
+                    true => Pred::Unknown,
+                    false => Pred::Uniform,
+                }
+            }
+            Pred::Elect(p) => Pred::Elect(at(p)),
+            Pred::Not(p) => Pred::Not(at(p)),
+            Pred::And(a, b) => Pred::And(at(a), at(b)),
+            Pred::Or(a, b) => Pred::Or(at(a), at(b)),
+            p => p,
         }
     }
 
@@ -260,24 +289,24 @@ impl Pred {
     /// The thread-index conditions as text; an unknown selector under
     /// a conjunction is left to the `<=` marker, elsewhere it prints
     /// as `?`. A disjunction is parenthesized when nested.
-    fn render(&self, nested: bool) -> Option<String> {
+    fn render(&self, nested: bool, name: &dyn Fn(&Var) -> String) -> Option<String> {
         match self {
             Pred::True => None,
             Pred::False => Some("no thread".to_owned()),
             Pred::Unknown | Pred::Uniform => Some("?".to_owned()),
-            Pred::Cmp(c) => Some(c.render()),
+            Pred::Cmp(c) => Some(c.render_named(name)),
             Pred::Elect(_) => Some("elected".to_owned()),
-            Pred::Not(p) => Some(format!("not ({})", p.render(false)?)),
+            Pred::Not(p) => Some(format!("not ({})", p.render(false, name)?)),
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
                     .filter(|p| !matches!(p.as_ref(), Pred::Unknown | Pred::Uniform))
-                    .filter_map(|p| p.render(true))
+                    .filter_map(|p| p.render(true, name))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
             Pred::Or(a, b) => {
-                let text = format!("{} or {}", a.render(true)?, b.render(true)?);
+                let text = format!("{} or {}", a.render(true, name)?, b.render(true, name)?);
                 Some(if nested { format!("({text})") } else { text })
             }
         }
@@ -458,11 +487,13 @@ fn across_ctas(
             },
             cmp: cmp.to_owned(),
             cta: None,
+            trip: None,
         },
         false => Constraint {
             form: form.clone(),
             cmp: cmp.to_owned(),
             cta: Some((lo, hi)),
+            trip: None,
         },
     }))
 }
@@ -502,6 +533,11 @@ impl Constraint {
 
     /// `form cmp 0` with the constant moved to the right: `⌊%tid.x/32⌋ < 4`.
     pub fn render(&self) -> String {
+        self.render_named(&|v| v.to_string())
+    }
+
+    /// The same, naming each variable by `name`.
+    pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> String {
         let c = self.form.base.as_const().unwrap_or(0);
         let lhs = Affine {
             terms: self.form.terms.clone(),
@@ -516,7 +552,7 @@ impl Constraint {
             "ne" => "!=",
             other => other,
         };
-        format!("{lhs} {op} {}", -i128::from(c))
+        format!("{} {op} {}", lhs.render(name), -i128::from(c))
     }
 }
 
@@ -546,9 +582,14 @@ impl ThreadSet {
     /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
     /// %tid.x == 0`; `None` when no such condition selects.
     pub fn render(&self) -> Option<String> {
+        self.render_named(&|v| v.to_string())
+    }
+
+    /// The same, naming each variable by `name`.
+    pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> Option<String> {
         self.pred
             .has_condition()
-            .then(|| self.pred.render(false))
+            .then(|| self.pred.render(false, name))
             .flatten()
     }
 
@@ -751,7 +792,12 @@ impl PredicateReader<'_> {
                     _ => None,
                 };
                 if let Some(taken_edge) = selected {
-                    let p = self.of(guard.reg, pos, 0);
+                    let forest = self.forest;
+                    let inside = |l: LoopId| {
+                        let blocks = &forest.get(l).blocks;
+                        blocks.binary_search(&b).is_ok() && blocks.binary_search(&d).is_ok()
+                    };
+                    let p = self.of(guard.reg, pos, 0).in_loops(&inside);
                     pred = pred.and(if taken_edge != guard.negated { p } else { !p });
                 }
             }
@@ -1010,7 +1056,9 @@ pub(crate) fn thread_sets(
         if instr.mnemonic == Opcode::Bra {
             continue;
         }
-        let p = reader.of(guard.reg, pos, 0);
+        let b = tracer.block_of(pos);
+        let p = (reader.of(guard.reg, pos, 0))
+            .in_loops(&|l| forest.get(l).blocks.binary_search(&b).is_ok());
         guards.insert(pos, if guard.negated { !p } else { p });
     }
     let mut dead_edges = Vec::new();
@@ -1090,7 +1138,7 @@ fn condition(
     let form = a.clone() - b.clone();
     // %ctaid below the bound grid, PTX ISA §10.6.
     let range = |v: &Var| match v {
-        Var::Ctaid(_) => tracer.bound(v),
+        Var::Ctaid(_) | Var::Iter(_) => tracer.bound(v),
         _ => any_block(v),
     };
     let fits = |x: &Affine, min: i128, end: i128| {
@@ -1134,6 +1182,16 @@ fn condition(
             form,
             cmp,
             cta: None,
+            trip: None,
+        }))
+    } else if let Some(trip) = per_trip(tracer, &form, def)
+        && comparable(&a, &b)
+    {
+        Some(Pred::Cmp(Constraint {
+            form,
+            cmp,
+            cta: None,
+            trip: Some(trip),
         }))
     } else if on_index(&form)
         && comparable(&a, &b)
@@ -1145,6 +1203,32 @@ fn condition(
     } else {
         None
     }
+}
+
+/// A form of the thread index and one loop's counter, read in that loop
+/// so its current trip's, the loop's trip count a constant n: the loop
+/// and the range of the counter's term over trips 1 to n.
+fn per_trip(
+    tracer: &AffineValueTracer,
+    form: &Affine,
+    def: usize,
+) -> Option<(LoopId, (i128, i128))> {
+    let mut rest = form.clone();
+    let mut counters = (form.terms.iter()).filter(|(v, _)| matches!(v, Var::Iter(_)));
+    let (Some((v @ Var::Iter(l), c)), None) = (counters.next(), counters.next()) else {
+        return None;
+    };
+    rest.terms.remove(v);
+    let c = i128::from(c.as_const().filter(|&c| c != 0)?);
+    let (_, n) = tracer.bound(v)?;
+    let inside = tracer
+        .forest
+        .get(*l)
+        .blocks
+        .binary_search(&tracer.block_of(def))
+        .is_ok();
+    (on_lane_only(&rest) && inside)
+        .then_some((*l, (c.min(c * i128::from(n)), c.max(c * i128::from(n)))))
 }
 
 #[cfg(test)]
@@ -1166,7 +1250,45 @@ mod tests {
             form: warp + Affine::invariant(SymExpr::Const(-4)),
             cmp: "lt".to_owned(),
             cta: None,
+            trip: None,
         }
+    }
+
+    /// A comparison with a loop counter over trips 1 to 512 decides a
+    /// thread only where every trip agrees, `k − 513 < 0`, not `k < 511`;
+    /// it is never exact, lane-exact without lanes, and outside its loop
+    /// an unknown.
+    #[test]
+    fn a_counter_comparison_is_read_per_trip() {
+        let counter = |rest: Affine| {
+            Pred::Cmp(Constraint {
+                form: Affine::var(Var::Iter(LoopId(0))) + rest,
+                cmp: "lt".to_owned(),
+                cta: None,
+                trip: Some((LoopId(0), (1, 512))),
+            })
+        };
+        let c = |n: i64| Affine::invariant(SymExpr::Const(n));
+        let below = counter(c(-511));
+        let set = ThreadSet {
+            pred: below.clone(),
+        };
+        assert!(!set.exact() && set.lane_exact());
+        let some = Counted {
+            certain: 0,
+            possible: 32,
+        };
+        assert_eq!(set.count([32, 1, 1]), Some(some));
+        let always = ThreadSet {
+            pred: counter(c(-513)),
+        };
+        assert_eq!(always.count([32, 1, 1]), Some(exact(32)));
+        let lanes = ThreadSet {
+            pred: counter(Affine::var(Var::Tid(Axis::X)) + c(-511)),
+        };
+        assert!(!lanes.lane_exact());
+        assert_eq!(below.clone().in_loops(&|_| false), Pred::Uniform);
+        assert_eq!(below.clone().in_loops(&|_| true), below);
     }
 
     #[test]
@@ -1188,6 +1310,7 @@ mod tests {
                 form: Affine::var(Var::Tid(Axis::X)),
                 cmp: "eq".to_owned(),
                 cta: None,
+                trip: None,
             }),
         };
         assert_eq!(lane0.count([128, 2, 1]), Some(exact(2)));
@@ -1224,6 +1347,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         let either = ThreadSet {
             pred: lane0.clone().or(Pred::Cmp(warps_below_4())),
@@ -1282,6 +1406,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-40)),
             cmp: "ge".to_owned(),
             cta: None,
+            trip: None,
         });
         let of_upper = ThreadSet {
             pred: Pred::Elect(Box::new(upper.clone())),
@@ -1291,6 +1416,7 @@ mod tests {
             form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         // A warp-uniform condition on the elected lane is exact.
         let leader_of_warp0 = ThreadSet {
@@ -1306,6 +1432,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         let leader_is_lane0 = ThreadSet {
             pred: lane0.and(Pred::Elect(Box::new(Pred::True))),
@@ -1352,6 +1479,7 @@ mod tests {
                 + Affine::invariant(SymExpr::Const(base)),
             cmp: cmp.to_owned(),
             cta: Some((lo.min(hi), lo.max(hi))),
+            trip: None,
         })
     }
 
@@ -1378,6 +1506,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-16)),
             cmp: "lt".to_owned(),
             cta: None,
+            trip: None,
         });
         assert_eq!(
             set(lanes.clone()).launch([32, 1, 1], [3, 2, 1]),
@@ -1447,6 +1576,7 @@ mod tests {
                     + Affine::var(Var::Ctaid(Axis::X)).scale(SymExpr::Const(-2)),
                 cmp: cmp.to_owned(),
                 cta: Some((-6, 0)),
+                trip: None,
             }),
         };
         let range = |certain, possible| Some(Counted { certain, possible });
@@ -1465,6 +1595,7 @@ mod tests {
                 form: Affine::var(Var::Ctaid(Axis::X)) + Affine::invariant(SymExpr::Const(-2)),
                 cmp: "lt".to_owned(),
                 cta: Some((0, 3)),
+                trip: None,
             }),
         };
         assert_eq!(cta.count([64, 1, 1]), range(0, 64));
@@ -1477,11 +1608,13 @@ mod tests {
             form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         let lane0 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         let set = |pred| ThreadSet { pred };
         assert_eq!(
@@ -1496,6 +1629,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-100)),
             cmp: "lt".to_owned(),
             cta: None,
+            trip: None,
         });
         assert_eq!(set(below_100).warps([128, 1, 1]), Some(exact(4)));
         // Every warp with an active lane has a leader, whichever lane.

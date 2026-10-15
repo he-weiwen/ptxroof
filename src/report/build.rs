@@ -1298,7 +1298,10 @@ impl<'a> KernelReportBuilder<'a> {
         let counted = set.count(self.shape);
         let warps = set.warps(self.shape);
         Some(ThreadsInfo {
-            condition: set.render()?,
+            condition: set.render_named(&|v| match v {
+                Var::Iter(l) => format!("k[{}]", self.display[l.0 as usize]),
+                other => other.to_string(),
+            })?,
             count: counted.map(|c| u64::from(c.possible)),
             at_most: counted.map_or(!set.exact(), |c| c.certain != c.possible),
             warps: warps.map(|w| u64::from(w.possible)),
