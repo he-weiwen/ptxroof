@@ -1547,10 +1547,10 @@ impl<'a> KernelReportBuilder<'a> {
         );
         let ai_global = match (all_flops.as_const(), bytes.get("global")) {
             (Some(f), Some((l, s))) => match (l.expr().as_const(), s.expr().as_const()) {
-                (Some(lb), Some(sb)) if lb + sb > 0 => {
+                (Some(lb), Some(sb)) if i128::from(lb) + i128::from(sb) > 0 => {
                     let bytes_bound = direction(l.at_most || s.at_most, l.at_least || s.at_least);
                     ratio_bound(flops_bound, bytes_bound).map(|bound| Intensity {
-                        value: f as f64 / (lb + sb) as f64,
+                        value: f as f64 / (i128::from(lb) + i128::from(sb)) as f64,
                         bound,
                     })
                 }

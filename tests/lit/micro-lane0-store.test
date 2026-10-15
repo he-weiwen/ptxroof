@@ -5,3 +5,9 @@ RUN: %ptxroof analyze %fixtures/micro/lane0_store.ptx --grid 536870912,32768,327
 CHECK: totals per launch [static]:
 CHECK: instructions = 0 + unknown, warp instructions = 0 + unknown
 CHECK: global bytes: load 0 B, store 2305843009213693952 B
+# micro_lane0_copy's thread 0 loads and stores 8 B: 2^62 B each way,
+# whose sum leaves i64 but is no overflow in its AI.
+CHECK: kernel micro_lane0_copy
+CHECK: totals per launch [static]:
+CHECK: global bytes: load 4611686018427387904 B, store 4611686018427387904 B
+CHECK: AI(global) = 0 flop/B

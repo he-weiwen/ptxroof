@@ -4,6 +4,8 @@
 //   ISETP.NE.U32.AND P0, PT, R5, RZ, PT
 //   @P0 EXIT
 //   STG.E [R2.64], R5
+// micro_lane0_copy: thread 0 loads 8 B at param_0 and stores them at
+// param_1.
 //
 .version 8.7
 .target sm_89
@@ -22,5 +24,24 @@
 	mov.u32 	%r1, %tid.x;
 	setp.eq.u32 	%p1, %r1, 0;
 	@%p1 st.global.u32 	[%rd1], %r1;
+	ret;
+}
+
+.visible .entry micro_lane0_copy(
+	.param .u64 micro_lane0_copy_param_0,
+	.param .u64 micro_lane0_copy_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_lane0_copy_param_0];
+	ld.param.u64 	%rd2, [micro_lane0_copy_param_1];
+	mov.u32 	%r1, %tid.x;
+	setp.eq.u32 	%p1, %r1, 0;
+	@%p1 ld.global.u64 	%rd3, [%rd1];
+	@%p1 st.global.u64 	[%rd2], %rd3;
 	ret;
 }
