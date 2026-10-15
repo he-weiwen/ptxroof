@@ -1438,7 +1438,16 @@ impl<'a> KernelReportBuilder<'a> {
         set.weighted_launch(self.shape, self.grid()?, read, &weight)
     }
 
-    fn multiplier(&self, b: BlockId, below: Option<LoopId>) -> Option<(SymExpr, bool)> {
+    /// The product of `b`'s loops' trip counts up to `below`, and whether
+    /// a loop among them may not be entered: one entered conditionally,
+    /// unless its header's threads are counted, per CTA (`cta`) or at
+    /// every CTA of the launch (`launch`).
+    fn multiplier(
+        &self,
+        b: BlockId,
+        below: Option<LoopId>,
+        (cta, launch): (bool, bool),
+    ) -> Option<(SymExpr, bool)> {
         let chain = self.chain(b);
         let cut = match below {
             Some(l) => chain.iter().position(|&x| x == l)?,
@@ -1448,7 +1457,12 @@ impl<'a> KernelReportBuilder<'a> {
         let mut at_most = false;
         for &l in &chain[..cut] {
             mult = SymExpr::mul(mult, self.trip_exprs[l.0 as usize].clone());
-            at_most |= self.cond_entry[l.0 as usize];
+            let header = self.forest.get(l).header;
+            let counted = (self.sets.blocks[header.0 as usize].count(self.shape))
+                .is_some_and(|c| c.certain == c.possible);
+            let entered =
+                (cta && counted) || (launch && self.launches.contains_key(&(header, None)));
+            at_most |= self.cond_entry[l.0 as usize] && !entered;
         }
         Some((mult, at_most))
     }
@@ -1511,7 +1525,9 @@ impl<'a> KernelReportBuilder<'a> {
         }
 
         for bm in &self.blocks {
-            let Some((mult, chain_at_most)) = self.multiplier(bm.block, below) else {
+            let Some((mult, chain_at_most)) =
+                self.multiplier(bm.block, below, (cta.is_some(), ctas.is_some()))
+            else {
                 continue;
             };
             if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
@@ -2032,7 +2048,7 @@ impl<'a> KernelReportBuilder<'a> {
         let reducible = self.forest.irreducible_edges.is_empty();
         let mut blocks = Vec::new();
         for bm in &self.blocks {
-            let Some((mult, chain_at_most)) = self.multiplier(bm.block, None) else {
+            let Some((mult, chain_at_most)) = self.multiplier(bm.block, None, (true, true)) else {
                 continue;
             };
             let split = self
@@ -2707,6 +2723,29 @@ mod tests {
         assert_eq!(store(nested, [2, 1, 1]), unknown);
         let both = one("add.s32 %r3, %r1, %r6;", 1, "lt");
         assert_eq!(store(&both, [8192, 4096, 1]), unknown);
+    }
+
+    /// A loop entered only by the threads a thread-index condition picks
+    /// is a bound per thread, but per CTA its threads are counted:
+    /// `%tid.x < 64` of 128 store 4 B on each of n trips.
+    #[test]
+    fn a_loop_entered_by_counted_threads_is_exact_per_cta() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
+                   .reqntid 128, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r5, [k_param_1];\n\
+                   mov.u32 %r1, %tid.x;\nsetp.ge.u32 %p2, %r1, 64;\n@%p2 bra $L__E;\n\
+                   mov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                   setp.lt.u32 %p1, %r2, %r5;\n@%p1 bra $L__L;\n$L__E:\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        let k = &r.kernels[0];
+        let store = |t: &Aggregates| {
+            let c = &t.bytes["global"].store;
+            (c.expr.clone(), c.at_most)
+        };
+        assert_eq!(store(&k.totals), ("4 * max(param_1, 1)".to_owned(), true));
+        let per_cta = k.totals_per_cta.as_ref().expect("a block shape");
+        assert_eq!(store(per_cta), ("256 * max(param_1, 1)".to_owned(), false));
     }
 
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
