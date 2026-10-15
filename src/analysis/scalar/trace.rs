@@ -676,10 +676,11 @@ impl<'a> AffineValueTracer<'a> {
                 // Each run of ones from bit `low` up to bit `top`: x mod
                 // 2^top − x mod 2^low, and x itself when the run reaches the
                 // register's top bit; one that stops just below it keeps x
-                // for x in [0, 2^(width−1)), and, when x's range is unknown
-                // and the mask is that run alone, in the nonneg domain. The
-                // runs' bits are disjoint, so the and is their sum; PTX ISA
-                // §4.5.1 converts the constant to the instruction's size.
+                // for x in [0, 2^(width−1)), and, when x's range is unknown,
+                // in the nonneg domain for a 32- or 64-bit mask of that run
+                // alone. The runs' bits are disjoint, so the and is their
+                // sum; PTX ISA §4.5.1 converts the constant to the
+                // instruction's size.
                 let width = (mods.iter())
                     .find_map(|m| m.strip_prefix('b')?.parse::<u32>().ok())
                     .unwrap_or(32);
@@ -692,6 +693,7 @@ impl<'a> AffineValueTracer<'a> {
                 let range = bound.range(&|v| self.bound(v));
                 let all = konst as u64 & u64::MAX >> (64 - width);
                 let (mut bits, mut sum) = (all, Affine::invariant(SymExpr::Const(0)));
+                let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
                 // A value of 0 or −1, all ones, keeps none or all of the
                 // mask: −mask·v, alike signed and unsigned below the sign bit.
                 if range.is_some_and(|(lo, hi)| lo >= -1 && hi <= 0) && all >> (width - 1) == 0 {
@@ -700,15 +702,15 @@ impl<'a> AffineValueTracer<'a> {
                 while bits != 0 {
                     let low = bits.trailing_zeros();
                     let top = low + (bits >> low).trailing_ones();
-                    let hi = if top >= width - 1 {
-                        let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
-                        if top == width - 1 && !held.unwrap_or(bits == all) {
-                            let bit = width - 1;
-                            return Err(format!(
-                                "and-mask {konst:#x} clears bit {bit} of a value that may set it"
-                            ));
-                        }
+                    let hi = if top == width
+                        || top == width - 1 && held.unwrap_or(bits == all && width >= 32)
+                    {
                         affine.clone()
+                    } else if top == width - 1 && (held.is_some() || top == 63) {
+                        let bit = width - 1;
+                        return Err(format!(
+                            "and-mask {konst:#x} clears bit {bit} of a value that may set it"
+                        ));
                     } else {
                         modulo(affine.clone(), top)?
                     };

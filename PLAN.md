@@ -119,9 +119,11 @@ its shared writes and instruction counts remain counted
   0x7fffff00` reads `[param_0 + 4 * param_1 - 4 * ((param_1 - 256) mod
   256) - 1024]`, where for n below 256 the and is 0x7fffff00 and the
   store 2^33 bytes higher; with `--bind 1:n=100` it is refused, and the
-  address a uniform variable. A mask of more runs needs the range
-  (`micro/and_runs.ptx`'s `micro_and_sign_runs`, `n & 0x7fffff0f`: a
-  uniform variable).
+  address a uniform variable. A 16-bit and, and a 32-bit mask of more
+  runs, take the remainder mod 2^(width−1) instead
+  (`micro/and_sign_remainder.ptx`'s `n & 0x7fff`: `param_1 mod 32768`;
+  `micro/and_runs.ptx`'s `micro_and_sign_runs`); a 64-bit mask of more
+  runs is refused (`micro_and_sign_wide_runs`: a uniform variable).
 - **`shfl.sync.idx` is read as if warps were rows of 32 `%tid.x`**,
   whatever the block shape: a warp is 32 consecutive
   `%tid.x + %tid.y·%ntid.x + %tid.z·%ntid.x·%ntid.y` (PTX ISA §3.1,

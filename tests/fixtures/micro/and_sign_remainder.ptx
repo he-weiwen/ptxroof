@@ -1,0 +1,56 @@
+//
+// HAND-WRITTEN: stores at an and of the second parameter, n, whose range
+// is unknown, with a mask that clears its sign bit. ptxas 13.4 (sm_89).
+//
+// micro_and_sign_b16: and.b16 with 0x7fff, which clears bit 15 of an n
+// from 32768, widened to the offset, R0 = n:
+//   LOP3.LUT R0, R0, 0x7fff, RZ, 0xc0, !PT
+//   IMAD.WIDE.U32 R2, R0, R3, c[0x0][0x160]
+// micro_and_sign_wide_runs: and.b64 with 0x7fffffffffffff0f, bits 0 to 3
+// and 8 to 62, UR6:UR7 = n:
+//   ULOP3.LUT UR5, UR6, 0xffffff0f, URZ, 0xc0, !UPT
+//   ULOP3.LUT UR6, UR7, 0x7fffffff, URZ, 0xc0, !UPT
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_and_sign_b16(
+	.param .u64 micro_and_sign_b16_param_0,
+	.param .u16 micro_and_sign_b16_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .b16 	%rs<3>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_and_sign_b16_param_0];
+	ld.param.u16 	%rs1, [micro_and_sign_b16_param_1];
+	mov.u32 	%r1, %tid.x;
+	and.b16 	%rs2, %rs1, 32767;
+	cvt.u32.u16 	%r2, %rs2;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_and_sign_wide_runs(
+	.param .u64 micro_and_sign_wide_runs_param_0,
+	.param .u64 micro_and_sign_wide_runs_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [micro_and_sign_wide_runs_param_0];
+	ld.param.u64 	%rd2, [micro_and_sign_wide_runs_param_1];
+	mov.u32 	%r1, %tid.x;
+	and.b64 	%rd3, %rd2, 9223372036854775567;
+	shl.b64 	%rd4, %rd3, 2;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r1;
+	ret;
+}
