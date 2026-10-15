@@ -1281,16 +1281,7 @@ impl<'a> KernelReportBuilder<'a> {
         let Register::Named(reg) = reg else {
             return None;
         };
-        let name = self.module.interner.resolve(reg);
-        (self.kernel.reg_decls.iter())
-            .find(|d| {
-                let prefix = self.module.interner.resolve(d.prefix);
-                match d.count {
-                    Some(n) => crate::ptx::parse::parser::member(name, prefix, n).is_some(),
-                    None => name == prefix,
-                }
-            })
-            .and_then(|d| d.class.bytes())
+        self.kernel.register_type(self.module, reg)?.bytes()
     }
 
     /// The threads a set selects, when a thread-index condition does.

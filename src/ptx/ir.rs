@@ -362,6 +362,22 @@ pub struct Kernel {
     pub stmts: Vec<Stmt>,
 }
 
+impl Kernel {
+    /// The type a `.reg` declaration gives register `reg`.
+    pub fn register_type(&self, module: &Module, reg: Symbol) -> Option<FundamentalType> {
+        let name = module.interner.resolve(reg);
+        (self.reg_decls.iter())
+            .find(|d| {
+                let prefix = module.interner.resolve(d.prefix);
+                match d.count {
+                    Some(n) => crate::ptx::parse::parser::member(name, prefix, n).is_some(),
+                    None => name == prefix,
+                }
+            })
+            .map(|d| d.class)
+    }
+}
+
 /// `.file N "path"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileDirective {
