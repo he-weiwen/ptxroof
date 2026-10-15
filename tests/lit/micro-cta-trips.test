@@ -1,8 +1,8 @@
 # A causal loop: CTA c runs c trips, so the count is %ctaid.x and the
 # guard skipping CTA 0 is the loop's entry. Per CTA the totals are
-# exact in %ctaid.x; over the launch, where which threads run the loop
-# varies by CTA, they are unknown, where on an RTX 4090 with 4 CTAs the
-# barrier runs 192 times. Without the guard CTA 0 runs once, the count
+# exact in %ctaid.x; over the launch each CTA's threads count its
+# trips, 0 + 1 + 2 + 3, so the barrier runs 192 times, as on an RTX
+# 4090 with 4 CTAs. Without the guard CTA 0 runs once, the count
 # is max(%ctaid.x, 1), and its sum over the grid, 7, gives the 224
 # barriers the RTX 4090 runs (micro/cta_trips.unguarded.ncu.json).
 RUN: %ptxroof analyze %fixtures/micro/cta_trips.ptx | FileCheck "%s"
@@ -12,8 +12,9 @@ CHECK: trips = %ctaid.x
 CHECK: totals per CTA [static]:
 CHECK: bar.sync{{ +}}32 * %ctaid.x{{ +}}%ctaid.x{{$}}
 REC: totals per launch [static]:
-REC: bar.sync{{ +}}0 + unknown{{ +}}0 + unknown{{$}}
-REC: $L__BB0_2  unchecked
+REC: bar.sync{{ +}}192{{ +}}6{{$}}
+REC: $L__BB0_2  confirmed
+REC: measured L2 sectors of global accesses: 1 lines agree (1 exact, 0 within a range, 0 within a bound), 0 differ
 SUM-LABEL: kernel micro_cta_trips_unguarded
 SUM: trips = max(%ctaid.x, 1)
 SUM: totals per launch [static]:

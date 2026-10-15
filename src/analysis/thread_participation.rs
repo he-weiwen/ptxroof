@@ -573,9 +573,21 @@ impl ThreadSet {
     /// group is counted. None past `CTA_BUDGET` CTAs on the axes those
     /// comparisons read, or `LANE_BUDGET` lane evaluations.
     pub fn launch(&self, shape: [u32; 3], grid: [u32; 3]) -> Option<(u64, u64)> {
+        self.weighted_launch(shape, grid, [false; 3], &|_| Some(1))
+    }
+
+    /// The same with CTA `c` counted `weight(c)` times, the weight
+    /// reading the axes `read`.
+    pub fn weighted_launch(
+        &self,
+        shape: [u32; 3],
+        grid: [u32; 3],
+        read: [bool; 3],
+        weight: &dyn Fn([i64; 3]) -> Option<u64>,
+    ) -> Option<(u64, u64)> {
         let mut over = Vec::new();
         self.pred.over_ctas(&mut over);
-        let mut used = [false; 3];
+        let mut used = read;
         for v in over.iter().flat_map(|k| k.form.terms.keys()) {
             cta_axes(v, &mut used);
         }
@@ -615,7 +627,8 @@ impl ThreadSet {
                             }
                         })
                         .collect();
-                    groups.entry(key).or_insert((0u64, c)).0 += 1;
+                    let n = &mut groups.entry(key).or_insert((0u64, c)).0;
+                    *n = n.checked_add(weight(c)?)?;
                     if groups.len() as u64 > LANE_BUDGET / threads.len() as u64 {
                         return None;
                     }
@@ -1390,6 +1403,31 @@ mod tests {
         assert_eq!(set(one).launch([32, 1, 1], [(1 << 24) + 1, 1, 1]), None);
         let spread = over_ctas(128, -1, 0, "lt", 1 << 17);
         assert_eq!(set(spread).launch([1024, 1, 1], [1 << 17, 1, 1]), None);
+    }
+
+    /// Weighted, CTA c counts `weight(c)` times: t < 2c over 4 CTAs with
+    /// weight c holds 0·0 + 2·1 + 4·2 + 6·3 threads; a weight on the y
+    /// axis, which no comparison reads, enumerates it too; a weight that
+    /// does not evaluate leaves no count.
+    #[test]
+    fn a_weighted_launch_counts_each_cta_its_weight_times() {
+        let below = ThreadSet {
+            pred: over_ctas(1, -2, 0, "lt", 4),
+        };
+        let by_x = |c: [i64; 3]| u64::try_from(c[0]).ok();
+        let launch = |grid, read, weight: &dyn Fn([i64; 3]) -> Option<u64>| {
+            below.weighted_launch([32, 1, 1], grid, read, weight)
+        };
+        assert_eq!(
+            launch([4, 1, 1], [true, false, false], &by_x),
+            Some((28, 6))
+        );
+        let by_y = |c: [i64; 3]| u64::try_from(c[1] + 1).ok();
+        assert_eq!(
+            launch([4, 2, 1], [false, true, false], &by_y),
+            Some((36, 9))
+        );
+        assert_eq!(launch([4, 1, 1], [true, false, false], &|_| None), None);
     }
 
     #[test]

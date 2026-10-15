@@ -1373,32 +1373,52 @@ impl<'a> KernelReportBuilder<'a> {
         })
     }
 
-    /// The trips of `b`'s loops over the grid: the product of the counts
-    /// that read the CTA index summed over every CTA, each value
-    /// evaluated and never negative, times the other counts; `None`
-    /// without the grid or past `CTA_BUDGET` CTAs on the axes read.
-    fn summed_trips(&self, b: BlockId) -> Option<SymExpr> {
-        let grid = self.grid()?;
+    /// `b`'s loops' trip counts: the product of those that read the CTA
+    /// index, and of the others.
+    fn cta_split(&self, b: BlockId) -> (SymExpr, SymExpr) {
         let (cta, rest): (Vec<SymExpr>, Vec<SymExpr>) = (self.chain(b).iter())
             .map(|l| self.trip_exprs[l.0 as usize].clone())
             .partition(|e| e.symbols().iter().any(|s| s.starts_with("%ctaid")));
-        let per_cta = cta.into_iter().fold(SymExpr::Const(1), SymExpr::mul);
+        let product = |v: Vec<SymExpr>| v.into_iter().fold(SymExpr::Const(1), SymExpr::mul);
+        (product(cta), product(rest))
+    }
+
+    /// A product of counts over the CTA index, as the axes it reads and
+    /// its value at each CTA, evaluated and never negative.
+    fn cta_weight(p: &SymExpr) -> ([bool; 3], impl Fn([i64; 3]) -> Option<u64>) {
         let names = SpecialVector::Ctaid.components().map(|reg| reg.name());
-        let read = names.clone().map(|n| per_cta.symbols().contains(&n));
+        let read = names.clone().map(|n| p.symbols().contains(&n));
+        let weight = move |c: [i64; 3]| {
+            let at = names.iter().cloned().zip(c).collect();
+            p.bind(&at).as_const().and_then(|n| u64::try_from(n).ok())
+        };
+        (read, weight)
+    }
+
+    /// The weight summed over the grid; `None` without the grid or past
+    /// `CTA_BUDGET` CTAs on the axes it reads.
+    fn cta_sum(&self, p: &SymExpr) -> Option<u64> {
+        let grid = self.grid()?;
+        let (read, weight) = Self::cta_weight(p);
         let n = |i: usize| if read[i] { grid[i] } else { 1 };
         if (0..3).map(|i| u64::from(n(i))).product::<u64>() > CTA_BUDGET {
             return None;
         }
-        let mut sum = 0i64;
+        let mut sum = 0u64;
         for c in
             (0..n(2)).flat_map(|z| (0..n(1)).flat_map(move |y| (0..n(0)).map(move |x| [x, y, z])))
         {
-            let at = names.iter().cloned().zip(c.map(i64::from)).collect();
-            sum = sum.checked_add(per_cta.bind(&at).as_const().filter(|&n| n >= 0)?)?;
+            sum = sum.checked_add(weight(c.map(i64::from))?)?;
         }
-        let other = (0..3).filter(|&i| !read[i]).map(|i| i64::from(grid[i]));
-        let sum = { other }.try_fold(sum, i64::checked_mul)?;
-        Some(rest.into_iter().fold(SymExpr::Const(sum), SymExpr::mul))
+        let other = (0..3).filter(|&i| !read[i]).map(|i| u64::from(grid[i]));
+        { other }.try_fold(sum, u64::checked_mul)
+    }
+
+    /// The set's threads and warps over the launch, CTA `c` counted the
+    /// weight's value there times.
+    fn weighted_launch(&self, set: &ThreadSet, p: &SymExpr) -> Option<(u64, u64)> {
+        let (read, weight) = Self::cta_weight(p);
+        set.weighted_launch(self.shape, self.grid()?, read, &weight)
     }
 
     fn multiplier(&self, b: BlockId, below: Option<LoopId>) -> Option<(SymExpr, bool)> {
@@ -1483,25 +1503,32 @@ impl<'a> KernelReportBuilder<'a> {
             let unread = ctas.is_some()
                 && (self.chain(bm.block).iter())
                     .any(|l| self.trip_info.trips[l.0 as usize].is_err());
-            let summed = ctas.is_some() && self.per_cta_trips(bm.block);
-            let trips = match (unread, summed) {
+            let split =
+                (ctas.is_some() && self.per_cta_trips(bm.block)).then(|| self.cta_split(bm.block));
+            let trips = match (unread, &split) {
                 (true, _) => None,
-                (false, true) => self.summed_trips(bm.block),
-                (false, false) => Some(mult),
+                (false, Some((_, rest))) => Some(rest.clone()),
+                (false, None) => Some(mult),
             };
             let trips = trips.as_ref();
+            let per_launch = match &split {
+                Some((p, _)) => self.cta_sum(p),
+                None => ctas,
+            };
             // None when a count over the launch does not fit in i64.
             let resolve = |set: &ThreadSet, stmt: Option<usize>| {
                 let per_cta = self.executing(bm, set, chain_at_most, cta);
-                let Some(n) = ctas else {
+                if ctas.is_none() {
                     return Some(per_cta);
-                };
-                if summed {
-                    return (!set.varies_by_cta()).then_some(per_cta);
                 }
-                let n = i64::try_from(n).ok()?;
-                match self.launches.get(&(bm.block, stmt)) {
-                    Some(&(t, w)) => {
+                let counted = match &split {
+                    Some((p, _)) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
+                    Some(_) => None,
+                    None => self.launches.get(&(bm.block, stmt)).copied(),
+                };
+                let n = i64::try_from(per_launch?).ok()?;
+                match counted {
+                    Some((t, w)) => {
                         let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
                         let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
                         Some((t, Some((w, bound)), bound, true))
@@ -1991,10 +2018,12 @@ impl<'a> KernelReportBuilder<'a> {
             let Some((mult, chain_at_most)) = self.multiplier(bm.block, None) else {
                 continue;
             };
-            let summed = self.per_cta_trips(bm.block);
-            let (mult, ctas) = match summed {
-                true => (self.summed_trips(bm.block), 1),
-                false => (Some(mult), ctas),
+            let split = self
+                .per_cta_trips(bm.block)
+                .then(|| self.cta_split(bm.block));
+            let (mult, ctas) = match &split {
+                Some((p, rest)) => (rest.clone(), self.cta_sum(p)),
+                None => (mult, Some(ctas)),
             };
             let mut predictions = Vec::new();
             for i in &bm.instructions {
@@ -2009,11 +2038,21 @@ impl<'a> KernelReportBuilder<'a> {
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
                 let never = !self.counted(bm.block, i.provenance);
-                let trips = (mult.as_ref().and_then(SymExpr::as_const))
-                    .filter(|_| alone && !(summed && set.varies_by_cta()));
+                let trips = mult.as_const().filter(|_| alone);
                 // Over the launch, a set counted at every CTA explains its
                 // block as an exact count per CTA does.
-                let launch = self.launch(bm.block, i.provenance).filter(|_| !summed);
+                let (launch, trips, ctas) = match &split {
+                    Some((p, _)) if set.varies_by_cta() => match self.weighted_launch(&set, p) {
+                        Some(n) => (Some(n), trips, 0),
+                        None => (None, None, 0),
+                    },
+                    _ => (
+                        self.launch(bm.block, i.provenance)
+                            .filter(|_| split.is_none()),
+                        trips.filter(|_| ctas.is_some()),
+                        ctas.unwrap_or(0),
+                    ),
+                };
                 let at_most = !never
                     && match launch {
                         Some(_) => {
