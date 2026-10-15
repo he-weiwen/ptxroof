@@ -278,7 +278,8 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, B
 /// the loop, or that block's one predecessor, lies in the loop's parent
 /// and ends in a two-way branch whose other successor does not reach the
 /// header without passing it. That block, and its test of entering the
-/// loop, as `e < 0`; `!=` and `==` of a side never negative as `>` and
+/// loop, read from the `setp` that reaches its branch predicate, as
+/// `e < 0`; `!=` and `==` of a side never negative as `>` and
 /// `<=`.
 fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, SymExpr)> {
     let (cfg, l) = (tracer.cfg, tracer.forest.get(id));
@@ -302,7 +303,11 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, Sy
     }
     let (pos, bra) = tracer.last_instr(g)?;
     let pred = bra.predicate?;
-    let (def, setp) = tracer.find_setp(g, pos, pred.reg)?;
+    let Some(Value::Result { op, .. }) = tracer.ssa.value_before(pos, Register::Named(pred.reg))
+    else {
+        return None;
+    };
+    let (def, setp) = tracer.find_setp(tracer.block_of(op), op + 1, pred.reg)?;
     let mods: Vec<&str> = (tracer.module.modifiers(setp).iter())
         .map(|&m| tracer.module.interner.resolve(m))
         .collect();
@@ -859,6 +864,35 @@ mod tests {
         let l = sibling.iter().find(|(n, ..)| n == "$L__L").expect("loop L");
         assert_eq!(l.1, Ok("param_0 - 10".to_owned()));
         assert_eq!(l.2, "$L__L");
+    }
+
+    /// The guard's predicate may be set in an earlier block, but not on
+    /// only some of the paths to the guard.
+    #[test]
+    fn a_guard_reads_the_setp_that_reaches_its_predicate() {
+        let entry = |other_path: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nsetp.lt.s32 %p1, %r1, 11;\n\
+                     setp.eq.s32 %p3, %r1, 3;\n@%p3 bra $L__G;\n{other_path}\n\
+                     $L__G:\n@%p1 bra $L__E;\nmov.u32 %r2, 10;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            (loops[0].1.clone().unwrap_or_default(), loops[0].2.clone())
+        };
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        assert_eq!(
+            entry("mov.u32 %r5, 1;"),
+            at("max(param_0 - 10, 0)", "$L__G")
+        );
+        assert_eq!(
+            entry("setp.lt.s32 %p1, %r1, 5;"),
+            at("param_0 - 10", "$L__L")
+        );
     }
 
     /// A guard skipping a loop from 0 below n where `n == 0` tests its
