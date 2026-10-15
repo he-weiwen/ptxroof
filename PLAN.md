@@ -365,10 +365,13 @@ its shared writes and instruction counts remain counted
   (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
   is an unknown selector too (`micro/guards.ptx`: the store total stays
   a bound). A comparison with the counter of a loop holding the block,
-  its trip count a constant, is read per trip but counted over all of
-  its trips as a bound (`fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `(k <
-  511)`, runs on 510 of its loop's 512 trips, 12,533,760 times as its
-  record measures, and reads `<= 12582912`, `gluon-counter-guard.test`). The census counts by
+  its trip count a constant, is read per trip, and the totals per CTA
+  and per launch count each trip's threads (`micro/counter_guard.ptx`:
+  384 barriers and 300 stores per CTA, as measured), but the ncu
+  predictions count it over all of the loop's trips as a bound
+  (`fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `(k < 511)`, runs on 510
+  of its loop's 512 trips, 12,533,760 times as its record measures, and
+  reads `<= 12582912`, `gluon-counter-guard.test`). The census counts by
   cause are in the message of commit `ccf8220`.
 
 ### Presentation

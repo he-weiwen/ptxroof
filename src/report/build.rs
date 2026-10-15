@@ -1369,6 +1369,41 @@ impl<'a> KernelReportBuilder<'a> {
         out
     }
 
+    /// Where comparisons with the counter of loop `l`, one of `b`'s loops
+    /// up to `below` with a constant trip count, select the set's
+    /// threads, which do not vary by CTA, and the loops inside `l` are
+    /// read: its threads and warps per CTA summed over `l`'s trips, and
+    /// the product of the other loops' counts.
+    fn per_trip(
+        &self,
+        b: BlockId,
+        set: &ThreadSet,
+        below: Option<LoopId>,
+    ) -> Option<(u64, u64, SymExpr)> {
+        let l = set.trip_loop()?;
+        let chain = self.chain(b);
+        let cut = match below {
+            Some(m) => chain.iter().position(|&x| x == m)?,
+            None => chain.len(),
+        };
+        let inner = chain[..cut].iter().position(|&x| x == l)?;
+        let n = u64::try_from(self.trip_exprs[l.0 as usize].as_const()?).ok()?;
+        if set.varies_by_cta()
+            || chain[..inner]
+                .iter()
+                .any(|i| self.trip_info.trips[i.0 as usize].is_err())
+        {
+            return None;
+        }
+        let (t, w) = set.over_trips(self.shape, l, n)?;
+        let rest = (chain[..cut].iter())
+            .filter(|&&x| x != l)
+            .fold(SymExpr::Const(1), |p, x| {
+                SymExpr::mul(p, self.trip_exprs[x.0 as usize].clone())
+            });
+        Some((t, w, rest))
+    }
+
     /// A loop around `b` counts trips that read the CTA index.
     fn per_cta_trips(&self, b: BlockId) -> bool {
         (self.chain(b).iter()).any(|l| {
@@ -1551,11 +1586,23 @@ impl<'a> KernelReportBuilder<'a> {
                 Some((p, _)) => self.cta_sum(p),
                 None => ctas,
             };
-            // None when a count over the launch does not fit in i64.
+            // None when a count over the launch does not fit in i64; with
+            // the trips it is counted over where they are its own.
             let resolve = |set: &ThreadSet, stmt: Option<usize>| {
+                if cta.is_some()
+                    && split.is_none()
+                    && !unread
+                    && let Some((t, w, rest)) = self.per_trip(bm.block, set, below)
+                {
+                    let n = ctas.unwrap_or(1);
+                    let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
+                    let t = i64::try_from(t.checked_mul(n)?).ok()?;
+                    let w = i64::try_from(w.checked_mul(n)?).ok()?;
+                    return Some(((t, Some((w, bound)), bound, true), Some(rest)));
+                }
                 let per_cta = self.executing(bm, set, chain_at_most, cta);
                 if ctas.is_none() {
-                    return Some(per_cta);
+                    return Some((per_cta, None));
                 }
                 let counted = match &split {
                     Some((p, _)) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
@@ -1566,7 +1613,7 @@ impl<'a> KernelReportBuilder<'a> {
                     Some((t, w)) => {
                         let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
                         let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
-                        Some((t, Some((w, bound)), bound, true))
+                        Some(((t, Some((w, bound)), bound, true), None))
                     }
                     None => {
                         let n = i64::try_from(per_launch?).ok()?;
@@ -1575,15 +1622,16 @@ impl<'a> KernelReportBuilder<'a> {
                             Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
                             None => None,
                         };
-                        Some((threads.checked_mul(n)?, warps, at_most, explained))
+                        Some(((threads.checked_mul(n)?, warps, at_most, explained), None))
                     }
                 }
             };
             // A block whose count does not fit is unknown, its warps too.
             let block = resolve(&self.sets.blocks[bm.block.0 as usize], None);
-            let mult = trips.filter(|_| block.is_some());
+            let mult = (block.as_ref()).and_then(|(_, own)| own.clone().or_else(|| trips.cloned()));
+            let mult = mult.as_ref();
             let (threads, warps, block_at_most, _) =
-                block.unwrap_or((0, Some((0, false)), false, false));
+                block.map_or((0, Some((0, false)), false, false), |(b, _)| b);
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
@@ -1611,19 +1659,22 @@ impl<'a> KernelReportBuilder<'a> {
                     continue;
                 }
                 let (threads, at_most, mult) = match self.sets.guards.get(&m.provenance) {
-                    Some(Pred::True) => (threads, block_at_most, mult),
+                    Some(Pred::True) => (threads, block_at_most, mult.cloned()),
                     Some(_) => {
                         match resolve(&self.sets.of(bm.block, m.provenance), Some(m.provenance)) {
-                            Some((threads, _, at_most, explained)) => {
-                                (threads, at_most || !explained, trips)
-                            }
+                            Some(((threads, _, at_most, explained), own)) => (
+                                threads,
+                                at_most || !explained,
+                                own.or_else(|| trips.cloned()),
+                            ),
                             None => (0, false, None),
                         }
                     }
-                    None => (threads, block_at_most || m.predicated, mult),
+                    None => (threads, block_at_most || m.predicated, mult.cloned()),
                 };
                 let n = (m.count as i64).checked_mul(threads);
                 let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
+                let mult = mult.as_ref();
                 match m.kind {
                     MeasureKind::Flops { pipe, precision } => {
                         flops

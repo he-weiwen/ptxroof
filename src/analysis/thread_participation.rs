@@ -206,6 +206,43 @@ impl Pred {
         }
     }
 
+    /// The predicate at trip `k` of loop `l`: each comparison with its
+    /// counter at the counter's value there.
+    fn at_trip(&self, l: LoopId, k: i128) -> Option<Pred> {
+        let at = |p: &Pred| p.at_trip(l, k).map(Box::new);
+        Some(match self {
+            Pred::Cmp(c) if c.trip.is_some_and(|(t, _)| t == l) => {
+                let mut form = c.form.clone();
+                let step = i128::from(form.terms.remove(&Var::Iter(l))?.as_const()?);
+                let base = i128::from(form.base.as_const()?).checked_add(step.checked_mul(k)?)?;
+                form.base = SymExpr::Const(i64::try_from(base).ok()?);
+                Pred::Cmp(Constraint {
+                    form,
+                    trip: None,
+                    ..c.clone()
+                })
+            }
+            Pred::Elect(p) => Pred::Elect(at(p)?),
+            Pred::Not(p) => Pred::Not(at(p)?),
+            Pred::And(a, b) => Pred::And(at(a)?, at(b)?),
+            Pred::Or(a, b) => Pred::Or(at(a)?, at(b)?),
+            p => p.clone(),
+        })
+    }
+
+    /// The comparisons with loop counters.
+    fn over_trips<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
+        match self {
+            Pred::Cmp(k) if k.trip.is_some() => out.push(k),
+            Pred::Elect(p) | Pred::Not(p) => p.over_trips(out),
+            Pred::And(a, b) | Pred::Or(a, b) => {
+                a.over_trips(out);
+                b.over_trips(out);
+            }
+            _ => {}
+        }
+    }
+
     /// The comparisons whose `%ctaid` terms vary over the grid.
     fn over_ctas<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
         match self {
@@ -691,6 +728,63 @@ impl ThreadSet {
             sum_w = sum_w.checked_add(u64::from(w.certain).checked_mul(k)?)?;
         }
         Some((sum_t.checked_mul(rest)?, sum_w.checked_mul(rest)?))
+    }
+
+    /// The loop whose counter the set's comparisons read, when one does.
+    pub fn trip_loop(&self) -> Option<LoopId> {
+        let mut over = Vec::new();
+        self.pred.over_trips(&mut over);
+        let l = over.first()?.trip?.0;
+        over.iter()
+            .all(|k| k.trip.is_some_and(|(t, _)| t == l))
+            .then_some(l)
+    }
+
+    /// The threads and warps the set holds summed over trips 1 to `n` of
+    /// loop `l`, whose counter its comparisons read. Each comparison
+    /// `c·k + g cmp 0` keeps its truth on a lane between the trips
+    /// around −g/c, so between those of every lane and comparison one
+    /// trip is counted for the run. None where the set is not exact at a
+    /// trip, or past `LANE_BUDGET` lane evaluations.
+    pub fn over_trips(&self, shape: [u32; 3], l: LoopId, n: u64) -> Option<(u64, u64)> {
+        let mut over = Vec::new();
+        self.pred.over_trips(&mut over);
+        let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
+            .map(|t| lane_of(t, shape))
+            .collect();
+        let end = i128::from(n) + 1;
+        let mut cuts = vec![1, end];
+        for k in &over {
+            let c = i128::from(k.form.terms.get(&Var::Iter(l))?.as_const()?);
+            for &t in &threads {
+                let (num, den) = if c < 0 {
+                    (at(&k.form, t), -c)
+                } else {
+                    (-at(&k.form, t), c)
+                };
+                let (lo, hi) = (num.div_euclid(den), -(-num).div_euclid(den));
+                cuts.extend([lo, lo + 1, hi, hi + 1].map(|x| x.clamp(1, end)));
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        if (cuts.len() as u64).saturating_mul(threads.len() as u64) > LANE_BUDGET {
+            return None;
+        }
+        let (mut sum_t, mut sum_w) = (0u64, 0u64);
+        for run in cuts.windows(2) {
+            let at = ThreadSet {
+                pred: self.pred.at_trip(l, run[0])?,
+            };
+            let (t, w) = (at.count(shape)?, at.warps(shape)?);
+            if t.certain != t.possible || w.certain != w.possible {
+                return None;
+            }
+            let len = u64::try_from(run[1] - run[0]).ok()?;
+            sum_t = sum_t.checked_add(u64::from(t.certain).checked_mul(len)?)?;
+            sum_w = sum_w.checked_add(u64::from(w.certain).checked_mul(len)?)?;
+        }
+        Some((sum_t, sum_w))
     }
 
     /// Per warp, the fewest and the most lanes in the set, folded by
@@ -1290,6 +1384,65 @@ mod tests {
         assert!(!lanes.lane_exact());
         assert_eq!(below.clone().in_loops(&|_| false), Pred::Uniform);
         assert_eq!(below.clone().in_loops(&|_| true), below);
+    }
+
+    /// Over a loop's trips, the threads of each trip summed: by runs of
+    /// trips between the lanes' breakpoints, as enumerating every trip
+    /// gives, for comparisons of the counter alone and with lanes, either
+    /// sign of step, every comparison, and two comparisons at once.
+    #[test]
+    fn a_set_over_trips_sums_each_trip_s_threads() {
+        let l = LoopId(0);
+        let cmp = |step: i64, lanes: Affine, cmp: &str, n: i128| {
+            let (a, b) = (i128::from(step), i128::from(step) * n);
+            Pred::Cmp(Constraint {
+                form: Affine::var(Var::Iter(l)).scale(SymExpr::Const(step)) + lanes,
+                cmp: cmp.to_owned(),
+                cta: None,
+                trip: Some((l, (a.min(b), a.max(b)))),
+            })
+        };
+        let c = |x: i64| Affine::invariant(SymExpr::Const(x));
+        let lane = |m: i64| Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), m));
+        let brute = |set: &ThreadSet, shape: [u32; 3], n: u64| {
+            (1..=i128::from(n)).try_fold((0u64, 0u64), |(t, w), k| {
+                let at = ThreadSet {
+                    pred: set.pred.at_trip(l, k)?,
+                };
+                Some((
+                    t + u64::from(at.count(shape)?.certain),
+                    w + u64::from(at.warps(shape)?.certain),
+                ))
+            })
+        };
+        let shape = [128, 1, 1];
+        for n in [1u64, 7, 40] {
+            let n128 = i128::from(n);
+            for op in ["lt", "le", "gt", "ge", "eq", "ne"] {
+                for (step, lanes) in [(1, c(-5)), (64, lane(64) + c(-300)), (-3, lane(32) + c(40))]
+                {
+                    let set = ThreadSet {
+                        pred: cmp(step, lanes, op, n128),
+                    };
+                    assert_eq!(
+                        set.over_trips(shape, l, n),
+                        brute(&set, shape, n),
+                        "{op} {step} {n}"
+                    );
+                }
+            }
+            let both = ThreadSet {
+                pred: cmp(1, c(-3), "ge", n128).and(cmp(64, lane(64) + c(-1000), "lt", n128)),
+            };
+            assert_eq!(both.over_trips(shape, l, n), brute(&both, shape, n));
+        }
+        let k_below_511 = ThreadSet {
+            pred: cmp(1, c(-511), "lt", 512),
+        };
+        assert_eq!(
+            k_below_511.over_trips([256, 1, 1], l, 512),
+            Some((510 * 256, 510 * 8))
+        );
     }
 
     #[test]
