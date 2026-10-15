@@ -114,10 +114,15 @@ pub fn trip_counts(
     }
 }
 
-/// `main = (X − X mod c)/c` and `rem = X mod c` → factor c.
+/// `main = (X − X mod c)/c`, or its max with 0, and `rem = X mod c` →
+/// factor c.
 fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
     let SymExpr::Mod(rem_x, c) = rem else {
         return None;
+    };
+    let main = match main {
+        SymExpr::Max(m, z) if **z == SymExpr::Const(0) => m,
+        _ => main,
     };
     let SymExpr::FloorDiv(inner, mc) = main else {
         return None;
@@ -1367,5 +1372,33 @@ ret;"
         let bound = [("param_0".to_owned(), 100)].into_iter().collect();
         assert_eq!(pairs(&src, &free), shape("min(param_0, 8)"));
         assert_eq!(pairs(&src, &bound), shape("min(param_0, 8)"));
+        // A unit-step main loop below (X − X mod 4)/4, behind a guard that
+        // tests its latch at k = 0.
+        let src = String::from(
+            ".version 8.7\n.target sm_80\n.address_size 64\n\
+             .visible .entry k(\n.param .u32 k_param_0\n)\n{\n\
+             ld.param.u32 %r1, [k_param_0];\n\
+             and.b32 %r9, %r1, 3;\n\
+             sub.s32 %r7, %r1, %r9;\n\
+             shr.u32 %r8, %r7, 2;\n\
+             setp.lt.s32 %p3, %r8, 1;\n@%p3 bra $L__G;\n\
+             mov.u32 %r2, 0;\n\
+             .loc 1 14 9\n\
+             $L__M:\n\
+             add.s32 %r2, %r2, 1;\n\
+             setp.lt.s32 %p1, %r2, %r8;\n@%p1 bra $L__M;\n\
+             $L__G:\n\
+             mov.u32 %r4, %r9;\n\
+             $L__R:\n\
+             .loc 1 14 9\n\
+             add.s32 %r4, %r4, -1;\n\
+             setp.ne.s32 %p2, %r4, 0;\n@%p2 bra $L__R;\n\
+             ret;\n}\n.file 1 \"kern.cu\"\n",
+        );
+        let clamped = (
+            1,
+            Some((4, "max((param_0 - param_0 mod 4) / 4, 0)".to_owned())),
+        );
+        assert_eq!(pairs(&src, &free), clamped);
     }
 }
