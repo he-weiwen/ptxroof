@@ -59,6 +59,16 @@ its shared writes and instruction counts remain counted
 
 ### Wrong output
 
+- **A `cp.async` that may read fewer bytes than cp-size counts
+  cp-size.** With a register src-size or an ignore-src predicate (PTX
+  ISA §9.7.9.26.3.1) a lane may read fewer bytes and zero-fill the
+  rest, but the access row's sectors per warp and the global bytes count
+  cp-size on every lane (`micro/cp_async_src_size.ptx`: 16 of 64 lanes
+  read, the report says `16–17 sectors` per warp and `load 1024 B` per
+  CTA where Nsight Compute measures 8 sectors over the launch,
+  `tests/lit/micro-cp-async-src-size.test`). Triton writes its masked
+  loads this way: 319 such `cp.async` in 16 B200 fixtures, 13,489 in the
+  census.
 - **Register effects are incomplete.** The affine tracer records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as

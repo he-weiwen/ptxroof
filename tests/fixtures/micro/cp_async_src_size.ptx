@@ -1,0 +1,33 @@
+//
+// HAND-WRITTEN: cp.async whose src-size is a register: lanes 0..15 read
+// their 16 bytes, lanes 16..63 read none and fill zeros (PTX ISA
+// §9.7.9.26.3.1, "remaining bytes in destination dst are filled with
+// zeros"), Triton's masked load. Thread t copies from param_0 + 16·t.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_cp_async_src_size(
+	.param .u64 micro_cp_async_src_size_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+	.shared .align 16 .b8 buf[1024];
+
+	ld.param.u64 	%rd1, [micro_cp_async_src_size_param_0];
+	mov.u32 	%r1, %tid.x;
+	mul.wide.u32 	%rd2, %r1, 16;
+	add.s64 	%rd3, %rd1, %rd2;
+	mov.u32 	%r2, buf;
+	shl.b32 	%r3, %r1, 4;
+	add.s32 	%r4, %r2, %r3;
+	setp.lt.u32 	%p1, %r1, 16;
+	selp.b32 	%r5, 16, 0, %p1;
+	cp.async.cg.shared.global 	[%r4], [%rd3], 16, %r5;
+	cp.async.wait_all;
+	ret;
+}

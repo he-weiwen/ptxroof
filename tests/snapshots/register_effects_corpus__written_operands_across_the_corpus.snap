@@ -11,8 +11,8 @@ add.rn.bf16x2	1	18
 add.rn.f32	1	564
 add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
-add.s32	1	3617
-add.s64	1	2556
+add.s32	1	3618
+add.s64	1	2557
 add.u32	1	17
 add.u64	1	4
 addc.u32	1	1
@@ -39,9 +39,10 @@ cp.async.bulk.tensor.2d.tile::gather4.shared::cta.global.mbarrier::complete_tx::
 cp.async.bulk.tensor.5d.shared::cta.global.mbarrier::complete_tx::bytes	0	10
 cp.async.bulk.wait_group	0	4
 cp.async.ca.shared.global	0	67
-cp.async.cg.shared.global	0	458
+cp.async.cg.shared.global	0	459
 cp.async.commit_group	0	138
 cp.async.mbarrier.arrive.noinc.shared.b64	0	16
+cp.async.wait_all	0	1
 cp.async.wait_group	0	49
 createpolicy.fractional.L2::evict_last.b64	1	2
 cvt.f32.bf16	1	1010
@@ -95,7 +96,7 @@ ld.param.f32	1	20
 ld.param.s32	1	36
 ld.param.u16	1	1
 ld.param.u32	1	68
-ld.param.u64	1	201
+ld.param.u64	1	202
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -139,7 +140,7 @@ mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	107
 mov.u16	1	293
-mov.u32	1	1235
+mov.u32	1	1237
 mov.u64	1	51
 mul.f32	1	1805
 mul.hi.s32	1	1
@@ -154,7 +155,7 @@ mul.rn.f32x2	1	773
 mul.wide.s16	1	1
 mul.wide.s32	1	159
 mul.wide.u16	1	9
-mul.wide.u32	1	219
+mul.wide.u32	1	220
 nanosleep.u32	0	13
 neg.bf16	1	12
 neg.bf16x2	1	16
@@ -174,10 +175,10 @@ redux.sync.max.f32	1	1
 rem.s32	1	32
 rem.s64	1	10
 rem.u32	1	8
-ret	0	218
+ret	0	219
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
-selp.b32	1	800
+selp.b32	1	801
 selp.b64	1	9
 selp.f32	1	863
 setmaxnreg.dec.sync.aligned.u32	0	9
@@ -209,7 +210,7 @@ setp.lt.f32	1	62
 setp.lt.ftz.f32	1	1
 setp.lt.s32	1	414
 setp.lt.s64	1	118
-setp.lt.u32	1	284
+setp.lt.u32	1	285
 setp.lt.u64	1	8
 setp.ne.b16	1	1
 setp.ne.b32	1	90
@@ -221,7 +222,7 @@ setp.ne.u64	1	1
 shfl.sync.bfly.b32	1	1357
 shfl.sync.idx.b32	1	52
 shl.b16	1	30
-shl.b32	1	851
+shl.b32	1	852
 shl.b64	1	460
 shr.s32	1	106
 shr.s64	1	6
