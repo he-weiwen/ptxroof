@@ -852,50 +852,23 @@ mod tests {
             let src = kernel_with(
                 N_PARAM,
                 &format!(
-                    "ld.param.u32 %r1, [k_param_0];
-{guard}
-$L__P:
-mov.u32 %r2, 0;
-                     $L__L:
-add.s32 %r2, %r2, 8;
-setp.lt.u32 %p2, %r2, %r1;
-                     @%p2 bra $L__L;
-$L__E:
-ret;"
+                    "ld.param.u32 %r1, [k_param_0];\n{guard}\n$L__P:\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 8;\nsetp.lt.u32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
                 ),
             );
             let loops = entries_of(&src);
             assert_eq!(loops[0].1, Ok("⌈param_0/8⌉".to_owned()));
             loops[0].2.clone()
         };
+        let guard = |g: &str| format!("setp.{g};\n@%p1 bra $L__E;");
+        assert_eq!(entry(&guard("eq.s32 %p1, %r1, 0")), "<block 0>");
         assert_eq!(
-            entry(
-                "setp.eq.s32 %p1, %r1, 0;
-@%p1 bra $L__E;"
-            ),
+            entry("setp.ne.s32 %p1, 0, %r1;\n@!%p1 bra $L__E;"),
             "<block 0>"
         );
-        assert_eq!(
-            entry(
-                "setp.ne.s32 %p1, 0, %r1;
-@!%p1 bra $L__E;"
-            ),
-            "<block 0>"
-        );
-        assert_eq!(
-            entry(
-                "setp.ne.s32 %p1, %r1, 0;
-@%p1 bra $L__E;"
-            ),
-            "$L__L"
-        );
-        assert_eq!(
-            entry(
-                "setp.eq.s32 %p1, %r1, 5;
-@%p1 bra $L__E;"
-            ),
-            "$L__L"
-        );
+        assert_eq!(entry(&guard("ne.s32 %p1, %r1, 0")), "$L__L");
+        assert_eq!(entry(&guard("eq.s32 %p1, %r1, 5")), "$L__L");
     }
 
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;
