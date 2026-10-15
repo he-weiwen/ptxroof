@@ -1,0 +1,10 @@
+# neg.s32 of %tid.x is 0 − %tid.x (PTX ISA §9.7.1.12): thread t stores
+# at param_0 + 4·(64 − t). A float neg is no integer, and its bits used
+# as an index stay unknown.
+RUN: %ptxroof analyze %fixtures/micro/neg.ptx | FileCheck "%s"
+CHECK: kernel micro_neg
+CHECK: st.global.u32  global store 4 B  warp: 4–5 sectors (ideal 4)
+CHECK-SAME: [-4 * %tid.x + param_0 + 256]
+CHECK: kernel micro_neg_float
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: depends on special register %tid.x, behind `neg.f32`

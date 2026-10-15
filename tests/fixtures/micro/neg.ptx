@@ -1,0 +1,50 @@
+//
+// HAND-WRITTEN: neg in an address.
+// micro_neg: thread t stores at param_0 + 4·(64 − t), `neg.s32` of
+// %tid.x plus 64 (PTX ISA §9.7.1.12: d = −a); ptxas 13.4 (sm_89),
+// R5 = %tid.x: `IADD3 R2, -R5, 0x40, RZ`, `IMAD.WIDE R2, R2, R3,
+// c[0x0][0x160]`, `STG.E [R2.64], R5`.
+// micro_neg_float: `neg.f32` of a float the thread converts from
+// %tid.x, its bits then taken as an integer index: no affine value.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_neg(
+	.param .u64 micro_neg_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_neg_param_0];
+	mov.u32 	%r1, %tid.x;
+	neg.s32 	%r2, %r1;
+	add.s32 	%r3, %r2, 64;
+	mul.wide.s32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_neg_float(
+	.param .u64 micro_neg_float_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .f32 	%f<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_neg_float_param_0];
+	mov.u32 	%r1, %tid.x;
+	cvt.rn.f32.u32 	%f1, %r1;
+	neg.f32 	%f2, %f1;
+	mov.b32 	%r2, %f2;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
