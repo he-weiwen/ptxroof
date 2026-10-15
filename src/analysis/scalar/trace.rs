@@ -589,6 +589,17 @@ impl<'a> AffineValueTracer<'a> {
         {
             return self.trace_special(SpecialReg::Vector(vector, Some(element)));
         }
+        if mnemonic == Opcode::Mov
+            && let Some(Operand::VectorList { children }) =
+                ops.first().map(|&o| self.module.operand(o))
+            && let Some(&Operand::Register(src)) = ops.get(1).map(|&o| self.module.operand(o))
+            && let elements = self.module.operand_ids(*children)
+            && let Some(place) = (elements.iter())
+                .position(|&c| matches!(self.module.operand(c), Operand::Register(r) if *r == reg))
+            && let Some(value) = self.unpacked(src, def, place, elements.len(), id, depth)
+        {
+            return value;
+        }
         if let Some(Operand::VectorList { children }) = ops.first().map(|&o| self.module.operand(o))
             && (mnemonic != Opcode::Ld || mods.contains(&"param") && children.len() > 1)
             && registers(self.module, ops[0]).contains(&reg)
@@ -926,6 +937,63 @@ impl<'a> AffineValueTracer<'a> {
             }
         }?;
         self.fits(value, instr, &mods)
+    }
+
+    /// Element `place` of the `count` a `mov` unpacks from `src` at `pos`,
+    /// when a `mov` packed `src` from as many, through scalar copies:
+    /// unpacking gives back the packed elements bit for bit (PTX ISA
+    /// §9.7.9.4). `None` when `src` was not packed so, or the element is
+    /// an immediate wider than its bits.
+    fn unpacked(
+        &self,
+        src: Symbol,
+        pos: usize,
+        place: usize,
+        count: usize,
+        id: Option<LoopId>,
+        depth: u32,
+    ) -> Option<Result<Affine, String>> {
+        let Some(Value::Result { op, .. }) = self.ssa.value_before(pos, Register::Named(src))
+        else {
+            return None;
+        };
+        let Stmt::Instr(instr) = &self.kernel.stmts[op] else {
+            return None;
+        };
+        if instr.mnemonic != Opcode::Mov || depth > 32 {
+            return None;
+        }
+        if self.strict.get() > 0 && instr.predicate.is_some() {
+            let name = self.module.interner.resolve(src);
+            return Some(Err(format!("{name} is written under a guard")));
+        }
+        let &[dest, packed] = self.module.operand_ids(instr.operands) else {
+            return None;
+        };
+        match self.module.operand(packed) {
+            Operand::VectorList { children } => {
+                let elements = self.module.operand_ids(*children);
+                let element = *elements.get(place).filter(|_| elements.len() == count)?;
+                let bits = (self.module.modifiers(instr).iter()).find_map(|&m| {
+                    let width = self.module.interner.resolve(m).strip_prefix('b')?;
+                    width.parse::<u32>().ok()
+                })? / count as u32;
+                if let Operand::Immediate(t) = self.module.operand(element)
+                    && !parse_int(self.module.interner.resolve(*t)).is_some_and(|v| {
+                        (-(1i128 << (bits - 1))..1i128 << bits).contains(&i128::from(v))
+                    })
+                {
+                    return None;
+                }
+                Some(self.trace_operand(element, op, id, depth + 1))
+            }
+            &Operand::Register(copied)
+                if matches!(self.module.operand(dest), Operand::Register(_)) =>
+            {
+                self.unpacked(copied, op, place, count, id, depth + 1)
+            }
+            _ => None,
+        }
     }
 
     /// A 16- or 32-bit `add`, `sub`, `neg`, `mul.lo`, `mad.lo`, `shl` or `bfe`

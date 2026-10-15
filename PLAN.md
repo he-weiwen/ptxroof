@@ -71,7 +71,9 @@ its shared writes and instruction counts remain counted
   exactly), even where every write agrees
   (`micro/guarded_selector.ptx`: in its second kernel 32 threads store,
   the report says `store <= 256 B`), and an address through one is
-  read as the last write. A form the
+  read as the last write (`micro/unpack.ptx`'s `micro_unpack_guarded`:
+  lanes 16–63 store at `param_0 + 16·%tid.x`, the report reads
+  `[param_0]`, 1 sector). A form the
   register-effects decoder does not decode, a sub-operation it does
   not list (none in the corpus,
   `tests/register_effects_corpus.rs`), is taken to write every register
@@ -166,7 +168,15 @@ its shared writes and instruction counts remain counted
   increment, `(k − 1) mod 2`, which is the same for every thread and so
   a uniform variable the loop defines (`micro/counter_mod_offset.ptx`:
   `requested 16 B, unique unknown` where ptxas stores 8 distinct bytes;
-  k12's double buffer `tile % 2`, `uniform(%r10@365)`).
+  k12's double buffer `tile % 2`, `uniform(%r10@365)`); an element a
+  `mov.b64 {…}` unpacks from a register no single `mov` packed, after a
+  join of packs (`micro/unpack.ptx`'s `micro_unpack_join`; b200
+  `bmm_kernel_persistent`'s `cp.async` sources, whose `%rd175` three
+  `mov`s pack, lines 372, 540 and 711), with another element
+  count (`micro_unpack_halves`), from 64-bit arithmetic
+  (`micro_unpack_wide`) or from an unpacked element
+  (`micro_unpack_twice`), or packed as an immediate wider than its
+  element (`micro_unpack_imm`).
 - **Offsets past 2^62 bytes are not counted**: an access whose lane
   offsets over the block, or whose loop's shifts over its trips, reach
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
@@ -211,16 +221,16 @@ its shared writes and instruction counts remain counted
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. Bounds the
   tracer does not read, by the loop's source line: a `max` of
-  non-constants (b200 `scaled_mm_kernel`, `:100`), a division by a
-  non-constant (b200 `_chunk_scan_fwd_kernel`, `:331`), one half of a
-  `mov.b64 {…}` unpack (b200 `_w8a8_block_fp8_matmul`, `:90`), a float
+  non-constants (b200 `scaled_mm_kernel`, `:100`;
+  `_w8a8_block_fp8_matmul`, `:90`), a division by a
+  non-constant (b200 `_chunk_scan_fwd_kernel`, `:331`), a float
   immediate and an `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`).
   Over the census's 2,997 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 749 have a trip count: 1,437 are mbarrier waits
-  and 408 read loaded values, 242 grid-stride, 50 `max`/`min`, 34
-  unpacks, 20 atomics, 19 divisions, 15 multi-exit.
+  inferred arguments), 758 have a trip count: 1,437 are mbarrier waits
+  and 408 read loaded values, 242 grid-stride, 73 `max`/`min`, 1
+  unpack, 20 atomics, 19 divisions, 15 multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,

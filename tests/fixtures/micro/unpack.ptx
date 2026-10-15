@@ -1,0 +1,214 @@
+//
+// HAND-WRITTEN: 32-bit values packed into a 64-bit register with
+// `mov.b64 %rd, {a, b}` and unpacked with `mov.b64 {x, y}, %rd`, as the
+// sm_100 NVPTX backend keeps a vector of two i32 (PTX ISA §9.7.9.4:
+// d = a.x | (a.y << 32), {d.x, d.y} = {a[0..31], a[32..63]}).
+//
+// micro_unpack: {128·%ctaid.x, 4·%tid.x} packed, copied, and unpacked
+// whole and through a sink; thread t of CTA c stores at
+// param_0 + 4·(128·c + 4·t), and at param_1 + 4·(4·t). ptxas 13.4
+// (sm_89), R3 = %ctaid.x, R4 = 4·%tid.x: `LEA R2, R3, R4, 0x7`,
+// `IMAD.WIDE.U32 R2, R2, R5, c[0x0][0x160]`,
+// `IMAD.WIDE.U32 R4, R4, R5, c[0x0][0x168]`.
+// micro_unpack_join: one pack on each side of a branch, unpacked after
+// the join.
+// micro_unpack_halves: two 32-bit values packed, four 16-bit halves
+// unpacked.
+// micro_unpack_wide: a 64-bit product unpacked, no pack.
+// micro_unpack_twice: the low element unpacked again into 16-bit halves;
+// the high half of 4·%tid.x is 0 (ptxas: `PRMT R2, R0, 0x7732, RZ`), not
+// the pack's high element %tid.x.
+// micro_unpack_imm: low elements 4294967296, whose low 32 bits are 0,
+// and 16; ptxas stores at `[R2.64]` and `[R2.64+0x40]`.
+// micro_unpack_redefined: an element register written between the pack
+// and the unpack; the unpack gives the packed 4·%tid.x (ptxas:
+// `SHF.L.U32 R2, R2, 0x2, RZ`, `IMAD.WIDE.U32 R2, R2, R3, c[0x0][0x160]`).
+// micro_unpack_guarded: lanes 0..15 overwrite the pack {4·%tid.x, 0}
+// with {0, 0} under a guard (ptxas: `SEL R0, R0, RZ, P0`); lanes 16..63
+// store at param_0 + 16·%tid.x, and lanes 0..15 store again at param_0.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_unpack(
+	.param .u64 micro_unpack_param_0,
+	.param .u64 micro_unpack_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<9>;
+	.reg .b64 	%rd<9>;
+
+	ld.param.u64 	%rd1, [micro_unpack_param_0];
+	ld.param.u64 	%rd5, [micro_unpack_param_1];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %ctaid.x;
+	shl.b32 	%r3, %r2, 7;
+	shl.b32 	%r4, %r1, 2;
+	mov.b64 	%rd2, {%r3, %r4};
+	mov.b64 	%rd3, %rd2;
+	mov.b64 	{%r5, %r6}, %rd3;
+	add.s32 	%r7, %r5, %r6;
+	mul.wide.u32 	%rd4, %r7, 4;
+	add.s64 	%rd6, %rd1, %rd4;
+	st.global.u32 	[%rd6], %r1;
+	mov.b64 	{_, %r8}, %rd2;
+	mul.wide.u32 	%rd7, %r8, 4;
+	add.s64 	%rd8, %rd5, %rd7;
+	st.global.u32 	[%rd8], %r1;
+	ret;
+}
+
+.visible .entry micro_unpack_join(
+	.param .u64 micro_unpack_join_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_unpack_join_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 2;
+	setp.lt.u32 	%p1, %r1, 32;
+	mov.b64 	%rd2, {%r2, %r1};
+	@%p1 bra 	$L__BB1_2;
+	mov.b64 	%rd2, {%r1, %r2};
+$L__BB1_2:
+	mov.b64 	{%r3, %r4}, %rd2;
+	mul.wide.u32 	%rd3, %r3, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	ret;
+}
+
+.visible .entry micro_unpack_halves(
+	.param .u64 micro_unpack_halves_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b16 	%rs<5>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_unpack_halves_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 2;
+	mov.b64 	%rd2, {%r2, %r1};
+	mov.b64 	{%rs1, %rs2, %rs3, %rs4}, %rd2;
+	cvt.u32.u16 	%r3, %rs1;
+	mul.wide.u32 	%rd3, %r3, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	ret;
+}
+
+.visible .entry micro_unpack_wide(
+	.param .u64 micro_unpack_wide_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_unpack_wide_param_0];
+	mov.u32 	%r1, %tid.x;
+	mul.wide.u32 	%rd2, %r1, 4;
+	mov.b64 	{%r2, %r3}, %rd2;
+	mul.wide.u32 	%rd3, %r2, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	ret;
+}
+
+.visible .entry micro_unpack_twice(
+	.param .u64 micro_unpack_twice_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b16 	%rs<3>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_unpack_twice_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 2;
+	mov.b64 	%rd2, {%r2, %r1};
+	mov.b64 	{%r3, %r4}, %rd2;
+	mov.b32 	{%rs1, %rs2}, %r3;
+	cvt.u32.u16 	%r5, %rs2;
+	mul.wide.u32 	%rd3, %r5, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	ret;
+}
+
+.visible .entry micro_unpack_imm(
+	.param .u64 micro_unpack_imm_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<8>;
+
+	ld.param.u64 	%rd1, [micro_unpack_imm_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.b64 	%rd2, {4294967296, %r1};
+	mov.b64 	{%r2, %r3}, %rd2;
+	mul.wide.u32 	%rd3, %r2, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	mov.b64 	%rd5, {16, %r1};
+	mov.b64 	{%r4, %r5}, %rd5;
+	mul.wide.u32 	%rd6, %r4, 4;
+	add.s64 	%rd7, %rd1, %rd6;
+	st.global.u32 	[%rd7], %r1;
+	ret;
+}
+
+.visible .entry micro_unpack_redefined(
+	.param .u64 micro_unpack_redefined_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_unpack_redefined_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 2;
+	mov.b64 	%rd2, {%r2, %r1};
+	add.s32 	%r2, %r2, 1;
+	mov.b64 	{%r3, %r4}, %rd2;
+	mul.wide.u32 	%rd3, %r3, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r2;
+	ret;
+}
+
+.visible .entry micro_unpack_guarded(
+	.param .u64 micro_unpack_guarded_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_unpack_guarded_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 2;
+	mov.u32 	%r3, 0;
+	mov.b64 	%rd2, {%r2, %r3};
+	setp.lt.u32 	%p1, %r1, 16;
+	@%p1 mov.b64 	%rd2, {%r3, %r3};
+	mov.b64 	{%r4, %r5}, %rd2;
+	mul.wide.u32 	%rd3, %r4, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	setp.eq.u32 	%p2, %r4, 0;
+	@%p2 st.global.u32 	[%rd1], %r1;
+	ret;
+}

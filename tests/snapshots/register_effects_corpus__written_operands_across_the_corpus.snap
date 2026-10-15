@@ -11,8 +11,8 @@ add.rn.bf16x2	1	18
 add.rn.f32	1	564
 add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
-add.s32	1	3603
-add.s64	1	2503
+add.s32	1	3605
+add.s64	1	2513
 add.u32	1	15
 add.u64	1	3
 addc.u32	1	1
@@ -28,7 +28,7 @@ barrier.sync	0	71
 bfe.s32	1	39
 bfe.u32	1	144
 bfi.b32	1	1
-bra	0	382
+bra	0	383
 bra.uni	0	296
 brx.idx	0	2
 call	1	1
@@ -54,7 +54,7 @@ cvt.rn.f32.u32	1	15
 cvt.rn.satfinite.e4m3x2.f32	1	84
 cvt.s64.s32	1	176
 cvt.u16.u32	1	22
-cvt.u32.u16	1	46
+cvt.u32.u16	1	48
 cvt.u32.u64	1	83
 cvt.u64.u32	1	390
 cvta.param.u64	1	23
@@ -94,7 +94,7 @@ ld.param.b64	1	248
 ld.param.f32	1	20
 ld.param.s32	1	36
 ld.param.u32	1	66
-ld.param.u64	1	146
+ld.param.u64	1	155
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -133,12 +133,12 @@ mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32	1	764
 mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32	1	33
 mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32	1	96
 mov.b16	1	20
-mov.b32	1	3813
-mov.b64	1	4004
+mov.b32	1	3814
+mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	107
 mov.u16	1	293
-mov.u32	1	1175
+mov.u32	1	1185
 mov.u64	1	48
 mul.f32	1	1805
 mul.hi.s32	1	1
@@ -152,7 +152,7 @@ mul.rn.f32	1	2358
 mul.rn.f32x2	1	773
 mul.wide.s32	1	150
 mul.wide.u16	1	6
-mul.wide.u32	1	189
+mul.wide.u32	1	200
 nanosleep.u32	0	13
 neg.bf16	1	12
 neg.bf16x2	1	16
@@ -170,7 +170,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	31
 rem.s64	1	10
 rem.u32	1	8
-ret	0	165
+ret	0	173
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	800
@@ -183,7 +183,7 @@ setp.eq.b32	1	148
 setp.eq.b64	1	20
 setp.eq.f32	1	34
 setp.eq.s32	1	8
-setp.eq.u32	1	14
+setp.eq.u32	1	15
 setp.ge.f32	1	2
 setp.ge.s32	1	131
 setp.ge.s64	1	15
@@ -205,7 +205,7 @@ setp.lt.f32	1	62
 setp.lt.ftz.f32	1	1
 setp.lt.s32	1	414
 setp.lt.s64	1	118
-setp.lt.u32	1	282
+setp.lt.u32	1	284
 setp.lt.u64	1	8
 setp.ne.b16	1	1
 setp.ne.b32	1	90
@@ -215,7 +215,7 @@ setp.ne.u32	1	7
 shfl.sync.bfly.b32	1	1357
 shfl.sync.idx.b32	1	52
 shl.b16	1	30
-shl.b32	1	839
+shl.b32	1	846
 shl.b64	1	449
 shr.s32	1	104
 shr.s64	1	6
@@ -227,7 +227,7 @@ st.global.b32	0	197
 st.global.b64	0	9
 st.global.f32	0	15
 st.global.u16	0	197
-st.global.u32	0	124
+st.global.u32	0	135
 st.global.u64	0	1
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2
