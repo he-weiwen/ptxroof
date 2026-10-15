@@ -157,7 +157,16 @@ its shared writes and instruction counts remain counted
   `128·⌊%tid.x/32⌋ | 16·%tid.x`: "or whose sides may both set bit 7"),
   or one side's bits unknown, a parameter not bound
   (`micro_or_param`) or a value that may be negative
-  (`micro/or_negative.ptx`).
+  (`micro/or_negative.ptx`); a division by a constant that is no power
+  of two, which LLVM writes as `mul.hi` by a magic number and a shift
+  (`micro/magic_div.ptx`: "`mul.hi.u32` keeps a product's upper half";
+  sglang `bmm_kernel_persistent`'s `/ 148` leaves its trip count
+  unknown); a floor or mod of a value whose base is no multiple of the
+  divisor, such as a 0-based counter's `i % 2` read before its
+  increment, `(k − 1) mod 2`, which is the same for every thread and so
+  a uniform variable the loop defines (`micro/counter_mod_offset.ptx`:
+  `requested 16 B, unique unknown` where ptxas stores 8 distinct bytes;
+  k12's double buffer `tile % 2`, `uniform(%r10@365)`).
 - **Offsets past 2^62 bytes are not counted**: an access whose lane
   offsets over the block, or whose loop's shifts over its trips, reach
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
@@ -283,6 +292,16 @@ its shared writes and instruction counts remain counted
 
 ### Presentation
 
+- **Floors and mods of one variable are not merged back**, so a form
+  can print longer than its value: k5's second `As` store reads
+  `16 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8)`, which is `2 * %tid.x`, and
+  the B200 fused_rmsnorm's `4 * ⌊(⌊%tid.x/8⌋ mod 128)/4⌋` is
+  `4 * ⌊%tid.x/32⌋` below 1024 threads.
+- **A refused φ names the obstacle on one of its source chains**: in
+  each Gluon `attn_fwd_ws` kernel 76 access rows say only "depends on
+  special register %ctaid.x" (34 in `tma_best`, 24 in
+  `bmm_kernel_persistent`), not that a join of two values stopped the
+  trace.
 - Per-thread totals of a warp-specialized kernel are `<=` the sum of
   its partitions, since a thread runs one of them: the `threads` column
   of the block table says which threads run each block (`128

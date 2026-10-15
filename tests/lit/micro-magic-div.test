@@ -1,0 +1,8 @@
+# ⌊%tid.x/3⌋ written as LLVM writes a division by a constant that is no
+# power of two, the upper half of a product by a magic number and a
+# shift: the tracer reads no mul.hi, and the address is unknown (PLAN,
+# "Addresses the tracer cannot read").
+RUN: %ptxroof analyze %fixtures/micro/magic_div.ptx | FileCheck "%s"
+CHECK: kernel micro_magic_div
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: `mul.hi.u32` keeps a product's upper half

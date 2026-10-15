@@ -1,0 +1,11 @@
+# A 0-based counter's `i % 2` read before its increment is (k − 1) mod 2
+# on trip k. The base −1 is no multiple of 2, so the tracer does not take
+# the remainder of the counter, and the value, the same on every thread,
+# is a uniform variable the loop defines: its stride varies, and the
+# loop's unique bytes are unknown where ptxas stores 8 distinct bytes
+# (PLAN, "Addresses the tracer cannot read").
+RUN: %ptxroof analyze %fixtures/micro/counter_mod_offset.ptx | FileCheck "%s"
+CHECK: trips = 4
+CHECK: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+CHECK-SAME: [4 * uniform(%r2@25) + param_0]  k[$L__BB0_1]: varies
+CHECK: global bytes per CTA over the loop's own blocks: requested 16 B, unique unknown
