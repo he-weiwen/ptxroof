@@ -32,7 +32,7 @@ use crate::analysis::instruction_counts::count_constraint::count_constraint;
 use crate::analysis::instruction_counts::measurement::{Contribution, MeasureKind};
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{
-    CountRange, SECTOR, SectorPattern, in_block, offsets_fit, warp_footprint,
+    AccessForm, CountRange, at_trip, loop_bytes, warp_footprint,
 };
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
@@ -547,54 +547,6 @@ type Running = (i64, Option<(i64, bool)>, bool);
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
 
-/// A memory operand's bound affine address, for the per-loop footprint.
-struct AccessForm {
-    /// `None` when the address is not read.
-    form: Option<Affine>,
-    bytes: u32,
-    /// The access size the address is aligned to.
-    align: u32,
-    space: Space,
-    /// The threads that execute the instruction.
-    set: ThreadSet,
-    /// The instruction's guard, if any, is a thread-index condition.
-    guard_exact: bool,
-    /// The block may not run on every iteration of its loop, and no
-    /// thread-index selection explains that.
-    conditional: bool,
-    /// The address holds a uniform variable defined in its loop.
-    uniform_varies: bool,
-}
-
-/// The bytes the half-open intervals cover.
-fn union_len(mut intervals: Vec<(i64, i64)>) -> i64 {
-    intervals.sort_unstable();
-    let mut len = 0;
-    let mut cur: Option<(i64, i64)> = None;
-    for (s, e) in intervals {
-        match cur {
-            Some((cs, ce)) if s <= ce => cur = Some((cs, ce.max(e))),
-            Some((cs, ce)) => {
-                len += ce - cs;
-                cur = Some((s, e));
-            }
-            None => cur = Some((s, e)),
-        }
-    }
-    len + cur.map_or(0, |(cs, ce)| ce - cs)
-}
-
-/// `v` at trip `k` of loop `id`, when `v` is that loop's counter or a
-/// floor or mod of it.
-fn at_trip(v: &Var, id: LoopId, k: i64) -> Option<i64> {
-    match v {
-        Var::Iter(l) if *l == id => Some(k),
-        Var::Div(inner, d) => at_trip(inner, id, k).map(|x| x.div_euclid(*d)),
-        Var::Mod(inner, m) => at_trip(inner, id, k).map(|x| x.rem_euclid(*m)),
-        _ => None,
-    }
-}
-
 /// The direction a count is known in; `None` when bounded in neither.
 fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
     match (at_most, at_least) {
@@ -1061,177 +1013,12 @@ impl<'a> KernelReportBuilder<'a> {
         }
     }
 
-    /// Global bytes one CTA requests over one execution of loop `id`'s
-    /// own blocks, and the distinct bytes they touch: every lane of every
-    /// executing thread at every iteration, as intervals merged per
-    /// base (the form without its lane, counter and constant parts).
-    /// Bases on different pointers are assumed disjoint; bases on one
-    /// pointer, or on none known, may overlap, so the distinct bytes are
-    /// at most their sum and at least the largest on each pointer. Needs
-    /// a numeric trip count, the block shape, and every global address's
-    /// lane and counter coefficients as constants.
     fn loop_bytes(&self, id: LoopId) -> Option<LoopBytes> {
         let trips = self.trip_exprs[id.0 as usize]
             .as_const()
             .filter(|&t| t > 0)?;
-        let [nx, ny, nz] = self.shape.map(i64::from);
-        let threads = nx * ny * nz;
-        if threads == 0 {
-            return None;
-        }
         let forms = self.access_forms.get(&Some(id))?;
-        let global: Vec<&AccessForm> = forms
-            .iter()
-            .filter(|f| matches!(f.space, Space::Global | Space::Generic))
-            .collect();
-        if global.is_empty() {
-            return None;
-        }
-        let mut requested = 0u64;
-        let mut complete = true;
-        let mut at_most = false;
-        let mut per_base: HashMap<Affine, Vec<(i64, i64)>> = HashMap::new();
-        // Each warp's pattern, with the trips it is summed over.
-        let mut patterns: HashMap<Affine, Vec<(SectorPattern, i64)>> = HashMap::new();
-        for f in global {
-            let set = &f.set;
-            let lanes = (0..threads)
-                .filter(|&t| set.contains([t % nx, (t / nx) % ny, t / (nx * ny)], self.shape))
-                .count() as u64;
-            let bytes = u64::from(f.bytes)
-                .checked_mul(trips as u64)?
-                .checked_mul(lanes)?;
-            requested = requested.checked_add(bytes)?;
-            at_most |= !f.guard_exact || f.conditional;
-            let varies = |v: &Var| {
-                crate::analysis::scalar::lane_eval::depends_on_lane(v)
-                    || at_trip(v, id, 0).is_some()
-            };
-            let bound = |v: &Var| match v {
-                Var::Iter(l) if *l == id => Some((0, trips)),
-                _ => in_block(self.shape)(v),
-            };
-            let read = |a: &&Affine| offsets_fit(a, varies, &bound) && !f.uniform_varies;
-            let Some(form) = (f.form.as_ref()).filter(read) else {
-                complete &= f.bytes == 0 || lanes == 0;
-                continue;
-            };
-            let stride = match form.terms.get(&Var::Iter(id)) {
-                Some(c) => c.as_const()?,
-                None => 0,
-            };
-            // A floor or mod of the counter moves the address by its
-            // value at each trip.
-            let mut stepped = Vec::new();
-            for (v, c) in &form.terms {
-                if *v != Var::Iter(id) && at_trip(v, id, 0).is_some() {
-                    stepped.push((v, c.as_const()?));
-                }
-            }
-            // One sector pattern per warp and trip: within the budget the
-            // intervals keep below.
-            if !stepped.is_empty() && trips.saturating_mul((threads + 31) / 32) > 1 << 22 {
-                return None;
-            }
-            let shift = |k: i64| -> i64 {
-                stride * k
-                    + (stepped.iter())
-                        .map(|(v, c)| c * at_trip(v, id, k).unwrap_or(0))
-                        .sum::<i64>()
-            };
-            if form.terms.iter().any(|(v, c)| {
-                crate::analysis::scalar::lane_eval::depends_on_lane(v) && c.as_const().is_none()
-            }) {
-                return None;
-            }
-            let bytes = i64::from(f.bytes);
-            // Which lane an election picks is unspecified: a lane-dependent
-            // address touched by the elected lane is a bound.
-            if f.set.pred.elect_active().is_some()
-                && form
-                    .terms
-                    .keys()
-                    .any(crate::analysis::scalar::lane_eval::depends_on_lane)
-            {
-                at_most = true;
-            }
-            let mut key = form.clone();
-            key.terms.retain(|v, _| {
-                !crate::analysis::scalar::lane_eval::depends_on_lane(v)
-                    && at_trip(v, id, 0).is_none()
-            });
-            key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
-            let intervals = per_base.entry(key.clone()).or_default();
-            for warp in 0..(threads + 31) / 32 {
-                let offsets: Vec<i64> = (warp * 32..((warp + 1) * 32).min(threads))
-                    .map(|t| [t % nx, (t / nx) % ny, t / (nx * ny)])
-                    .filter(|&tid| set.contains(tid, self.shape))
-                    .map(|tid| crate::analysis::scalar::lane_eval::eval_lane(form, tid))
-                    .collect();
-                let align = i64::from(f.align);
-                let pats = patterns.entry(key.clone()).or_default();
-                if offsets.is_empty() {
-                } else if stepped.is_empty() {
-                    pats.push((SectorPattern::new(&offsets, bytes, align, stride), trips));
-                } else {
-                    for k in 1..=trips {
-                        let at: Vec<i64> = offsets.iter().map(|o| o + shift(k)).collect();
-                        pats.push((SectorPattern::new(&at, bytes, align, 0), 1));
-                    }
-                }
-            }
-            for t in 0..threads {
-                let tid = [t % nx, (t / nx) % ny, t / (nx * ny)];
-                if !set.contains(tid, self.shape) {
-                    continue;
-                }
-                let base = crate::analysis::scalar::lane_eval::eval_lane(form, tid);
-                if intervals.len() as i64 + trips > 1 << 22 {
-                    return None;
-                }
-                for k in 1..=trips {
-                    let start = base + shift(k);
-                    intervals.push((start, start + bytes));
-                }
-            }
-        }
-        let (mut most, mut loose) = (0i64, 0i64);
-        let mut largest: HashMap<String, i64> = HashMap::new();
-        for (key, intervals) in per_base {
-            let len = union_len(intervals);
-            most += len;
-            match self.pointer(&key) {
-                Some(p) => {
-                    let m = largest.entry(p).or_default();
-                    *m = (*m).max(len);
-                }
-                None => loose = loose.max(len),
-            }
-        }
-        let unique = ByteRange {
-            min: largest.values().sum::<i64>().max(loose) as u64,
-            max: most as u64,
-        };
-        let mut sector_bytes = Some(ByteRange { min: 0, max: 0 });
-        for pats in patterns.values() {
-            let totals: Vec<u64> = (0..SECTOR)
-                .filter(|&rho| pats.iter().all(|(p, n)| p.aligned(rho, *n)))
-                .map(|rho| pats.iter().map(|(p, n)| p.total(rho, *n)).sum())
-                .collect();
-            sector_bytes = match (sector_bytes, totals.iter().min(), totals.iter().max()) {
-                (Some(s), Some(&lo), Some(&hi)) => Some(ByteRange {
-                    min: s.min + lo * SECTOR as u64,
-                    max: s.max + hi * SECTOR as u64,
-                }),
-                _ => None,
-            };
-        }
-        Some(LoopBytes {
-            requested,
-            unique: complete.then_some(unique),
-            sector_bytes: sector_bytes.filter(|_| complete),
-            at_most,
-        })
+        loop_bytes(id, trips, self.shape, forms, |key| self.pointer(key))
     }
 
     /// The pointer a loop footprint's base sits on: the one 64-bit

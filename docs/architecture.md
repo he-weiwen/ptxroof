@@ -25,7 +25,7 @@ analysis framework is introduced.
 | `analysis/scalar/trip_counts` | Loop trip matching and unroll pairing | `trips` |
 | `analysis/thread_participation` | Threads that execute a block | `threads` |
 | `analysis/dead_code` | Instructions whose results nothing with an effect reads | new |
-| `analysis/memory_footprint` | Sectors touched by a warp request | remaining `footprint` |
+| `analysis/memory_footprint` | Sectors touched by a warp request; a loop's requested, distinct and sector bytes per CTA | remaining `footprint` |
 | `analysis/instruction_counts` | Classification, measurements, and collection | `classify`, `core/measurement`, `report/collect` |
 | `report/build` | Analysis orchestration and report-specific aggregation | unchanged |
 | `report/schema` | Owned, serializable output structures | `report/tree` |
@@ -91,6 +91,7 @@ affine -> ssa (`Var::Uniform` names a register SSA value)
 thread_participation -> lane_eval -> affine
 memory_footprint -----> lane_eval
 memory_footprint -----------------> affine
+memory_footprint -> thread_participation, classify, control_flow
 
 instruction_counts::collect -> classify <-> measurement
                       +-> control_flow

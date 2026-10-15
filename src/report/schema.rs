@@ -18,6 +18,7 @@
 //! - `coverage` is `{metric: {num, den}}` count pairs — the runner
 //!   aggregates them corpus-wide (percentages cannot be aggregated).
 
+pub use crate::analysis::memory_footprint::{ByteRange, LoopBytes};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -262,29 +263,6 @@ pub struct LoopNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub global_bytes_per_cta: Option<LoopBytes>,
     pub loops: Vec<LoopNode>,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
-pub struct LoopBytes {
-    pub requested: u64,
-    /// The distinct bytes: at most the sum over the bases, at least the
-    /// largest base on each pointer, summed (bases on one pointer may
-    /// overlap); `None` when an access's address is not read.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unique: Option<ByteRange>,
-    /// The bytes of the 32-byte sectors those requests touch, over the
-    /// alignments of each base pointer, when every access on it is
-    /// aligned under one of them.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sector_bytes: Option<ByteRange>,
-    /// Some contributing access is predicated: all are upper bounds.
-    pub at_most: bool,
-}
-
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
-pub struct ByteRange {
-    pub min: u64,
-    pub max: u64,
 }
 
 /// One memory operand of one instruction: where it points, as an
