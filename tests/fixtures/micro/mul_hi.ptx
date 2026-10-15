@@ -4,11 +4,11 @@
 // t<2n-1..n> for .hi), so the store writes a[0]: ptxas 13.4 (sm_89)
 // emits
 //   STG.E [R2.64], RZ
-// with R2 = param_0. The tracer reads `mul.hi` as the full product, 6.
-// Then `mad.hi.u32 %r3, %r1, 3, 1`: the high half of 6 plus 1 is 1
-// (PTX ISA §9.7.1.4: d = t<2n-1..n> + c for .hi), so the second store
-// writes a[1]; ptxas keeps an `IMAD.HI.U32` for it, so the manual is the
-// evidence. The tracer reads it as 6 + 1, a[7].
+// with R2 = param_0. Then `mad.hi.u32 %r3, %r1, 3, 1`: the high half of
+// 6 plus 1 is 1 (PTX ISA §9.7.1.4: d = t<2n-1..n> + c for .hi), so the
+// second store writes a[1]; ptxas keeps an `IMAD.HI.U32` for it, so the
+// manual is the evidence. The tracer refuses both upper halves, and
+// reads each value, the same on every thread, as a uniform variable.
 //
 .version 8.7
 .target sm_89

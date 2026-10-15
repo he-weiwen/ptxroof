@@ -4,9 +4,9 @@
 // leaves with %r3 = t + 1 and lane 0's is 1, so thread t stores at
 // param_0 + 4t (ptxas 13.4, sm_89: `SHFL.IDX PT, R3, R0, RZ, 0x1f`,
 // `IMAD.IADD R3, R0, 0x1, -R3`, `IMAD.WIDE R2, R3, R2, c[0x0][0x160]`,
-// `STG.E [R2.64], R5`). The tracer reads both operands as the loop's
-// counter, which cancels before the check that a counter read after
-// its loop differs between lanes, so every lane reads param_0.
+// `STG.E [R2.64], R5`). A counter passes `shfl.sync.idx` only where
+// its loop's exits are the same for every lane, so the address is
+// unknown rather than the two counters cancelling to param_0.
 //
 .version 8.7
 .target sm_89

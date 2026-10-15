@@ -5,8 +5,8 @@
 // every trip: ptxas 13.4 (sm_89) folds the loop into one
 //   STG.E [R2.64], RZ
 // at param_0. The old induction search took the guarded add as a step
-// of 1 on every trip; a guarded write is no recurrence's step, and the
-// address is unknown.
+// of 1 on every trip; a guarded write is no recurrence's step, and %r1
+// reads as a uniform variable the loop defines, its stride "varies".
 //
 .version 8.7
 .target sm_89
