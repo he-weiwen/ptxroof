@@ -642,6 +642,19 @@ mod tests {
         let varies = Err("induction step is not a constant".to_owned());
         assert_eq!(trips(step, None), varies);
         assert_eq!(trips(step, Some(4)), Ok("256".to_owned()));
+        // An outer counter stepped once per trip of an inner loop of
+        // max(n, 2) trips: 4 a trip at n = 4, so 100 / 4 trips.
+        let nested = "ld.param.u32 %r1, [k_param_0];\nmax.s32 %r9, %r1, 2;\nmov.u32 %r2, 0;\n\
+                      $L__O:\nmov.u32 %r3, 0;\n$L__I:\nadd.s32 %r3, %r3, 1;\nadd.s32 %r2, %r2, 1;\n\
+                      setp.lt.s32 %p1, %r3, %r9;\n@%p1 bra $L__I;\n\
+                      setp.lt.s32 %p2, %r2, 100;\n@%p2 bra $L__O;\nret;";
+        let bound = [("param_0".to_owned(), 4)].into_iter().collect();
+        let outer = trips_under(&kernel_with(N_PARAM, nested), &bound);
+        let outer = outer
+            .iter()
+            .find(|(n, _)| n == "$L__O")
+            .expect("outer loop");
+        assert_eq!(outer.1, Ok(SymExpr::Const(25)));
     }
 
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;
