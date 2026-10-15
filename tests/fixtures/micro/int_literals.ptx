@@ -1,0 +1,78 @@
+//
+// HAND-WRITTEN: stores at param_0 plus an integer literal written in
+// octal, binary, with the unsigned suffix U, and in hexadecimal above
+// 2^63 (PTX ISA §4.5.1). ptxas 13.4 (sm_89) folds each offset into the
+// store, R2 = param_0:
+//
+// micro_literal_octal: 020, sixteen:
+//   STG.E [R2.64+0x10], R5
+// micro_literal_binary: 0b10000:
+//   STG.E [R2.64+0x10], R5
+// micro_literal_unsigned: 16U:
+//   STG.E [R2.64+0x10], R5
+// micro_literal_wide: 0xfffffffffffffff0, −16 in 64 bits:
+//   STG.E [R2.64+-0x10], R5
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_literal_octal(
+	.param .u64 micro_literal_octal_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [micro_literal_octal_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s64 	%rd2, %rd1, 020;
+	st.global.u32 	[%rd2], %r1;
+	ret;
+}
+
+.visible .entry micro_literal_binary(
+	.param .u64 micro_literal_binary_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [micro_literal_binary_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s64 	%rd2, %rd1, 0b10000;
+	st.global.u32 	[%rd2], %r1;
+	ret;
+}
+
+.visible .entry micro_literal_unsigned(
+	.param .u64 micro_literal_unsigned_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [micro_literal_unsigned_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s64 	%rd2, %rd1, 16U;
+	st.global.u32 	[%rd2], %r1;
+	ret;
+}
+
+.visible .entry micro_literal_wide(
+	.param .u64 micro_literal_wide_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [micro_literal_wide_param_0];
+	mov.u32 	%r1, %tid.x;
+	add.s64 	%rd2, %rd1, 0xfffffffffffffff0;
+	st.global.u32 	[%rd2], %r1;
+	ret;
+}

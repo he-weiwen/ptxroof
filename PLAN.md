@@ -137,6 +137,16 @@ its shared writes and instruction counts remain counted
   the load at offset 0, so comparing two fields of a by-value
   aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
   threads in 2 warps`, `store 256 B` per CTA).
+- **Integer literals are read in decimal and hexadecimal below 2^63
+  only**; PTX ISA §4.5.1 also writes them in octal and binary, with the
+  suffix `U`, and up to 2^64 − 1 as `.u64`. In `micro/int_literals.ptx`,
+  where ptxas folds each offset into the store, octal `020` reads as
+  twenty (`[param_0 + 20]`, ptxas `[R2.64+0x10]`), `0b10000` and `16U`
+  as symbols (`[param_0 + 0b10000]`), and `0xfffffffffffffff0` as no
+  integer, the address a uniform variable (ptxas `[R2.64+-0x10]`). In
+  the census the forms are 7,019 `prmt` selectors with a `U`
+  (`0x3340U`, 119 kernels) and 19 masked loads' default
+  `0xffffffffffffffff` (`mov.u64`, 3 kernels; `00101.ptx`).
 - **A `!=` latch with a symbolic distance is taken to meet its
   bound**: the trip solver divides the distance by the step, rounding
   down, as `src/analysis/scalar/trip_counts.rs`'s doc assumes the
