@@ -33,7 +33,7 @@ gpu_ready() {
     nvidia-smi -L > /dev/null 2>&1
 }
 if gpu_ready; then
-    # The B200 records come from reports, not measure.py: tests/lit/b200-*.test check them.
+    echo "ci.sh: the B200 records come from reports, not measure.py, and are not measured again"
     find tests/fixtures tests/lit/Inputs -name '*.ncu.json' -not -path 'tests/fixtures/b200/*' -print0 |
         sort -z | xargs -0 -n1 tools/ncu/measure.py --check
 elif [ "${PTXROOF_REQUIRE_GPU:-0}" = 1 ]; then

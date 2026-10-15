@@ -596,7 +596,9 @@ One line each, with the trigger that would start it.
   every record's block verdicts, their counts and its sector lines by
   outcome in one snapshot: 117 blocks confirmed, 231 consistent, 512
   unchecked; 736 sector lines agree, 27 differ. `ci.sh` measures every record again on the GPU it
-  names (`measure.py --check`) and fails if it changed.
+  names (`measure.py --check`) and fails if it changed; a record of
+  another GPU is skipped, and fails the run under
+  `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a

@@ -14,13 +14,15 @@ bits.
 Lines of a loop that branches back on an mbarrier test_wait or try_wait
 result are marked timing_dependent. With --check the record is measured
 again on the GPU it names, if this is that GPU, and must not change but
-for those lines' executions.
+for those lines' executions; on another GPU it is skipped, or with
+PTXROOF_REQUIRE_GPU=1 fails. Either way it prints one line.
 
 Usage: measure.py [--check] RECORD
 """
 
 import csv
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -112,7 +114,10 @@ def main(path, check):
         run("gcc", "-O2", Path(__file__).with_name("launch.c"), f"-I{include}", "-lcuda", "-o", tmp / "launch")
         gpu, arch = run(tmp / "launch", "--device").splitlines()
         if check and record.get("gpu") != gpu:
-            print(f"measure.py: {path} was recorded on {record.get('gpu')}, not {gpu}: skipped")
+            skipped = f"measure.py: {path} was recorded on {record.get('gpu')}, not {gpu}"
+            if os.environ.get("PTXROOF_REQUIRE_GPU") == "1":
+                sys.exit(f"{skipped}, and PTXROOF_REQUIRE_GPU=1")
+            print(f"{skipped}: skipped")
             return
         (tmp / "numbered.ptx").write_text(numbered(ptx.read_text(), ptx))
         for name, source in (("original", ptx), ("numbered", tmp / "numbered.ptx")):
@@ -141,6 +146,8 @@ def main(path, check):
     if check and text != Path(path).read_text():
         sys.exit(f"measure.py: {path} differs from a fresh measurement; rerun without --check, review the diff")
     Path(path).write_text(text)
+    if check:
+        print(f"measure.py: {path} measured again on {gpu}: unchanged")
 
 
 if __name__ == "__main__":
