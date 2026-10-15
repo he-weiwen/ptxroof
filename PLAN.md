@@ -352,10 +352,8 @@ its shared writes and instruction counts remain counted
   a bound). A comparison with a loop counter is not read per trip
   (`fp8_gemm_kernel.lm_head_dx`'s `<block 4>` runs on 510 of its loop's
   512 trips, 12,533,760 times as its record measures, and reads
-  `<= 12582912`, `gluon-counter-guard.test`), and a counter whose trip
-  count is a constant only under the bindings has no range, since
-  `AffineValueTracer::bound` reads the unbound `constant_trips`. The
-  census counts by cause are in the message of commit `ccf8220`.
+  `<= 12582912`, `gluon-counter-guard.test`). The census counts by
+  cause are in the message of commit `ccf8220`.
 
 ### Presentation
 

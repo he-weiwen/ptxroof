@@ -527,15 +527,16 @@ impl<'a> AffineValueTracer<'a> {
         t
     }
 
-    /// Loop `l`'s trip count when it is a constant of at least 1, which
-    /// makes its latch, and so its exit, the same for every lane.
+    /// Loop `l`'s trip count when it is a constant of at least 1 under the
+    /// bindings, which makes its latch, and so its exit, the same for
+    /// every lane.
     fn constant_trips(&self, l: LoopId) -> Option<i64> {
         if let Some(&n) = self.trips.borrow().get(&l) {
             return n;
         }
         self.trips.borrow_mut().insert(l, None);
         let n = (loop_trips(self, l).ok())
-            .and_then(|t| t.as_const())
+            .and_then(|t| self.constant(&Affine::invariant(t)))
             .filter(|&n| n >= 1);
         self.trips.borrow_mut().insert(l, n);
         n
