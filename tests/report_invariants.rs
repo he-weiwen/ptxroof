@@ -208,7 +208,7 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names);
+        let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default());
         let bind_map: HashMap<String, i64> =
             [(format!("param_{param}"), value)].into_iter().collect();
         let trips_num: Vec<i64> = info

@@ -450,7 +450,11 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
     let cols: Vec<[String; 6]> = rows
         .iter()
         .map(|a| {
-            let bytes = a.bytes.map(|b| format!(" {b} B")).unwrap_or_default();
+            let bound = if a.bytes_at_most { "<= " } else { "" };
+            let bytes = a
+                .bytes
+                .map(|b| format!(" {bound}{b} B"))
+                .unwrap_or_default();
             let pred = match (&a.threads, a.predicated) {
                 (Some(t), _) => format!(" on {}", threads_phrase(t)),
                 (None, true) => " (predicated)".to_owned(),
@@ -461,9 +465,10 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                 |r: &crate::analysis::memory_footprint::CountRange, one: &str, many: &str| {
                     format!("{} {}", range(r), if r.max == 1 { one } else { many })
                 };
+            let bound = if a.sectors_at_most { "<= " } else { "" };
             let ideal = a
                 .ideal_sectors_per_request
-                .map(|i| format!(" (ideal {})", range(&i)))
+                .map(|i| format!(" (ideal {bound}{})", range(&i)))
                 .unwrap_or_default();
             let warp = match (&a.sectors_per_request, &a.footprint_unknown) {
                 (Some(s), _) if a.sectors_at_most => {
@@ -660,7 +665,11 @@ fn contribution_text(c: &ContributionDetails) -> String {
             space,
             direction,
             count,
-        } => format!("{space} {direction} {count} B"),
+            at_most,
+        } => {
+            let bound = if *at_most { "<= " } else { "" };
+            format!("{space} {direction} {bound}{count} B")
+        }
         ContributionDetails::UnquantifiedBytes { space, direction } => {
             format!("{space} {direction} ? B")
         }

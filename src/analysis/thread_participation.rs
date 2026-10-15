@@ -7,34 +7,42 @@
 //! counted by enumeration over the block shape. With the grid bound, a
 //! comparison may hold the CTA index too: each thread is then in at
 //! every CTA, at none, or at some, and the counts are bounds where CTAs
-//! differ. A predicate that involves anything else (a parameter, a
-//! loop counter, a loaded value) is an unknown selector, and the
-//! block's counts stay bounds; one the same for every thread empties or
-//! keeps whole warps.
+//! differ. A comparison with the counter of a loop holding the block,
+//! its current trip's, decides a thread only where every trip agrees.
+//! A predicate that involves anything else (a parameter, a loaded
+//! value) is an unknown selector, and the block's counts stay bounds;
+//! one the same for every thread empties or keeps whole warps. So is a branch off the chain that decides whether
+//! the block runs: a path from a chain branch that reaches the block and
+//! also leaves its scope around it.
 
 use crate::analysis::control_flow::dominators;
-use crate::analysis::control_flow::loops::LoopForest;
+use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::analysis::instruction_counts::classify::cp_async_size_operand;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ptx::ir::{FundamentalType, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 
 /// One condition `form cmp 0` over the thread index and, with the grid
 /// bound, the CTA index: `cta` is the least and greatest value of the
 /// form's `%ctaid` terms over the launch's CTAs, `None` when it has
-/// none.
+/// none. `trip` names the loop whose counter, its current trip's, the
+/// form holds instead, and the least and greatest value of its term
+/// over the loop's trips.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constraint {
     pub form: Affine,
     pub cmp: String,
     pub cta: Option<(i128, i128)>,
+    pub trip: Option<(LoopId, (i128, i128))>,
 }
 
 /// The condition under which a thread executes an instruction: the
@@ -99,6 +107,7 @@ impl std::ops::Not for Pred {
                 form: c.form,
                 cmp: negate(&c.cmp).to_owned(),
                 cta: c.cta,
+                trip: c.trip,
             }),
             Pred::Not(p) => *p,
             p => Pred::Not(Box::new(p)),
@@ -139,6 +148,7 @@ impl Pred {
             Pred::Cmp(c) => {
                 let x = at(&c.form, tid);
                 let (lo, hi) = c.cta.map_or((x, x), |(a, b)| (x + a, x + b));
+                let (lo, hi) = c.trip.map_or((lo, hi), |(_, (a, b))| (lo + a, hi + b));
                 decide(&c.cmp, lo, hi)
             }
             Pred::Elect(active) => match leader {
@@ -187,6 +197,7 @@ impl Pred {
                     },
                     cmp: k.cmp.clone(),
                     cta: None,
+                    trip: None,
                 })
             }
             Pred::Elect(p) => Pred::Elect(at(p)),
@@ -194,6 +205,43 @@ impl Pred {
             Pred::And(a, b) => Pred::And(at(a), at(b)),
             Pred::Or(a, b) => Pred::Or(at(a), at(b)),
             p => p.clone(),
+        }
+    }
+
+    /// The predicate at trip `k` of loop `l`: each comparison with its
+    /// counter at the counter's value there.
+    fn at_trip(&self, l: LoopId, k: i128) -> Option<Pred> {
+        let at = |p: &Pred| p.at_trip(l, k).map(Box::new);
+        Some(match self {
+            Pred::Cmp(c) if c.trip.is_some_and(|(t, _)| t == l) => {
+                let mut form = c.form.clone();
+                let step = i128::from(form.terms.remove(&Var::Iter(l))?.as_const()?);
+                let base = i128::from(form.base.as_const()?).checked_add(step.checked_mul(k)?)?;
+                form.base = SymExpr::Const(i64::try_from(base).ok()?);
+                Pred::Cmp(Constraint {
+                    form,
+                    trip: None,
+                    ..c.clone()
+                })
+            }
+            Pred::Elect(p) => Pred::Elect(at(p)?),
+            Pred::Not(p) => Pred::Not(at(p)?),
+            Pred::And(a, b) => Pred::And(at(a)?, at(b)?),
+            Pred::Or(a, b) => Pred::Or(at(a)?, at(b)?),
+            p => p.clone(),
+        })
+    }
+
+    /// The comparisons with loop counters.
+    fn over_trips<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
+        match self {
+            Pred::Cmp(k) if k.trip.is_some() => out.push(k),
+            Pred::Elect(p) | Pred::Not(p) => p.over_trips(out),
+            Pred::And(a, b) | Pred::Or(a, b) => {
+                a.over_trips(out);
+                b.over_trips(out);
+            }
+            _ => {}
         }
     }
 
@@ -223,7 +271,7 @@ impl Pred {
     pub fn exact(&self) -> bool {
         match self {
             Pred::True | Pred::False => true,
-            Pred::Cmp(c) => c.cta.is_none(),
+            Pred::Cmp(c) => c.cta.is_none() && c.trip.is_none(),
             Pred::Unknown | Pred::Uniform => false,
             Pred::Elect(p) | Pred::Not(p) => p.exact(),
             Pred::And(a, b) | Pred::Or(a, b) => a.exact() && b.exact(),
@@ -231,18 +279,40 @@ impl Pred {
     }
 
     /// Which lanes of a warp are in the set is known whenever any is:
-    /// a uniform unknown, or a comparison of the CTA index alone, only
-    /// ever empties the set, which a conjunction or an election keeps
-    /// and a disjunction or a negation does not.
+    /// a uniform unknown, or a comparison of the CTA index or a loop
+    /// counter alone, only ever empties the set, which a conjunction or
+    /// an election keeps and a disjunction or a negation does not.
     pub fn lane_exact(&self) -> bool {
         match self {
             Pred::True | Pred::False | Pred::Uniform => true,
-            Pred::Cmp(c) => c.cta.is_none() || !c.form.terms.keys().any(depends_on_lane),
+            Pred::Cmp(c) => {
+                (c.cta.is_none() && c.trip.is_none()) || !c.form.terms.keys().any(depends_on_lane)
+            }
             Pred::Unknown => false,
             Pred::Elect(p) => p.lane_exact(),
             Pred::Not(p) => p.exact(),
             Pred::And(a, b) => a.lane_exact() && b.lane_exact(),
             Pred::Or(a, b) => a.exact() && b.exact(),
+        }
+    }
+
+    /// The predicate where it is used in blocks of the loops `inside`
+    /// accepts: a comparison with another loop's counter is not its
+    /// current trip's there, and selects as an unknown.
+    fn in_loops(self, inside: &dyn Fn(LoopId) -> bool) -> Pred {
+        let at = |p: Box<Pred>| Box::new(p.in_loops(inside));
+        match self {
+            Pred::Cmp(c) if c.trip.is_some_and(|(l, _)| !inside(l)) => {
+                match c.form.terms.keys().any(depends_on_lane) {
+                    true => Pred::Unknown,
+                    false => Pred::Uniform,
+                }
+            }
+            Pred::Elect(p) => Pred::Elect(at(p)),
+            Pred::Not(p) => Pred::Not(at(p)),
+            Pred::And(a, b) => Pred::And(at(a), at(b)),
+            Pred::Or(a, b) => Pred::Or(at(a), at(b)),
+            p => p,
         }
     }
 
@@ -258,24 +328,24 @@ impl Pred {
     /// The thread-index conditions as text; an unknown selector under
     /// a conjunction is left to the `<=` marker, elsewhere it prints
     /// as `?`. A disjunction is parenthesized when nested.
-    fn render(&self, nested: bool) -> Option<String> {
+    fn render(&self, nested: bool, name: &dyn Fn(&Var) -> String) -> Option<String> {
         match self {
             Pred::True => None,
             Pred::False => Some("no thread".to_owned()),
             Pred::Unknown | Pred::Uniform => Some("?".to_owned()),
-            Pred::Cmp(c) => Some(c.render()),
+            Pred::Cmp(c) => Some(c.render_named(name)),
             Pred::Elect(_) => Some("elected".to_owned()),
-            Pred::Not(p) => Some(format!("not ({})", p.render(false)?)),
+            Pred::Not(p) => Some(format!("not ({})", p.render(false, name)?)),
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
                     .filter(|p| !matches!(p.as_ref(), Pred::Unknown | Pred::Uniform))
-                    .filter_map(|p| p.render(true))
+                    .filter_map(|p| p.render(true, name))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
             Pred::Or(a, b) => {
-                let text = format!("{} or {}", a.render(true)?, b.render(true)?);
+                let text = format!("{} or {}", a.render(true, name)?, b.render(true, name)?);
                 Some(if nested { format!("({text})") } else { text })
             }
         }
@@ -456,11 +526,13 @@ fn across_ctas(
             },
             cmp: cmp.to_owned(),
             cta: None,
+            trip: None,
         },
         false => Constraint {
             form: form.clone(),
             cmp: cmp.to_owned(),
             cta: Some((lo, hi)),
+            trip: None,
         },
     }))
 }
@@ -476,7 +548,7 @@ fn on_lane_only(a: &Affine) -> bool {
 
 /// The most CTAs `ThreadSet::launch` enumerates, and the most lanes it
 /// evaluates over its groups of CTAs.
-const CTA_BUDGET: u64 = 1 << 24;
+pub(crate) const CTA_BUDGET: u64 = 1 << 24;
 const LANE_BUDGET: u64 = 1 << 26;
 
 /// The thread index's values on any block, PTX ISA §10.1, §10.2:
@@ -500,6 +572,11 @@ impl Constraint {
 
     /// `form cmp 0` with the constant moved to the right: `⌊%tid.x/32⌋ < 4`.
     pub fn render(&self) -> String {
+        self.render_named(&|v| v.to_string())
+    }
+
+    /// The same, naming each variable by `name`.
+    pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> String {
         let c = self.form.base.as_const().unwrap_or(0);
         let lhs = Affine {
             terms: self.form.terms.clone(),
@@ -514,7 +591,7 @@ impl Constraint {
             "ne" => "!=",
             other => other,
         };
-        format!("{lhs} {op} {}", -i128::from(c))
+        format!("{} {op} {}", lhs.render(name), -i128::from(c))
     }
 }
 
@@ -534,12 +611,24 @@ impl ThreadSet {
         self.pred.lane_exact()
     }
 
+    /// A comparison selecting the set reads the CTA index.
+    pub fn varies_by_cta(&self) -> bool {
+        let mut over = Vec::new();
+        self.pred.over_ctas(&mut over);
+        !over.is_empty()
+    }
+
     /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
     /// %tid.x == 0`; `None` when no such condition selects.
     pub fn render(&self) -> Option<String> {
+        self.render_named(&|v| v.to_string())
+    }
+
+    /// The same, naming each variable by `name`.
+    pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> Option<String> {
         self.pred
             .has_condition()
-            .then(|| self.pred.render(false))
+            .then(|| self.pred.render(false, name))
             .flatten()
     }
 
@@ -564,9 +653,22 @@ impl ThreadSet {
     /// group is counted. None past `CTA_BUDGET` CTAs on the axes those
     /// comparisons read, or `LANE_BUDGET` lane evaluations.
     pub fn launch(&self, shape: [u32; 3], grid: [u32; 3]) -> Option<(u64, u64)> {
+        self.weighted_launch(shape, grid, [false; 3], &|_| Some(1))
+    }
+
+    /// The same with CTA `c` counted `weight(c)` times, the weight
+    /// reading the axes `read`; a CTA where the set holds no thread needs
+    /// none.
+    pub fn weighted_launch(
+        &self,
+        shape: [u32; 3],
+        grid: [u32; 3],
+        read: [bool; 3],
+        weight: &dyn Fn([i64; 3]) -> Option<u64>,
+    ) -> Option<(u64, u64)> {
         let mut over = Vec::new();
         self.pred.over_ctas(&mut over);
-        let mut used = [false; 3];
+        let mut used = read;
         for v in over.iter().flat_map(|k| k.form.terms.keys()) {
             cta_axes(v, &mut used);
         }
@@ -606,7 +708,22 @@ impl ThreadSet {
                             }
                         })
                         .collect();
-                    groups.entry(key).or_insert((0u64, c)).0 += 1;
+                    let group = match groups.entry(key) {
+                        Entry::Occupied(e) => e.into_mut(),
+                        Entry::Vacant(e) => {
+                            let at = ThreadSet {
+                                pred: self.pred.at_cta(c),
+                            };
+                            let (t, w) = (at.count(shape)?, at.warps(shape)?);
+                            if t.certain != t.possible || w.certain != w.possible {
+                                return None;
+                            }
+                            e.insert((0u64, t.certain, w.certain))
+                        }
+                    };
+                    if group.1 > 0 {
+                        group.0 = group.0.checked_add(weight(c)?)?;
+                    }
                     if groups.len() as u64 > LANE_BUDGET / threads.len() as u64 {
                         return None;
                     }
@@ -614,18 +731,68 @@ impl ThreadSet {
             }
         }
         let (mut sum_t, mut sum_w) = (0u64, 0u64);
-        for (k, c) in groups.into_values() {
+        for (k, t, w) in groups.into_values() {
+            sum_t = sum_t.checked_add(u64::from(t).checked_mul(k)?)?;
+            sum_w = sum_w.checked_add(u64::from(w).checked_mul(k)?)?;
+        }
+        Some((sum_t.checked_mul(rest)?, sum_w.checked_mul(rest)?))
+    }
+
+    /// The loop whose counter the set's comparisons read, when one does.
+    pub fn trip_loop(&self) -> Option<LoopId> {
+        let mut over = Vec::new();
+        self.pred.over_trips(&mut over);
+        let l = over.first()?.trip?.0;
+        over.iter()
+            .all(|k| k.trip.is_some_and(|(t, _)| t == l))
+            .then_some(l)
+    }
+
+    /// The threads and warps the set holds summed over trips 1 to `n` of
+    /// loop `l`, whose counter its comparisons read. Each comparison
+    /// `c·k + g cmp 0` keeps its truth on a lane between the trips
+    /// around −g/c, so between those of every lane and comparison one
+    /// trip is counted for the run. None where the set is not exact at a
+    /// trip, or past `LANE_BUDGET` lane evaluations.
+    pub fn over_trips(&self, shape: [u32; 3], l: LoopId, n: u64) -> Option<(u64, u64)> {
+        let mut over = Vec::new();
+        self.pred.over_trips(&mut over);
+        let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
+            .map(|t| lane_of(t, shape))
+            .collect();
+        let end = i128::from(n) + 1;
+        let mut cuts = vec![1, end];
+        for k in &over {
+            let c = i128::from(k.form.terms.get(&Var::Iter(l))?.as_const()?);
+            for &t in &threads {
+                let (num, den) = if c < 0 {
+                    (at(&k.form, t), -c)
+                } else {
+                    (-at(&k.form, t), c)
+                };
+                let (lo, hi) = (num.div_euclid(den), -(-num).div_euclid(den));
+                cuts.extend([lo, lo + 1, hi, hi + 1].map(|x| x.clamp(1, end)));
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        if (cuts.len() as u64).saturating_mul(threads.len() as u64) > LANE_BUDGET {
+            return None;
+        }
+        let (mut sum_t, mut sum_w) = (0u64, 0u64);
+        for run in cuts.windows(2) {
             let at = ThreadSet {
-                pred: self.pred.at_cta(c),
+                pred: self.pred.at_trip(l, run[0])?,
             };
             let (t, w) = (at.count(shape)?, at.warps(shape)?);
             if t.certain != t.possible || w.certain != w.possible {
                 return None;
             }
-            sum_t = sum_t.checked_add(u64::from(t.certain).checked_mul(k)?)?;
-            sum_w = sum_w.checked_add(u64::from(w.certain).checked_mul(k)?)?;
+            let len = u64::try_from(run[1] - run[0]).ok()?;
+            sum_t = sum_t.checked_add(u64::from(t.certain).checked_mul(len)?)?;
+            sum_w = sum_w.checked_add(u64::from(w.certain).checked_mul(len)?)?;
         }
-        Some((sum_t.checked_mul(rest)?, sum_w.checked_mul(rest)?))
+        Some((sum_t, sum_w))
     }
 
     /// Per warp, the fewest and the most lanes in the set, folded by
@@ -694,6 +861,7 @@ struct PredicateReader<'a> {
     uniformity: &'a Uniformity,
     memo: HashMap<usize, Pred>,
     blocks: Vec<Option<Pred>>,
+    bypass: Vec<Option<bool>>,
 }
 
 impl PredicateReader<'_> {
@@ -726,7 +894,12 @@ impl PredicateReader<'_> {
                     _ => None,
                 };
                 if let Some(taken_edge) = selected {
-                    let p = self.of(guard.reg, pos, 0);
+                    let forest = self.forest;
+                    let inside = |l: LoopId| {
+                        let blocks = &forest.get(l).blocks;
+                        blocks.binary_search(&b).is_ok() && blocks.binary_search(&d).is_ok()
+                    };
+                    let p = self.of(guard.reg, pos, 0).in_loops(&inside);
                     pred = pred.and(if taken_edge != guard.negated { p } else { !p });
                 }
             }
@@ -735,8 +908,54 @@ impl PredicateReader<'_> {
             }
             cur = self.forest.doms.idom[d.0 as usize];
         }
+        if self.bypassed(b) {
+            pred = pred.and(Pred::Unknown);
+        }
         self.blocks[b.0 as usize] = Some(pred.clone());
         pred
+    }
+
+    /// Whether a condition off b's dominator chain decides whether b
+    /// runs: so for b's immediate dominator, or one of its successors
+    /// reaches b without passing it and leaves b's scope around b.
+    fn bypassed(&mut self, b: BlockId) -> bool {
+        if let Some(x) = self.bypass[b.0 as usize] {
+            return x;
+        }
+        let x = match self.forest.doms.idom[b.0 as usize] {
+            Some(d) => self.skips(d, b) || self.bypassed(d),
+            None => false,
+        };
+        self.bypass[b.0 as usize] = Some(x);
+        x
+    }
+
+    /// A successor of `d` reaches `c` without passing `d`, and also an exit
+    /// of c's scope without passing `c`: a latch or exit target of c's
+    /// innermost loop (its parent's for a loop header), or a kernel exit.
+    fn skips(&self, d: BlockId, c: BlockId) -> bool {
+        let innermost = self.forest.block_loop[c.0 as usize].map(|l| self.forest.get(l));
+        let scope = match innermost {
+            Some(l) if l.header == c => l.parent.map(|p| self.forest.get(p)),
+            other => other,
+        };
+        let inside = |x: BlockId| scope.is_none_or(|s| s.blocks.binary_search(&x).is_ok());
+        let exits: Vec<BlockId> = match scope {
+            Some(s) => (s.blocks.iter())
+                .flat_map(|&x| self.cfg.block(x).succs.iter().copied())
+                .filter(|&t| !inside(t))
+                .chain(s.latches.iter().copied())
+                .collect(),
+            None => (0..self.cfg.blocks.len() as u32)
+                .map(BlockId)
+                .filter(|&x| self.cfg.block(x).succs.is_empty())
+                .collect(),
+        };
+        let around =
+            |s: BlockId, t: BlockId| t != c && (s == t || self.tracer.path_avoiding(s, t, c));
+        (self.cfg.block(d).succs.iter()).any(|&s| {
+            s != c && self.tracer.path_avoiding(s, c, d) && exits.iter().any(|&t| around(s, t))
+        })
     }
 
     fn of(&mut self, reg: Symbol, pos: usize, depth: u32) -> Pred {
@@ -881,6 +1100,10 @@ impl PredicateReader<'_> {
 pub struct ThreadSets {
     pub blocks: Vec<ThreadSet>,
     pub guards: HashMap<usize, Pred>,
+    /// Per `cp.async` whose src-size or ignore-src is a register, the
+    /// threads that read its source, memory operand 1: those whose
+    /// ignore-src is false; with a src-size register, unknown.
+    pub sources: HashMap<usize, Pred>,
     /// The edges no thread follows: the other way out of a branch
     /// every thread takes the same way.
     pub dead_edges: Vec<(BlockId, BlockId)>,
@@ -894,6 +1117,28 @@ impl ThreadSets {
         match self.guards.get(&stmt) {
             Some(guard) => ThreadSet {
                 pred: block.pred.clone().and(guard.clone()),
+            },
+            None => block.clone(),
+        }
+    }
+
+    /// The guard on memory operand `operand` of statement `stmt`: its
+    /// own, and on a `cp.async`'s source that its ignore-src is false.
+    pub fn guard(&self, stmt: usize, operand: usize) -> Option<Pred> {
+        let own = self.guards.get(&stmt).cloned();
+        match (operand, self.sources.get(&stmt)) {
+            (1, Some(read)) => Some(own.unwrap_or(Pred::True).and(read.clone())),
+            _ => own,
+        }
+    }
+
+    /// The threads that access memory operand `operand` of statement
+    /// `stmt` of block `b`.
+    pub fn of_access(&self, b: BlockId, stmt: usize, operand: usize) -> ThreadSet {
+        let block = &self.blocks[b.0 as usize];
+        match self.guard(stmt, operand) {
+            Some(guard) => ThreadSet {
+                pred: block.pred.clone().and(guard),
             },
             None => block.clone(),
         }
@@ -923,6 +1168,7 @@ pub(crate) fn thread_sets(
         uniformity,
         memo: HashMap::new(),
         blocks: vec![None; cfg.blocks.len()],
+        bypass: vec![None; cfg.blocks.len()],
     };
     let blocks: Vec<ThreadSet> = (0..cfg.blocks.len() as u32)
         .map(|b| ThreadSet {
@@ -938,7 +1184,9 @@ pub(crate) fn thread_sets(
         if instr.mnemonic == Opcode::Bra {
             continue;
         }
-        let p = reader.of(guard.reg, pos, 0);
+        let b = tracer.block_of(pos);
+        let p = (reader.of(guard.reg, pos, 0))
+            .in_loops(&|l| forest.get(l).blocks.binary_search(&b).is_ok());
         guards.insert(pos, if guard.negated { !p } else { p });
     }
     let mut dead_edges = Vec::new();
@@ -956,6 +1204,25 @@ pub(crate) fn thread_sets(
             }
         }
     }
+    let mut sources = HashMap::new();
+    for (pos, stmt) in kernel.stmts.iter().enumerate() {
+        let Stmt::Instr(instr) = stmt else { continue };
+        let Some(op) = cp_async_size_operand(module, instr) else {
+            continue;
+        };
+        let Operand::Register(r) = module.operand(op) else {
+            continue;
+        };
+        let b = tracer.block_of(pos);
+        let read = match kernel.register_type(module, *r) {
+            Some(FundamentalType::Pred) => !(reader.of(*r, pos, 0))
+                .in_loops(&|l| forest.get(l).blocks.binary_search(&b).is_ok()),
+            _ => Pred::Unknown,
+        };
+        if read != Pred::True {
+            sources.insert(pos, read);
+        }
+    }
     let doms = dominators(&cfg.without(&dead_edges));
     let mut blocks = blocks;
     for (b, set) in blocks.iter_mut().enumerate() {
@@ -966,6 +1233,7 @@ pub(crate) fn thread_sets(
     ThreadSets {
         blocks,
         guards,
+        sources,
         dead_edges,
     }
 }
@@ -980,7 +1248,8 @@ pub(crate) fn thread_sets(
 /// when `a − b` lies in (−2^width, 2^width), so that it is zero
 /// exactly when it is zero modulo 2^width. A form free of the thread
 /// index whose comparison the uniformity analysis finds divergent is
-/// none.
+/// none, unless it is a loop counter's compared within its type, one
+/// value at each trip.
 fn condition(
     module: &Module,
     kernel: &Kernel,
@@ -1018,7 +1287,7 @@ fn condition(
     let form = a.clone() - b.clone();
     // %ctaid below the bound grid, PTX ISA §10.6.
     let range = |v: &Var| match v {
-        Var::Ctaid(_) => tracer.bound(v),
+        Var::Ctaid(_) | Var::Iter(_) => tracer.bound(v),
         _ => any_block(v),
     };
     let fits = |x: &Affine, min: i128, end: i128| {
@@ -1055,13 +1324,22 @@ fn condition(
         });
     }
     let lanes = form.terms.keys().any(depends_on_lane);
-    if !lanes && !uniformity.is_uniform_def(def) {
+    let trip = per_trip(tracer, &form, def).filter(|_| comparable(&a, &b));
+    if !lanes && trip.is_none() && !uniformity.is_uniform_def(def) {
         None
     } else if on_lane_only(&form) && comparable(&a, &b) {
         Some(Pred::Cmp(Constraint {
             form,
             cmp,
             cta: None,
+            trip: None,
+        }))
+    } else if let Some(trip) = trip {
+        Some(Pred::Cmp(Constraint {
+            form,
+            cmp,
+            cta: None,
+            trip: Some(trip),
         }))
     } else if on_index(&form)
         && comparable(&a, &b)
@@ -1073,6 +1351,32 @@ fn condition(
     } else {
         None
     }
+}
+
+/// A form of the thread index and one loop's counter, read in that loop
+/// so its current trip's, the loop's trip count a constant n: the loop
+/// and the range of the counter's term over trips 1 to n.
+fn per_trip(
+    tracer: &AffineValueTracer,
+    form: &Affine,
+    def: usize,
+) -> Option<(LoopId, (i128, i128))> {
+    let mut rest = form.clone();
+    let mut counters = (form.terms.iter()).filter(|(v, _)| matches!(v, Var::Iter(_)));
+    let (Some((v @ Var::Iter(l), c)), None) = (counters.next(), counters.next()) else {
+        return None;
+    };
+    rest.terms.remove(v);
+    let c = i128::from(c.as_const().filter(|&c| c != 0)?);
+    let (_, n) = tracer.bound(v)?;
+    let inside = tracer
+        .forest
+        .get(*l)
+        .blocks
+        .binary_search(&tracer.block_of(def))
+        .is_ok();
+    (on_lane_only(&rest) && inside)
+        .then_some((*l, (c.min(c * i128::from(n)), c.max(c * i128::from(n)))))
 }
 
 #[cfg(test)]
@@ -1094,7 +1398,104 @@ mod tests {
             form: warp + Affine::invariant(SymExpr::Const(-4)),
             cmp: "lt".to_owned(),
             cta: None,
+            trip: None,
         }
+    }
+
+    /// A comparison with a loop counter over trips 1 to 512 decides a
+    /// thread only where every trip agrees, `k − 513 < 0`, not `k < 511`;
+    /// it is never exact, lane-exact without lanes, and outside its loop
+    /// an unknown.
+    #[test]
+    fn a_counter_comparison_is_read_per_trip() {
+        let counter = |rest: Affine| {
+            Pred::Cmp(Constraint {
+                form: Affine::var(Var::Iter(LoopId(0))) + rest,
+                cmp: "lt".to_owned(),
+                cta: None,
+                trip: Some((LoopId(0), (1, 512))),
+            })
+        };
+        let c = |n: i64| Affine::invariant(SymExpr::Const(n));
+        let below = counter(c(-511));
+        let set = ThreadSet {
+            pred: below.clone(),
+        };
+        assert!(!set.exact() && set.lane_exact());
+        let some = Counted {
+            certain: 0,
+            possible: 32,
+        };
+        assert_eq!(set.count([32, 1, 1]), Some(some));
+        let always = ThreadSet {
+            pred: counter(c(-513)),
+        };
+        assert_eq!(always.count([32, 1, 1]), Some(exact(32)));
+        let lanes = ThreadSet {
+            pred: counter(Affine::var(Var::Tid(Axis::X)) + c(-511)),
+        };
+        assert!(!lanes.lane_exact());
+        assert_eq!(below.clone().in_loops(&|_| false), Pred::Uniform);
+        assert_eq!(below.clone().in_loops(&|_| true), below);
+    }
+
+    /// Over a loop's trips, the threads of each trip summed: by runs of
+    /// trips between the lanes' breakpoints, as enumerating every trip
+    /// gives, for comparisons of the counter alone and with lanes, either
+    /// sign of step, every comparison, and two comparisons at once.
+    #[test]
+    fn a_set_over_trips_sums_each_trip_s_threads() {
+        let l = LoopId(0);
+        let cmp = |step: i64, lanes: Affine, cmp: &str, n: i128| {
+            let (a, b) = (i128::from(step), i128::from(step) * n);
+            Pred::Cmp(Constraint {
+                form: Affine::var(Var::Iter(l)).scale(SymExpr::Const(step)) + lanes,
+                cmp: cmp.to_owned(),
+                cta: None,
+                trip: Some((l, (a.min(b), a.max(b)))),
+            })
+        };
+        let c = |x: i64| Affine::invariant(SymExpr::Const(x));
+        let lane = |m: i64| Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), m));
+        let brute = |set: &ThreadSet, shape: [u32; 3], n: u64| {
+            (1..=i128::from(n)).try_fold((0u64, 0u64), |(t, w), k| {
+                let at = ThreadSet {
+                    pred: set.pred.at_trip(l, k)?,
+                };
+                Some((
+                    t + u64::from(at.count(shape)?.certain),
+                    w + u64::from(at.warps(shape)?.certain),
+                ))
+            })
+        };
+        let shape = [128, 1, 1];
+        for n in [1u64, 7, 40] {
+            let n128 = i128::from(n);
+            for op in ["lt", "le", "gt", "ge", "eq", "ne"] {
+                for (step, lanes) in [(1, c(-5)), (64, lane(64) + c(-300)), (-3, lane(32) + c(40))]
+                {
+                    let set = ThreadSet {
+                        pred: cmp(step, lanes, op, n128),
+                    };
+                    assert_eq!(
+                        set.over_trips(shape, l, n),
+                        brute(&set, shape, n),
+                        "{op} {step} {n}"
+                    );
+                }
+            }
+            let both = ThreadSet {
+                pred: cmp(1, c(-3), "ge", n128).and(cmp(64, lane(64) + c(-1000), "lt", n128)),
+            };
+            assert_eq!(both.over_trips(shape, l, n), brute(&both, shape, n));
+        }
+        let k_below_511 = ThreadSet {
+            pred: cmp(1, c(-511), "lt", 512),
+        };
+        assert_eq!(
+            k_below_511.over_trips([256, 1, 1], l, 512),
+            Some((510 * 256, 510 * 8))
+        );
     }
 
     #[test]
@@ -1116,6 +1517,7 @@ mod tests {
                 form: Affine::var(Var::Tid(Axis::X)),
                 cmp: "eq".to_owned(),
                 cta: None,
+                trip: None,
             }),
         };
         assert_eq!(lane0.count([128, 2, 1]), Some(exact(2)));
@@ -1152,6 +1554,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         let either = ThreadSet {
             pred: lane0.clone().or(Pred::Cmp(warps_below_4())),
@@ -1210,6 +1613,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-40)),
             cmp: "ge".to_owned(),
             cta: None,
+            trip: None,
         });
         let of_upper = ThreadSet {
             pred: Pred::Elect(Box::new(upper.clone())),
@@ -1219,6 +1623,7 @@ mod tests {
             form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         // A warp-uniform condition on the elected lane is exact.
         let leader_of_warp0 = ThreadSet {
@@ -1234,6 +1639,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         let leader_is_lane0 = ThreadSet {
             pred: lane0.and(Pred::Elect(Box::new(Pred::True))),
@@ -1280,6 +1686,7 @@ mod tests {
                 + Affine::invariant(SymExpr::Const(base)),
             cmp: cmp.to_owned(),
             cta: Some((lo.min(hi), lo.max(hi))),
+            trip: None,
         })
     }
 
@@ -1306,6 +1713,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-16)),
             cmp: "lt".to_owned(),
             cta: None,
+            trip: None,
         });
         assert_eq!(
             set(lanes.clone()).launch([32, 1, 1], [3, 2, 1]),
@@ -1335,6 +1743,44 @@ mod tests {
         assert_eq!(set(spread).launch([1024, 1, 1], [1 << 17, 1, 1]), None);
     }
 
+    /// Weighted, CTA c counts `weight(c)` times: t < 2c over 4 CTAs with
+    /// weight c holds 0·0 + 2·1 + 4·2 + 6·3 threads; a weight on the y
+    /// axis, which no comparison reads, enumerates it too; a weight that
+    /// does not evaluate leaves no count, unless only at CTA 0, where the
+    /// set holds no thread, and stops at the first CTA that holds one.
+    #[test]
+    fn a_weighted_launch_counts_each_cta_its_weight_times() {
+        let below = ThreadSet {
+            pred: over_ctas(1, -2, 0, "lt", 4),
+        };
+        let by_x = |c: [i64; 3]| u64::try_from(c[0]).ok();
+        let launch = |grid, read, weight: &dyn Fn([i64; 3]) -> Option<u64>| {
+            below.weighted_launch([32, 1, 1], grid, read, weight)
+        };
+        assert_eq!(
+            launch([4, 1, 1], [true, false, false], &by_x),
+            Some((28, 6))
+        );
+        let by_y = |c: [i64; 3]| u64::try_from(c[1] + 1).ok();
+        assert_eq!(
+            launch([4, 2, 1], [false, true, false], &by_y),
+            Some((36, 9))
+        );
+        assert_eq!(launch([4, 1, 1], [true, false, false], &|_| None), None);
+        let past_zero = |c: [i64; 3]| (c[0] > 0).then_some(1);
+        assert_eq!(
+            launch([4, 1, 1], [true, false, false], &past_zero),
+            Some((12, 3))
+        );
+        let calls = std::cell::Cell::new(0);
+        let fails = |_: [i64; 3]| {
+            calls.set(calls.get() + 1);
+            None
+        };
+        assert_eq!(launch([1 << 16, 1, 1], [true, false, false], &fails), None);
+        assert_eq!(calls.get(), 1);
+    }
+
     #[test]
     fn a_comparison_over_ctas_holds_on_a_lane_at_every_cta_none_or_some() {
         // %tid.x − 2·%ctaid.x with %ctaid.x in 0..=3: 2·%ctaid.x spans 0..=6.
@@ -1344,6 +1790,7 @@ mod tests {
                     + Affine::var(Var::Ctaid(Axis::X)).scale(SymExpr::Const(-2)),
                 cmp: cmp.to_owned(),
                 cta: Some((-6, 0)),
+                trip: None,
             }),
         };
         let range = |certain, possible| Some(Counted { certain, possible });
@@ -1362,6 +1809,7 @@ mod tests {
                 form: Affine::var(Var::Ctaid(Axis::X)) + Affine::invariant(SymExpr::Const(-2)),
                 cmp: "lt".to_owned(),
                 cta: Some((0, 3)),
+                trip: None,
             }),
         };
         assert_eq!(cta.count([64, 1, 1]), range(0, 64));
@@ -1374,11 +1822,13 @@ mod tests {
             form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         let lane0 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)),
             cmp: "eq".to_owned(),
             cta: None,
+            trip: None,
         });
         let set = |pred| ThreadSet { pred };
         assert_eq!(
@@ -1393,6 +1843,7 @@ mod tests {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-100)),
             cmp: "lt".to_owned(),
             cta: None,
+            trip: None,
         });
         assert_eq!(set(below_100).warps([128, 1, 1]), Some(exact(4)));
         // Every warp with an active lane has a leader, whichever lane.
@@ -1445,5 +1896,107 @@ mod tests {
         assert!(!set(Pred::Uniform.or(lanes())).lane_exact());
         assert!(!set(!(Pred::Uniform.and(lanes()))).lane_exact());
         assert!(set(Pred::Elect(Box::new(Pred::Uniform.and(lanes())))).lane_exact());
+    }
+
+    /// Per `cp.async` of `body`, in order: the threads that read its
+    /// source as stored, and its guards on memory operands 0 and 1.
+    /// `%r1` holds the thread index.
+    fn copies(body: &str) -> Vec<(Option<Pred>, Option<Pred>, Option<Pred>)> {
+        use crate::analysis::control_flow::loop_forest;
+        use crate::ptx::cfg::build_cfg;
+        use crate::ptx::parse::parser::parse;
+        let src = format!(
+            ".version 8.7\n.target sm_80\n.address_size 64\n\
+             .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 64, 1, 1\n{{\n\
+             .reg .pred %p<8>;\n.reg .b32 %r<8>;\n.reg .b64 %rd<4>;\n\
+             ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n{body}\nret;\n}}\n"
+        );
+        let m = parse(&src).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let forest = loop_forest(&cfg);
+        let t = AffineValueTracer::new(&m, k, &cfg, &forest);
+        let sets = thread_sets(&m, k, &cfg, &forest, &t, t.uniformity());
+        let copy =
+            |s: usize| matches!(&k.stmts[s], Stmt::Instr(i) if m.opcode(i).starts_with("cp.async"));
+        (0..k.stmts.len())
+            .filter(|&s| copy(s))
+            .map(|s| {
+                (
+                    sets.sources.get(&s).cloned(),
+                    sets.guard(s, 0),
+                    sets.guard(s, 1),
+                )
+            })
+            .collect()
+    }
+
+    /// A `cp.async` reads its source where its ignore-src is false (PTX
+    /// ISA §9.7.9.26.3.1), read like a guard: the fourth operand, or
+    /// under `.L2::cache_hint` the one before the policy. A src-size
+    /// register is unknown; a constant false ignore-src stores nothing,
+    /// a true one no thread. A guarded copy's source is under both.
+    #[test]
+    fn a_cp_async_reads_its_source_where_ignore_src_is_false() {
+        let text = |p: &Option<Pred>| p.clone().and_then(|pred| ThreadSet { pred }.render());
+        let copy = |def: &str, form: &str, tail: &str| {
+            format!("{def}\ncp.async.cg.shared.global{form} [%r2], [%rd1], 16{tail};")
+        };
+        let ignore = "setp.lt.u32 %p1, %r1, 16;\nnot.pred %p2, %p1;";
+        let below = Some("%tid.x < 16".to_owned());
+        for body in [
+            copy(ignore, "", ", %p2"),
+            copy(ignore, ".L2::cache_hint", ", %p2, %rd2"),
+        ] {
+            let [(read, own, source)] = &copies(&body)[..] else {
+                panic!("one copy");
+            };
+            assert_eq!(
+                (text(read), own, text(source)),
+                (below.clone(), &None, below.clone())
+            );
+        }
+        for body in [
+            copy("", "", ""),
+            copy("", "", ", 8"),
+            copy("", ".L2::cache_hint", ", %rd2"),
+            copy("mov.pred %p2, 0;", "", ", %p2"),
+        ] {
+            assert_eq!(copies(&body), [(None, None, None)], "{body}");
+        }
+        let unknown = Some(Pred::Unknown);
+        let size = copies(&copy("", "", ", %r3"));
+        assert_eq!(size, [(unknown.clone(), None, unknown)]);
+        let never = Some(Pred::False);
+        let all = copies(&copy("mov.pred %p2, -1;", "", ", %p2"));
+        assert_eq!(all, [(never.clone(), None, never)]);
+        let guarded = format!(
+            "{ignore}\nsetp.lt.u32 %p3, %r1, 48;\n\
+             @%p3 cp.async.ca.shared.global [%r2], [%rd1], 4, %p2;"
+        );
+        let [(_, own, source)] = &copies(&guarded)[..] else {
+            panic!("one copy");
+        };
+        assert_eq!(text(own).as_deref(), Some("%tid.x < 48"));
+        assert_eq!(text(source).as_deref(), Some("%tid.x < 48 and %tid.x < 16"));
+    }
+
+    /// An ignore-src comparing a loop counter reads per trip at a copy in
+    /// the loop, as a guard does, and as the same for every thread after
+    /// it.
+    #[test]
+    fn an_ignore_src_on_a_loop_counter_is_read_in_its_loop() {
+        let body = "mov.u32 %r5, 0;\n$L__L:\nadd.s32 %r5, %r5, 1;\nsetp.lt.u32 %p6, %r5, 3;\n\
+                    cp.async.cg.shared.global [%r2], [%rd1], 16, %p6;\n\
+                    setp.lt.u32 %p7, %r5, 4;\n@%p7 bra $L__L;\n\
+                    cp.async.cg.shared.global [%r2], [%rd1], 16, %p6;";
+        let [(Some(inside), ..), (after, ..)] = &copies(body)[..] else {
+            panic!("two copies, the first read");
+        };
+        assert!(
+            matches!(inside, Pred::Cmp(c) if c.trip.is_some()),
+            "{inside:?}"
+        );
+        assert_eq!(after, &Some(Pred::Uniform));
     }
 }

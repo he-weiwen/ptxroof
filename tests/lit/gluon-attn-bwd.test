@@ -1,15 +1,21 @@
 # Flash-attention backward, main kernel: one CTA per key block walks
 # the query blocks at or after it, 160 bf16 mma per iteration (five
-# 64x64x128 GEMMs over 8 warps). The trip count depends on the CTA
-# index, which the reason names.
+# 64x64x128 GEMMs over 8 warps). The trip count is the number of query
+# blocks at or after the CTA's, one value per CTA. Over the record's
+# 32x12 CTAs its sum, Σ (32 − x) · 12 = 6336 trips, gives 259,522,560
+# mma per launch, and the loop's executions agree with the RTX 4090's.
 RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_kernel.sm_89.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json | FileCheck --check-prefix=REC "%s"
 CHECK: kernel attn_bwd_kernel
 CHECK: block size: 256 threads, 8 warps (256x1x1 from .reqntid)
 CHECK: loop gluon_attn_bwd.py:112 ($L__BB0_2)
-CHECK: trips = unknown: latch condition depends on special register %ctaid.x
+CHECK: trips = param_13 / 64 - %ctaid.x
 CHECK: mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32    160
 CHECK: tensor flops = 20480  (bf16 20480)
 # The `red` under `mov.pred %p20, -1` runs on every thread: its store is exact.
 CHECK: global bytes: load <= 192 B, store 128 B
 CHECK: unknowns:
 CHECK: coverage: instructions_classified 100.0% (1247/1247)
+REC: totals per launch [static]:
+REC: tensor bf16{{ +}}259522560{{ +}}8110080{{$}}
+REC: $L__BB0_2{{ +}}confirmed

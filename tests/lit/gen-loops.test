@@ -2,5 +2,6 @@
 # the tool gives equals the simulator's, and how many bindings it
 # compares and which shapes it refuses are pinned.
 RUN: python3 %S/../gen_loops.py --seed 1 --count 200 --bin %ptxroof | FileCheck "%s"
-CHECK:      unsupported x8: loop continues only while values are equal — shape not recognized
-CHECK-NEXT: gen_loops: 200 kernels, 226 bindings compared, 8 unsupported, 0 mismatch(es), 0 error(s)
+CHECK:      unsupported x174: loop continues only while values are equal — shape not recognized
+CHECK-NEXT: unsupported x164: loop bound moves away from the exit condition
+CHECK-NEXT: gen_loops: 200 kernels, 486 bindings compared, 338 unsupported, 0 mismatch(es), 0 error(s)

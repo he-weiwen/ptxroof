@@ -1,9 +1,12 @@
 # cp.async with a register src-size, 16 on lanes 0..15 and 0 on the
-# others: ptxas writes LDGSTS with an ignore-src predicate. The report
-# counts cp-size on every lane, 16–17 sectors per warp and 1024 B per
-# CTA, where Nsight Compute measures 8 sectors over the launch.
+# others: ptxas writes LDGSTS with an ignore-src predicate. The register
+# is not read, so which lanes read, and how much, is not known: the row,
+# the per-execution read and the totals are bounds, within which Nsight
+# Compute's 8 sectors over the launch fall.
 RUN: %ptxroof analyze %fixtures/micro/cp_async_src_size.ptx --ncu %fixtures/micro/cp_async_src_size.ncu.json | FileCheck "%s"
-CHECK: global load 16 B   warp: 16–17 sectors (ideal 16)
-CHECK: global bytes: load 1024 B, store 0 B
-CHECK: measured L2 sectors of global accesses: 0 lines agree (0 exact, 0 within a range, 0 within a bound), 1 differ
-CHECK-NEXT: line 30: predicted 32–34 (ideal 32), measured 8 (ideal 8)
+CHECK: global load <= 16 B (predicated)  warp: <= 17 sectors (ideal <= 16)
+CHECK: per thread per execution: global load <= 16 B; shared store 16 B
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load <= 1024 B, store 0 B
+CHECK: AI(global) >= 0 flop/B
+CHECK: measured L2 sectors of global accesses: 1 lines agree (0 exact, 0 within a range, 1 within a bound), 0 differ

@@ -280,10 +280,17 @@ pub struct Access {
     /// Bytes per thread per execution, when the instruction states them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u32>,
-    /// The instruction is guarded.
+    /// `bytes` is the most one execution moves.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bytes_at_most: bool,
+    /// A predicate, or for a `cp.async`'s source a src-size register,
+    /// makes this operand's access conditional beyond its block: the
+    /// instruction's guard, or the copy's ignore-src.
     pub predicated: bool,
-    /// The threads the guard selects, when it is a thread-index
-    /// condition; the bytes and footprint count those threads.
+    /// The threads that access this operand, when a thread-index
+    /// condition selects them: the guard's, and on a `cp.async`'s source
+    /// those whose ignore-src is false; the footprint counts those
+    /// threads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub threads: Option<ThreadsInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -296,6 +303,8 @@ pub struct Access {
     /// threads are a bound, so is this: the most any warp touches.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
+    /// `sectors_per_request` and `ideal_sectors_per_request` are each the
+    /// most any warp touches.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sectors_at_most: bool,
     /// The fewest sectors the distinct bytes the executing lanes touch
@@ -421,6 +430,9 @@ pub enum ContributionDetails {
         space: String,
         direction: String,
         count: u64,
+        /// `count` is the most one execution moves.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        at_most: bool,
     },
     UnquantifiedBytes {
         space: String,

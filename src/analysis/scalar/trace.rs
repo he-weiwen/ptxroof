@@ -18,7 +18,7 @@ use crate::analysis::register_effects::{self, registers, split_operands};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::recurrences::{Recurrence, Step, recurrences};
 use crate::analysis::scalar::symexpr::SymExpr;
-use crate::analysis::scalar::trip_counts::loop_trips;
+use crate::analysis::scalar::trip_counts::{loop_trips, per_cta};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{
@@ -58,6 +58,9 @@ pub(crate) struct AffineValueTracer<'a> {
     /// Tracing an address that does not read otherwise: a uniform read
     /// the trace cannot interpret is a `Var::Uniform`.
     fallback: Cell<bool>,
+    /// Reading a latch: a `min` or `max` holds its operands' CTA-index
+    /// terms as symbols, one value per CTA.
+    pub(crate) cta_symbols: Cell<bool>,
 }
 
 impl<'a> AffineValueTracer<'a> {
@@ -125,6 +128,7 @@ impl<'a> AffineValueTracer<'a> {
             bindings: None,
             uniformity: OnceCell::new(),
             fallback: Cell::new(false),
+            cta_symbols: Cell::new(false),
         }
     }
 
@@ -191,6 +195,12 @@ impl<'a> AffineValueTracer<'a> {
     pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<String, i64>) -> Self {
         self.bindings = Some(bindings);
         self
+    }
+
+    /// `f` of `a`, or of `a` under the bindings where `f` needs a
+    /// coefficient the bindings make a constant.
+    fn reduced(&self, a: &Affine, f: impl Fn(Affine) -> Option<Affine>) -> Option<Affine> {
+        f(a.clone()).or_else(|| f(a.bind(self.bindings?)))
     }
 
     /// A constant, after the bindings if there are any.
@@ -527,15 +537,16 @@ impl<'a> AffineValueTracer<'a> {
         t
     }
 
-    /// Loop `l`'s trip count when it is a constant of at least 1, which
-    /// makes its latch, and so its exit, the same for every lane.
+    /// Loop `l`'s trip count when it is a constant of at least 1 under the
+    /// bindings, which makes its latch, and so its exit, the same for
+    /// every lane.
     fn constant_trips(&self, l: LoopId) -> Option<i64> {
         if let Some(&n) = self.trips.borrow().get(&l) {
             return n;
         }
         self.trips.borrow_mut().insert(l, None);
         let n = (loop_trips(self, l).ok())
-            .and_then(|t| t.as_const())
+            .and_then(|t| self.constant(&Affine::invariant(t)))
             .filter(|&n| n >= 1);
         self.trips.borrow_mut().insert(l, n);
         n
@@ -694,8 +705,7 @@ impl<'a> AffineValueTracer<'a> {
                     .find_map(|m| m.strip_prefix('b')?.parse::<u32>().ok())
                     .unwrap_or(32);
                 let modulo = |x: Affine, k: u32| -> Result<Affine, String> {
-                    x.clone()
-                        .modulo_const(1i64 << k)
+                    (self.reduced(&x, |x| x.modulo_const(1i64 << k)))
                         .ok_or_else(|| refuse(&x, id, "mod"))
                 };
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
@@ -729,7 +739,7 @@ impl<'a> AffineValueTracer<'a> {
                             63 => {
                                 return Err(format!("and-mask {konst:#x} keeps bit 63 without 62"));
                             }
-                            _ => (hi.clone().align_down(1i64 << low))
+                            _ => (self.reduced(&hi, |x| x.align_down(1i64 << low)))
                                 .ok_or_else(|| refuse(&hi, id, "mod"))?,
                         };
                     bits &= u64::MAX.checked_shl(top).unwrap_or(0);
@@ -762,23 +772,17 @@ impl<'a> AffineValueTracer<'a> {
                 let signed = mods.iter().any(|m| m.starts_with('s'));
                 if signed && pos == 0 {
                     let half = 1i128 << (len.clamp(1, 64) - 1);
-                    return match a.range(&|v| self.bound(v)) {
-                        Some((lo, hi)) if lo < -half || hi >= half => {
-                            Err(format!("bfe of {len} bits leaves them"))
-                        }
-                        _ => Ok(a),
+                    return match self.within(&a, -half, half) {
+                        false => Err(format!("bfe of {len} bits leaves them")),
+                        true => Ok(a),
                     };
                 }
                 if signed || !(0..63).contains(&pos) || !(1..63).contains(&len) {
                     return Err(format!("bfe at {pos} of {len} bits"));
                 }
-                let shifted = a
-                    .clone()
-                    .div_const(1i64 << pos)
+                let shifted = (self.reduced(&a, |x| x.div_const(1i64 << pos)))
                     .ok_or_else(|| refuse(&a, id, "bit field"))?;
-                shifted
-                    .clone()
-                    .modulo_const(1i64 << len)
+                (self.reduced(&shifted, |x| x.modulo_const(1i64 << len)))
                     .ok_or_else(|| refuse(&shifted, id, "bit field"))
             }
             Opcode::Shl if ops.len() == 3 => {
@@ -816,9 +820,7 @@ impl<'a> AffineValueTracer<'a> {
                     if !(0..63).contains(&c) {
                         return Err(format!("shift by {c} is out of range"));
                     }
-                    return v
-                        .clone()
-                        .div_const(1i64 << c)
+                    return (self.reduced(&v, |x| x.div_const(1i64 << c)))
                         .ok_or_else(|| refuse(&v, id, "shift"));
                 }
                 let signed_width = mods.iter().find_map(|m| match *m {
@@ -854,9 +856,9 @@ impl<'a> AffineValueTracer<'a> {
                     return Err(format!("{} by a non-constant divisor", mnemonic.name()));
                 };
                 let result = if mnemonic == Opcode::Div {
-                    a.clone().div_const(d)
+                    self.reduced(&a, |x| x.div_const(d))
                 } else {
-                    a.clone().modulo_const(d)
+                    self.reduced(&a, |x| x.modulo_const(d))
                 };
                 result.ok_or_else(|| refuse(&a, id, "division"))
             }
@@ -929,22 +931,29 @@ impl<'a> AffineValueTracer<'a> {
                 a.map_vars(lane)
                     .ok_or_else(|| "shfl.idx of a value not a function of %tid.x".to_owned())
             }
-            Opcode::Min | Opcode::Max if ops.len() == 3 => {
-                // A clamp of two constants (after bindings) is a constant.
-                let (a, b) = (arg(1)?, arg(2)?);
-                match (self.constant(&a), self.constant(&b)) {
-                    (Some(x), Some(y)) => Ok(Affine::invariant(SymExpr::Const(
-                        if mnemonic == Opcode::Min {
-                            x.min(y)
-                        } else {
-                            x.max(y)
-                        },
-                    ))),
-                    _ if a.is_invariant() && b.is_invariant() => {
-                        Err(format!("{} of values not both constant", mnemonic.name()))
-                    }
-                    _ => Err(refuse(&(a + b), id, mnemonic.name())),
+            // PTX ISA §9.7.1.13, §9.7.1.14: one integer type, compared as
+            // that type reads both operands; `.relu` and the packed types
+            // are other operations.
+            Opcode::Min | Opcode::Max
+                if ops.len() == 3 && mods.len() == 1 && int_type_range(mods[0]).is_some() =>
+            {
+                let (a, b) = match self.cta_symbols.get() {
+                    true => (per_cta(arg(1)?), per_cta(arg(2)?)),
+                    false => (arg(1)?, arg(2)?),
+                };
+                if !(a.is_invariant() && b.is_invariant()) {
+                    return Err(refuse(&(a + b), id, mnemonic.name()));
                 }
+                if let Some((_, lo, hi)) = int_type_range(mods[0])
+                    && !(self.within(&a, lo, hi) && self.within(&b, lo, hi))
+                {
+                    let opcode = self.module.opcode(instr);
+                    return Err(format!("`{opcode}` of a value its type does not hold"));
+                }
+                Ok(Affine::invariant(match mnemonic {
+                    Opcode::Min => SymExpr::min(a.base, b.base),
+                    _ => SymExpr::max(a.base, b.base),
+                }))
             }
             // PTX ISA §9.7.1.3, §9.7.1.4: `.hi` keeps the product's upper
             // half, which the affine form does not hold.

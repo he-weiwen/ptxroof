@@ -1,13 +1,17 @@
-# k1 at M=N=K=256, block 32x32: every lane of a warp reads the same A
-# element (1 sector) and consecutive B and C elements (2). Nsight
+# k1 at M=N=K=256, block 32x32, grid 8x8: every lane of a warp reads the
+# same A element (1 sector) and consecutive B and C elements (2). Nsight
 # Compute on this launch: 1,050,624 load requests over 1,576,960
 # sectors and 2,048 store requests over 4,096, exactly these rows times
-# their counts.
-RUN: %ptxroof analyze %fixtures/k1/k1.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 32,32,1 | FileCheck "%s"
+# their counts. The guard `x < M && y < N` reads only with M and the grid
+# bound; without them which threads run the loop is not known, and its
+# footprint is a bound.
+RUN: %ptxroof analyze %fixtures/k1/k1.sm_80.ptx --bind 0:M=256 --bind 1:N=256 --bind 2:K=256 --launch 32,32,1 --grid 8,8,1 | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/k1/k1.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 32,32,1 | FileCheck --check-prefix=FREE "%s"
 CHECK: kernel hgemm_naive(int, int, int, float, __half const*, __half const*, float, __half*)
-CHECK: 1_naive.cuh:16  ld.global.u16  global load 2 B  warp: <= 1 sector (ideal 1)   [512 * %tid.y + 16384 * %ctaid.y + 8 * k[1_naive.cuh:15] + param_4 - 8]   k[1_naive.cuh:15]: +8 B/iter
-CHECK: 1_naive.cuh:16  ld.global.u16  global load 2 B  warp: <= 3 sectors (ideal 2)  [2 * %tid.x + 64 * %ctaid.x + 2048 * k[1_naive.cuh:15] + param_5 - 2048]  k[1_naive.cuh:15]: +2048 B/iter
+CHECK: 1_naive.cuh:16  ld.global.u16  global load 2 B  warp: 1 sector (ideal 1)       [512 * %tid.y + 16384 * %ctaid.y + 8 * k[1_naive.cuh:15] + param_4 - 8]   k[1_naive.cuh:15]: +8 B/iter
+CHECK: 1_naive.cuh:16  ld.global.u16  global load 2 B  warp: 2–3 sectors (ideal 2)    [2 * %tid.x + 64 * %ctaid.x + 2048 * k[1_naive.cuh:15] + param_5 - 2048]  k[1_naive.cuh:15]: +2048 B/iter
 CHECK: global bytes per CTA over the loop's own blocks: requested 1048576 B, unique 32768 B, in sectors 786432–1048576 B
 CHECK: accesses outside loops:
-CHECK: 1_naive.cuh:18  ld.global.u16  global load 2 B   warp: <= 3 sectors (ideal 2)  [2 * %tid.x + 512 * %tid.y + 64 * %ctaid.x + 16384 * %ctaid.y + param_7]
-CHECK: 1_naive.cuh:18  st.global.u16  global store 2 B  warp: <= 3 sectors (ideal 2)  [2 * %tid.x + 512 * %tid.y + 64 * %ctaid.x + 16384 * %ctaid.y + param_7]
+CHECK: 1_naive.cuh:18  ld.global.u16  global load 2 B   warp: 2–3 sectors (ideal 2)    [2 * %tid.x + 512 * %tid.y + 64 * %ctaid.x + 16384 * %ctaid.y + param_7]
+CHECK: 1_naive.cuh:18  st.global.u16  global store 2 B  warp: 2–3 sectors (ideal 2)    [2 * %tid.x + 512 * %tid.y + 64 * %ctaid.x + 16384 * %ctaid.y + param_7]
+FREE: global bytes per CTA over the loop's own blocks: requested <= 1048576 B, unique <= 32768 B, in sectors <= 786432–1048576 B

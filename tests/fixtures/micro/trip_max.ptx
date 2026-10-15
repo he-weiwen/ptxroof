@@ -1,0 +1,63 @@
+//
+// HAND-WRITTEN: do-while loops bounded by a max and a min of a parameter
+// and a constant (PTX ISA §9.7.1.13, §9.7.1.14: "Signed and unsigned
+// differ"). micro_trip_max runs while k < max(n, 2): ptxas 13.4
+// -arch=sm_89 computes the bound with `UISETP.LT.AND UP0, UPT, UR4,
+// 0x2` and a select, and keeps the loop rolled around its
+// `BAR.SYNC.DEFER_BLOCKING`; on an RTX 4090 with n = 1 the barrier runs
+// twice per thread (micro/trip_max.ncu.json). micro_trip_min_unsigned
+// runs while k < min.u32(n − 4, 8), compared unsigned (`UISETP.LT.U32.AND
+// UP0, UPT, UR4, 0x8`): for n below 4, n − 4 reads as 2^32 + n − 4 and
+// the bound is 8; on an RTX 4090 with n = 2 the barrier runs 8 times per
+// thread (micro/trip_max.unsigned.ncu.json).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_trip_max(
+	.param .u64 micro_trip_max_param_0,
+	.param .u32 micro_trip_max_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_trip_max_param_0];
+	ld.param.u32 	%r1, [micro_trip_max_param_1];
+	max.s32 	%r2, %r1, 2;
+	mov.u32 	%r3, 0;
+$L__BB0_1:
+	add.s32 	%r3, %r3, 1;
+	st.global.u32 	[%rd1], %r3;
+	bar.sync 	0;
+	setp.lt.s32 	%p1, %r3, %r2;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}
+
+.visible .entry micro_trip_min_unsigned(
+	.param .u64 micro_trip_min_unsigned_param_0,
+	.param .u32 micro_trip_min_unsigned_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_trip_min_unsigned_param_0];
+	ld.param.u32 	%r1, [micro_trip_min_unsigned_param_1];
+	add.s32 	%r2, %r1, -4;
+	min.u32 	%r3, %r2, 8;
+	mov.u32 	%r4, 0;
+$L__BB1_1:
+	add.s32 	%r4, %r4, 1;
+	st.global.u32 	[%rd1], %r4;
+	bar.sync 	0;
+	setp.lt.u32 	%p1, %r4, %r3;
+	@%p1 bra 	$L__BB1_1;
+	ret;
+}

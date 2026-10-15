@@ -47,5 +47,5 @@ FREE: kernel micro_and_select_min
 FREE: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
 FREE-SAME: [(-9223372036854775808) * %tid.x + param_0 + 4611686018427387904]
 FREE: kernel micro_and_select_divided
-FREE: st.global.u32  global store 4 B (predicated)  warp: <= 1 sector (ideal 1)
+FREE: st.global.u32  global store 4 B (predicated)  warp: <= 1 sector (ideal <= 1)
 FREE-SAME: [param_0]

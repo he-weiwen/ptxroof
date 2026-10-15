@@ -77,7 +77,9 @@ The text report expands instructions with multiple contributions; JSON
 `instructions.by_kind.*.contribution_variants` exposes each opcode's
 contribution lists and issued counts. Different immediate sizes remain
 separate variants. Contribution annotations are per execution with a true
-predicate, even when the report's issued counts include inactive threads.
+guard, a `cp.async`'s global read on a thread that reads its source, marked
+`<=` with a src-size register, even when the report's issued counts include
+inactive threads.
 
 Atomic/reduction FP add/min/max contribute one FLOP per scalar element,
 including packed and vector multiplicity, on the `atomic` accounting pipe.
@@ -286,7 +288,7 @@ tensor and multimem variants remain visible, counted `Unknown` work.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.9.26.3.1 | `cp.async` | `Memory` with Global read = src-size or cp-size and Shared write = cp-size — the immediates after the two addresses; a non-immediate `src-size` (a register) falls back to `cp-size`, an upper bound on the read | OK — the `cp` arm, pinned by k12/k14 (nvcc writes `..., 16, 16`) and the Gluon GEMMs (Triton writes `..., 0x10, 0x10`). `collect` records one memory instruction with two byte measurements: a global load and a shared store. Immediate source size zero has zero global bytes and sectors per request and per loop, while retaining shared writes and issued copies (`tests/instruction_contributions.rs::zero_source_copy_has_no_global_sectors_but_keeps_shared_writes`). |
+| 9.7.9.26.3.1 | `cp.async` | `Memory` with Global read = src-size or cp-size and Shared write = cp-size. cp-size is the third operand. A fourth, without `.L2::cache_hint`, is src-size or ignore-src. Under `.L2::cache_hint` the last operand is the cache policy, so a fourth operand alone is the policy and a fifth follows a src-size or ignore-src. The global read happens on the threads whose ignore-src is false (`ThreadSets::sources`), read as a guard is: its row, sectors per warp, loop footprint, global load totals and sector comparison count them. A src-size register reads at most cp-size (`at_most`: `global load <= 16 B`) on threads not known (PLAN.md, Reported as unknowns) | OK — the `cp` arm, pinned by k12/k14 (nvcc writes `..., 16, 16`) and the Gluon GEMMs (Triton writes `..., 0x10, 0x10`); the positions, an immediate cache policy no size, by `cp_async_is_a_global_read_and_a_shared_write`; the source rows, totals and sector comparison by `micro/cp_async_ignore_src.ptx` and its RTX 4090 record (`micro-cp-async-ignore-src.test`) and `micro/cp_async_src_size.ptx`. `collect` records one memory instruction with two byte measurements: a global load and a shared store. Immediate source size zero has zero global bytes and sectors per request and per loop, while retaining shared writes and issued copies (`tests/instruction_contributions.rs::zero_source_copy_has_no_global_sectors_but_keeps_shared_writes`). |
 | 9.7.9.26.3.2 | `cp.async.commit_group` | `Sync` | OK — moves no bytes. |
 | 9.7.9.26.3.3 | `cp.async.wait_group` | `Sync` | OK. |
 | 9.7.9.26.3.3 | `cp.async.wait_all` | `Sync` | OK. |
@@ -344,8 +346,8 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | 9.7.13.3 | `bra` | `Control` | OK. |
 | 9.7.13.4 | `brx.idx` | `Control` (mnemonic `brx`) | OK — and CFG-side, unresolved `.branchtargets` surface as a report unknown (commit `d58b305`), so indirect branches degrade honestly. |
 | 9.7.13.5 | `call` | `Control` | OK at the classifier layer; the parser reads its `(…)` return and argument lists (`Operand::ParamList`, `micro/call_returns.ptx`), and skips `.calltargets` and `.callprototype`. ⚠ misfit §E: flops/bytes inside the callee are not attributed to the call site. Fine while the corpus is fully-inlined nvcc output; recommend a report-level named unknown when a kernel calls a function whose body the module doesn't contain (extern), so the gap is visible the day it matters. |
-| 9.7.13.6 | `ret` | `Control` | OK. |
-| 9.7.13.7 | `exit` | `Control` | OK. |
+| 9.7.13.6 | `ret` | `Control` | OK at the classifier layer. ⚠ The CFG reads a predicated `ret` as falling through, so what follows counts on every thread (PLAN.md; `micro/predicated_exit.ptx`). |
+| 9.7.13.7 | `exit` | `Control` | OK at the classifier layer. ⚠ The same for a predicated `exit` (`micro/predicated_exit.ptx`: the store after `@%p1 exit` counts 32 per CTA, none run at n = 20 on an RTX 4090). |
 
 ## §9.7.14 Parallel Synchronization and Communication Instructions
 
@@ -550,7 +552,9 @@ unless a `--bind`-style flag supplies the map. Register-sized
 `cp.async.bulk`/`st.bulk`: classic `UnquantifiedBytes`. `tex`/`tld4`/
 `suld`/`sust`: coordinate- and descriptor-dependent footprints.
 Related asymmetries where bytes-in ≠ bytes-out of a single
-instruction: `cp.async` with `src-size < cp-size` (zero-fill) and
+instruction: `cp.async` reads src-size, or cp-size on the threads whose
+ignore-src is false (at most cp-size with a src-size register), from
+global and writes cp-size to shared on the threads that execute it;
 `tcgen05.cp` with decompression — pick one side per space and
 document.
 

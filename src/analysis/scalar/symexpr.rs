@@ -3,9 +3,10 @@
 //! Deliberately not a CAS — exactly the forms the trip matcher emits
 //! and the report aggregates: integer constants, named symbols (kernel
 //! params, opaque trip symbols), sums, products, integer ceil-/floor-
-//! division by a constant, and modulo by a constant (PTX lowers
+//! division by a constant, modulo by a constant (PTX lowers
 //! `K mod 4` as `and.b32 r, K, 3`, so real trip counts are shapes like
-//! `(K − K mod 4)/4`).
+//! `(K − K mod 4)/4`), and the min and max of two (Triton's
+//! `max(cdiv(K, BK), 2)`).
 //!
 //! Symbols are assumed nonnegative (they are loop bounds and sizes);
 //! `mod` evaluates with `rem_euclid` so a hostile negative binding
@@ -22,8 +23,8 @@
 //! committed scenario expectations: `param_2 mod 4` binds tighter than
 //! `+`/`-`, exact division prints as `(...) / c`, ceil-division prints
 //! `⌈x/c⌉` (a sum or product numerator parenthesized), products
-//! parenthesize sums and divisions, and a `-c·x` summand prints as
-//! `- c * x`.
+//! parenthesize sums and divisions, a `-c·x` summand prints as
+//! `- c * x`, and a min or max as `max(a, b)`.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -46,6 +47,10 @@ pub enum SymExpr {
     FloorDiv(Box<SymExpr>, i64),
     /// `e mod c`, c > 0.
     Mod(Box<SymExpr>, i64),
+    /// The lesser of two values.
+    Min(Box<SymExpr>, Box<SymExpr>),
+    /// The greater of two values.
+    Max(Box<SymExpr>, Box<SymExpr>),
 }
 
 impl SymExpr {
@@ -90,10 +95,82 @@ impl SymExpr {
             SymExpr::Const(c) => c % m == 0,
             SymExpr::Prod(fs) => matches!(fs.first(), Some(SymExpr::Const(c)) if c % m == 0),
             SymExpr::Sum(ts) => ts.iter().all(|t| t.divisible_by(m)),
+            SymExpr::Min(a, b) | SymExpr::Max(a, b) => a.divisible_by(m) && b.divisible_by(m),
             SymExpr::Sym(_) | SymExpr::CeilDiv(..) | SymExpr::FloorDiv(..) | SymExpr::Mod(..) => {
                 false
             }
         }
+    }
+
+    /// The least value with every symbol at 0 or above, where bounded.
+    pub fn least(&self) -> Option<i64> {
+        match self {
+            SymExpr::Const(c) => Some(*c),
+            SymExpr::Sym(_) | SymExpr::Mod(..) => Some(0),
+            SymExpr::Sum(ts) => ts.iter().try_fold(0i64, |s, t| s.checked_add(t.least()?)),
+            SymExpr::Prod(fs) => {
+                (fs.iter()).try_fold(1i64, |p, f| p.checked_mul(f.least().filter(|&l| l >= 0)?))
+            }
+            SymExpr::CeilDiv(e, c) => Some(-e.least()?.checked_neg()?.div_euclid(*c)),
+            SymExpr::FloorDiv(e, c) => e.least().map(|l| l.div_euclid(*c)),
+            SymExpr::Min(a, b) => Some(a.least()?.min(b.least()?)),
+            SymExpr::Max(a, b) => a.least().max(b.least()),
+        }
+    }
+
+    /// The least and the greatest value, every symbol within `sym`'s
+    /// bounds: `None` where one has none, the whole `i128` line where a
+    /// bound leaves it.
+    pub fn range(&self, sym: &dyn Fn(&str) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
+        match self.span(sym) {
+            Ok(r) => Some(r),
+            Err(true) => Some((i128::MIN, i128::MAX)),
+            Err(false) => None,
+        }
+    }
+
+    /// The same, `Err(false)` where a symbol has no bounds and
+    /// `Err(true)` where a bound leaves `i128`.
+    pub fn span(&self, sym: &dyn Fn(&str) -> Option<(i64, i64)>) -> Result<(i128, i128), bool> {
+        let pair = |x: &SymExpr, y: &SymExpr| Ok((x.span(sym)?, y.span(sym)?));
+        let fits = |x: Option<i128>| x.ok_or(true);
+        Ok(match self {
+            SymExpr::Const(c) => (i128::from(*c), i128::from(*c)),
+            SymExpr::Sym(s) => sym(s)
+                .map(|(a, b)| (i128::from(a), i128::from(b)))
+                .ok_or(false)?,
+            SymExpr::Sum(ts) => ts.iter().try_fold((0i128, 0i128), |(lo, hi), t| {
+                let (a, b) = t.span(sym)?;
+                Ok((fits(lo.checked_add(a))?, fits(hi.checked_add(b))?))
+            })?,
+            SymExpr::Prod(fs) => {
+                (fs.iter()).try_fold((1, 1), |r, f| product(r, f.span(sym)?).ok_or(true))?
+            }
+            SymExpr::FloorDiv(e, c) => {
+                let (a, b) = e.span(sym)?;
+                (a.div_euclid(i128::from(*c)), b.div_euclid(i128::from(*c)))
+            }
+            SymExpr::CeilDiv(e, c) => {
+                let up = |x: i128| fits(x.checked_neg().map(|n| -n.div_euclid(i128::from(*c))));
+                let (a, b) = e.span(sym)?;
+                (up(a)?, up(b)?)
+            }
+            SymExpr::Mod(e, c) => {
+                let (c, (a, b)) = (i128::from(*c), e.span(sym)?);
+                match a.div_euclid(c) == b.div_euclid(c) {
+                    true => (a.rem_euclid(c), b.rem_euclid(c)),
+                    false => (0, c - 1),
+                }
+            }
+            SymExpr::Min(x, y) => {
+                let ((a, b), (c, d)) = pair(x, y)?;
+                (a.min(c), b.min(d))
+            }
+            SymExpr::Max(x, y) => {
+                let ((a, b), (c, d)) = pair(x, y)?;
+                (a.max(c), b.max(d))
+            }
+        })
     }
 
     pub fn as_const(&self) -> Option<i64> {
@@ -239,12 +316,14 @@ impl SymExpr {
         }
         match e.as_const() {
             Some(v) => SymExpr::Const(v.div_euclid(c) + i64::from(v.rem_euclid(c) != 0)),
+            None if e.divisible_by(c) => SymExpr::floor_div(e, c),
             None => SymExpr::CeilDiv(Box::new(e), c),
         }
     }
 
-    /// `e / c` rounding toward −∞; `c` must be positive. Two identities
-    /// fold: `⌊(x + c − 1)/c⌋ = ⌈x/c⌉` and `⌊k·c·x / c⌋ = k·x`.
+    /// `e / c` rounding toward −∞; `c` must be positive. Three identities
+    /// fold: `⌊(x + c − 1)/c⌋ = ⌈x/c⌉`, `⌊k·c·x / c⌋ = k·x`, and a sum of
+    /// multiples of c divided term by term.
     pub fn floor_div(e: SymExpr, c: i64) -> SymExpr {
         assert!(c > 0, "floor_div by non-positive constant is a matcher bug");
         if c == 1 {
@@ -260,6 +339,10 @@ impl SymExpr {
                     .expect("Sum invariant: ≥ 2 terms");
                 SymExpr::ceil_div(rest, c)
             }
+            SymExpr::Sum(terms) if terms.iter().all(|t| t.divisible_by(c)) => (terms.into_iter())
+                .map(|t| SymExpr::floor_div(t, c))
+                .reduce(SymExpr::add)
+                .expect("Sum invariant: ≥ 2 terms"),
             SymExpr::Prod(factors) if matches!(factors.first(), Some(SymExpr::Const(k)) if k % c == 0) =>
             {
                 let mut rest = factors.into_iter();
@@ -270,6 +353,25 @@ impl SymExpr {
                 rest.fold(SymExpr::Const(k / c), SymExpr::mul)
             }
             other => SymExpr::FloorDiv(Box::new(other), c),
+        }
+    }
+
+    /// The lesser of `a` and `b`, a constant when both are.
+    pub fn min(a: SymExpr, b: SymExpr) -> SymExpr {
+        match (a.as_const(), b.as_const()) {
+            (Some(x), Some(y)) => SymExpr::Const(x.min(y)),
+            _ => SymExpr::Min(Box::new(a), Box::new(b)),
+        }
+    }
+
+    /// The greater of `a` and `b`, a constant when both are, and one when
+    /// it is never less than the other constant.
+    pub fn max(a: SymExpr, b: SymExpr) -> SymExpr {
+        match (a.as_const(), b.as_const()) {
+            (Some(x), Some(y)) => SymExpr::Const(x.max(y)),
+            (_, Some(y)) if a.least().is_some_and(|l| l >= y) => a,
+            (Some(x), _) if b.least().is_some_and(|l| l >= x) => b,
+            _ => SymExpr::Max(Box::new(a), Box::new(b)),
         }
     }
 
@@ -311,6 +413,8 @@ impl SymExpr {
             SymExpr::CeilDiv(e, c) => SymExpr::ceil_div(e.bind(bindings), *c),
             SymExpr::FloorDiv(e, c) => SymExpr::floor_div(e.bind(bindings), *c),
             SymExpr::Mod(e, c) => SymExpr::modulo(e.bind(bindings), *c),
+            SymExpr::Min(a, b) => SymExpr::min(a.bind(bindings), b.bind(bindings)),
+            SymExpr::Max(a, b) => SymExpr::max(a.bind(bindings), b.bind(bindings)),
         }
     }
 
@@ -333,6 +437,10 @@ impl SymExpr {
                 SymExpr::CeilDiv(e, _) | SymExpr::FloorDiv(e, _) | SymExpr::Mod(e, _) => {
                     walk(e, out)
                 }
+                SymExpr::Min(a, b) | SymExpr::Max(a, b) => {
+                    walk(a, out);
+                    walk(b, out);
+                }
             }
         }
         let mut out = Vec::new();
@@ -354,6 +462,17 @@ enum PrintContext {
     DivOrModLeft,
 }
 
+/// The product of two ranges; `None` past `i128`.
+pub fn product((a, b): (i128, i128), (c, d): (i128, i128)) -> Option<(i128, i128)> {
+    let p = [
+        a.checked_mul(c)?,
+        a.checked_mul(d)?,
+        b.checked_mul(c)?,
+        b.checked_mul(d)?,
+    ];
+    Some((p.into_iter().min()?, p.into_iter().max()?))
+}
+
 impl fmt::Display for SymExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", render(self, PrintContext::Top))
@@ -362,7 +481,11 @@ impl fmt::Display for SymExpr {
 
 fn parens_needed(e: &SymExpr, ctx: PrintContext) -> bool {
     match e {
-        SymExpr::Const(_) | SymExpr::Sym(_) | SymExpr::CeilDiv(..) => false,
+        SymExpr::Const(_)
+        | SymExpr::Sym(_)
+        | SymExpr::CeilDiv(..)
+        | SymExpr::Min(..)
+        | SymExpr::Max(..) => false,
         SymExpr::Sum(_) => matches!(ctx, PrintContext::ProdFactor | PrintContext::DivOrModLeft),
         SymExpr::Prod(_) => ctx == PrintContext::DivOrModLeft,
         SymExpr::FloorDiv(..) => {
@@ -385,9 +508,12 @@ fn render(e: &SymExpr, ctx: PrintContext) -> String {
                     SymExpr::Prod(fs) => match fs.first() {
                         Some(SymExpr::Const(c)) if *c < 0 && *c != i64::MIN => {
                             let mut pos = fs.clone();
-                            if *c == -1 && pos.len() == 2 {
+                            if *c == -1 {
                                 pos.remove(0);
-                                (true, pos.pop().expect("two factors"))
+                                match pos.len() {
+                                    1 => (true, pos.pop().expect("one factor")),
+                                    _ => (true, SymExpr::Prod(pos)),
+                                }
                             } else {
                                 pos[0] = SymExpr::Const(-c);
                                 (true, SymExpr::Prod(pos))
@@ -429,6 +555,8 @@ fn render(e: &SymExpr, ctx: PrintContext) -> String {
         SymExpr::CeilDiv(e, c) => format!("⌈{}/{c}⌉", render(e, PrintContext::DivOrModLeft)),
         SymExpr::FloorDiv(e, c) => format!("{} / {c}", render(e, PrintContext::DivOrModLeft)),
         SymExpr::Mod(e, c) => format!("{} mod {c}", render(e, PrintContext::DivOrModLeft)),
+        SymExpr::Min(a, b) => format!("min({a}, {b})"),
+        SymExpr::Max(a, b) => format!("max({a}, {b})"),
     };
     if parens_needed(e, ctx) {
         format!("({body})")
@@ -510,6 +638,15 @@ mod tests {
             E::floor_div(E::mul(E::Const(6), k()), 4),
             E::FloorDiv(..)
         ));
+        // A sum of multiples divides term by term (scaled_mm's
+        // `(128·max(⌈K/128⌉, 2) − 128)/128`); a multiple's ceiling is exact.
+        let m = E::max(E::ceil_div(k(), 128), E::Const(2));
+        let scaled = E::sub(E::mul(E::Const(128), m.clone()), E::Const(128));
+        assert_eq!(E::floor_div(scaled, 128), E::sub(m, E::Const(1)));
+        assert_eq!(E::ceil_div(E::mul(E::Const(128), k()), 128), k());
+        let off = E::add(E::mul(E::Const(128), k()), E::Const(64));
+        assert!(matches!(E::floor_div(off.clone(), 128), E::FloorDiv(..)));
+        assert!(matches!(E::ceil_div(off, 128), E::CeilDiv(..)));
     }
 
     #[test]
@@ -616,6 +753,79 @@ mod tests {
         );
         assert_eq!(e.symbols(), ["a", "b"]);
         assert_eq!(E::Const(3).symbols(), Vec::<String>::new());
+    }
+
+    /// A product subtracted prints without a unit coefficient.
+    #[test]
+    fn a_subtracted_product_of_symbols_prints_as_one() {
+        let (p, q) = (E::sym("p"), E::sym("q"));
+        let e = E::sub(E::sym("x"), E::mul(p.clone(), q.clone()));
+        assert_eq!(e.to_string(), "x - p * q");
+        assert_eq!(E::sub(E::sym("x"), p).to_string(), "x - p");
+    }
+
+    /// Ranges by interval arithmetic, `param_2` in [0, 100], `n` not
+    /// bounded; past i128 the whole line, though a remainder follows.
+    #[test]
+    fn ranges_over_bounded_symbols() {
+        let sym = |s: &str| (s == "param_2").then_some((0, 100));
+        let row = E::sub(
+            E::min(
+                E::add(E::mul(E::Const(16), k()), E::Const(16)),
+                E::Const(64),
+            ),
+            k(),
+        );
+        assert_eq!(row.range(&sym), Some((-84, 64)));
+        assert_eq!(E::ceil_div(k(), 8).range(&sym), Some((0, 13)));
+        assert_eq!(
+            E::floor_div(E::sub(k(), E::Const(1)), 8).range(&sym),
+            Some((-1, 12))
+        );
+        assert_eq!(E::modulo(k(), 64).range(&sym), Some((0, 63)));
+        assert_eq!(E::max(k(), E::Const(1)).range(&sym), Some((1, 100)));
+        assert_eq!(E::add(k(), E::sym("n")).range(&sym), None);
+        let huge = E::mul(E::Const(i64::MAX), E::mul(k(), E::sym("param_2")));
+        assert_eq!(
+            huge.range(&|_| Some((i64::MIN, i64::MAX))).map(|r| r.1),
+            Some(i128::MAX)
+        );
+    }
+
+    #[test]
+    fn least_values_with_nonnegative_symbols_fold_a_max() {
+        let minus = |e: E, c: i64| E::sub(e, E::Const(c));
+        assert_eq!(E::ceil_div(k(), 8).least(), Some(0));
+        assert_eq!(minus(k(), 10).least(), Some(-10));
+        assert_eq!(E::ceil_div(minus(k(), 128), 128).least(), Some(-1));
+        assert_eq!(E::sub(k(), E::sym("n")).least(), None);
+        let w8a8 = minus(E::max(E::ceil_div(k(), 128), E::Const(2)), 1);
+        assert_eq!(w8a8.least(), Some(1));
+        assert_eq!(E::max(w8a8.clone(), E::Const(1)), w8a8);
+        assert_eq!(
+            E::max(E::ceil_div(k(), 8), E::Const(0)),
+            E::ceil_div(k(), 8)
+        );
+        assert!(matches!(E::max(minus(k(), 10), E::Const(0)), E::Max(..)));
+    }
+
+    #[test]
+    fn min_and_max_fold_bind_and_print() {
+        // Triton's `tl.maximum(cdiv(K, 128), 2)`, less one.
+        let m = E::max(E::ceil_div(k(), 128), E::Const(2));
+        assert_eq!(m.to_string(), "max(⌈param_2/128⌉, 2)");
+        let trips = E::sub(m.clone(), E::Const(1));
+        assert_eq!(trips.to_string(), "max(⌈param_2/128⌉, 2) - 1");
+        assert_eq!(trips.bind(&bindings(&[("param_2", 7168)])), E::Const(55));
+        assert_eq!(m.bind(&bindings(&[("param_2", 100)])), E::Const(2));
+        assert_eq!(E::min(E::Const(3), E::Const(-1)), E::Const(-1));
+        assert_eq!(
+            E::mul(E::Const(2), E::min(k(), E::sym("n"))).to_string(),
+            "2 * min(param_2, n)"
+        );
+        assert_eq!(E::min(k(), E::sym("n")).symbols(), ["n", "param_2"]);
+        assert!(E::max(E::mul(E::Const(4), k()), E::Const(8)).divisible_by(4));
+        assert!(!E::max(k(), E::Const(8)).divisible_by(4));
     }
 
     #[test]

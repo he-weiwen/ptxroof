@@ -17,7 +17,12 @@
 //! solve to:  `ne` → −A0/A1 (exact division — compiler-generated
 //! not-equal latches step in divisor units; a constant −A0/A1 that is
 //! not a positive integer is refused);  `lt` → ceildiv(−A0, A1);
-//! `le` → floordiv(−A0, A1) + 1;  `gt`/`ge` → mirrored.
+//! `le` → floordiv(−A0, A1) + 1;  `gt`/`ge` → mirrored. An ordered
+//! latch's count T is max(T, 0) per execution of a guard branch that
+//! skips the loop where the latch fails at k = 0, and max(T, 1) per
+//! entry otherwise, as ScalarEvolution counts a rotated loop's backedges
+//! from max(RHS, Start) unless a guard covers it
+//! (llvm/lib/Analysis/ScalarEvolution.cpp:13628–13643 at e32776a129f5).
 //!
 //! Anything else — multiple exits, exits not at the latch, latch
 //! values loaded in the loop, dependence on a special register that is
@@ -34,7 +39,7 @@
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::loop_names::LoopName;
-use crate::analysis::scalar::affine::Var;
+use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -42,6 +47,7 @@ use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
+use std::collections::HashMap;
 
 /// Trip count of one loop: an expression, or a named reason there
 /// isn't one.
@@ -58,20 +64,37 @@ pub struct UnrollPair {
 pub struct TripCountResults {
     /// Indexed by `LoopId`.
     pub trips: Vec<TripCount>,
+    /// Indexed by `LoopId`: the block each count is per execution of, the
+    /// loop's guard branch or its header.
+    pub entries: Vec<BlockId>,
+    /// Indexed by `LoopId`: for a `!=` latch, the distance its counter
+    /// covers and its step; the count holds where the step divides the
+    /// distance into a positive count.
+    pub distances: Vec<Option<(SymExpr, i64)>>,
     pub unroll_pairs: Vec<UnrollPair>,
 }
 
+/// Every loop's trip count, its latch traced under `bindings` (`--bind`,
+/// the launch shape) where a constant is needed.
 pub fn trip_counts(
     module: &Module,
     kernel: &Kernel,
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
     names: &[LoopName],
+    bindings: &HashMap<String, i64>,
 ) -> TripCountResults {
-    let tracer = AffineValueTracer::new(module, kernel, cfg, forest);
-    let trips: Vec<TripCount> = (0..forest.loops.len() as u32)
-        .map(|i| loop_trips(&tracer, LoopId(i)))
-        .collect();
+    let tracer = AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings);
+    let (mut trips, mut entries, mut distances) = (Vec::new(), Vec::new(), Vec::new());
+    for i in 0..forest.loops.len() as u32 {
+        let (t, entry, distance) = match counted_trips(&tracer, LoopId(i)) {
+            Ok((t, entry, distance)) => (Ok(t), entry, distance),
+            Err(e) => (Err(e), forest.get(LoopId(i)).header, None),
+        };
+        trips.push(t);
+        entries.push(entry);
+        distances.push(distance);
+    }
 
     // -- unroll main+remainder linking ----------------------------------
     let mut unroll_pairs = Vec::new();
@@ -99,14 +122,21 @@ pub fn trip_counts(
 
     TripCountResults {
         trips,
+        entries,
+        distances,
         unroll_pairs,
     }
 }
 
-/// `main = (X − X mod c)/c` and `rem = X mod c` → factor c.
+/// `main = (X − X mod c)/c`, or its max with 0, and `rem = X mod c` →
+/// factor c.
 fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
     let SymExpr::Mod(rem_x, c) = rem else {
         return None;
+    };
+    let main = match main {
+        SymExpr::Max(m, z) if **z == SymExpr::Const(0) => m,
+        _ => main,
     };
     let SymExpr::FloorDiv(inner, mc) = main else {
         return None;
@@ -132,10 +162,21 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
 
 /// Loop `id`'s trip count, refusing a guarded write its latch reads.
 pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
-    tracer.without_fallback(|| tracer.strictly(|| latch_trips(tracer, id)))
+    counted_trips(tracer, id).map(|(t, ..)| t)
 }
 
-fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
+/// The count, the block it is per execution of, and a `!=` latch's
+/// distance and step.
+type Counted = (SymExpr, BlockId, Option<(SymExpr, i64)>);
+
+fn counted_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
+    let outer = tracer.cta_symbols.replace(true);
+    let counted = tracer.without_fallback(|| tracer.strictly(|| latch_trips(tracer, id)));
+    tracer.cta_symbols.set(outer);
+    counted
+}
+
+fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
     let l = tracer.forest.get(id);
 
     // Structural requirements: one latch, one exit edge, at the latch.
@@ -178,7 +219,8 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     // The setp defining the branch predicate, inside the latch block.
     let Some((setp_idx, setp)) = tracer.find_setp(latch, branch.0, pred.reg) else {
         return predicate_phi_trips(tracer, id, latch, branch.0, pred.reg, continue_if_true)
-            .unwrap_or_else(|| Err(predicate_reason(tracer, latch, branch.0, pred.reg)));
+            .unwrap_or_else(|| Err(predicate_reason(tracer, latch, branch.0, pred.reg)))
+            .map(|t| (t, l.header, None));
     };
     if setp.predicate.is_some() {
         let name = tracer.module.interner.resolve(pred.reg);
@@ -215,7 +257,7 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     }) {
         return Err("latch condition compares floating-point values".to_owned());
     }
-    let d = a - b; // D = A − B; condition is `D cmp 0`
+    let d = per_cta(a - b); // D = A − B; condition is `D cmp 0`
 
     // D(k) = A1·k + A0 in this loop's iteration number alone.
     let k = Var::Iter(id);
@@ -228,13 +270,221 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     let Some(coeff) = d.terms.get(&k) else {
         return Err("latch condition does not involve an induction variable".to_owned());
     };
-    let a1 = coeff
-        .as_const()
+    let a1 = (tracer.constant(&Affine::invariant(coeff.clone())))
         .ok_or_else(|| "induction step is not a constant".to_owned())?;
     if a1 == i64::MIN {
         return Err("induction step is −2^63, which has no negation".to_owned());
     }
-    solve(&cmp, continue_if_true, a1, d.base)
+    let cond = if continue_if_true {
+        cmp.as_str()
+    } else {
+        negate(&cmp)
+    };
+    let bound = tracer.bindings.and_then(|b| d.base.bind(b).as_const());
+    if cond == "ne" && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
+        return Err("latch condition never meets its `!=` bound".to_owned());
+    }
+    let trips = solve(cond, a1, d.base.clone())?;
+    let distance = (cond == "ne").then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
+    match (below_zero(cond, d.base), guard_test(tracer, id)) {
+        (Some(at_zero), Some((g, test))) if test == at_zero => {
+            Ok((SymExpr::max(trips, SymExpr::Const(0)), g, None))
+        }
+        (Some(_), _) => Ok((SymExpr::max(trips, SymExpr::Const(1)), l.header, None)),
+        _ => Ok((trips, l.header, distance)),
+    }
+}
+
+/// LLVM's loop guard branch (`Loop::getLoopGuardBranch`,
+/// llvm/lib/Analysis/LoopInfo.cpp): above the header's one predecessor
+/// outside the loop, through blocks of one predecessor and one successor
+/// and loops left only through their one latch, none ending in a
+/// predicated `ret` or `exit`, the first block, which
+/// must lie in the loop's parent and end in a two-way branch whose other
+/// successor does not reach the header without passing it. That block,
+/// and its test of entering the loop, read from the `setp` that reaches
+/// its branch predicate, as `e < 0`; `!=` and `==` of a side never
+/// negative as `>` and `<=`.
+fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, SymExpr)> {
+    let (cfg, l) = (tracer.cfg, tracer.forest.get(id));
+    let mut outside =
+        (cfg.block(l.header).preds.iter()).filter(|p| l.blocks.binary_search(p).is_err());
+    let (&pre, None) = (outside.next()?, outside.next()) else {
+        return None;
+    };
+    let (mut g, mut into) = (pre, l.header);
+    loop {
+        (g, into) = match (&cfg.block(g).succs[..], &cfg.block(g).preds[..]) {
+            ([_], &[p]) if !exits_some(tracer, g) => (p, g),
+            ([_, _], _) => match sibling_entry(tracer, g, into) {
+                Some(entry) => entry,
+                None => break,
+            },
+            _ => break,
+        };
+    }
+    let &[taken, other] = &cfg.block(g).succs[..] else {
+        return None;
+    };
+    let skip = if taken == into { other } else { taken };
+    let in_loop = |b: BlockId| tracer.forest.block_loop[b.0 as usize];
+    if taken == other || in_loop(g) != l.parent || tracer.path_avoiding(skip, l.header, g) {
+        return None;
+    }
+    let (pos, bra) = tracer.last_instr(g)?;
+    let pred = bra.predicate?;
+    let Some(Value::Result { op, .. }) = tracer.ssa.value_before(pos, Register::Named(pred.reg))
+    else {
+        return None;
+    };
+    let (def, setp) = tracer.find_setp(tracer.block_of(op), op + 1, pred.reg)?;
+    let mods: Vec<&str> = (tracer.module.modifiers(setp).iter())
+        .map(|&m| tracer.module.interner.resolve(m))
+        .collect();
+    let &[_, a, b] = tracer.module.operand_ids(setp.operands) else {
+        return None;
+    };
+    if setp.predicate.is_some()
+        || mods
+            .iter()
+            .any(|m| m.starts_with('f') || m.starts_with("bf"))
+    {
+        return None;
+    }
+    let form = per_cta(
+        tracer.trace_operand(a, def, None, 0).ok()? - tracer.trace_operand(b, def, None, 0).ok()?,
+    );
+    let cmp = *mods.first()?;
+    let cmp = if (taken == into) != pred.negated {
+        cmp
+    } else {
+        negate(cmp)
+    };
+    let e = form.is_invariant().then_some(form.base)?;
+    let nonneg = |e: &SymExpr| e.least().is_some_and(|l| l >= 0);
+    let (cmp, e) = match cmp {
+        "ne" | "eq" => {
+            let e = if nonneg(&e) {
+                e
+            } else {
+                SymExpr::mul(SymExpr::Const(-1), e)
+            };
+            (
+                if cmp == "ne" { "gt" } else { "le" },
+                nonneg(&e).then_some(e)?,
+            )
+        }
+        _ => (cmp, e),
+    };
+    Some((g, below_zero(cmp, e)?))
+}
+
+/// The one block entering loop S from outside, and S's header, where `g`
+/// is S's one latch and `g → into` its one exit edge.
+fn sibling_entry(
+    tracer: &AffineValueTracer<'_>,
+    g: BlockId,
+    into: BlockId,
+) -> Option<(BlockId, BlockId)> {
+    let s = tracer.forest.get(tracer.forest.block_loop[g.0 as usize]?);
+    let inside = |b: &BlockId| s.blocks.binary_search(b).is_ok();
+    let exits = (s.blocks.iter())
+        .flat_map(|&b| tracer.cfg.block(b).succs.iter().map(move |&t| (b, t)))
+        .filter(|(_, t)| !inside(t));
+    if s.latches != [g] || !exits.eq([(g, into)]) || s.blocks.iter().any(|&b| exits_some(tracer, b))
+    {
+        return None;
+    }
+    let mut outside = (tracer.cfg.block(s.header).preds.iter()).filter(|p| !inside(p));
+    let (&q, None) = (outside.next()?, outside.next()) else {
+        return None;
+    };
+    Some((q, s.header))
+}
+
+/// Block `b` ends in a predicated `ret` or `exit`, which the CFG reads as
+/// falling through.
+fn exits_some(tracer: &AffineValueTracer<'_>, b: BlockId) -> bool {
+    (tracer.last_instr(b)).is_some_and(|(_, i)| matches!(i.mnemonic, Opcode::Ret | Opcode::Exit))
+}
+
+/// `a` with its terms in the CTA index as symbols of its base: `%ctaid`
+/// is the CTA's identifier, one value per CTA, never negative (PTX ISA
+/// §10.6).
+pub(crate) fn per_cta(mut a: Affine) -> Affine {
+    fn symbol(v: &Var) -> Option<SymExpr> {
+        match v {
+            Var::Ctaid(_) => Some(SymExpr::sym(v.to_string())),
+            Var::Div(v, d) => symbol(v).map(|e| SymExpr::floor_div(e, *d)),
+            Var::Mod(v, m) => symbol(v).map(|e| SymExpr::modulo(e, *m)),
+            _ => None,
+        }
+    }
+    for (v, c) in std::mem::take(&mut a.terms) {
+        match symbol(&v) {
+            Some(e) => a.base = SymExpr::add(a.base, SymExpr::mul(c, e)),
+            None => {
+                a.terms.insert(v, c);
+            }
+        }
+    }
+    a
+}
+
+/// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
+fn below_zero(cmp: &str, e: SymExpr) -> Option<SymExpr> {
+    let minus = |e: SymExpr| SymExpr::mul(SymExpr::Const(-1), e);
+    Some(undivided(match cmp {
+        "lt" => e,
+        "le" => SymExpr::sub(e, SymExpr::Const(1)),
+        "gt" => minus(e),
+        "ge" => SymExpr::sub(minus(e), SymExpr::Const(1)),
+        _ => return None,
+    }))
+}
+
+/// `±⌊x/d⌋ + b < 0` or `±⌈x/d⌉ + b < 0` as the same test of x, as
+/// ⌊x/d⌋ ≤ m ⇔ x < (m + 1)·d and ⌈x/d⌉ ≤ m ⇔ x ≤ m·d for d > 0.
+fn undivided(e: SymExpr) -> SymExpr {
+    let terms = match &e {
+        SymExpr::Sum(ts) => ts.clone(),
+        other => vec![other.clone()],
+    };
+    let (consts, rest): (Vec<_>, Vec<_>) = terms.into_iter().partition(|t| t.as_const().is_some());
+    let [rest] = &rest[..] else {
+        return e;
+    };
+    let b: i128 = (consts.iter())
+        .filter_map(SymExpr::as_const)
+        .map(i128::from)
+        .sum();
+    let (x, k) = match SymExpr::split_const(rest.clone()) {
+        (1, SymExpr::FloorDiv(x, d)) => (*x, b * i128::from(d)),
+        (-1, SymExpr::FloorDiv(x, d)) => (
+            SymExpr::mul(SymExpr::Const(-1), *x),
+            (b + 1) * i128::from(d) - 1,
+        ),
+        (1, SymExpr::CeilDiv(x, d)) => (*x, (b + 1) * i128::from(d) - 1),
+        (-1, SymExpr::CeilDiv(x, d)) => (SymExpr::mul(SymExpr::Const(-1), *x), b * i128::from(d)),
+        _ => return e,
+    };
+    match i64::try_from(k) {
+        Ok(k) => SymExpr::add(x, SymExpr::Const(k)),
+        Err(_) => e,
+    }
+}
+
+/// The comparison that holds exactly when `cmp` does not.
+fn negate(cmp: &str) -> &str {
+    match cmp {
+        "lt" => "ge",
+        "le" => "gt",
+        "gt" => "le",
+        "ge" => "lt",
+        "ne" => "eq",
+        "eq" => "ne",
+        other => other,
+    }
 }
 
 /// No setp defines the latch predicate: say what does, if anything
@@ -348,25 +598,10 @@ fn predicate_phi_trips(
 
 /// Solve `continue while A1·k + A0 cmp 0` (k = 1, 2, ...) for the
 /// iteration count.
-fn solve(cmp: &str, continue_if_true: bool, a1: i64, a0: SymExpr) -> TripCount {
-    // Normalize to the continue-condition comparison.
-    let cond = if continue_if_true {
-        cmp.to_owned()
-    } else {
-        match cmp {
-            "lt" => "ge",
-            "le" => "gt",
-            "gt" => "le",
-            "ge" => "lt",
-            "ne" => "eq",
-            "eq" => "ne",
-            other => other,
-        }
-        .to_owned()
-    };
+fn solve(cond: &str, a1: i64, a0: SymExpr) -> TripCount {
     let neg = |e: SymExpr| SymExpr::mul(SymExpr::Const(-1), e);
 
-    match cond.as_str() {
+    match cond {
         // D ≠ 0: exits exactly when A1·k = −A0.
         "ne" => {
             if a1 == 0 {
@@ -396,8 +631,8 @@ fn solve(cmp: &str, continue_if_true: bool, a1: i64, a0: SymExpr) -> TripCount {
             _ => Err("loop bound moves away from the exit condition".to_owned()),
         },
         // D > 0 ⇔ −D < 0;   D ≥ 0 ⇔ −D ≤ 0.
-        "gt" => solve("lt", true, -a1, neg(a0)),
-        "ge" => solve("le", true, -a1, neg(a0)),
+        "gt" => solve("lt", -a1, neg(a0)),
+        "ge" => solve("le", -a1, neg(a0)),
         "eq" => Err("loop continues only while values are equal — shape not recognized".to_owned()),
         other => Err(format!("unsupported latch comparison `{other}`")),
     }
@@ -413,16 +648,33 @@ mod tests {
 
     /// Trips of every loop in a one-kernel source, by display name.
     fn trips_of(src: &str) -> Vec<(String, TripCount)> {
+        trips_under(src, &HashMap::new())
+    }
+
+    fn trips_under(src: &str, bindings: &HashMap<String, i64>) -> Vec<(String, TripCount)> {
         let m = parse(src).expect("test source parses");
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names);
+        let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
         names
             .into_iter()
             .zip(info.trips)
             .map(|(n, t)| (n.display, t))
+            .collect()
+    }
+
+    /// Every loop's name, count and the block the count is per execution of.
+    fn entries_of(src: &str) -> Vec<(String, Result<String, String>, String)> {
+        let m = parse(src).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let names = loop_names(&m, k, &cfg, &f);
+        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
+        (names.into_iter().zip(info.trips).zip(info.entries))
+            .map(|((n, t), e)| (n.display, t.map(|t| t.to_string()), cfg.block_name(&m, e)))
             .collect()
     }
 
@@ -444,7 +696,7 @@ mod tests {
              setp.lt.s32 %p1, %r2, %r1;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -464,6 +716,21 @@ mod tests {
         assert_eq!(latch(0, 2, 5), never);
         assert_eq!(latch(6, 2, 4), never);
         assert_eq!(latch(4, -2, 0), Ok("2".to_owned()));
+        // A bound the bindings make a constant is checked at its value.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nmax.s32 %r3, %r1, 1;\nmov.u32 %r2, 0;\n\
+             $L__L:\nadd.s32 %r2, %r2, 2;\nsetp.ne.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;",
+        );
+        let at = |n: i64| {
+            let bound = [("param_0".to_owned(), n)].into_iter().collect();
+            trips_under(&src, &bound)[0]
+                .1
+                .clone()
+                .map(|t| t.bind(&bound).to_string())
+        };
+        assert_eq!(at(6), Ok("3".to_owned()));
+        assert_eq!(at(5), never);
     }
 
     /// The two-trip shape with each of its writes guarded: the lanes the
@@ -554,6 +821,359 @@ mod tests {
         );
     }
 
+    /// PTX ISA §9.7.1.13, §9.7.1.14: a min or max of invariants is one
+    /// too; a `.relu` one, or one of a value its type does not read, is
+    /// no bound.
+    #[test]
+    fn a_min_or_max_bound_is_symbolic() {
+        let bound = |minmax: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{minmax}\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\n\
+                     setp.lt.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        let ok = |s: &str| Ok(s.to_owned());
+        assert_eq!(bound("max.s32 %r3, %r1, 2;"), ok("max(param_0, 2)"));
+        assert_eq!(bound("min.s32 %r3, 2, %r1;"), ok("max(min(2, param_0), 1)"));
+        assert_eq!(bound("min.u32 %r3, %r1, 8;"), ok("max(min(param_0, 8), 1)"));
+        assert_eq!(bound("mov.u32 %r4, 5;\nmin.s32 %r3, %r4, 8;"), ok("5"));
+        assert_eq!(
+            bound("mov.u32 %r4, -1;\nmin.u32 %r3, %r4, 8;"),
+            Err("`min.u32` of a value its type does not hold".to_owned())
+        );
+        assert_eq!(
+            bound("min.relu.s32 %r3, %r1, 8;"),
+            Err("value defined by unsupported instruction `min`".to_owned())
+        );
+    }
+
+    /// Under the bindings a min or max is checked and stepped by its
+    /// value: `bfe.s32` of 8 bits of max(n, 1) at n = 128 is −128 (PTX ISA
+    /// §9.7.1.20), and a step of max(n, 1) at n = 4 is 4.
+    #[test]
+    fn a_bound_min_or_max_is_read_at_its_value() {
+        let trips = |body: &str, n: Option<i64>| {
+            let bound: HashMap<String, i64> =
+                n.map(|n| ("param_0".to_owned(), n)).into_iter().collect();
+            let t = trips_under(&kernel_with(N_PARAM, body), &bound)[0]
+                .1
+                .clone();
+            t.map(|t| t.bind(&bound).to_string())
+        };
+        let bfe = "ld.param.u32 %r1, [k_param_0];\nmax.u32 %r2, %r1, 1;\n\
+                   bfe.s32 %r3, %r2, 0, 8;\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+                   setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;";
+        assert_eq!(trips(bfe, None), Ok("max(param_0, 1)".to_owned()));
+        assert_eq!(trips(bfe, Some(100)), Ok("100".to_owned()));
+        let leaves = Err("bfe of 8 bits leaves them".to_owned());
+        assert_eq!(trips(bfe, Some(128)), leaves);
+        let step = "ld.param.u32 %r1, [k_param_0];\nmax.s32 %r2, %r1, 1;\nmov.u32 %r4, 0;\n\
+                    $L__L:\nadd.s32 %r4, %r4, %r2;\nsetp.lt.s32 %p1, %r4, 1024;\n\
+                    @%p1 bra $L__L;\nret;";
+        let varies = Err("induction step is not a constant".to_owned());
+        assert_eq!(trips(step, None), varies);
+        assert_eq!(trips(step, Some(4)), Ok("256".to_owned()));
+        // An outer counter stepped once per trip of an inner loop of
+        // max(n, 2) trips: 4 a trip at n = 4, so 100 / 4 trips.
+        let nested = "ld.param.u32 %r1, [k_param_0];\nmax.s32 %r9, %r1, 2;\nmov.u32 %r2, 0;\n\
+                      $L__O:\nmov.u32 %r3, 0;\n$L__I:\nadd.s32 %r3, %r3, 1;\nadd.s32 %r2, %r2, 1;\n\
+                      setp.lt.s32 %p1, %r3, %r9;\n@%p1 bra $L__I;\n\
+                      setp.lt.s32 %p2, %r2, 100;\n@%p2 bra $L__O;\nret;";
+        let bound = [("param_0".to_owned(), 4)].into_iter().collect();
+        let outer = trips_under(&kernel_with(N_PARAM, nested), &bound);
+        let outer = outer
+            .iter()
+            .find(|(n, _)| n == "$L__O")
+            .expect("outer loop");
+        assert_eq!(outer.1, Ok(SymExpr::Const(25)));
+    }
+
+    /// LLVM's loop guard: a branch before the loop that skips it when its
+    /// latch condition fails at k = 0 makes the count max(T, 0), however
+    /// it writes the test; a guard on another condition, or none, leaves
+    /// the count per entry, max(T, 1).
+    #[test]
+    fn a_guard_testing_the_latch_at_zero_clamps_the_count_at_zero() {
+        let trips = |guard: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{guard}\nmov.u32 %r2, 10;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        let clamped = Ok("max(param_0 - 10, 0)".to_owned());
+        assert_eq!(trips("setp.lt.s32 %p1, %r1, 11;\n@%p1 bra $L__E;"), clamped);
+        assert_eq!(trips("setp.le.s32 %p1, %r1, 10;\n@%p1 bra $L__E;"), clamped);
+        assert_eq!(trips("setp.ge.s32 %p1, 10, %r1;\n@%p1 bra $L__E;"), clamped);
+        assert_eq!(
+            trips("setp.gt.s32 %p1, %r1, 10;\n@!%p1 bra $L__E;"),
+            clamped
+        );
+        let unclamped = Ok("max(param_0 - 10, 1)".to_owned());
+        assert_eq!(
+            trips("setp.lt.s32 %p1, %r1, 6;\n@%p1 bra $L__E;"),
+            unclamped
+        );
+        assert_eq!(
+            trips("setp.lt.s32 %p1, %r1, 11;\n@!%p1 bra $L__E;"),
+            unclamped
+        );
+        assert_eq!(
+            trips("setp.lt.f32 %p1, %r1, 11;\n@%p1 bra $L__E;"),
+            unclamped
+        );
+        assert_eq!(trips(""), unclamped);
+    }
+
+    /// The clamped count is per execution of the guard, so the guard is
+    /// the loop's entry; a branch inside another loop runs per trip of
+    /// that loop and is not taken as the guard.
+    #[test]
+    fn a_guard_in_the_parent_is_the_loops_entry() {
+        let entries = |pre: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r3, 0;\n{pre}\n\
+                     setp.lt.s32 %p1, %r1, 11;\n@%p1 bra $L__S;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            entries_of(&src)
+        };
+        let guard = entries("mov.u32 %r2, 10;\nbra.uni $L__G;\n$L__S:\nbra.uni $L__E;\n$L__G:");
+        assert_eq!(guard[0].1, Ok("max(param_0 - 10, 0)".to_owned()));
+        assert_eq!(guard[0].2, "$L__G");
+        let sibling = entries(
+            "$L__S:\nadd.s32 %r3, %r3, 1;\nsetp.eq.s32 %p3, %r3, 7;\n@%p3 bra $L__E;\n\
+             mov.u32 %r2, 10;",
+        );
+        let l = sibling.iter().find(|(n, ..)| n == "$L__L").expect("loop L");
+        assert_eq!(l.1, Ok("max(param_0 - 10, 1)".to_owned()));
+        assert_eq!(l.2, "$L__L");
+    }
+
+    /// The guard's predicate may be set in an earlier block, but not on
+    /// only some of the paths to the guard.
+    #[test]
+    fn a_guard_reads_the_setp_that_reaches_its_predicate() {
+        let entry = |other_path: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nsetp.lt.s32 %p1, %r1, 11;\n\
+                     setp.eq.s32 %p3, %r1, 3;\n@%p3 bra $L__G;\n{other_path}\n\
+                     $L__G:\n@%p1 bra $L__E;\nmov.u32 %r2, 10;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            (loops[0].1.clone().unwrap_or_default(), loops[0].2.clone())
+        };
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        assert_eq!(
+            entry("mov.u32 %r5, 1;"),
+            at("max(param_0 - 10, 0)", "$L__G")
+        );
+        assert_eq!(
+            entry("setp.lt.s32 %p1, %r1, 5;"),
+            at("max(param_0 - 10, 1)", "$L__L")
+        );
+    }
+
+    /// A latch whose test at k = 0 is a sum of constants past i64, left
+    /// unfolded (`i = −(2^63 − 1); do i += 2^63 − 1 while i <= 1`), is
+    /// compared with a guard without overflow.
+    #[test]
+    fn a_latch_test_past_i64_at_zero_is_compared_unfolded() {
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u64 %rd1, -9223372036854775807;\n\
+             $L__L:\nadd.s64 %rd1, %rd1, 9223372036854775807;\n\
+             setp.le.s64 %p1, %rd1, 1;\n@%p1 bra $L__L;\nret;",
+        );
+        assert!(trips_of(&src)[0].1.is_ok());
+    }
+
+    /// The guard may lie several blocks above the loop, each of one
+    /// predecessor and one successor; a join between them hides it.
+    #[test]
+    fn a_guard_above_a_chain_of_blocks_is_the_loops_entry() {
+        let entry = |join: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{join}\n$L__G:\n\
+                     setp.lt.s32 %p1, %r1, 11;\n@%p1 bra $L__E;\n\
+                     mov.u32 %r2, 10;\nbra.uni $L__B;\n$L__B:\nmov.u32 %r5, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            assert_eq!(loops[0].0, "$L__L");
+            (loops[0].1.clone().unwrap_or_default(), loops[0].2.clone())
+        };
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        assert_eq!(entry(""), at("max(param_0 - 10, 0)", "<block 0>"));
+        let join = "mov.u32 %r2, 10;\nsetp.eq.s32 %p3, %r1, 3;\n@%p3 bra $L__B;";
+        assert_eq!(entry(join), at("max(param_0 - 10, 1)", "$L__L"));
+    }
+
+    /// A predicated `exit` between the guard and the loop, or in a loop
+    /// crossed on the way, lets threads the guard passes skip the loop:
+    /// the guard is not its entry.
+    #[test]
+    fn a_predicated_exit_after_the_guard_hides_it() {
+        let entry = |between: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nsetp.lt.s32 %p1, %r1, 11;\n\
+                     @%p1 bra $L__E;\n{between}\nmov.u32 %r2, 10;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            let l = loops.iter().find(|(n, ..)| n == "$L__L").expect("loop L");
+            (l.1.clone().unwrap_or_default(), l.2.clone())
+        };
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        let (entered, unguarded) = (
+            at("max(param_0 - 10, 0)", "<block 0>"),
+            at("max(param_0 - 10, 1)", "$L__L"),
+        );
+        let exit = "setp.eq.s32 %p3, %r1, 20;\n@%p3 exit;";
+        let sibling = |body: &str| {
+            format!(
+                "mov.u32 %r3, 0;\n$L__S:\nadd.s32 %r3, %r3, 1;\n{body}\n\
+                 setp.lt.s32 %p4, %r3, 4;\n@%p4 bra $L__S;"
+            )
+        };
+        assert_eq!(entry(exit), unguarded);
+        assert_eq!(entry(&sibling("")), entered);
+        assert_eq!(entry(&sibling(exit)), unguarded);
+    }
+
+    /// A latch's `min` or `max` of the CTA index is one value per CTA, a
+    /// row range's `min(16·%ctaid.y + 16, n) - 16·%ctaid.y`; ranged over
+    /// the grid, a `max.u32(%ctaid.x, 1)` shifted by 31, or times
+    /// `%ctaid.x` and shifted, leaves 32 bits with 3 CTAs.
+    #[test]
+    fn a_latch_min_or_max_of_the_cta_index_is_one_per_cta() {
+        let trips = |bound: &str, grid: Option<i64>| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r2, %ctaid.x;\nmov.u32 %r6, %ctaid.y;\n\
+                     {bound}\nmov.u32 %r8, 0;\n$L__L:\nadd.s32 %r8, %r8, 1;\n\
+                     setp.lt.u32 %p1, %r8, %r9;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            let grid = grid
+                .into_iter()
+                .flat_map(|n| [("%nctaid.x".to_owned(), n), ("%nctaid.y".to_owned(), 1)]);
+            let bindings = grid.collect();
+            trips_under(&src, &bindings)[0]
+                .1
+                .clone()
+                .map(|t| t.to_string())
+        };
+        let rows = "shl.b32 %r3, %r6, 4;\nadd.s32 %r4, %r3, 16;\nmin.u32 %r5, %r4, %r1;\n\
+                    sub.s32 %r9, %r5, %r3;";
+        let read = "max(min(16 * %ctaid.y + 16, param_0) - 16 * %ctaid.y, 1)";
+        assert_eq!(trips(rows, None), Ok(read.to_owned()));
+        let shifted = "max.u32 %r3, %r2, 1;\nshl.b32 %r9, %r3, 31;";
+        assert!(trips(shifted, None).is_ok());
+        assert_eq!(
+            trips(shifted, Some(3)),
+            Err("`shl.b32` leaves 32 bits".to_owned())
+        );
+        let times = "max.u32 %r3, %r2, 1;\nmul.lo.u32 %r4, %r3, %r2;\nshl.b32 %r9, %r4, 31;";
+        assert!(trips(times, None).is_ok());
+        assert_eq!(
+            trips(times, Some(3)),
+            Err("`shl.b32` leaves 32 bits".to_owned())
+        );
+    }
+
+    /// A guard skipping a loop from 0 below n where `n == 0` tests its
+    /// latch at k = 0, `0 < n`, as n is never negative; one where `n != 0`
+    /// or `n == 5` does not.
+    #[test]
+    fn a_guard_n_ne_0_tests_0_lt_n() {
+        let entry = |guard: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{guard}\n$L__P:\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 8;\nsetp.lt.u32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            (loops[0].1.clone().unwrap_or_default(), loops[0].2.clone())
+        };
+        let guard = |g: &str| format!("setp.{g};\n@%p1 bra $L__E;");
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        let (entered, unguarded) = (
+            at("⌈param_0/8⌉", "<block 0>"),
+            at("max(⌈param_0/8⌉, 1)", "$L__L"),
+        );
+        assert_eq!(entry(&guard("eq.s32 %p1, %r1, 0")), entered);
+        assert_eq!(entry("setp.ne.s32 %p1, 0, %r1;\n@!%p1 bra $L__E;"), entered);
+        assert_eq!(entry(&guard("ne.s32 %p1, %r1, 0")), unguarded);
+        assert_eq!(entry(&guard("eq.s32 %p1, %r1, 5")), unguarded);
+    }
+
+    /// A loop from 0 below ⌊n/16⌋ is entered where n ≥ 16, and one below
+    /// ⌈n/8⌉ where n ≥ 1: guards on n alone test those latches at k = 0.
+    #[test]
+    fn a_guard_on_the_numerator_tests_a_floor_or_ceiling_bound() {
+        let entry = |bound: &str, guard: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{bound}\n{guard}\n@%p1 bra $L__E;\n\
+                     mov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, 1;\n\
+                     setp.lt.u32 %p2, %r2, %r3;\n@%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            (loops[0].1.clone().unwrap_or_default(), loops[0].2.clone())
+        };
+        let floor = "shr.u32 %r3, %r1, 4;";
+        let ceil = "add.s32 %r4, %r1, 7;\nshr.u32 %r3, %r4, 3;";
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        let entered = at("param_0 / 16", "<block 0>");
+        assert_eq!(entry(floor, "setp.lt.s32 %p1, %r1, 16;"), entered);
+        assert_eq!(entry(floor, "setp.lt.s32 %p1, %r3, 1;"), entered);
+        assert_eq!(
+            entry(floor, "setp.lt.s32 %p1, %r1, 15;"),
+            at("max(param_0 / 16, 1)", "$L__L")
+        );
+        assert_eq!(
+            entry(ceil, "setp.lt.s32 %p1, %r1, 1;"),
+            at("⌈param_0/8⌉", "<block 0>")
+        );
+        assert_eq!(
+            entry(ceil, "setp.lt.s32 %p1, %r1, 8;"),
+            at("max(⌈param_0/8⌉, 1)", "$L__L")
+        );
+    }
+
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;
     /// §10.24: `%clock64` is a cycle counter.
     #[test]
@@ -575,7 +1195,7 @@ mod tests {
         };
         assert_eq!(
             trips("%dynamic_smem_size"),
-            Ok("⌈%dynamic_smem_size/4⌉".to_owned())
+            Ok("max(⌈%dynamic_smem_size/4⌉, 1)".to_owned())
         );
         assert_eq!(
             trips("%clock"),
@@ -619,7 +1239,7 @@ mod tests {
                 .map_err(Clone::clone)
         };
         let second = Err("latch predicate is not `setp.lt.s32`'s first output".to_owned());
-        assert_eq!(trips("%p1|%p2", "%p1"), Ok("param_0".to_owned()));
+        assert_eq!(trips("%p1|%p2", "%p1"), Ok("max(param_0, 1)".to_owned()));
         assert_eq!(trips("%p2|%p1", "%p1"), second);
         assert_eq!(trips("_|%p1", "%p1"), second);
     }
@@ -677,7 +1297,10 @@ mod tests {
              setp.lt.u32 %p1, %r2, %r1;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "⌈param_0/8⌉");
+        assert_eq!(
+            trips[0].1.as_ref().unwrap().to_string(),
+            "max(⌈param_0/8⌉, 1)"
+        );
     }
 
     #[test]
@@ -694,7 +1317,10 @@ mod tests {
              setp.lt.u32 %p1, %r6, %r5;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0 / 16");
+        assert_eq!(
+            trips[0].1.as_ref().unwrap().to_string(),
+            "max(param_0 / 16, 1)"
+        );
     }
 
     #[test]
@@ -709,7 +1335,7 @@ mod tests {
              setp.lt.u32 %p1, %r2, %r1;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -733,7 +1359,7 @@ mod tests {
              setp.lt.s64 %p1, %rd2, %rd1;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -781,7 +1407,7 @@ mod tests {
              setp.ge.s32 %p1, %r2, %r1;\n@!%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -817,15 +1443,15 @@ mod tests {
     #[test]
     fn the_reason_is_the_obstacle_behind_unread_arithmetic() {
         // LLVM writes m_start + 127 as `or` on a value with zero low bits;
-        // the bound still comes from the CTA index, and that is the reason.
+        // the CTA index one value per CTA, the bound is read.
         let src = kernel_with(
             N_PARAM,
             "mov.u32 %r1, %ctaid.x;\nshl.b32 %r2, %r1, 7;\nor.b32 %r3, %r2, 127;\n\
              mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
              setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
         );
-        let err = trips_of(&src)[0].1.clone().unwrap_err();
-        assert!(err.contains("special register %ctaid.x"), "{err}");
+        let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
+        assert_eq!(trips, Ok("128 * %ctaid.x + 127".to_owned()));
         // A loaded bound behind `bfe` is a loaded bound.
         let src = kernel_with(
             ".param .u64 k_param_0",
@@ -898,7 +1524,7 @@ mod tests {
             .iter()
             .find(|(n, _)| n == "$L__O")
             .expect("outer loop");
-        assert_eq!(outer.1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(outer.1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -934,7 +1560,7 @@ mod tests {
         );
         assert_eq!(
             trips_of(&src)[0].1.as_ref().unwrap().to_string(),
-            "(param_0 / 8) mod 32"
+            "max((param_0 / 8) mod 32, 1)"
         );
         // div and rem by a constant; and-masks as one run of bits.
         let src = kernel_with(
@@ -945,7 +1571,7 @@ mod tests {
         );
         assert_eq!(
             trips_of(&src)[0].1.as_ref().unwrap().to_string(),
-            "param_0 / 8 + param_0 mod 64"
+            "max(param_0 / 8 + param_0 mod 64, 1)"
         );
         // A step that is a loop-invariant register: the count is not a
         // constant multiple, so it is refused with that reason.
@@ -965,7 +1591,10 @@ mod tests {
              mov.u32 %r4, 0;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r4, 0;\n$L__J:\n\
              $L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r1;\n@%p1 bra $L__L;\nret;",
         );
-        assert_eq!(trips_of(&src)[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(
+            trips_of(&src)[0].1.as_ref().unwrap().to_string(),
+            "max(param_0, 1)"
+        );
     }
 
     #[test]
@@ -1004,18 +1633,57 @@ mod tests {
              setp.ne.s32 %p2, %r4, 0;\n@%p2 bra $L__R;\n\
              ret;\n}\n.file 1 \"kern.cu\"\n",
         );
-        let m = parse(&src).expect("parses");
-        let k = &m.kernels[0];
-        let cfg = build_cfg(&m, k);
-        let f = loop_forest(&cfg);
-        let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names);
-        assert_eq!(info.unroll_pairs.len(), 1, "{:?}", info);
-        assert_eq!(info.unroll_pairs[0].factor, 4);
-        let main = info.unroll_pairs[0].main;
-        assert_eq!(
-            info.trips[main.0 as usize].as_ref().unwrap().to_string(),
-            "(param_0 - param_0 mod 4) / 4"
+        let pairs = |src: &str, bindings: &HashMap<String, i64>| {
+            let m = parse(src).expect("parses");
+            let k = &m.kernels[0];
+            let cfg = build_cfg(&m, k);
+            let f = loop_forest(&cfg);
+            let names = loop_names(&m, k, &cfg, &f);
+            let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
+            let main = info.unroll_pairs.first().map(|p| {
+                let trips = info.trips[p.main.0 as usize].as_ref();
+                (p.factor, trips.unwrap().to_string())
+            });
+            (info.unroll_pairs.len(), main)
+        };
+        let free = HashMap::new();
+        let shape = |x: &str| (1, Some((4, format!("({x} - {x} mod 4) / 4"))));
+        assert_eq!(pairs(&src, &free), shape("param_0"));
+        // A min-bounded pair keeps its shape under the bindings.
+        let src = src.replace(
+            "ld.param.u32 %r1, [k_param_0];",
+            "ld.param.u32 %r0, [k_param_0];\nmin.s32 %r1, %r0, 8;",
         );
+        let bound = [("param_0".to_owned(), 100)].into_iter().collect();
+        assert_eq!(pairs(&src, &free), shape("min(param_0, 8)"));
+        assert_eq!(pairs(&src, &bound), shape("min(param_0, 8)"));
+        // A unit-step main loop below (X − X mod 4)/4, behind a guard that
+        // tests its latch at k = 0.
+        let src = String::from(
+            ".version 8.7\n.target sm_80\n.address_size 64\n\
+             .visible .entry k(\n.param .u32 k_param_0\n)\n{\n\
+             ld.param.u32 %r1, [k_param_0];\n\
+             and.b32 %r9, %r1, 3;\n\
+             sub.s32 %r7, %r1, %r9;\n\
+             shr.u32 %r8, %r7, 2;\n\
+             setp.lt.s32 %p3, %r8, 1;\n@%p3 bra $L__G;\n\
+             mov.u32 %r2, 0;\n\
+             .loc 1 14 9\n\
+             $L__M:\n\
+             add.s32 %r2, %r2, 1;\n\
+             setp.lt.s32 %p1, %r2, %r8;\n@%p1 bra $L__M;\n\
+             $L__G:\n\
+             mov.u32 %r4, %r9;\n\
+             $L__R:\n\
+             .loc 1 14 9\n\
+             add.s32 %r4, %r4, -1;\n\
+             setp.ne.s32 %p2, %r4, 0;\n@%p2 bra $L__R;\n\
+             ret;\n}\n.file 1 \"kern.cu\"\n",
+        );
+        let clamped = (
+            1,
+            Some((4, "max((param_0 - param_0 mod 4) / 4, 0)".to_owned())),
+        );
+        assert_eq!(pairs(&src, &free), clamped);
     }
 }

@@ -1,0 +1,23 @@
+{
+ "ptx": "tests/fixtures/micro/latch_exits_first.ptx",
+ "kernel": "micro_latch_exits_first_param",
+ "grid": [1, 1, 1],
+ "block": [32, 1, 1],
+ "params": ["ptr:8", "u32:5"],
+ "gpu": "NVIDIA GeForce RTX 4090",
+ "driver": "580.178.04",
+ "arch": "sm_89",
+ "ptxas": "Cuda compilation tools, release 13.4, V13.4.92",
+ "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",
+ "lines": {
+  "50": {"ptx": "ld.param.u64 %rd1, [micro_latch_exits_first_param_param_0];", "sass": {"IMAD.MOV.U32": 1}, "executions": 32},
+  "53": {"ptx": "mov.u32 %r1, 10;", "sass": {"IMAD.MOV.U32": 2}, "executions": 64},
+  "55": {"ptx": "add.s32 %r1, %r1, 1;", "sass": {"IADD3": 7, "ISETP.GE.AND": 1}, "executions": 32},
+  "56": {"ptx": "add.s32 %r4, %r4, 1;", "sass": {"IADD3": 7, "PLOP3.LUT": 1}, "executions": 32},
+  "57": {"ptx": "st.global.u32 [%rd1], %r1;", "sass": {"IMAD.MOV.U32": 2, "STG.E": 7}, "executions": 32, "l2_theoretical_sectors_global": 1, "l2_theoretical_sectors_global_ideal": 1, "global_access_sizes": [32], "global_executions": 32},
+  "58": {"ptx": "st.global.u32 [%rd1+4], %r4;", "sass": {"STG.E": 7, "ISETP.LT.OR": 1}, "executions": 64, "l2_theoretical_sectors_global": 1, "l2_theoretical_sectors_global_ideal": 1, "global_access_sizes": [32], "global_executions": 32},
+  "59": {"ptx": "setp.lt.s32 %p1, %r1, %r5;", "sass": {"IMAD.MOV.U32": 3, "ULDC.64": 1, "PLOP3.LUT": 2, "IADD3": 2, "ISETP.GT.AND": 2, "ULDC": 1, "UIADD3": 1}, "executions": 288},
+  "60": {"ptx": "@%p1 bra $L__BB1_1;", "sass": {"BRA": 3, "IMAD.MOV.U32": 1, "EXIT": 1}, "executions": 64},
+  "61": {"ptx": "ret;", "sass": {"EXIT": 1, "BRA": 1, "NOP": 9}, "executions": 32}
+ }
+}

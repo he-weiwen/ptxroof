@@ -101,7 +101,9 @@ with multiple contributions show their work per thread per execution:
 ```
 
 The instruction count is issued work; the annotation describes work when its
-predicate is true. Different contributions under the same opcode (for example,
+guard is true, and a `cp.async`'s global read on a thread that reads its
+source, at most cp-size with a src-size register (`global load <= 16 B`).
+Different contributions under the same opcode (for example,
 `cp.async` copies with different source sizes) appear as separate variants.
 JSON retains the existing `opcodes` counts and adds `contribution_variants`,
 whose issued counts sum to each opcode's count. Contributions are available for

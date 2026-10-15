@@ -5,9 +5,10 @@
 // RZ`, `ISETP.GE.AND P0, PT, R7, 0x5, PT`, two `STG.E`, `@!P0 BRA`);
 // the second against its parameter (ptxas 13.4 unrolls it, its last
 // test `ISETP.LT.OR P0, PT, R7, c[0x0][0x168], P0`). On an RTX 4090
-// both store 11 and the count 1, the second launched with 5; with 20
-// it stores 20 and 10. Both kernels take the same parameters, so one
-// --bind covers them.
+// both store 11 and the count 1, the second launched with 5
+// (micro/latch_exits_first.ncu.json: each store requests 1 L2 sector);
+// with 20 it stores 20 and 10. Both kernels take the same parameters,
+// so one --bind covers them.
 //
 .version 8.7
 .target sm_89

@@ -27,7 +27,7 @@
 
 use super::measurement::{Contribution, MeasureKind};
 
-use crate::ptx::ir::{Instr, Module, Opcode, Operand};
+use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId};
 use crate::ptx::literal::parse_int;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -551,23 +551,49 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     if !(has("shared") || has("shared::cta")) || !has("global") {
         return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     }
-    let immediates: Vec<u32> = module
-        .operand_ids(instr.operands)
-        .iter()
-        .skip(2)
-        .filter_map(|&id| match module.operand(id) {
-            Operand::Immediate(text) => {
-                parse_int(module.interner.resolve(*text)).and_then(|v| u32::try_from(v).ok())
-            }
-            _ => None,
-        })
-        .collect();
-    ClassifiedInstruction::copy(
-        Space::Global,
-        Space::Shared,
-        immediates.get(1).or(immediates.first()).copied(),
-        immediates.first().copied(),
-    )
+    let immediate = |id: Option<OperandId>| match module.operand(id?) {
+        Operand::Immediate(text) => {
+            parse_int(module.interner.resolve(*text)).and_then(|v| u32::try_from(v).ok())
+        }
+        _ => None,
+    };
+    let cp_size = immediate(module.operand_ids(instr.operands).get(2).copied());
+    let src_size = immediate(cp_async_size_operand(module, instr));
+    ClassifiedInstruction::copy(Space::Global, Space::Shared, src_size.or(cp_size), cp_size)
+}
+
+/// `classify`, with a `cp.async` read whose src-size is a register, not
+/// an ignore-src predicate, marked as at most its cp-size.
+pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> ClassifiedInstruction {
+    let mut c = classify(module, instr);
+    if let Some(op) = cp_async_size_operand(module, instr)
+        && let Operand::Register(r) = module.operand(op)
+        && kernel.register_type(module, *r) != Some(FundamentalType::Pred)
+    {
+        for x in &mut c.contributions {
+            x.at_most |= matches!(
+                x.kind,
+                MeasureKind::Bytes {
+                    direction: Direction::Load,
+                    ..
+                }
+            );
+        }
+    }
+    c
+}
+
+/// A `cp.async`'s src-size or ignore-src operand, the one after cp-size;
+/// with `.L2::cache_hint` the last operand is the cache policy (PTX ISA
+/// §9.7.9.26.3.1).
+pub fn cp_async_size_operand(module: &Module, instr: &Instr) -> Option<OperandId> {
+    let mods = module.modifiers(instr);
+    let has = |name: &str| mods.iter().any(|&m| module.interner.resolve(m) == name);
+    if instr.mnemonic != Opcode::Cp || !has("async") || has("bulk") || has("reduce") {
+        return None;
+    }
+    let ops = module.operand_ids(instr.operands);
+    (ops.len() == 4 + usize::from(has("L2::cache_hint"))).then(|| ops[3])
 }
 
 /// FP precision + packed-lane multiplier from type modifiers.
@@ -1030,6 +1056,38 @@ mod tests {
             class_of("cp.async.cg.shared.global.L2::cache_hint [%r1], [%rd1], 16, %p1, %rd2;"),
             copy(16, 16)
         );
+        // A src-size register reads at most cp-size; an ignore-src
+        // predicate, an immediate or the cache policy leaves it exact.
+        let bounds = |tail: &str| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n.visible .entry k()\n{{\n\
+                 .reg .pred %p<2>;\n.reg .b32 %r<3>;\n.reg .b64 %rd<3>;\n\
+                 cp.async.cg.shared.global.L2::cache_hint [%r1], [%rd1], 16{tail};\n}}\n"
+            );
+            let m = parse(&src).expect("snippet parses");
+            let k = &m.kernels[0];
+            let Some(Stmt::Instr(instr)) = k.stmts.first() else {
+                panic!("one instruction");
+            };
+            (classify_in(&m, k, instr).contributions.iter())
+                .map(|c| c.at_most)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bounds(", %r2, %rd2"), [true, false]);
+        for tail in [", %p1, %rd2", ", 8, %rd2", ", %rd2"] {
+            assert_eq!(bounds(tail), [false, false], "{tail}");
+        }
+        // Under `.L2::cache_hint` the last operand is the policy, an
+        // immediate one too; ptxas reads 16 B from `..., 16, 8`.
+        for (sizes, read) in [("16, 0x1234", 16), ("16, 8", 16), ("16, 8, %rd2", 8)] {
+            assert_eq!(
+                class_of(&format!(
+                    "cp.async.cg.shared.global.L2::cache_hint [%r1], [%rd1], {sizes};"
+                )),
+                copy(read, 16),
+                "{sizes}"
+            );
+        }
         for text in [
             "cp.async.commit_group;",
             "cp.async.wait_group 1;",
@@ -1185,6 +1243,7 @@ mod tests {
                     },
                     count: width,
                     memory_operand: Some(0),
+                    at_most: false,
                 });
             }
             expected.push(Contribution {
@@ -1194,6 +1253,7 @@ mod tests {
                 },
                 count: width,
                 memory_operand: Some(0),
+                at_most: false,
             });
             if let Some(precision) = precision {
                 expected.push(Contribution {
@@ -1203,6 +1263,7 @@ mod tests {
                     },
                     count: flops,
                     memory_operand: None,
+                    at_most: false,
                 });
             }
             assert_eq!(actual.contributions, expected, "{text}");

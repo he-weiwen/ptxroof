@@ -1,0 +1,17 @@
+# A max and a min of a parameter and a constant as loop bounds print as
+# max and min. On an RTX 4090 micro_trip_max at n = 1 runs 2 trips.
+# min.u32 compares unsigned: at n = 2, n − 4 reads as 2^32 − 2 and the
+# loop runs 8 trips, where a signed min would give −2; with n bound to 2
+# the operand leaves its type and the trip count is refused.
+RUN: %ptxroof analyze %fixtures/micro/trip_max.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_max.ptx --ncu %fixtures/micro/trip_max.ncu.json | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_max.ptx --ncu %fixtures/micro/trip_max.unsigned.ncu.json | FileCheck --check-prefix=UNSIGNED "%s"
+FREE-LABEL: kernel micro_trip_max
+FREE: trips = max(param_1, 2)
+FREE-LABEL: kernel micro_trip_min_unsigned
+FREE: trips = max(min(param_1 - 4, 8), 1)
+CHECK-LABEL: kernel micro_trip_max
+CHECK: trips = 2
+CHECK: $L__BB0_1  confirmed
+UNSIGNED-LABEL: kernel micro_trip_min_unsigned
+UNSIGNED: trips = unknown: `min.u32` of a value its type does not hold

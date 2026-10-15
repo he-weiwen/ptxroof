@@ -1,0 +1,12 @@
+# Triton's causal attention (tut_ll): the loops at tut_attn.py:140 run
+# %ctaid.x trips, the CTA's row block, on the 128 threads of the first
+# four warps of CTAs with %ctaid.x >= 1. That condition decides which
+# threads enter the loop, so over the record's 16x128 CTAs each CTA's
+# threads count its trips, Σ x · 128 · 128 = 1,966,080 executions per
+# instruction, as the B200 measures.
+RUN: %ptxroof analyze %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx --ncu %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json | FileCheck "%s"
+CHECK: trips = %ctaid.x
+CHECK: <block 12>{{ +}}confirmed
+CHECK: <block 14>{{ +}}confirmed
+CHECK: <block 16>{{ +}}confirmed
+CHECK: <block 18>{{ +}}confirmed

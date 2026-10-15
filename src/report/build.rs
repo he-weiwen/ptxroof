@@ -38,7 +38,7 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
-use crate::analysis::thread_participation::{Pred, ThreadSet, ThreadSets, thread_sets};
+use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSet, ThreadSets, thread_sets};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
@@ -315,36 +315,20 @@ impl KernelReportBuilder<'_> {
             .components()
             .map(|reg| bind_map.get(&reg.name()).map(|&v| v as u32).unwrap_or(0));
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
-        for bm in &self.blocks {
-            let bid = bm.block;
+        for (bid, block) in cfg.blocks.iter_enumerated() {
             let scope = forest.block_loop[bid.0 as usize];
-            for record in &bm.instructions {
-                let pos = record.provenance;
-                let Stmt::Instr(instr) = &kernel.stmts[pos] else {
-                    continue;
-                };
-                let set = self.sets.of(bid, pos);
-                let guard_exact = self.sets.guards.get(&pos).is_none_or(|g| {
-                    let alone = ThreadSet { pred: g.clone() };
-                    alone
-                        .count(shape)
-                        .map_or(g.exact(), |c| c.certain == c.possible)
-                });
-                let conditional = self.blocks[bid.0 as usize].qualifier == CountQualifier::AtMost
-                    && set.count(shape).is_none_or(|c| c.certain != c.possible);
-                let threads = self
-                    .sets
-                    .guards
-                    .contains_key(&pos)
-                    .then(|| self.threads_info(&set))
-                    .flatten();
+            for (si, stmt) in kernel.stmts[block.start..block.end].iter().enumerate() {
+                let Stmt::Instr(instr) = stmt else { continue };
+                let pos = block.start + si;
                 let mem_ops: Vec<_> = module
                     .operand_ids(instr.operands)
                     .iter()
                     .copied()
                     .filter(|&id| matches!(module.operand(id), Operand::Memory { .. }))
                     .collect();
-                let classified = &record.classified;
+                let classified = crate::analysis::instruction_counts::classify::classify_in(
+                    module, kernel, instr,
+                );
                 // Pair memory contributions by their explicit operand association.
                 // An atomic has one address with read+write; a copy has two addresses.
                 let mut accesses: BTreeMap<(usize, Space, Option<u32>), (bool, bool)> =
@@ -382,6 +366,19 @@ impl KernelReportBuilder<'_> {
                     if space == Space::Param {
                         continue;
                     }
+                    let set = self.sets.of_access(bid, pos, i);
+                    let guard = self.sets.guard(pos, i);
+                    let guard_exact = guard.as_ref().is_none_or(|g| {
+                        let alone = ThreadSet { pred: g.clone() };
+                        alone
+                            .count(shape)
+                            .map_or(g.exact(), |c| c.certain == c.possible)
+                    });
+                    let conditional = (self.blocks[bid.0 as usize].qualifier
+                        == CountQualifier::AtMost
+                        || !set.lane_exact())
+                        && set.count(shape).is_none_or(|c| c.certain != c.possible);
+                    let threads = guard.is_some().then(|| self.threads_info(&set)).flatten();
                     let Operand::Memory { base, offset, .. } = module.operand(mem_ops[i]) else {
                         continue;
                     };
@@ -512,7 +509,9 @@ impl KernelReportBuilder<'_> {
                         space: space.key().to_owned(),
                         direction: direction.to_owned(),
                         bytes,
-                        predicated: instr.predicate.is_some(),
+                        bytes_at_most: (classified.contributions.iter())
+                            .any(|c| c.at_most && c.memory_operand == Some(i)),
+                        predicated: guard.is_some(),
                         threads: threads.clone(),
                         address,
                         unknown,
@@ -541,19 +540,6 @@ struct PerRequest {
 
 /// Per statement, its global access's sectors.
 type PerRequests = HashMap<usize, PerRequest>;
-
-/// The threads that run a statement, its warps with whether they are a
-/// bound, and whether the threads are.
-type Running<N = u64> = (N, Option<(N, bool)>, bool);
-
-/// A `Running` as the i64 counts the totals sum, when it fits.
-fn narrow((threads, warps, at_most): Running) -> Option<Running<i64>> {
-    let warps = match warps {
-        Some((w, bound)) => Some((i64::try_from(w).ok()?, bound)),
-        None => None,
-    };
-    Some((i64::try_from(threads).ok()?, warps, at_most))
-}
 
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
@@ -723,6 +709,7 @@ fn contribution_details(c: &Contribution) -> ContributionDetails {
             space: space.key().to_owned(),
             direction: direction_key(direction).to_owned(),
             count,
+            at_most: c.at_most,
         },
         MeasureKind::UnquantifiedBytes { space, direction } => {
             ContributionDetails::UnquantifiedBytes {
@@ -850,6 +837,8 @@ struct KernelReportBuilder<'a> {
     /// block's set (`None`) and of each guarded statement's, where
     /// `ThreadSet::launch` counts them.
     launches: HashMap<(BlockId, Option<usize>), (u64, u64)>,
+    /// The same for each `cp.async`'s source read, by statement.
+    source_launches: HashMap<usize, (u64, u64)>,
     /// The PTX file's lines, naming a uniform value by its statement's.
     lines: &'a LineIndex,
 }
@@ -864,7 +853,7 @@ impl<'a> KernelReportBuilder<'a> {
         let cfg = build_cfg(module, kernel);
         let forest = loop_forest(&cfg);
         let names = loop_names(module, kernel, &cfg, &forest);
-        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names);
+        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names, bind_map);
         let blocks = collect(module, kernel, &cfg, &forest);
 
         let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
@@ -894,7 +883,8 @@ impl<'a> KernelReportBuilder<'a> {
                     Some(p) => &forest.get(p).latches,
                     None => &exit_blocks,
                 };
-                targets.is_empty() || !targets.iter().all(|&t| forest.doms.dominates(l.header, t))
+                let entry = trip_info.entries[i];
+                targets.is_empty() || !targets.iter().all(|&t| forest.doms.dominates(entry, t))
             })
             .collect();
 
@@ -920,6 +910,7 @@ impl<'a> KernelReportBuilder<'a> {
             unused: Vec::new(),
             shape,
             launches: HashMap::new(),
+            source_launches: HashMap::new(),
             lines,
         };
         let tracer =
@@ -937,6 +928,12 @@ impl<'a> KernelReportBuilder<'a> {
                     if let Some(n) = set.launch(shape, grid) {
                         b.launches.insert((block, stmt), n);
                     }
+                }
+            }
+            for &s in b.sets.sources.keys() {
+                let set = b.sets.of_access(tracer.block_of(s), s, 1);
+                if let Some(n) = set.launch(shape, grid) {
+                    b.source_launches.insert(s, n);
                 }
             }
         }
@@ -962,7 +959,7 @@ impl<'a> KernelReportBuilder<'a> {
                 Some(p) => &b.forest.get(p).latches,
                 None => &exit_blocks,
             };
-            b.cond_entry[i] &= !always(l.header, targets);
+            b.cond_entry[i] &= !always(b.trip_info.entries[i], targets);
         }
         let compile_time: HashMap<String, i64> = (SpecialVector::Ntid.components().into_iter())
             .zip(kernel.reqntid.into_iter().flatten())
@@ -1084,16 +1081,7 @@ impl<'a> KernelReportBuilder<'a> {
         let Register::Named(reg) = reg else {
             return None;
         };
-        let name = self.module.interner.resolve(reg);
-        (self.kernel.reg_decls.iter())
-            .find(|d| {
-                let prefix = self.module.interner.resolve(d.prefix);
-                match d.count {
-                    Some(n) => crate::ptx::parse::parser::member(name, prefix, n).is_some(),
-                    None => name == prefix,
-                }
-            })
-            .and_then(|d| d.class.bytes())
+        self.kernel.register_type(self.module, reg)?.bytes()
     }
 
     /// The threads a set selects, when a thread-index condition does.
@@ -1101,7 +1089,10 @@ impl<'a> KernelReportBuilder<'a> {
         let counted = set.count(self.shape);
         let warps = set.warps(self.shape);
         Some(ThreadsInfo {
-            condition: set.render()?,
+            condition: set.render_named(&|v| match v {
+                Var::Iter(l) => format!("k[{}]", self.display[l.0 as usize]),
+                other => other.to_string(),
+            })?,
             count: counted.map(|c| u64::from(c.possible)),
             at_most: counted.map_or(!set.exact(), |c| c.certain != c.possible),
             warps: warps.map(|w| u64::from(w.possible)),
@@ -1169,7 +1160,123 @@ impl<'a> KernelReportBuilder<'a> {
         out
     }
 
-    fn multiplier(&self, b: BlockId, below: Option<LoopId>) -> Option<(SymExpr, bool)> {
+    /// Where comparisons with the counter of loop `l`, one of `b`'s loops
+    /// up to `below` with a constant trip count, select the set's
+    /// threads, which do not vary by CTA, and the loops inside `l` are
+    /// read: its threads and warps per CTA summed over `l`'s trips, and
+    /// the product of the other loops' counts.
+    fn per_trip(
+        &self,
+        b: BlockId,
+        set: &ThreadSet,
+        below: Option<LoopId>,
+    ) -> Option<(u64, u64, SymExpr)> {
+        let l = set.trip_loop()?;
+        let chain = self.chain(b);
+        let cut = match below {
+            Some(m) => chain.iter().position(|&x| x == m)?,
+            None => chain.len(),
+        };
+        let inner = chain[..cut].iter().position(|&x| x == l)?;
+        let n = u64::try_from(self.trip_exprs[l.0 as usize].as_const()?).ok()?;
+        if set.varies_by_cta()
+            || chain[..inner]
+                .iter()
+                .any(|i| self.trip_info.trips[i.0 as usize].is_err())
+        {
+            return None;
+        }
+        let (t, w) = set.over_trips(self.shape, l, n)?;
+        let rest = (chain[..cut].iter())
+            .filter(|&&x| x != l)
+            .fold(SymExpr::Const(1), |p, x| {
+                SymExpr::mul(p, self.trip_exprs[x.0 as usize].clone())
+            });
+        Some((t, w, rest))
+    }
+
+    /// A loop around `b` counts trips that read the CTA index.
+    fn per_cta_trips(&self, b: BlockId) -> bool {
+        (self.chain(b).iter()).any(|l| {
+            (self.trip_exprs[l.0 as usize].symbols().iter()).any(|s| s.starts_with("%ctaid"))
+        })
+    }
+
+    /// `b`'s loops whose trip counts read the CTA index, and the product
+    /// of the others.
+    fn cta_split(&self, b: BlockId) -> (Vec<LoopId>, SymExpr) {
+        let (cta, rest): (Vec<LoopId>, Vec<LoopId>) = (self.chain(b).into_iter()).partition(|l| {
+            self.trip_exprs[l.0 as usize]
+                .symbols()
+                .iter()
+                .any(|s| s.starts_with("%ctaid"))
+        });
+        let rest = (rest.iter()).fold(SymExpr::Const(1), |p, l| {
+            SymExpr::mul(p, self.trip_exprs[l.0 as usize].clone())
+        });
+        (cta, rest)
+    }
+
+    /// The product of the loops' counts as the axes they read and its
+    /// value at each CTA: each count evaluated and never negative, and a
+    /// `!=` latch's step dividing its distance into a positive count.
+    fn cta_weight(&self, loops: Vec<LoopId>) -> ([bool; 3], impl Fn([i64; 3]) -> Option<u64> + '_) {
+        let names = SpecialVector::Ctaid.components().map(|reg| reg.name());
+        let read = names
+            .clone()
+            .map(|n| (loops.iter()).any(|l| self.trip_exprs[l.0 as usize].symbols().contains(&n)));
+        let weight = move |c: [i64; 3]| {
+            let at: HashMap<String, i64> = names.iter().cloned().zip(c).collect();
+            loops.iter().try_fold(1u64, |w, l| {
+                let n = self.trip_exprs[l.0 as usize].bind(&at).as_const()?;
+                if let Some((x, step)) = &self.trip_info.distances[l.0 as usize] {
+                    let x = x.bind(self.bind_map).bind(&at).as_const()?;
+                    if x.checked_rem(*step)? != 0 || x.checked_div(*step)? < 1 {
+                        return None;
+                    }
+                }
+                w.checked_mul(u64::try_from(n).ok()?)
+            })
+        };
+        (read, weight)
+    }
+
+    /// The weight summed over the grid; `None` without the grid or past
+    /// `CTA_BUDGET` CTAs on the axes it reads.
+    fn cta_sum(&self, loops: &[LoopId]) -> Option<u64> {
+        let grid = self.grid()?;
+        let (read, weight) = self.cta_weight(loops.to_vec());
+        let n = |i: usize| if read[i] { grid[i] } else { 1 };
+        if (0..3).map(|i| u64::from(n(i))).product::<u64>() > CTA_BUDGET {
+            return None;
+        }
+        let mut sum = 0u64;
+        for c in
+            (0..n(2)).flat_map(|z| (0..n(1)).flat_map(move |y| (0..n(0)).map(move |x| [x, y, z])))
+        {
+            sum = sum.checked_add(weight(c.map(i64::from))?)?;
+        }
+        let other = (0..3).filter(|&i| !read[i]).map(|i| u64::from(grid[i]));
+        { other }.try_fold(sum, u64::checked_mul)
+    }
+
+    /// The set's threads and warps over the launch, CTA `c` counted the
+    /// weight's value there times.
+    fn weighted_launch(&self, set: &ThreadSet, loops: &[LoopId]) -> Option<(u64, u64)> {
+        let (read, weight) = self.cta_weight(loops.to_vec());
+        set.weighted_launch(self.shape, self.grid()?, read, &weight)
+    }
+
+    /// The product of `b`'s loops' trip counts up to `below`, and whether
+    /// a loop among them may not be entered: one entered conditionally,
+    /// unless its header's threads are counted, per CTA (`cta`) or at
+    /// every CTA of the launch (`launch`).
+    fn multiplier(
+        &self,
+        b: BlockId,
+        below: Option<LoopId>,
+        (cta, launch): (bool, bool),
+    ) -> Option<(SymExpr, bool)> {
         let chain = self.chain(b);
         let cut = match below {
             Some(l) => chain.iter().position(|&x| x == l)?,
@@ -1179,7 +1286,12 @@ impl<'a> KernelReportBuilder<'a> {
         let mut at_most = false;
         for &l in &chain[..cut] {
             mult = SymExpr::mul(mult, self.trip_exprs[l.0 as usize].clone());
-            at_most |= self.cond_entry[l.0 as usize];
+            let header = self.forest.get(l).header;
+            let counted = (self.sets.blocks[header.0 as usize].count(self.shape))
+                .is_some_and(|c| c.certain == c.possible);
+            let entered =
+                (cta && counted) || (launch && self.launches.contains_key(&(header, None)));
+            at_most |= self.cond_entry[l.0 as usize] && !entered;
         }
         Some((mult, at_most))
     }
@@ -1210,70 +1322,6 @@ impl<'a> KernelReportBuilder<'a> {
         (threads, warps, at_most, explained)
     }
 
-    /// The threads and warps that run block `bm`, or with `guard` the
-    /// statement it guards, and whether they are a bound: per thread,
-    /// per CTA with `cta`, and over the launch with `ctas` too, at the
-    /// launch's own count where the grid gives one. `None` when a count
-    /// does not fit in u64.
-    fn running(
-        &self,
-        bm: &BlockMeasurements,
-        guard: Option<usize>,
-        chain_at_most: bool,
-        cta: Option<&LaunchInfo>,
-        ctas: Option<u64>,
-    ) -> Option<Running> {
-        let b = bm.block;
-        let set = match guard {
-            Some(s) => self.sets.of(b, s),
-            None => self.sets.blocks[b.0 as usize].clone(),
-        };
-        let (threads, warps, at_most, explained) = match (ctas, self.launches.get(&(b, guard))) {
-            (Some(_), Some(&(t, w))) => {
-                let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
-                (t, Some((w, bound)), bound, true)
-            }
-            (n, _) => {
-                let n = n.unwrap_or(1);
-                let (t, w, at_most, explained) = self.executing(bm, &set, chain_at_most, cta);
-                let w = match w {
-                    Some((w, bound)) => Some((u64::try_from(w).ok()?.checked_mul(n)?, bound)),
-                    None => None,
-                };
-                (
-                    u64::try_from(t).ok()?.checked_mul(n)?,
-                    w,
-                    at_most,
-                    explained,
-                )
-            }
-        };
-        Some((threads, warps, at_most || guard.is_some() && !explained))
-    }
-
-    /// Statement `stmt` of block `bm`: it runs as the block's `running`
-    /// unless a guard not every thread reads as true selects its own
-    /// threads, and a predicated branch is a bound.
-    fn statement(
-        &self,
-        bm: &BlockMeasurements,
-        stmt: usize,
-        block: Option<Running>,
-        chain_at_most: bool,
-        cta: Option<&LaunchInfo>,
-        ctas: Option<u64>,
-    ) -> Option<Running> {
-        match self.sets.guards.get(&stmt) {
-            Some(g) if *g != Pred::True => self.running(bm, Some(stmt), chain_at_most, cta, ctas),
-            Some(_) => block,
-            None => {
-                let branch =
-                    matches!(&self.kernel.stmts[stmt], Stmt::Instr(i) if i.predicate.is_some());
-                block.map(|(t, w, at_most)| (t, w, at_most || branch))
-            }
-        }
-    }
-
     /// Aggregate over blocks; `below` = aggregate within this loop
     /// (multipliers stop there), `None` = whole kernel. With
     /// `cta`, every per-thread count additionally scales by the CTA's
@@ -1282,6 +1330,9 @@ impl<'a> KernelReportBuilder<'a> {
     /// threads and warps over the grid where they are counted, else at
     /// its count per CTA times the CTAs; one under a loop whose trip
     /// count is not read is unknown, its trips perhaps differing by CTA.
+    /// Under loops whose counts read the CTA index, a block or guarded
+    /// instruction whose threads do not is counted per CTA times those
+    /// counts summed over the grid, and is unknown otherwise.
     fn aggregates(
         &self,
         below: Option<LoopId>,
@@ -1303,7 +1354,9 @@ impl<'a> KernelReportBuilder<'a> {
         }
 
         for bm in &self.blocks {
-            let Some((mult, chain_at_most)) = self.multiplier(bm.block, below) else {
+            let Some((mult, chain_at_most)) =
+                self.multiplier(bm.block, below, (cta.is_some(), ctas.is_some()))
+            else {
                 continue;
             };
             if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
@@ -1312,14 +1365,67 @@ impl<'a> KernelReportBuilder<'a> {
             let unread = ctas.is_some()
                 && (self.chain(bm.block).iter())
                     .any(|l| self.trip_info.trips[l.0 as usize].is_err());
-            let trips = (!unread).then_some(mult);
+            let split =
+                (ctas.is_some() && self.per_cta_trips(bm.block)).then(|| self.cta_split(bm.block));
+            let trips = match (unread, &split) {
+                (true, _) => None,
+                (false, Some((_, rest))) => Some(rest.clone()),
+                (false, None) => Some(mult),
+            };
             let trips = trips.as_ref();
+            let per_launch = match &split {
+                Some((p, _)) => self.cta_sum(p),
+                None => ctas,
+            };
+            // None when a count over the launch does not fit in i64; with
+            // the trips it is counted over where they are its own.
+            let resolve = |set: &ThreadSet, launch: Option<(u64, u64)>| {
+                if cta.is_some()
+                    && split.is_none()
+                    && !unread
+                    && let Some((t, w, rest)) = self.per_trip(bm.block, set, below)
+                {
+                    let n = ctas.unwrap_or(1);
+                    let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
+                    let t = i64::try_from(t.checked_mul(n)?).ok()?;
+                    let w = i64::try_from(w.checked_mul(n)?).ok()?;
+                    return Some(((t, Some((w, bound)), bound, true), Some(rest)));
+                }
+                let per_cta = self.executing(bm, set, chain_at_most, cta);
+                if ctas.is_none() {
+                    return Some((per_cta, None));
+                }
+                let counted = match &split {
+                    Some((p, _)) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
+                    Some(_) => None,
+                    None => launch,
+                };
+                match counted {
+                    Some((t, w)) => {
+                        let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
+                        let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
+                        Some(((t, Some((w, bound)), bound, true), None))
+                    }
+                    None => {
+                        let n = i64::try_from(per_launch?).ok()?;
+                        let (threads, warps, at_most, explained) = per_cta;
+                        let warps = match warps {
+                            Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
+                            None => None,
+                        };
+                        Some(((threads.checked_mul(n)?, warps, at_most, explained), None))
+                    }
+                }
+            };
             // A block whose count does not fit is unknown, its warps too.
-            let block = self.running(bm, None, chain_at_most, cta, ctas);
-            let narrow_block = block.and_then(narrow);
-            let mult = trips.filter(|_| narrow_block.is_some());
-            let (threads, warps, block_at_most) =
-                narrow_block.unwrap_or((0, Some((0, false)), false));
+            let block = resolve(
+                &self.sets.blocks[bm.block.0 as usize],
+                self.launches.get(&(bm.block, None)).copied(),
+            );
+            let mult = (block.as_ref()).and_then(|(_, own)| own.clone().or_else(|| trips.cloned()));
+            let mult = mult.as_ref();
+            let (threads, warps, block_at_most, _) =
+                block.map_or((0, Some((0, false)), false, false), |(b, _)| b);
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
@@ -1346,13 +1452,37 @@ impl<'a> KernelReportBuilder<'a> {
                 if !self.counted(bm.block, m.provenance) {
                     continue;
                 }
-                let run = self.statement(bm, m.provenance, block, chain_at_most, cta, ctas);
-                let (threads, at_most, mult) = match run.and_then(narrow) {
-                    Some((threads, _, at_most)) => (threads, at_most, trips),
-                    None => (0, false, None),
-                };
+                let p = m.provenance;
+                let source = m.memory_operand == Some(1) && self.sets.sources.contains_key(&p);
+                let (threads, at_most, mult) =
+                    match self.sets.guard(p, m.memory_operand.unwrap_or(0)) {
+                        Some(Pred::True) => (threads, block_at_most, mult.cloned()),
+                        Some(Pred::False) => continue,
+                        Some(_) => {
+                            let (set, launch) = match source {
+                                true => (
+                                    self.sets.of_access(bm.block, p, 1),
+                                    self.source_launches.get(&p).copied(),
+                                ),
+                                false => (
+                                    self.sets.of(bm.block, p),
+                                    self.launches.get(&(bm.block, Some(p))).copied(),
+                                ),
+                            };
+                            match resolve(&set, launch) {
+                                Some(((threads, _, at_most, explained), own)) => (
+                                    threads,
+                                    at_most || !explained,
+                                    own.or_else(|| trips.cloned()),
+                                ),
+                                None => (0, false, None),
+                            }
+                        }
+                        None => (threads, block_at_most || m.predicated, mult.cloned()),
+                    };
                 let n = (m.count as i64).checked_mul(threads);
                 let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
+                let mult = mult.as_ref();
                 match m.kind {
                     MeasureKind::Flops { pipe, precision } => {
                         flops
@@ -1757,13 +1887,20 @@ impl<'a> KernelReportBuilder<'a> {
         Some([x?, y?, z?])
     }
 
+    /// The threads and warps that run statement `stmt` of block `b` over
+    /// the launch, where the grid is bound and they are counted.
+    fn launch(&self, b: BlockId, stmt: usize) -> Option<(u64, u64)> {
+        let guard = self.sets.guards.contains_key(&stmt).then_some(stmt);
+        self.launches.get(&(b, guard)).copied()
+    }
+
     fn measured(
         &self,
         record: &NcuRecord,
         lines: &LineIndex,
         cta: &LaunchInfo,
     ) -> Vec<MeasuredBlock> {
-        let ctas = (record.grid.iter()).try_fold(1u64, |n, &d| n.checked_mul(d.into()));
+        let grid = (record.grid.iter()).try_fold(1u64, |n, &d| n.checked_mul(d.into()));
         let mut per_line: HashMap<u32, usize> = HashMap::new();
         for stmt in &self.kernel.stmts {
             if let Stmt::Instr(i) = stmt {
@@ -1773,30 +1910,99 @@ impl<'a> KernelReportBuilder<'a> {
         let reducible = self.forest.irreducible_edges.is_empty();
         let mut blocks = Vec::new();
         for bm in &self.blocks {
-            let Some((mult, chain_at_most)) = self.multiplier(bm.block, None) else {
+            let Some((mult, chain_at_most)) = self.multiplier(bm.block, None, (true, true)) else {
                 continue;
             };
-            let block =
-                ctas.and_then(|n| self.running(bm, None, chain_at_most, Some(cta), Some(n)));
+            let split = self
+                .per_cta_trips(bm.block)
+                .then(|| self.cta_split(bm.block));
+            let (mult, ctas) = match &split {
+                Some((p, rest)) => (rest.clone(), self.cta_sum(p)),
+                None => (mult, grid),
+            };
+            let mut weighted = HashMap::new();
             let mut predictions = Vec::new();
             for i in &bm.instructions {
                 let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
                     continue;
                 };
-                let run = ctas.and_then(|n| {
-                    self.statement(bm, i.provenance, block, chain_at_most, Some(cta), Some(n))
-                });
+                let set = self.sets.of(bm.block, i.provenance);
+                let (threads, warps, at_most, explained) =
+                    self.executing(bm, &set, chain_at_most, Some(cta));
+                let guarded = self.sets.guards.contains_key(&i.provenance);
+                let holds = self.sets.guards.get(&i.provenance) == Some(&Pred::True);
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
                 let never = !self.counted(bm.block, i.provenance);
                 let trips = mult.as_const().filter(|_| alone);
-                let at_most = !never && run.is_some_and(|(_, _, at_most)| at_most);
-                // Warps with a lane that runs it: each requests its sectors.
-                let requests = match never {
-                    true => alone.then_some((0, false)),
-                    false => trips.zip(run).and_then(|(m, (_, w, _))| {
-                        let (w, bound) = w?;
-                        Some((u64::try_from(m).ok()?.checked_mul(w)?, bound))
+                // Over the launch, a set counted at every CTA explains its
+                // block as an exact count per CTA does, and one a loop
+                // counter selects as its sum over the trips.
+                let over = |set: &ThreadSet, launch: Option<(u64, u64)>, weighted| {
+                    let per_trip = split.is_none().then(|| self.per_trip(bm.block, set, None));
+                    match (per_trip.flatten(), weighted) {
+                        (Some((t, w, rest)), _) => {
+                            let counted = ctas.and_then(|n| t.checked_mul(n).zip(w.checked_mul(n)));
+                            (
+                                counted,
+                                rest.as_const().filter(|_| alone && ctas.is_some()),
+                                0,
+                            )
+                        }
+                        (None, Some(Some(n))) => (Some(n), trips, 0),
+                        (None, Some(None)) => (None, None, 0),
+                        (None, None) => (
+                            launch.filter(|_| split.is_none()),
+                            trips.filter(|_| ctas.is_some()),
+                            ctas.unwrap_or(0),
+                        ),
+                    }
+                };
+                let stmt_weighted = match &split {
+                    Some((p, _)) if set.varies_by_cta() => Some(
+                        *(weighted.entry(guarded.then_some(i.provenance)))
+                            .or_insert_with(|| self.weighted_launch(&set, p)),
+                    ),
+                    _ => None,
+                };
+                let (launch, trips, ctas) =
+                    over(&set, self.launch(bm.block, i.provenance), stmt_weighted);
+                let at_most = !never
+                    && match launch {
+                        Some(_) => {
+                            chain_at_most
+                                || !cta.exact
+                                || (instr.predicate.is_some() && !(holds || guarded))
+                        }
+                        None => {
+                            at_most
+                                || (instr.predicate.is_some() && !(holds || guarded && explained))
+                        }
+                    };
+                // Warps with a lane that reads its global operand: each
+                // requests its sectors.
+                let reading = self.sets.sources.contains_key(&i.provenance).then(|| {
+                    let set = self.sets.of_access(bm.block, i.provenance, 1);
+                    let (_, w, _, explained) = self.executing(bm, &set, chain_at_most, Some(cta));
+                    let weighted = match &split {
+                        Some((p, _)) if set.varies_by_cta() => Some(self.weighted_launch(&set, p)),
+                        _ => None,
+                    };
+                    let launch = self.source_launches.get(&i.provenance).copied();
+                    let w = w.map(|(n, bound)| (n, bound || !explained));
+                    (over(&set, launch, weighted), w)
+                });
+                let ((reads, read_trips, read_ctas), read_warps) =
+                    reading.unwrap_or(((launch, trips, ctas), warps));
+                let requests = match (never, reads) {
+                    (true, _) => alone.then_some((0, false)),
+                    (false, Some((_, w))) => read_trips
+                        .and_then(|m| Some((u64::try_from(m).ok()?.checked_mul(w)?, false))),
+                    (false, None) => read_trips.zip(read_warps).and_then(|(m, (w, bound))| {
+                        let n = u64::try_from(m.checked_mul(w)?)
+                            .ok()?
+                            .checked_mul(read_ctas)?;
+                        Some((n, bound))
                     }),
                 };
                 let sectors = (self.per_request.get(&i.provenance).copied())
@@ -1818,11 +2024,16 @@ impl<'a> KernelReportBuilder<'a> {
                 predictions.push(Prediction {
                     line,
                     constraint: count_constraint(self.module, instr),
-                    executions: match never {
-                        true => alone.then_some(0),
-                        false => trips
-                            .zip(run)
-                            .and_then(|(m, (t, _, _))| u64::try_from(m).ok()?.checked_mul(t)),
+                    executions: match (never, launch) {
+                        (true, _) => alone.then_some(0),
+                        (false, Some((n, _))) => {
+                            trips.and_then(|m| u64::try_from(m).ok()?.checked_mul(n))
+                        }
+                        (false, None) => trips.and_then(|m| {
+                            u64::try_from(m.checked_mul(threads)?)
+                                .ok()?
+                                .checked_mul(ctas)
+                        }),
                     },
                     at_most,
                     sectors,
@@ -2329,6 +2540,228 @@ mod tests {
             }]
         );
         assert!(k.accesses[0].reuse.is_empty());
+    }
+
+    /// A max of a parameter scaling the thread index divides once the
+    /// parameter is bound: `(max(n, 1)·%tid.x) >> 2` at n = 2 is
+    /// ⌊%tid.x/2⌋, and its `rem` by 4 is 2·(%tid.x mod 2).
+    #[test]
+    fn a_bound_max_coefficient_divides() {
+        let opts = AnalyzeOptions {
+            bindings: vec![parse_bind("1:n=2").expect("binding")],
+            ..Default::default()
+        };
+        let src = |reduce: &str| {
+            format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r1, [k_param_1];\n\
+                 max.s32 %r2, %r1, 1;\nmov.u32 %r3, %tid.x;\nmul.lo.s32 %r4, %r2, %r3;\n\
+                 {reduce}\nmul.wide.u32 %rd2, %r5, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                 st.global.u32 [%rd3], %r5;\nret;\n}}\n"
+            )
+        };
+        let address = |reduce: &str| {
+            let r = analyze(&src(reduce), "t", &opts).expect("analyzes");
+            r.kernels[0].accesses[0].address.clone()
+        };
+        let shifted = Some("4 * ⌊%tid.x/2⌋ + param_0".to_owned());
+        assert_eq!(address("shr.u32 %r5, %r4, 2;"), shifted);
+        let rem = Some("8 * (%tid.x mod 2) + param_0".to_owned());
+        assert_eq!(address("rem.u32 %r5, %r4, 4;"), rem);
+    }
+
+    /// Over a launch, a count that reads the CTA index is summed over the
+    /// grid: `k < %ctaid.x` from 0 runs max(c, 1) trips in CTA c, 7 over
+    /// 4 CTAs. A `!=` latch's count holds where its step divides its
+    /// distance into a positive count: `k != 2 - %ctaid.x` by 1 is
+    /// unknown with CTA 2, whose counter never meets 0, and by 2 with CTA
+    /// 1; two nested loops of `1 - 2 * %ctaid.x` trips are unknown with
+    /// CTA 1, though the product of their counts is 1 there. A guard
+    /// skipping CTA 0, where `k != %ctaid.x` never meets its bound, leaves
+    /// 1 + 2 + 3 trips. Past 2^24 CTAs on the axes read it is unknown.
+    #[test]
+    fn a_count_over_the_cta_index_is_summed_over_the_grid() {
+        let store = |body: &str, grid: [u32; 3]| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
+                 .reqntid 32, 1, 1\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r5, [k_param_1];\n\
+                 mov.u32 %r1, %ctaid.x;\nmov.u32 %r6, %ctaid.y;\n{body}\nret;\n}}\n"
+            );
+            let opts = AnalyzeOptions {
+                bindings: vec![parse_bind("1:n=2").expect("binding")],
+                grid: Some(grid),
+                ..Default::default()
+            };
+            let r = analyze(&src, "t", &opts).expect("analyzes");
+            let launch = r.kernels[0].totals_per_launch.as_ref().expect("a grid");
+            let bytes = &launch.bytes["global"].store;
+            (bytes.expr.clone(), bytes.at_least)
+        };
+        let one = |bound: &str, step: i64, cmp: &str| {
+            format!(
+                "{bound}\nmov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, {step};\n\
+                 st.global.u32 [%rd1], %r2;\nsetp.{cmp}.u32 %p1, %r2, %r3;\n@%p1 bra $L__L;"
+            )
+        };
+        let (known, unknown) = (|n: &str| (n.to_owned(), false), ("0".to_owned(), true));
+        let below = one("mov.u32 %r3, %r1;", 1, "lt");
+        assert_eq!(store(&below, [4, 1, 1]), known("896"));
+        assert_eq!(store(&below, [4, 3, 1]), known("2688"));
+        let ne = |step| one("sub.s32 %r3, %r5, %r1;", step, "ne");
+        assert_eq!(store(&ne(1), [2, 1, 1]), known("384"));
+        assert_eq!(store(&ne(1), [3, 1, 1]), unknown);
+        assert_eq!(store(&ne(2), [1, 1, 1]), known("128"));
+        assert_eq!(store(&ne(2), [2, 1, 1]), unknown);
+        let nested = "mov.u32 %r9, 1;\nshl.b32 %r7, %r1, 1;\nsub.s32 %r3, %r9, %r7;\n\
+                      mov.u32 %r8, 0;\n$L__O:\nadd.s32 %r8, %r8, 1;\nmov.u32 %r2, 0;\n\
+                      $L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                      setp.ne.u32 %p1, %r2, %r3;\n@%p1 bra $L__L;\n\
+                      setp.ne.u32 %p2, %r8, %r3;\n@%p2 bra $L__O;";
+        assert_eq!(store(nested, [1, 1, 1]), known("128"));
+        assert_eq!(store(nested, [2, 1, 1]), unknown);
+        let guarded = "setp.lt.s32 %p3, %r1, 1;\n@%p3 bra $L__E;\nmov.u32 %r2, 0;\n\
+                       $L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                       setp.ne.u32 %p1, %r2, %r1;\n@%p1 bra $L__L;\n$L__E:";
+        assert_eq!(store(guarded, [4, 1, 1]), known("768"));
+        let both = one("add.s32 %r3, %r1, %r6;", 1, "lt");
+        assert_eq!(store(&both, [8192, 4096, 1]), unknown);
+    }
+
+    /// A loop entered only by the threads a thread-index condition picks
+    /// is a bound per thread, but per CTA its threads are counted:
+    /// `%tid.x < 64` of 128 store 4 B on each of n trips.
+    #[test]
+    fn a_loop_entered_by_counted_threads_is_exact_per_cta() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
+                   .reqntid 128, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r5, [k_param_1];\n\
+                   mov.u32 %r1, %tid.x;\nsetp.ge.u32 %p2, %r1, 64;\n@%p2 bra $L__E;\n\
+                   mov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                   setp.lt.u32 %p1, %r2, %r5;\n@%p1 bra $L__L;\n$L__E:\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        let k = &r.kernels[0];
+        let store = |t: &Aggregates| {
+            let c = &t.bytes["global"].store;
+            (c.expr.clone(), c.at_most)
+        };
+        assert_eq!(store(&k.totals), ("4 * max(param_1, 1)".to_owned(), true));
+        let per_cta = k.totals_per_cta.as_ref().expect("a block shape");
+        assert_eq!(store(per_cta), ("256 * max(param_1, 1)".to_owned(), false));
+    }
+
+    /// A prediction past u64 is none: 32 threads in each of 2 CTAs run
+    /// 2^62 + %ctaid.x trips, 2^63 + 1 over the grid.
+    #[test]
+    fn an_execution_count_past_u64_is_not_predicted() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %ctaid.x;\n\
+                   cvt.u64.u32 %rd2, %r1;\nadd.s64 %rd3, %rd2, 4611686018427387904;\n\
+                   mov.u64 %rd4, 0;\n$L__L:\nadd.s64 %rd4, %rd4, 1;\nst.global.u32 [%rd1], %r1;\n\
+                   setp.lt.u64 %p1, %rd4, %rd3;\n@%p1 bra $L__L;\nret;\n}\n";
+        let record = NcuRecord {
+            kernel: "k".to_owned(),
+            grid: [2, 1, 1],
+            block: [32, 1, 1],
+            params: vec!["ptr:4".to_owned()],
+            lines: Default::default(),
+        };
+        let opts = AnalyzeOptions {
+            grid: Some([2, 1, 1]),
+            ncu: Some(record),
+            ..Default::default()
+        };
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        assert_eq!(
+            r.kernels[0].loops[0].trips.expr.as_deref(),
+            Some("%ctaid.x + 4611686018427387904")
+        );
+        assert!(r.kernels[0].measured.is_some());
+    }
+
+    /// A block a loop counter's mask selects, but that a short-circuit
+    /// on loaded values may also skip, is a bound per CTA however its
+    /// trips count.
+    #[test]
+    fn a_bypassed_block_under_a_counter_mask_is_a_bound() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 64, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r7, [%rd1];\n\
+                   ld.global.u32 %r8, [%rd1+4];\nmov.u32 %r2, %tid.x;\nmov.u32 %r3, 0;\n\
+                   $L__H:\nshl.b32 %r4, %r3, 6;\nadd.s32 %r5, %r4, %r2;\n\
+                   setp.ge.u32 %p2, %r5, 300;\n@%p2 bra $L__T;\n\
+                   setp.ne.u32 %p4, %r7, 0;\n@%p4 bra $L__S;\n\
+                   setp.eq.u32 %p5, %r8, 0;\n@%p5 bra $L__T;\n\
+                   $L__S:\nst.global.u32 [%rd1+8], %r5;\n\
+                   $L__T:\nadd.s32 %r3, %r3, 1;\nsetp.lt.u32 %p3, %r3, 8;\n@%p3 bra $L__H;\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        let per_cta = r.kernels[0].totals_per_cta.as_ref().expect("a block shape");
+        let store = &per_cta.bytes["global"].store;
+        assert_eq!((store.expr.as_str(), store.at_most), ("2048", true));
+    }
+
+    /// `a < b` as `s32` with `a = b + k`, `b = %tid.x + 2^31 - 16`: the
+    /// difference is the counter alone, but `b` leaves the type, so the
+    /// lanes differ (lane 15 alone at k = 1) and a warp's sectors under
+    /// the guard are a bound.
+    #[test]
+    fn a_counter_difference_past_its_type_is_no_per_trip_comparison() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n\
+                   add.u32 %r2, %r1, 2147483632;\nmul.wide.u32 %rd2, %r1, 4;\n\
+                   add.s64 %rd3, %rd1, %rd2;\nmov.u32 %r3, 0;\n$L__L:\nadd.u32 %r3, %r3, 1;\n\
+                   add.u32 %r4, %r2, %r3;\nsetp.lt.s32 %p1, %r4, %r2;\n\
+                   @%p1 st.global.u32 [%rd3], %r3;\nsetp.lt.u32 %p2, %r3, 4;\n\
+                   @%p2 bra $L__L;\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        assert!(r.kernels[0].loops[0].accesses[0].sectors_at_most);
+    }
+
+    /// Wrong output (PLAN.md): a per-trip launch count past u64, 32
+    /// threads of 3 CTAs on 2^58 - 1 of 2^58 trips, predicts 0 executions
+    /// rather than none.
+    #[test]
+    fn a_per_trip_launch_count_past_u64_predicts_zero() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u64 %rd2, 0;\n$L__H:\n\
+                   add.s64 %rd2, %rd2, 1;\nsetp.ge.u64 %p1, %rd2, 288230376151711744;\n\
+                   @%p1 bra $L__T;\nbar.sync 0;\n$L__T:\n\
+                   setp.lt.u64 %p2, %rd2, 288230376151711744;\n@%p2 bra $L__H;\nret;\n}\n";
+        let line = |ptx: &str| crate::report::measured::NcuLine {
+            ptx: ptx.to_owned(),
+            sass: [("BAR.SYNC.DEFER_BLOCKING".to_owned(), 1)]
+                .into_iter()
+                .collect(),
+            executions: 5,
+            l2_theoretical_sectors_global: None,
+            l2_theoretical_sectors_global_ideal: None,
+            global_access_sizes: Vec::new(),
+            global_executions: None,
+        };
+        let record = NcuRecord {
+            kernel: "k".to_owned(),
+            grid: [3, 1, 1],
+            block: [32, 1, 1],
+            params: vec!["ptr:4".to_owned()],
+            lines: [(15, line("bar.sync 0;"))].into_iter().collect(),
+        };
+        let opts = AnalyzeOptions {
+            grid: Some([3, 1, 1]),
+            ncu: Some(record),
+            ..Default::default()
+        };
+        let r = analyze(src, "t", &opts).expect("analyzes");
+        let measured = r.kernels[0].measured.as_ref().expect("a record");
+        let predicted: Vec<u64> = (measured.iter())
+            .flat_map(|b| b.differing.iter().map(|l| l.predicted))
+            .collect();
+        assert_eq!(predicted, [0]);
     }
 
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not

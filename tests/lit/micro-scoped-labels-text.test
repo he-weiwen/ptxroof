@@ -5,7 +5,7 @@ CHECK: kernel micro_scoped_labels
 CHECK: <->  spin$scope1  scoped_labels.cu:5        3  spin$scope1, <block 2>  scoped_labels.cu:5 (header, latch)
 CHECK: <->  spin$scope2  scoped_labels.cu:9        3  spin$scope2, <block 4>  scoped_labels.cu:9 (header, latch)
 CHECK: loop scoped_labels.cu:5 (spin$scope1)
-CHECK: trips = param_0
+CHECK: trips = max(param_0, 1)
 CHECK: loop scoped_labels.cu:9 (spin$scope2)
-CHECK: trips = param_1
+CHECK: trips = max(param_1, 1)
 CHECK: unknowns: none

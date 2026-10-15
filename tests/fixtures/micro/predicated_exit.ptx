@@ -1,0 +1,30 @@
+//
+// HAND-WRITTEN: a predicated `exit` (PTX ISA §9.7.13.7: it "ends
+// execution of a thread") ends the threads where n is 20; the store
+// after it runs on the others. The CFG reads the predicated exit as
+// falling through to the store. ptxas 13.4 -arch=sm_89 keeps it
+// (`ISETP.NE.AND P0, PT, R5, 0x14, PT` then `@!P0 EXIT`). On an RTX
+// 4090 with n = 20 the store runs on no thread
+// (micro/predicated_exit.ncu.json).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_predicated_exit(
+	.param .u64 micro_predicated_exit_param_0,
+	.param .u32 micro_predicated_exit_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_predicated_exit_param_0];
+	ld.param.u32 	%r1, [micro_predicated_exit_param_1];
+	setp.eq.s32 	%p1, %r1, 20;
+	@%p1 exit;
+	st.global.u32 	[%rd1], %r1;
+	ret;
+}

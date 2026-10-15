@@ -1,6 +1,7 @@
 # Every Gluon kernel against its Nsight Compute record (regen.sh): no
 # block's predicted count is contradicted by the measured one, and no
-# line's global L2 sectors differ from the measured ones.
+# line's global L2 sectors differ from the measured ones, but for
+# lm_head_dx's two (gluon-counter-guard.test).
 RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_post_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_post_kernel.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_pre_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_pre_kernel.sm_89.ncu.json | FileCheck "%s"
@@ -9,7 +10,6 @@ RUN: %ptxroof analyze %fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx --ncu %f
 RUN: %ptxroof analyze %fixtures/gluon/ce_chunk_kernel.sm_89.ptx --ncu %fixtures/gluon/ce_chunk_kernel.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ptx --ncu %fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx --ncu %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ncu.json | FileCheck "%s"
-RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx --ncu %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/quantize_transpose_kernel.sm_89.ptx --ncu %fixtures/gluon/quantize_transpose_kernel.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx --ncu %fixtures/gluon/rmsnorm_stats_kernel.sm_89.ncu.json | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/gluon/rope_norm_kernel.sm_89.ptx --ncu %fixtures/gluon/rope_norm_kernel.sm_89.ncu.json | FileCheck "%s"

@@ -1,0 +1,83 @@
+//
+// HAND-WRITTEN: one guard skipping two loops in turn, as in the
+// missed-opt census's 03654.ptx (a Triton MoE kernel whose `n < 1`
+// skips two consecutive loops over n). The guard (n < 11) skips a
+// first loop of 4 trips and then the second loop, whose latch at k = 0
+// is 10 < n. In micro_loop_guard_sibling the first loop's only exit is
+// its latch, so every thread the guard lets through reaches the second
+// loop; in micro_loop_guard_sibling_exit the first loop also leaves for
+// the end when its counter meets n, so the guard does not decide the
+// second loop's entry alone. ptxas 13.4
+// -arch=sm_89 keeps the guard (`ISETP.GE.AND P0, PT, R0, 0xb, PT` then
+// `@!P0 EXIT`) and the early exit (`ISETP.NE.AND P0, PT, R0,
+// c[0x0][0x168], PT` then `@!P0 EXIT`), unrolling the loops. On an RTX
+// 4090 at n = 20, micro_loop_guard_sibling's store, in the second loop,
+// requests 10 L2 sectors (micro/loop_guard_sibling.ncu.json).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_loop_guard_sibling(
+	.param .u64 micro_loop_guard_sibling_param_0,
+	.param .u32 micro_loop_guard_sibling_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<4>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_loop_guard_sibling_param_0];
+	ld.param.u32 	%r1, [micro_loop_guard_sibling_param_1];
+	setp.lt.s32 	%p1, %r1, 11;
+	@%p1 bra 	$L__BB0_5;
+	mov.u32 	%r3, 0;
+$L__BB0_2:
+	add.s32 	%r3, %r3, 1;
+	bar.sync 	0;
+	setp.lt.s32 	%p3, %r3, 4;
+	@%p3 bra 	$L__BB0_2;
+	mov.u32 	%r2, 10;
+$L__BB0_4:
+	add.s32 	%r2, %r2, 1;
+	st.global.u32 	[%rd1], %r2;
+	bar.sync 	0;
+	setp.lt.s32 	%p2, %r2, %r1;
+	@%p2 bra 	$L__BB0_4;
+$L__BB0_5:
+	ret;
+}
+
+.visible .entry micro_loop_guard_sibling_exit(
+	.param .u64 micro_loop_guard_sibling_exit_param_0,
+	.param .u32 micro_loop_guard_sibling_exit_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<5>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_loop_guard_sibling_exit_param_0];
+	ld.param.u32 	%r1, [micro_loop_guard_sibling_exit_param_1];
+	setp.lt.s32 	%p1, %r1, 11;
+	@%p1 bra 	$L__BB1_6;
+	mov.u32 	%r3, 0;
+$L__BB1_2:
+	add.s32 	%r3, %r3, 1;
+	setp.eq.s32 	%p4, %r3, %r1;
+	@%p4 bra 	$L__BB1_6;
+	bar.sync 	0;
+	setp.lt.s32 	%p3, %r3, 4;
+	@%p3 bra 	$L__BB1_2;
+	mov.u32 	%r2, 10;
+$L__BB1_5:
+	add.s32 	%r2, %r2, 1;
+	st.global.u32 	[%rd1], %r2;
+	bar.sync 	0;
+	setp.lt.s32 	%p2, %r2, %r1;
+	@%p2 bra 	$L__BB1_5;
+$L__BB1_6:
+	ret;
+}

@@ -1,0 +1,6 @@
+# Presentation (PLAN.md): a thread-index condition that holds on every
+# thread of the block still prints. Under its record scaled_mm's copies
+# outside the K loop read their sources where 16·(%tid.x mod 8) < 7936,
+# all 128 threads.
+RUN: %ptxroof analyze %fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx --ncu %fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ncu.json | FileCheck "%s"
+CHECK: global load 16 B on 128 threads in 4 warps (16 * (%tid.x mod 8) < 7936)

@@ -21,7 +21,7 @@ fn info_of(fixture: &str) -> (Vec<String>, TripCountResults) {
     let cfg = build_cfg(&m, k);
     let f = loop_forest(&cfg);
     let names = loop_names(&m, k, &cfg, &f);
-    let info = trip_counts(&m, k, &cfg, &f, &names);
+    let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default());
     let rendered = info
         .trips
         .iter()
@@ -84,13 +84,9 @@ fn two_register_counter_is_an_induction_variable() {
 
 #[test]
 fn attention_trip_reasons_are_pinned() {
-    // Causal bounds depend on the CTA index, behind `bfe`, `div` and `or`
-    // the tracer does not read; the reason is the index.
+    // A causal bound reads the CTA index, one value per CTA.
     let (trips, _) = info_of("gluon/attn_bwd_kernel.sm_89.ptx");
-    assert_eq!(
-        trips,
-        ["unknown: latch condition depends on special register %ctaid.x"]
-    );
+    assert_eq!(trips, ["ok: param_13 / 64 - %ctaid.x"]);
     for f in [
         "gluon/attn_bwd_pre_kernel.sm_89.ptx",
         "gluon/attn_bwd_post_kernel.sm_89.ptx",
@@ -120,7 +116,7 @@ fn a_triangular_nest_is_an_honest_unknown() {
     assert_eq!(
         sorted,
         [
-            "ok: param_0",
+            "ok: max(param_0, 1)",
             "unknown: latch condition depends on an enclosing loop's counter",
         ]
     );
@@ -129,7 +125,7 @@ fn a_triangular_nest_is_an_honest_unknown() {
 #[test]
 fn scoped_labels_are_separate_loops() {
     let (trips, _) = info_of("micro/scoped_labels.ptx");
-    assert_eq!(trips, ["ok: param_0", "ok: param_1"]);
+    assert_eq!(trips, ["ok: max(param_0, 1)", "ok: max(param_1, 1)"]);
 }
 
 #[test]

@@ -54,23 +54,18 @@ convention (`tests/instruction_contributions.rs`). A `cp.async` with immediate
 source size zero has zero global sectors per request and over the loop;
 its shared writes and instruction counts remain counted
 (`zero_source_copy_has_no_global_sectors_but_keeps_shared_writes` in that test).
+A `cp.async` reads its source only on the threads whose ignore-src
+predicate is false (PTX ISA §9.7.9.26.3.1), read as a guard is: its
+global row, sectors per warp, loop footprint, global load bytes and
+sector comparison count those threads, and its shared store the
+threads that execute it (`micro/cp_async_ignore_src.ptx`, RTX 4090:
+2176 B over the launch, its four lines' 68 measured L2 sectors). With a
+src-size register it reads at most cp-size: `global load <= 16 B`.
 
 ## Known limitations
 
 ### Wrong output
 
-- **A `cp.async` that may read fewer bytes than cp-size counts
-  cp-size.** With a register src-size or an ignore-src predicate (PTX
-  ISA §9.7.9.26.3.1) a lane may read fewer bytes and zero-fill the
-  rest, but the access row's sectors per warp and the global bytes count
-  cp-size on every lane (`micro/cp_async_src_size.ptx`: 16 of 64 lanes
-  read, the report says `16–17 sectors` per warp and `load 1024 B` per
-  CTA where Nsight Compute measures 8 sectors over the launch,
-  `tests/lit/micro-cp-async-src-size.test`). Triton writes its masked
-  loads this way: 319 such `cp.async` in 16 B200 fixtures, 13,489 in the
-  census. In the B200 records 24 of them measure fewer L2 sectors than
-  the predicted range, in four kernels (`ssd_pass_tlrange`'s line 469:
-  predicted 655,360–696,320, measured 593,920).
 - **Register effects are incomplete.** The affine tracer records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
@@ -97,10 +92,27 @@ its shared writes and instruction counts remain counted
   round-trip: `Unknown symbol 'gbuf'`) and its `.texref` declaration
   (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
   'micro_texture_outputs_tex'`).
-  The CFG treats `trap` as fallthrough. The `cp.async` classifier reports a
-  fixed source-read size even with a runtime ignore-source predicate.
+  The CFG treats `trap` as fallthrough.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
+- **lm_head_dx's predicated `cp.async` lines measure one more warp
+  request per CTA than predicted.** Counted trip by trip, their
+  12,533,760 executions agree with the record, but at 16 sectors per
+  warp request (`warp: 16–24 sectors (ideal 16)`) lines 979 and 985
+  predict an ideal of 6,266,880 L2 sectors each where the record
+  measures 6,268,416, 16 more per CTA; ptxas predicates the block's two
+  `LDGSTS` (`@!P0`) rather than branching around them
+  (`gluon-counter-guard.test`).
+- **An ncu prediction counted trip by trip past u64 predicts 0.** Where
+  the threads a loop counter selects, summed over the trips and times
+  the CTAs, leave u64, the line predicts 0 executions instead of none
+  (`a_per_trip_launch_count_past_u64_predicts_zero`: 32 threads of 3
+  CTAs on 2^58 − 1 of 2^58 trips).
+- **A predicated `ret` or `exit` is read as falling through.** The CFG
+  gives its block one successor, the next block, so what follows counts
+  on every thread, exactly (`micro/predicated_exit.ptx`: the store
+  after `@%p1 exit` counts 32 per CTA, where on an RTX 4090 at n = 20
+  it runs on none).
 - **Vector registers are not modelled** (PTX ISA §6.4.3): the parser
   does not read `.reg .v2 .b32 %v;`, and an element `%v.x` is a register
   of its own, apart from `%v`. In `micro/vector_register.ptx`, after
@@ -109,13 +121,16 @@ its shared writes and instruction counts remain counted
   `[4 * %tid.x + param_0]`, where ptxas takes it from the load.
 - **Integer arithmetic is taken not to wrap where its range is
   unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
-  or `bfe` result, and an integer `cvt`'s source and destination, are
+  or `bfe` result, and an integer `cvt`'s source and destination, or a
+  `min` or `max`'s operands, are
   refused when the value's range, over constants, the block shape
   `.reqntid` or `--launch` gives, the grid `--grid` gives, and constant
   trip counts, leaves the type (`micro/mul_wrap.ptx`: `mul.lo.s32` of
   2^30 and 4, the same for every thread, so its address reads
   `uniform(%r2@24)`; `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` +
-  2^32; `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`); one
+  2^32; `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`;
+  `micro/trip_max.ptx`: `min.u32` of n − 4 under `--bind 1:n=2`, where
+  the loop runs 8 trips, unbound `max(min(param_1 - 4, 8), 1)`); one
   through a parameter, `%ctaid` with no grid given or a symbolic trip
   count keeps the tracer's documented assumption
   (`src/analysis/scalar/trace.rs`, module doc). A conversion to or from
@@ -169,15 +184,15 @@ its shared writes and instruction counts remain counted
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
   stepping by 2 from 0 while `!= 5`, reads `trips = unknown`, where the
   loop does not exit.
-- **A loop whose latch is false at its first evaluation gets a trip
-  count below one.** In `micro/latch_exits_first.ptx` a counter from
-  10 is compared below 5 (`setp.lt.s32`): the body runs once (ptxas
-  13.4, and on an RTX 4090), read as `trips = -5` and `store -40 B`;
-  the same loop against a parameter reads `trips = param_1 - 10`, -5
-  with `--bind 1:n=5`. The count is 1 when the loop is entered and 0
-  when a guard skips it, as for nvcc's remainder loop at K = 4096
-  (`k2-bind.test`: `trips = 0`); the trip matcher does not read the
-  guard.
+- **A loop's count drops its max with 0 or 1 on nonnegative
+  parameters.** A loop is counted max(T, 0) per execution of a guard
+  that skips it where its latch fails at k = 0 (`micro/loop_guard.ptx`),
+  and max(T, 1) per entry otherwise (`micro/latch_exits_first.ptx`);
+  the max is dropped where T is never below it with every parameter
+  taken as nonnegative (`src/analysis/scalar/symexpr.rs`'s doc):
+  `micro/single_loop.ptx` reads its `ld.param.u32` n as `param_1`,
+  with exact totals, where an n of 2^31 or more, below 1 as its
+  `setp.lt.s32` compares it, runs no trips.
 - **Addresses the tracer cannot read are unknown rows**, with the
   reason, unless every thread of the CTA computes the part it cannot
   read alike: that part is then a variable, `uniform(%r54@90)`
@@ -248,42 +263,50 @@ its shared writes and instruction counts remain counted
   16–32 B, 16 B with `--bind 1:n=0`; `micro/uniform_bases.ptx`), count
   the loop's own blocks only, and need a numeric trip count, the block
   shape, constant lane and counter coefficients, and every access's
-  address (else `unique unknown`, `micro/footprint_unknown.ptx`). k5's K loop at
+  address (else `unique unknown`, `micro/footprint_unknown.ptx`), and
+  are bounds where which threads run the loop is not known. k5's K loop at
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
-  k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B.
+  k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B, a bound until M and
+  the grid are given, which its guard `x < M && y < N` reads.
 
 ### Reported as unknowns
 
 - **A block under a loop whose trip count is not read is unknown in
-  the totals per launch**, as its trips may differ by CTA: ds2 rope's
-  loop, whose latch reads `%ctaid.y`, moves `16640·trips` B per CTA
-  and `+ unknown` per launch (`b200-launch-totals.test`).
+  the totals per launch**, as its trips may differ by CTA
+  (`micro_loop_guard_sibling_exit`'s first loop, with two exit edges:
+  `bar.sync <= 320 + unknown` under `micro/loop_guard_sibling.ncu.json`'s
+  grid). Under a count that reads the CTA index
+  a block is counted over the launch as the count summed over the
+  grid, CTA by CTA where which of its threads run varies by CTA
+  (`micro/cta_trips.ptx`: 192 and 224 barriers over 4 CTAs, as
+  measured on an RTX 4090), and stays unknown where those threads are
+  not counted at every CTA, past 2^24 CTAs on the axes the count
+  reads, or where the count at a CTA is negative or not a constant.
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unroll main+remainder pair, LLVM's two-register counter and its
   predicate-phi two-trip loop. Not recognised, reported as
-  `trips = unknown`: grid-stride loops (special registers),
-  data-dependent bounds, multi-exit loops, inner loops bounded by an
+  `trips = unknown`: grid-stride loops without `--grid`, whose step is
+  `%nctaid.x` ("induction step is not a constant"), data-dependent
+  bounds, multi-exit loops, inner loops bounded by an
   enclosing loop's counter (`micro/triangular.ptx`), a latch `setp`
   that combines its comparison with a predicate
   (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
   compares floats (`micro/latch_float.ptx`: "latch condition compares
-  floating-point values"), and the attention kernels'
-  causal loops, bounded by the CTA index, the mbarrier spin-waits
+  floating-point values"), a bound through a `selp` or shift of the
+  CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. Bounds the
-  tracer does not read, by the loop's source line: a `max` of
-  non-constants (b200 `scaled_mm_kernel`, `:100`;
-  `_w8a8_block_fp8_matmul`, `:90`), a division by a
-  non-constant (b200 `_chunk_scan_fwd_kernel`, `:331`), a float
-  immediate and an `and.pred` latch predicate (sol-study census
+  tracer does not read, by the loop's source line: a division by a
+  parameter not bound (`micro/trip_div_param.ptx` reads with `--bind`),
+  a float immediate and an `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`).
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 771 have a trip count: 1,445 are mbarrier waits
-  and 411 read loaded values, 240 depend on `%ctaid` (grid-stride
-  loops, per-CTA row ranges, causal and persistent tile loops), 75
-  `max`/`min`, 1 unpack, 20 atomics, 20 divisions, 17 multi-exit.
+  inferred arguments), 953 have a trip count: 1,445 are mbarrier waits
+  and 411 read loaded values, 40 depend on `%ctaid` (15 through a
+  `selp`, 7 a shift), 93 are grid-stride loops, 1 unpack, 20 atomics,
+  20 divisions, 17 multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
@@ -350,13 +373,43 @@ its shared writes and instruction counts remain counted
   Triton builds from `pid·BLOCK + arange` leave what they guard a bound
   (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
   is an unknown selector too (`micro/guards.ptx`: the store total stays
-  a bound). A comparison with a loop counter is not read per trip
-  (`fp8_gemm_kernel.lm_head_dx`'s `<block 4>` runs on 510 of its loop's
-  512 trips, 12,533,760 times as its record measures, and reads
-  `<= 12582912`, `gluon-counter-guard.test`), and a counter whose trip
-  count is a constant only under the bindings has no range, since
-  `AffineValueTracer::bound` reads the unbound `constant_trips`. The
-  census counts by cause are in the message of commit `ccf8220`.
+  a bound). A comparison with a loop counter is counted trip by trip
+  (`micro/counter_guard.ptx`: 384 barriers and 300 stores per CTA, as
+  measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `k < 511`,
+  confirmed at 12,533,760, `gluon-counter-guard.test`) only where the
+  block lies in that loop, the loop's trip count is a constant and the
+  comparison holds that one counter with the thread index; with a
+  parameter not bound (`micro/counter_guard.ptx`'s mask `64·k +
+  %tid.x < n` without `--bind`), the CTA index, or a second counter, it
+  is an unknown selector. The census counts by
+  cause are in the message of commit `ccf8220`. Sectors per warp under
+  such a comparison count every lane it holds at some CTA:
+  `micro/cp_async_ignore_src.ptx` line 55 reads its source on 80
+  threads over the launch, exactly, with sectors `<= 51`, where 40 are
+  measured.
+- **A `cp.async` whose ignore-src is not read counts cp-size on every
+  thread that runs it, as a bound.**
+  - Census (13,489 in 300 kernels, sm_100a, no bindings): 479 read
+    nothing (a constant true ignore-src), 285 all, 9 on a thread-index
+    condition, 58 on a loop counter trip by trip, 901 on one the same
+    for every thread, 213 partly (212 in loops), 11,544 not at all
+    (4,175 in loops).
+  - B200 fixtures (319 in 16 kernels): without their records none is
+    read exactly (74 the same for every thread, 245 not read). With
+    them: 84 read all, 48 on a thread-index condition, 34 trip by trip,
+    40 partly, 113 not at all (49 in loops).
+
+  In the B200 records 14 such copies in two kernels are predicted as
+  every lane reading, a range rather than a bound, and measure fewer
+  L2 sectors (`ssd_pass_tlrange._state_passing_fwd_kernel`'s line 184:
+  20,480–21,760 predicted, 20,368 measured; six lines of
+  `scaled_mm_kernel`, 1,835,008–2,293,760 against 1,823,328 to
+  1,832,880).
+
+  A src-size register is a bound on which threads read and how much
+  (`micro/cp_async_src_size.ptx`: `global load <= 16 B (predicated)
+  warp: <= 17 sectors`, `load <= 1024 B`, where 16 lanes read 8
+  sectors; `micro-cp-async-src-size.test`).
 
 ### Presentation
 
@@ -370,6 +423,10 @@ its shared writes and instruction counts remain counted
   special register %ctaid.x" (34 in `tma_best`, 24 in
   `bmm_kernel_persistent`), not that a join of two values stopped the
   trace.
+- **A thread-index condition that holds on every thread still
+  prints.** Under its record b200 scaled_mm's copies outside the K loop
+  read their sources `on 128 threads in 4 warps (16 * (%tid.x mod 8) <
+  7936)`, every thread of the block (`b200-every-thread-condition.test`).
 - Per-thread totals of a warp-specialized kernel are `<=` the sum of
   its partitions, since a thread runs one of them: the `threads` column
   of the block table says which threads run each block (`128
@@ -408,6 +465,13 @@ its shared writes and instruction counts remain counted
 
 ### Producers and validation
 
+- **A launch count past the lane budget is rejected late.**
+  `ThreadSet::weighted_launch` counts a group of CTAs' threads when it
+  first meets the group, so a set whose CTAs form more groups than 2^26
+  lane evaluations allow tallies every group's lanes before it returns
+  none: the `spread` case of `a_launch_sums_each_cta_s_threads_and_warps`,
+  65,537 groups of 1,024 lanes, evaluates about 134 million predicates.
+
 - **The frontend is not panic-free for arbitrary UTF-8.** An input file
   containing only `é` causes `ptxroof analyze` to exit with a panic:
   `end byte index 1 is not a char boundary`. The byte-oriented lexer
@@ -445,12 +509,13 @@ its shared writes and instruction counts remain counted
 - Generated loops (`tests/gen_loops.py`, `tests/lit/gen-loops.test`): single counted
   loops drawn from a grammar of steps, initial values, bounds,
   comparisons, operand orders, branch polarities and read positions,
-  each simulated in Python and bound with `--bind`; the tool's count
-  must equal the simulation wherever the loop iterates, a refused
-  shape only counts, and a crash, other than one loop or a count left
-  symbolic fails. The lit test pins seed 1's 200 kernels: 226 bindings
-  compared, 8 refused, all a loop that continues while two values are
-  equal.
+  some behind LLVM's loop guard, each simulated in Python and bound
+  with `--bind`; the tool's count must equal the simulation at every
+  binding, 0 where the guard skips the loop, a refused shape only
+  counts, and a crash, other than one loop or a count left symbolic
+  fails. The lit test pins seed 1's 200 kernels: 486 bindings compared,
+  338 refused, 174 a loop that continues while two values are equal
+  and 164 one whose bound moves away from its exit condition.
 - Hardware cross-check on an RTX 4090 with Nsight Compute: k5's
   counts, and the c_fc fp8 GEMM's launch (M=4096, N=3072, K=768):
   `sm__ops_path_tensor_src_fp8.sum` = 19,327,352,832 = 2·M·N·K, the
@@ -583,9 +648,10 @@ One line each, with the trigger that would start it.
   lane that runs it, a range over the address's alignment
   (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`; the
   text report counts the lines that agree and prints those that differ,
-  none in the Gluon records, `tests/lit/gluon-ncu.test`, 24 in the B200
-  records, all listed under Known limitations), once the line's global
-  SASS executed the predicted count, or within its bound. ptxas may run
+  two in the Gluon records, lm_head_dx's (`tests/lit/gluon-ncu.test`),
+  and 14 in the B200 records, all listed under Known limitations), once
+  the line's global SASS executed the predicted count, or within its
+  bound. ptxas may run
   a load less often than its statement: `tma_best_Q64N64w8s3._stage1_tma`'s
   line 544 executes 655,360 times where its loop iteration runs
   2,424,832 times, so it and one line of
@@ -593,8 +659,8 @@ One line each, with the trigger that would start it.
   (`outcome: executions_differ`). Not compared at all: a generic access
   and a line whose count is unknown. `tests/ncu_corpus.rs` keeps
   every record's block verdicts, their counts and its sector lines by
-  outcome in one snapshot: 117 blocks confirmed, 231 consistent, 512
-  unchecked; 736 sector lines agree, 25 differ, 2 not compared. `ci.sh` measures every record again on the GPU it
+  outcome in one snapshot: 137 blocks confirmed, 273 consistent, 499
+  unchecked; 956 sector lines agree, 16 differ, 2 not compared. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed; a record of
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.

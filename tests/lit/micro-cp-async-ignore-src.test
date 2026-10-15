@@ -1,0 +1,27 @@
+# cp.async with an ignore-src predicate (PTX ISA §9.7.9.26.3.1): each
+# copy's global row counts the lanes whose ignore-src is false, under
+# the copy's own guard, and its shared row the lanes that run it. The
+# cache-hinted copy's ignore-src compares the CTA index with a
+# parameter, so without the grid its row is a bound. The global load
+# bytes per CTA count the reading lanes: 256 + 64 + 128 B, and at most
+# 64 lanes of 16 B for the cache-hinted copy; the shared store counts
+# every lane that runs a copy, 2752 B. Under the record, over the
+# launch, the cache-hinted copy reads on 64 lanes of CTA 0 and 16 of
+# CTA 1: 2176 B in all, the four lines' 68 measured L2 sectors.
+RUN: %ptxroof analyze %fixtures/micro/cp_async_ignore_src.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/cp_async_ignore_src.ptx --ncu %fixtures/micro/cp_async_ignore_src.ncu.json | FileCheck --check-prefix=NCU "%s"
+CHECK: <block 0>  cp.async.cg.shared.global                 shared store 16 B                                                                                         [16 * %tid.x + buf]
+CHECK-NEXT: <block 0>  cp.async.cg.shared.global                 global load 16 B on 16 threads in 1 warp (%tid.x < 16)                 warp: 8–9 sectors (ideal 8)        [16 * %tid.x + param_0]
+CHECK-NEXT: <block 0>  cp.async.ca.shared.global                 shared store 4 B on 48 threads in 2 warps (%tid.x < 48)                                                   [4 * %tid.x + buf + 1024]
+CHECK-NEXT: <block 0>  cp.async.ca.shared.global                 global load 4 B on 16 threads in 1 warp (%tid.x < 48 and %tid.x < 16)  warp: 2–3 sectors (ideal 2)        [4 * %tid.x + param_0 + 1024]
+CHECK-NEXT: <block 0>  cp.async.ca.shared.global                 shared store 8 B                                                                                          [8 * %tid.x + buf + 2048]
+CHECK-NEXT: <block 0>  cp.async.ca.shared.global                 global load 8 B on 16 threads in 1 warp (%tid.x < 16)                  warp: 4–5 sectors (ideal 4)        [8 * %tid.x + param_0 + 2048]
+CHECK-NEXT: <block 0>  cp.async.cg.shared.global.L2::cache_hint  shared store 16 B                                                                                         [16 * %tid.x + buf + 3072]
+CHECK-NEXT: <block 0>  cp.async.cg.shared.global.L2::cache_hint  global load 16 B (predicated)                                          warp: <= 17 sectors (ideal <= 16)  [16 * %tid.x + 1024 * %ctaid.x + param_0 + 4096]
+CHECK: totals per CTA [static]:
+CHECK: global bytes: load <= 1472 B, store 0 B
+CHECK: shared bytes: load 0 B, store 2752 B
+NCU: totals per launch [static]:
+NCU: global bytes: load 2176 B, store 0 B
+NCU: shared bytes: load 0 B, store 5504 B
+NCU: measured L2 sectors of global accesses: 4 lines agree (0 exact, 3 within a range, 1 within a bound), 0 differ

@@ -1,15 +1,26 @@
 # Totals per launch under a record's grid. norope's store runs on 72
 # threads of each of its 8192 CTAs, 16 B each: 9437184 B. ds2 rope's
-# loads and stores sit in a loop whose latch reads %ctaid.y, so its
-# trip count is not read and may differ by CTA: per CTA they are
-# 16640·trips B, per launch unknown.
+# loads and stores sit in a loop whose latch reads a `min` of %ctaid.y,
+# a row range of 16 rows per CTA: per CTA 16640 B per trip, over the
+# record's 512 CTAs 136,314,880 B, and the loop's executions agree with
+# the B200's. ssd_pass's copies read their sources only where their
+# ignore-src is false (PTX ISA §9.7.9.26.3.1): in 3 stages before its
+# loop and on 29 of the loop's 32 trips, `k < 30`, 8200 B each per CTA,
+# 262,400 B, over the record's 320 CTAs 83,968,000 B.
 RUN: %ptxroof analyze %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json | FileCheck --check-prefix=NOROPE "%s"
 RUN: %ptxroof analyze %fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ncu.json | FileCheck --check-prefix=DS2 "%s"
+RUN: %ptxroof analyze %fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ptx --ncu %fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ncu.json | FileCheck --check-prefix=SSD "%s"
 NOROPE: totals per CTA [static]:
 NOROPE: global bytes: load 2176 B, store 1152 B
 NOROPE: totals per launch [static]:
 NOROPE: global bytes: load 17825792 B, store 9437184 B
+DS2: trips = max(min(16 * %ctaid.y + 16, 8192) - 16 * %ctaid.y, 1)
 DS2: totals per CTA [static]:
-DS2: global bytes: load 16640 * trips(
+DS2: global bytes: load 16640 * max(min(16 * %ctaid.y + 16, 8192) - 16 * %ctaid.y, 1) B
 DS2: totals per launch [static]:
-DS2: global bytes: load 0 B + unknown, store 0 B + unknown
+DS2: global bytes: load 136314880 B, store 135266304 B
+DS2: $L__BB0_2{{ +}}confirmed
+SSD: totals per CTA [static]:
+SSD: global bytes: load 262400 B, store 270336 B
+SSD: totals per launch [static]:
+SSD: global bytes: load 83968000 B, store 86507520 B

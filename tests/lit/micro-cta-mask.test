@@ -9,13 +9,13 @@ RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 | FileCheck -
 RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 15 | FileCheck --check-prefix=FULL "%s"
 RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 16 | FileCheck --check-prefix=PARTIAL "%s"
 RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 2147483647,65535,65535 | FileCheck --check-prefix=HUGE "%s"
-FREE: st.global.u32  global store 4 B (predicated)  warp: <= 5 sectors (ideal 4)
+FREE: st.global.u32  global store 4 B (predicated)  warp: <= 5 sectors (ideal <= 4)
 FREE: totals per CTA [static]:
 FREE: global bytes: load 0 B, store <= 256 B
 FULL: st.global.u32  global store 4 B (predicated)  warp: 4–5 sectors (ideal 4)
 FULL: totals per CTA [static]:
 FULL: global bytes: load 0 B, store 256 B
-PARTIAL: st.global.u32  global store 4 B on <= 64 threads in 2 warps (%tid.x + 64 * %ctaid.x < 1000)  warp: <= 5 sectors (ideal 4)
+PARTIAL: st.global.u32  global store 4 B on <= 64 threads in 2 warps (%tid.x + 64 * %ctaid.x < 1000)  warp: <= 5 sectors (ideal <= 4)
 PARTIAL: totals per CTA [static]:
 PARTIAL: global bytes: load 0 B, store <= 256 B
 PARTIAL: totals per launch [static]:

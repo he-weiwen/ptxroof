@@ -19,7 +19,7 @@
 
 use crate::analysis::control_flow::loops::LoopForest;
 use crate::analysis::instruction_counts::classify::{
-    ClassifiedInstruction, InstructionCategory, classify,
+    ClassifiedInstruction, InstructionCategory, classify_in,
 };
 use crate::analysis::instruction_counts::measurement::Measurement;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -99,7 +99,7 @@ pub fn collect(
                 let provenance = b.start + si;
                 counts.total += 1;
                 let predicated = instr.predicate.is_some();
-                let classified = classify(module, instr);
+                let classified = classify_in(module, kernel, instr);
                 match classified.category {
                     InstructionCategory::Flop => counts.flop += 1,
                     InstructionCategory::NonFlopArith { .. } => counts.non_flop_arith += 1,
@@ -115,6 +115,7 @@ pub fn collect(
                     count: c.count,
                     predicated,
                     provenance,
+                    memory_operand: c.memory_operand,
                 }));
                 instructions.push(InstructionRecord {
                     opcode: module.opcode(instr),
