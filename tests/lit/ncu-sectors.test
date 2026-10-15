@@ -1,0 +1,21 @@
+# A line whose global access ptxas lowers at its own width compares its
+# L2 sectors over the launch with the record's
+# l2_theoretical_sectors_global: the predicted sectors per warp request
+# times the warps with a lane that runs it. Here one warp loads and
+# stores one float at one address, one sector each.
+RUN: %ptxroof analyze "%S/Inputs/ncu-two-per-line.ptx" --ncu "%S/Inputs/ncu-two-per-line.ncu.json" --json | %check-report "%s"
+{
+  "kernels": [
+    {
+      "measured": [
+        {
+          "name": "<block 0>",
+          "sectors": [
+            {"line": 17, "predicted": {"min": 1, "max": 1}, "ideal": {"min": 1, "max": 1}, "at_most": false, "measured": 1, "measured_ideal": 1, "agrees": true},
+            {"line": 19, "predicted": {"min": 1, "max": 1}, "ideal": {"min": 1, "max": 1}, "at_most": false, "measured": 1, "measured_ideal": 1, "agrees": true}
+          ]
+        }
+      ]
+    }
+  ]
+}

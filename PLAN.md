@@ -555,7 +555,13 @@ One line each, with the trigger that would start it.
   counts its instructions, those with SASS and those that agree, and
   lists every line whose measured count is not the predicted number,
   with its SASS opcodes (`differing`); the text report prints them
-  under `measured`. `ci.sh` measures every record again on the GPU it
+  under `measured`. A line whose global SASS all have the width of its
+  one PTX global access also compares its L2 sectors and their ideal
+  over the launch, the sectors per warp request times the warps with a
+  lane that runs it, a range over the address's alignment
+  (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`); not
+  compared: a generic access, a line whose count is unknown, and the
+  B200 records. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.

@@ -45,7 +45,7 @@ use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
-use crate::report::measured::{LineIndex, NcuRecord, Prediction};
+use crate::report::measured::{LineIndex, NcuRecord, Prediction, Sectors};
 use crate::report::names::demangle;
 use crate::report::schema::*;
 use crate::ssa::Value;
@@ -265,7 +265,7 @@ impl KernelReportBuilder<'_> {
         &self,
         tracer: &AffineValueTracer,
         uniformity: &Uniformity,
-    ) -> (ByScope<Access>, ByScope<AccessForm>) {
+    ) -> (ByScope<Access>, ByScope<AccessForm>, PerRequests) {
         let (module, kernel, cfg, forest, bind_map) = (
             self.module,
             self.kernel,
@@ -275,6 +275,7 @@ impl KernelReportBuilder<'_> {
         );
         let display = &self.display;
         let mut forms: ByScope<AccessForm> = HashMap::new();
+        let mut per_request = PerRequests::new();
         let name = |v: &Var| match v {
             Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
             Var::Uniform(u) => format!("uniform({})", self.value_name(*u)),
@@ -449,6 +450,18 @@ impl KernelReportBuilder<'_> {
                         Some(Err(why)) => (None, None, Some(why)),
                         None => (None, None, None),
                     };
+                    if space == Space::Global
+                        && let (Some(b), Some(sectors), Some(ideal)) =
+                            (bytes, sectors_per_request, ideal)
+                    {
+                        let r = PerRequest {
+                            bits: b * 8,
+                            sectors,
+                            ideal,
+                            at_most: sectors_at_most,
+                        };
+                        per_request.insert(pos, r);
+                    }
                     if let Some(b) = bytes.filter(|_| !self.unused[pos]) {
                         let uniform_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
                             v.uniform()
@@ -510,9 +523,22 @@ impl KernelReportBuilder<'_> {
                 }
             }
         }
-        (out, forms)
+        (out, forms, per_request)
     }
 }
+
+/// A global access's width in bits and its sectors and ideal per warp
+/// request, bounds when `at_most`.
+#[derive(Clone, Copy)]
+struct PerRequest {
+    bits: u32,
+    sectors: CountRange,
+    ideal: CountRange,
+    at_most: bool,
+}
+
+/// Per statement, its global access's sectors.
+type PerRequests = HashMap<usize, PerRequest>;
 
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
@@ -846,6 +872,7 @@ struct KernelReportBuilder<'a> {
     accesses: ByScope<Access>,
     /// The same rows' bound affine forms, where known.
     access_forms: ByScope<AccessForm>,
+    per_request: PerRequests,
     /// Which threads run each block and each guarded instruction.
     sets: ThreadSets,
     /// Per statement: it runs, but nothing with an effect reads its results.
@@ -921,6 +948,7 @@ impl<'a> KernelReportBuilder<'a> {
             display,
             accesses: HashMap::new(),
             access_forms: HashMap::new(),
+            per_request: HashMap::new(),
             sets: ThreadSets::default(),
             unused: Vec::new(),
             shape,
@@ -989,9 +1017,10 @@ impl<'a> KernelReportBuilder<'a> {
                 false => (sets.guards.get(&s) == Some(&Pred::True)).then_some(true),
             }
         });
-        let (accesses, access_forms) = b.accesses_by_scope(&tracer, uniformity);
+        let (accesses, access_forms, per_request) = b.accesses_by_scope(&tracer, uniformity);
         b.accesses = accesses;
         b.access_forms = access_forms;
+        b.per_request = per_request;
         b
     }
 
@@ -1920,7 +1949,7 @@ impl<'a> KernelReportBuilder<'a> {
                     continue;
                 };
                 let set = self.sets.of(bm.block, i.provenance);
-                let (threads, _, at_most, explained) =
+                let (threads, warps, at_most, explained) =
                     self.executing(bm, &set, chain_at_most, Some(cta));
                 let guarded = self.sets.guards.contains_key(&i.provenance);
                 let holds = self.sets.guards.get(&i.provenance) == Some(&Pred::True);
@@ -1931,6 +1960,45 @@ impl<'a> KernelReportBuilder<'a> {
                 // Over the launch, a set counted at every CTA explains its
                 // block as an exact count per CTA does.
                 let launch = self.launch(bm.block, i.provenance);
+                let at_most = !never
+                    && match launch {
+                        Some(_) => {
+                            chain_at_most
+                                || !cta.exact
+                                || (instr.predicate.is_some() && !(holds || guarded))
+                        }
+                        None => {
+                            at_most
+                                || (instr.predicate.is_some() && !(holds || guarded && explained))
+                        }
+                    };
+                // Warps with a lane that runs it: each requests its sectors.
+                let requests = match (never, launch) {
+                    (true, _) => alone.then_some((0, false)),
+                    (false, Some((_, w))) => {
+                        trips.and_then(|m| Some((u64::try_from(m).ok()?.checked_mul(w)?, false)))
+                    }
+                    (false, None) => trips.zip(warps).and_then(|(m, (w, bound))| {
+                        let n = u64::try_from(m.checked_mul(w)?).ok()?.checked_mul(ctas)?;
+                        Some((n, bound))
+                    }),
+                };
+                let sectors = (self.per_request.get(&i.provenance).copied())
+                    .zip(requests)
+                    .and_then(|(r, (n, bound))| {
+                        let total = |c: CountRange| {
+                            Some(SectorCount {
+                                min: u64::from(c.min).checked_mul(n)?,
+                                max: u64::from(c.max).checked_mul(n)?,
+                            })
+                        };
+                        Some(Sectors {
+                            bits: r.bits,
+                            requested: total(r.sectors)?,
+                            ideal: total(r.ideal)?,
+                            at_most: at_most || bound || r.at_most,
+                        })
+                    });
                 predictions.push(Prediction {
                     line,
                     constraint: count_constraint(self.module, instr),
@@ -1941,20 +2009,8 @@ impl<'a> KernelReportBuilder<'a> {
                         }
                         (false, None) => trips.map(|m| (m * threads) as u64 * ctas),
                     },
-                    at_most: !never
-                        && match launch {
-                            Some(_) => {
-                                chain_at_most
-                                    || !cta.exact
-                                    || (instr.predicate.is_some() && !(holds || guarded))
-                            }
-                            None => {
-                                at_most
-                                    || (instr.predicate.is_some()
-                                        && !(holds || guarded && explained))
-                            }
-                        },
-                    sectors: None,
+                    at_most,
+                    sectors,
                 });
             }
             let name = self.cfg.block_name(self.module, bm.block);
