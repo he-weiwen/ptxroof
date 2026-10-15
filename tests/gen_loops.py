@@ -9,8 +9,9 @@ plus a constant, read after the increment, before it through a copy,
 or through LLVM's two-register form. A Python interpreter of the same
 loop gives the trip count for each binding of the parameter; the tool's
 symbolic count, bound with --bind, must equal it wherever the loop
-actually iterates. A shape the tool refuses is counted as unsupported,
-never as a failure: the property is that it is never wrong.
+actually iterates. A shape the tool refuses with a reason is counted as
+unsupported, never as a failure: the property is that it is never wrong.
+A crash, other than one loop, or a count left symbolic is an error.
 
 Usage: gen_loops.py [--seed N] [--count N] [--bin PATH] [--keep DIR]
 """
@@ -104,6 +105,10 @@ def simulate(shape, n):
     return None
 
 
+class ToolError(Exception):
+    pass
+
+
 def tool_trips(binary, ptx_path, n):
     """The tool's bound trip count as an int, or the unknown's reason."""
     out = subprocess.run(
@@ -111,18 +116,18 @@ def tool_trips(binary, ptx_path, n):
         capture_output=True, text=True, timeout=60,
     )
     if out.returncode != 0:
-        return f"exit {out.returncode}: {out.stderr.strip()[:200]}"
+        raise ToolError(f"exit {out.returncode}: {out.stderr.strip()[:200]}")
     report = json.loads(out.stdout)
     loops = report["kernels"][0]["loops"]
     if len(loops) != 1:
-        return f"{len(loops)} loops found"
+        raise ToolError(f"{len(loops)} loops found")
     trips = loops[0]["trips"]
     if "unknown" in trips:
         return trips["unknown"]
     try:
         return int(trips["expr"])
     except ValueError:
-        return f"symbolic after binding: {trips['expr']}"
+        raise ToolError(f"symbolic after binding: {trips['expr']}")
 
 
 def main():
@@ -138,7 +143,7 @@ def main():
     if not opts.bin.is_file():
         sys.exit(f"gen_loops: binary {opts.bin} not found — run `cargo build` first")
     rng = random.Random(opts.seed)
-    compared = mismatches = 0
+    compared = mismatches = errors = 0
     unsupported = {}
     with tempfile.TemporaryDirectory() as tmp:
         for k in range(opts.count):
@@ -152,7 +157,12 @@ def main():
             cases = [(n, simulate(shape, n)) for n in BINDINGS]
             cases = [(n, t) for n, t in cases if t is not None and t >= 2]
             for n, expected in cases:
-                got = tool_trips(opts.bin, path, n)
+                try:
+                    got = tool_trips(opts.bin, path, n)
+                except ToolError as e:
+                    errors += 1
+                    print(f"ERROR seed {opts.seed} kernel {k} n={n}: {e}")
+                    continue
                 if isinstance(got, int):
                     compared += 1
                     if got != expected:
@@ -166,9 +176,9 @@ def main():
         print(f"unsupported x{count}: {reason}")
     print(
         f"gen_loops: {opts.count} kernels, {compared} bindings compared, "
-        f"{sum(unsupported.values())} unsupported, {mismatches} mismatch(es)"
+        f"{sum(unsupported.values())} unsupported, {mismatches} mismatch(es), {errors} error(s)"
     )
-    return 1 if mismatches else 0
+    return 1 if mismatches or errors else 0
 
 
 def self_test():

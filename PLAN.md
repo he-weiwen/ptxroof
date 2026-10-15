@@ -450,13 +450,15 @@ its shared writes and instruction counts remain counted
   `tests/roundtrip-allowlist.txt`. One lit test per fixture
   (`tests/lit/roundtrip`), unsupported without the toolkit or when
   ptxas rejects the fixture's `.version` as newer than its own.
-- Generated loops (`tests/gen_loops.py`, a CI step): single counted
+- Generated loops (`tests/gen_loops.py`, `tests/lit/gen-loops.test`): single counted
   loops drawn from a grammar of steps, initial values, bounds,
   comparisons, operand orders, branch polarities and read positions,
   each simulated in Python and bound with `--bind`; the tool's count
-  must equal the simulation wherever the loop iterates, and a refused
-  shape only counts. 200 kernels per run; the only refused shape is a
-  loop that continues while two values are equal.
+  must equal the simulation wherever the loop iterates, a refused
+  shape only counts, and a crash, other than one loop or a count left
+  symbolic fails. The lit test pins seed 1's 200 kernels: 226 bindings
+  compared, 8 refused, all a loop that continues while two values are
+  equal.
 - Hardware cross-check on an RTX 4090 with Nsight Compute: k5's
   counts, and the c_fc fp8 GEMM's launch (M=4096, N=3072, K=768):
   `sm__ops_path_tensor_src_fp8.sum` = 19,327,352,832 = 2·M·N·K, the

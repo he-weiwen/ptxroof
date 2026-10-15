@@ -1,4 +1,4 @@
-# cargo mutants also runs tests/cli_suite.rs, which drives
-# tests/gen_loops.py and the lit tests, so a mutant only they catch
+# cargo mutants also runs tests/cli_suite.rs, which drives the lit
+# tests, tests/gen_loops.py among them, so a mutant only they catch
 # counts as caught.
 additional_cargo_test_args = ["--", "--include-ignored"]

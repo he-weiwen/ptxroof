@@ -1,0 +1,6 @@
+# The generated loops of seed 1 (tests/gen_loops.py): every trip count
+# the tool gives equals the simulator's, and how many bindings it
+# compares and which shapes it refuses are pinned.
+RUN: python3 %S/../gen_loops.py --seed 1 --count 200 --bin %ptxroof | FileCheck "%s"
+CHECK:      unsupported x8: loop continues only while values are equal — shape not recognized
+CHECK-NEXT: gen_loops: 200 kernels, 226 bindings compared, 8 unsupported, 0 mismatch(es), 0 error(s)

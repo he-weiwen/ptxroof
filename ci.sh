@@ -23,9 +23,8 @@ cargo test --locked
 cargo build --locked # the lit tests run target/debug/ptxroof
 
 tests/lit.sh -sv tests/lit
-# Compare recognized trip counts with a simulator for generated loop kernels.
+# The simulator behind tests/lit/gen-loops.test, on shapes with a known count.
 python3 tests/gen_loops.py --self-test
-python3 tests/gen_loops.py --seed 1 --count 200
 
 gpu_ready() {
     for tool in ncu ptxas cuobjdump gcc nvidia-smi; do
