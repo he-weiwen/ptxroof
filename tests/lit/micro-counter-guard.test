@@ -1,0 +1,6 @@
+# Guards on a loop counter, read per trip: the barrier's `k >= 3`
+# compares the counter alone, though the loop also holds a branch on
+# the thread index; the store's mask compares it with the lanes.
+RUN: %ptxroof analyze %fixtures/micro/counter_guard.ptx --bind 1:n=300 | FileCheck "%s"
+CHECK: <block 2>  (no line info)       1  <= 64 in <= 2 warps (k[$L__BB0_1] >= 3)
+CHECK: <block 4>  (no line info)       1  <= 64 in <= 2 warps (%tid.x + 64 * k[$L__BB0_1] < 364)
