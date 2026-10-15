@@ -346,13 +346,31 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, Sy
 /// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
 fn below_zero(cmp: &str, e: SymExpr) -> Option<SymExpr> {
     let minus = |e: SymExpr| SymExpr::mul(SymExpr::Const(-1), e);
-    Some(match cmp {
+    Some(undivided(match cmp {
         "lt" => e,
         "le" => SymExpr::sub(e, SymExpr::Const(1)),
         "gt" => minus(e),
         "ge" => SymExpr::sub(minus(e), SymExpr::Const(1)),
         _ => return None,
-    })
+    }))
+}
+
+/// `±⌊x/d⌋ + b < 0` or `±⌈x/d⌉ + b < 0` as the same test of x, as
+/// ⌊x/d⌋ ≤ m ⇔ x < (m + 1)·d and ⌈x/d⌉ ≤ m ⇔ x ≤ m·d for d > 0.
+fn undivided(e: SymExpr) -> SymExpr {
+    let b = i128::from(e.const_part());
+    let (s, rest) = SymExpr::split_const(SymExpr::sub(e.clone(), SymExpr::Const(e.const_part())));
+    let (x, k) = match (rest, s) {
+        (SymExpr::FloorDiv(x, d), 1) => (x, b * i128::from(d)),
+        (SymExpr::FloorDiv(x, d), -1) => (x, (b + 1) * i128::from(d) - 1),
+        (SymExpr::CeilDiv(x, d), 1) => (x, (b + 1) * i128::from(d) - 1),
+        (SymExpr::CeilDiv(x, d), -1) => (x, b * i128::from(d)),
+        _ => return e,
+    };
+    match i64::try_from(k) {
+        Ok(k) => SymExpr::add(SymExpr::mul(SymExpr::Const(s), *x), SymExpr::Const(k)),
+        Err(_) => e,
+    }
 }
 
 /// The comparison that holds exactly when `cmp` does not.
@@ -869,6 +887,42 @@ mod tests {
         );
         assert_eq!(entry(&guard("ne.s32 %p1, %r1, 0")), "$L__L");
         assert_eq!(entry(&guard("eq.s32 %p1, %r1, 5")), "$L__L");
+    }
+
+    /// A loop from 0 below ⌊n/16⌋ is entered where n ≥ 16, and one below
+    /// ⌈n/8⌉ where n ≥ 1: guards on n alone test those latches at k = 0.
+    #[test]
+    fn a_guard_on_the_numerator_tests_a_floor_or_ceiling_bound() {
+        let entry = |bound: &str, guard: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\n{bound}\n{guard}\n@%p1 bra $L__E;\n\
+                     mov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, 1;\n\
+                     setp.lt.u32 %p2, %r2, %r3;\n@%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let loops = entries_of(&src);
+            (loops[0].1.clone().unwrap_or_default(), loops[0].2.clone())
+        };
+        let floor = "shr.u32 %r3, %r1, 4;";
+        let ceil = "add.s32 %r4, %r1, 7;\nshr.u32 %r3, %r4, 3;";
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        let entered = at("param_0 / 16", "<block 0>");
+        assert_eq!(entry(floor, "setp.lt.s32 %p1, %r1, 16;"), entered);
+        assert_eq!(entry(floor, "setp.lt.s32 %p1, %r3, 1;"), entered);
+        assert_eq!(
+            entry(floor, "setp.lt.s32 %p1, %r1, 15;"),
+            at("param_0 / 16", "$L__L")
+        );
+        assert_eq!(
+            entry(ceil, "setp.lt.s32 %p1, %r1, 1;"),
+            at("⌈param_0/8⌉", "<block 0>")
+        );
+        assert_eq!(
+            entry(ceil, "setp.lt.s32 %p1, %r1, 8;"),
+            at("⌈param_0/8⌉", "$L__L")
+        );
     }
 
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;
