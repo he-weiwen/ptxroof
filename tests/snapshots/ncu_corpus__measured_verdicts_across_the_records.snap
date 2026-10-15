@@ -1,0 +1,968 @@
+---
+source: tests/ncu_corpus.rs
+expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\n\\n{out}\")"
+---
+blocks {"confirmed": 117, "consistent": 231, "unchecked": 512}
+sector lines {"differ": 27, "exact": 69, "within a bound": 70, "within a range": 597}
+
+tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
+  $L__func_begin0	consistent	5 of 8 with SASS, 2 agreeing
+  <block 1>	consistent	119 of 261 with SASS, 61 agreeing
+  $L__BB0_18	consistent	2 of 4 with SASS, 1 agreeing
+  <block 3>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_21	unchecked	5 of 5 with SASS, 0 agreeing
+  $L__BB0_2	consistent	7 of 10 with SASS, 1 agreeing
+  <block 6>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__tmp2	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_19	consistent	3 of 5 with SASS, 2 agreeing
+  $L__BB0_3	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_5	unchecked	4 of 6 with SASS, 0 agreeing
+  <block 11>	consistent	9 of 13 with SASS, 2 agreeing
+  $L__BB0_17	unchecked	14 of 15 with SASS, 0 agreeing
+  $L__BB0_7	unchecked	2 of 4 with SASS, 0 agreeing
+  <block 14>	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__BB0_8	unchecked	2 of 4 with SASS, 0 agreeing
+  $L__BB0_10	unchecked	69 of 191 with SASS, 0 agreeing
+  <block 17>	unchecked	16 of 94 with SASS, 0 agreeing
+  $L__BB0_12	unchecked	336 of 420 with SASS, 0 agreeing
+  $L__BB0_13	unchecked	158 of 178 with SASS, 0 agreeing
+  <block 20>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_15	unchecked	26 of 30 with SASS, 0 agreeing
+  <block 22>	unchecked	1 of 2 with SASS, 0 agreeing
+  $L__BB0_22	unchecked	0 of 1 with SASS, 0 agreeing
+  sectors	{"differ": 1, "exact": 2}
+  sectors differ	lines 420
+tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage2.sm_100a.ncu.json
+  $L__func_begin0	consistent	16 of 28 with SASS, 10 agreeing
+  <block 1>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_1	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_3	consistent	18 of 29 with SASS, 5 agreeing
+  <block 4>	consistent	13 of 19 with SASS, 4 agreeing
+  $L__BB0_5	unchecked	31 of 36 with SASS, 0 agreeing
+  $L__BB0_6	confirmed	15 of 18 with SASS, 9 agreeing
+  sectors	{"exact": 3, "within a range": 1}
+tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage1.sm_100a.ncu.json
+  $L__func_begin0	consistent	10 of 13 with SASS, 6 agreeing
+  <block 1>	consistent	84 of 174 with SASS, 82 agreeing
+  $L__BB0_5	unchecked	7 of 8 with SASS, 0 agreeing
+  $L__BB0_2	unchecked	33 of 55 with SASS, 0 agreeing
+  <block 4>	unchecked	5 of 9 with SASS, 0 agreeing
+  $L__BB0_4	unchecked	148 of 179 with SASS, 0 agreeing
+  <block 6>	unchecked	0 of 1 with SASS, 0 agreeing
+  $L__BB0_6	consistent	72 of 86 with SASS, 70 agreeing
+  <block 8>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_8	consistent	25 of 26 with SASS, 25 agreeing
+  <block 10>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_10	consistent	16 of 21 with SASS, 15 agreeing
+  $L__BB0_11	unchecked	1 of 1 with SASS, 0 agreeing
+  sectors	{"exact": 1, "within a bound": 1}
+tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2.sm_100a.ncu.json
+  $L__func_begin0	consistent	14 of 22 with SASS, 10 agreeing
+  <block 1>	consistent	7 of 18 with SASS, 1 agreeing
+  $L__BB0_2	unchecked	21 of 24 with SASS, 0 agreeing
+  $L__BB0_3	consistent	9 of 9 with SASS, 3 agreeing
+  sectors	{"exact": 1, "within a range": 1}
+tests/fixtures/b200/attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cache.sm_100a.ncu.json
+  $L__func_begin0	confirmed	104 of 160 with SASS, 70 agreeing
+  <block 1>	consistent	106 of 142 with SASS, 84 agreeing
+  $L__BB0_7	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 4>	unchecked	8 of 10 with SASS, 0 agreeing
+  $L__BB0_3	unchecked	109 of 166 with SASS, 0 agreeing
+  <block 6>	unchecked	9 of 13 with SASS, 0 agreeing
+  $L__BB0_5	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 9>	unchecked	625 of 747 with SASS, 0 agreeing
+  <block 10>	unchecked	9 of 12 with SASS, 0 agreeing
+  $L__BB0_1	consistent	7 of 7 with SASS, 7 agreeing
+  $L__BB0_8	confirmed	168 of 177 with SASS, 144 agreeing
+  sectors	{"exact": 2}
+tests/fixtures/b200/attn_sglang__llama3-8b__extend._fwd_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	20 of 28 with SASS, 7 agreeing
+  <block 1>	consistent	79 of 151 with SASS, 41 agreeing
+  <block 2>	consistent	57 of 104 with SASS, 46 agreeing
+  $L__BB0_9	unchecked	2 of 2 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 5>	unchecked	57 of 78 with SASS, 0 agreeing
+  $L__BB0_5	unchecked	56 of 134 with SASS, 0 agreeing
+  <block 7>	unchecked	9 of 13 with SASS, 0 agreeing
+  $L__BB0_7	unchecked	0 of 0 with SASS, 0 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 10>	unchecked	135 of 205 with SASS, 0 agreeing
+  <block 11>	unchecked	5 of 9 with SASS, 0 agreeing
+  $L__BB0_1	consistent	3 of 3 with SASS, 3 agreeing
+  $L__BB0_10	consistent	100 of 160 with SASS, 62 agreeing
+  $L__BB0_15	unchecked	2 of 2 with SASS, 0 agreeing
+  waitLoop$scope3	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 16>	unchecked	14 of 16 with SASS, 0 agreeing
+  $L__BB0_11	unchecked	58 of 125 with SASS, 0 agreeing
+  <block 18>	unchecked	9 of 13 with SASS, 0 agreeing
+  $L__BB0_13	unchecked	0 of 0 with SASS, 0 agreeing
+  waitLoop$scope4	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 21>	unchecked	159 of 223 with SASS, 0 agreeing
+  <block 22>	unchecked	5 of 8 with SASS, 0 agreeing
+  $L__BB0_16	consistent	105 of 117 with SASS, 82 agreeing
+  $L__BB0_2	consistent	1 of 1 with SASS, 1 agreeing
+  sectors	{"exact": 4}
+tests/fixtures/b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ncu.json
+  $L__func_begin0	confirmed	62 of 136 with SASS, 29 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 2>	consistent	14 of 21 with SASS, 8 agreeing
+  <block 3>	consistent	21 of 29 with SASS, 14 agreeing
+  $L__BB0_2	confirmed	8 of 27 with SASS, 2 agreeing
+  $L__BB0_5	consistent	2 of 2 with SASS, 1 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 7>	confirmed	25 of 48 with SASS, 17 agreeing
+  $L__BB0_3	consistent	7 of 8 with SASS, 6 agreeing
+  waitLoop$scope3	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 10>	consistent	17 of 26 with SASS, 10 agreeing
+  <block 11>	consistent	24 of 33 with SASS, 17 agreeing
+  $L__BB0_6	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope4	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 14>	confirmed	196 of 476 with SASS, 191 agreeing
+tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ncu.json
+  $L__func_begin0	confirmed	148 of 211 with SASS, 99 agreeing
+  <block 1>	consistent	22 of 28 with SASS, 15 agreeing
+  $L__BB0_2	consistent	21 of 79 with SASS, 18 agreeing
+  <block 3>	consistent	14 of 86 with SASS, 11 agreeing
+  $L__BB0_6	unchecked	63 of 89 with SASS, 0 agreeing
+  $L__BB0_4	unchecked	5 of 8 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 7>	unchecked	93 of 129 with SASS, 0 agreeing
+  <block 8>	unchecked	24 of 32 with SASS, 0 agreeing
+  $L__BB0_7	consistent	1 of 4 with SASS, 1 agreeing
+  <block 10>	consistent	2 of 4 with SASS, 1 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 12>	confirmed	120 of 155 with SASS, 118 agreeing
+  $L__BB0_9	confirmed	119 of 175 with SASS, 93 agreeing
+  sectors	{"within a bound": 8}
+tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	139 of 349 with SASS, 54 agreeing
+  <block 1>	consistent	22 of 27 with SASS, 15 agreeing
+  $L__BB0_2	consistent	22 of 104 with SASS, 8 agreeing
+  <block 3>	consistent	24 of 65 with SASS, 6 agreeing
+  $L__BB0_6	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 6>	unchecked	34 of 118 with SASS, 0 agreeing
+  $L__BB0_4	unchecked	8 of 11 with SASS, 0 agreeing
+  <block 8>	unchecked	23 of 29 with SASS, 0 agreeing
+  $L__BB0_7	unchecked	1 of 7 with SASS, 0 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__BB0_9	confirmed	405 of 681 with SASS, 229 agreeing
+  sectors	{"differ": 6, "within a range": 60}
+  sectors differ	lines 676, 711, 718, 725, 752, 759
+tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ncu.json
+  $L__func_begin0	confirmed	27 of 36 with SASS, 17 agreeing
+  <block 1>	consistent	2 of 2 with SASS, 2 agreeing
+  <block 2>	unchecked	0 of 5 with SASS, 0 agreeing
+  $L__BB0_3	consistent	59 of 79 with SASS, 59 agreeing
+  <block 4>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_4	consistent	106 of 155 with SASS, 77 agreeing
+  <block 6>	consistent	47 of 59 with SASS, 47 agreeing
+  $L__BB0_6	consistent	34 of 47 with SASS, 23 agreeing
+  <block 8>	consistent	36 of 47 with SASS, 36 agreeing
+  $L__BB0_8	consistent	6 of 7 with SASS, 3 agreeing
+  <block 10>	consistent	22 of 28 with SASS, 15 agreeing
+  $L__BB0_10	consistent	35 of 52 with SASS, 24 agreeing
+  <block 12>	consistent	17 of 40 with SASS, 16 agreeing
+  $L__BB0_18	unchecked	6 of 21 with SASS, 0 agreeing
+  $L__BB0_12	unchecked	5 of 10 with SASS, 0 agreeing
+  <block 15>	unchecked	36 of 46 with SASS, 0 agreeing
+  $L__BB0_14	unchecked	13 of 15 with SASS, 0 agreeing
+  <block 17>	unchecked	24 of 30 with SASS, 0 agreeing
+  $L__BB0_16	unchecked	2 of 2 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 20>	unchecked	42 of 56 with SASS, 0 agreeing
+  <block 21>	unchecked	102 of 185 with SASS, 0 agreeing
+  $L__BB0_19	consistent	1 of 4 with SASS, 1 agreeing
+  $L__BB0_20	consistent	1 of 1 with SASS, 1 agreeing
+  <block 24>	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 26>	unchecked	0 of 1 with SASS, 0 agreeing
+  <block 27>	consistent	117 of 205 with SASS, 96 agreeing
+  $L__BB0_23	confirmed	5 of 9 with SASS, 4 agreeing
+  $L__BB0_24	confirmed	3 of 3 with SASS, 2 agreeing
+tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	31 of 39 with SASS, 19 agreeing
+  <block 1>	consistent	36 of 66 with SASS, 26 agreeing
+  <block 2>	consistent	8 of 16 with SASS, 8 agreeing
+  <block 3>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_1	consistent	3 of 3 with SASS, 2 agreeing
+  $L__BB0_4	consistent	38 of 74 with SASS, 38 agreeing
+  $L__BB0_6	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_8	consistent	4 of 7 with SASS, 4 agreeing
+  <block 8>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_9	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_11	consistent	4 of 7 with SASS, 4 agreeing
+  <block 11>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_12	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_14	consistent	4 of 7 with SASS, 4 agreeing
+  <block 14>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_15	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_17	consistent	5 of 7 with SASS, 5 agreeing
+  <block 17>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_18	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_20	consistent	5 of 17 with SASS, 4 agreeing
+  <block 20>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_21	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_23	consistent	100 of 188 with SASS, 56 agreeing
+  <block 23>	consistent	22 of 28 with SASS, 15 agreeing
+  $L__BB0_25	consistent	26 of 88 with SASS, 23 agreeing
+  <block 25>	consistent	28 of 88 with SASS, 6 agreeing
+  $L__BB0_29	consistent	61 of 91 with SASS, 38 agreeing
+  $L__BB0_27	consistent	6 of 11 with SASS, 4 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 29>	consistent	42 of 77 with SASS, 39 agreeing
+  <block 30>	consistent	24 of 32 with SASS, 17 agreeing
+  $L__BB0_30	consistent	2 of 2 with SASS, 2 agreeing
+  <block 32>	consistent	7 of 11 with SASS, 4 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 34>	consistent	68 of 101 with SASS, 67 agreeing
+  $L__BB0_32	consistent	110 of 187 with SASS, 80 agreeing
+  $L__BB0_2	unchecked	1 of 1 with SASS, 0 agreeing
+  sectors	{"exact": 1, "within a bound": 14}
+tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	31 of 39 with SASS, 19 agreeing
+  <block 1>	consistent	21 of 37 with SASS, 15 agreeing
+  <block 2>	consistent	8 of 12 with SASS, 8 agreeing
+  <block 3>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_1	consistent	3 of 3 with SASS, 2 agreeing
+  $L__BB0_4	consistent	22 of 41 with SASS, 22 agreeing
+  $L__BB0_6	unchecked	2 of 4 with SASS, 0 agreeing
+  $L__BB0_8	consistent	5 of 12 with SASS, 4 agreeing
+  <block 8>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__BB0_9	consistent	2 of 4 with SASS, 1 agreeing
+  $L__BB0_11	consistent	63 of 97 with SASS, 39 agreeing
+  <block 11>	consistent	12 of 17 with SASS, 7 agreeing
+  $L__BB0_13	consistent	12 of 22 with SASS, 11 agreeing
+  <block 13>	consistent	9 of 21 with SASS, 2 agreeing
+  $L__BB0_17	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 16>	consistent	28 of 36 with SASS, 17 agreeing
+  $L__BB0_15	consistent	8 of 11 with SASS, 6 agreeing
+  <block 18>	consistent	13 of 19 with SASS, 8 agreeing
+  $L__BB0_18	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__BB0_20	consistent	77 of 134 with SASS, 58 agreeing
+  $L__BB0_2	unchecked	1 of 1 with SASS, 0 agreeing
+  sectors	{"exact": 1, "within a bound": 7}
+tests/fixtures/b200/norm_act__llama3-8b__train__liger_swiglu_bwd_rowwise._swiglu_backward_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	492 of 666 with SASS, 415 agreeing
+  sectors	{"within a range": 20}
+tests/fixtures/b200/norm_act__qwen3-next-80b__prefill__sglang_fla_gated_rmsnorm._layer_norm_fwd_1pass_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	326 of 390 with SASS, 274 agreeing
+  sectors	{"within a range": 8}
+tests/fixtures/b200/quant__deepseek-v3__prefill__sglang_group_quant_fp8_hidden._per_token_group_quant_8bit.sm_100a.ncu.json
+  $L__func_begin0	confirmed	43 of 61 with SASS, 31 agreeing
+  sectors	{"exact": 1, "within a range": 2}
+tests/fixtures/b200/rca_small__ropec.rope_cache_tile_flip.sm_100a.ncu.json
+  $L__func_begin0	confirmed	558 of 695 with SASS, 473 agreeing
+  sectors	{"exact": 2, "within a range": 11}
+tests/fixtures/b200/rmsnorm_sglang__deepseek-v3__prefill.fused_rmsnorm_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	97 of 131 with SASS, 88 agreeing
+  sectors	{"within a range": 3}
+tests/fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ncu.json
+  $L__func_begin0	consistent	5 of 5 with SASS, 4 agreeing
+  <block 1>	consistent	5 of 15 with SASS, 4 agreeing
+  $L__BB0_2	unchecked	1556 of 2076 with SASS, 0 agreeing
+  $L__BB0_3	consistent	1 of 1 with SASS, 1 agreeing
+tests/fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json
+  $L__func_begin0	consistent	20 of 29 with SASS, 14 agreeing
+  sectors	{"exact": 1, "within a range": 1}
+tests/fixtures/b200/rope_kv__qwen3-30b-a3b__prefill__sgl_rope_cache._fused_qk_rope_reshape_and_cache_kernel.sm_100a.ncu.json
+  $L__func_begin0	consistent	8 of 25 with SASS, 7 agreeing
+  <block 1>	consistent	73 of 122 with SASS, 54 agreeing
+  <block 2>	consistent	4 of 7 with SASS, 3 agreeing
+  <block 3>	consistent	79 of 109 with SASS, 79 agreeing
+  $L__BB0_4	consistent	5 of 7 with SASS, 5 agreeing
+  <block 5>	consistent	7 of 9 with SASS, 7 agreeing
+  <block 6>	consistent	30 of 41 with SASS, 30 agreeing
+  $L__BB0_7	unchecked	1 of 1 with SASS, 0 agreeing
+  sectors	{"exact": 2, "within a bound": 3, "within a range": 2}
+tests/fixtures/b200/routing__deepseek-v3__prefill__grouped_topk.grouped_topk_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	5229 of 6781 with SASS, 4952 agreeing
+  sectors	{"exact": 2, "within a range": 10}
+tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ncu.json
+  $L__func_begin0	unchecked	0 of 0 with SASS, 0 agreeing
+  JTI0_0	confirmed	11 of 14 with SASS, 4 agreeing
+  <block 2>	confirmed	48 of 83 with SASS, 28 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 4>	confirmed	13 of 21 with SASS, 8 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 6>	confirmed	61 of 72 with SASS, 55 agreeing
+  <block 7>	consistent	41 of 44 with SASS, 30 agreeing
+  $L__BB0_20	unchecked	1 of 3 with SASS, 0 agreeing
+  waitLoop$scope3	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 10>	confirmed	11 of 19 with SASS, 6 agreeing
+  waitLoop$scope4	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 12>	confirmed	65 of 96 with SASS, 55 agreeing
+  <block 13>	consistent	102 of 148 with SASS, 80 agreeing
+  $L__BB0_22	unchecked	121 of 181 with SASS, 0 agreeing
+  waitLoop$scope5	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 16>	unchecked	92 of 141 with SASS, 0 agreeing
+  waitLoop$scope6	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 18>	unchecked	68 of 107 with SASS, 0 agreeing
+  $L__BB0_23	confirmed	4 of 4 with SASS, 2 agreeing
+  waitLoop$scope7	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 21>	confirmed	12 of 18 with SASS, 6 agreeing
+  waitLoop$scope8	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 23>	confirmed	133 of 206 with SASS, 126 agreeing
+  $L__BB0_1	consistent	1 of 7 with SASS, 1 agreeing
+  $L__BB0_17	unchecked	4 of 4 with SASS, 0 agreeing
+  $L__BB0_2	unchecked	4 of 6 with SASS, 0 agreeing
+  <block 27>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_7	unchecked	5 of 5 with SASS, 0 agreeing
+  <block 29>	unchecked	11 of 14 with SASS, 0 agreeing
+  $L__BB0_11	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_9	unchecked	2 of 2 with SASS, 0 agreeing
+  waitLoop$scope9	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 33>	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope10	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 35>	unchecked	2 of 4 with SASS, 0 agreeing
+  <block 36>	unchecked	8 of 12 with SASS, 0 agreeing
+  $L__BB0_13	unchecked	5 of 5 with SASS, 0 agreeing
+  <block 38>	unchecked	10 of 16 with SASS, 0 agreeing
+  $L__BB0_15	unchecked	4 of 4 with SASS, 0 agreeing
+  waitLoop$scope11	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 41>	unchecked	9 of 14 with SASS, 0 agreeing
+  waitLoop$scope12	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 43>	unchecked	9 of 11 with SASS, 0 agreeing
+  $L__BB0_16	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_12	unchecked	6 of 7 with SASS, 0 agreeing
+  $L__BB0_4	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_5	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__BB0_6	unchecked	1 of 1 with SASS, 0 agreeing
+  sectors	{"exact": 2, "within a bound": 1, "within a range": 5}
+tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ncu.json
+  $L__func_begin0	consistent	17 of 28 with SASS, 11 agreeing
+  <block 1>	consistent	136 of 265 with SASS, 133 agreeing
+  $L__BB0_2	unchecked	164 of 216 with SASS, 0 agreeing
+  <block 3>	consistent	80 of 125 with SASS, 78 agreeing
+  <block 4>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_5	consistent	25 of 26 with SASS, 25 agreeing
+  <block 6>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_7	consistent	16 of 21 with SASS, 16 agreeing
+  $L__BB0_8	consistent	2 of 2 with SASS, 2 agreeing
+  sectors	{"exact": 3, "within a bound": 2}
+tests/fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ncu.json
+  $L__func_begin0	consistent	83 of 160 with SASS, 35 agreeing
+  <block 1>	consistent	32 of 49 with SASS, 11 agreeing
+  $L__BB0_2	confirmed	72 of 102 with SASS, 38 agreeing
+  $L__BB0_3	confirmed	3 of 3 with SASS, 3 agreeing
+  sectors	{"differ": 12, "exact": 6, "within a range": 10}
+  sectors differ	lines 184, 244, 251, 296, 303, 317, 469, 476, 483, 490, 499, 511
+tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._bmm_chunk_fwd_kernel.sm_100a.ncu.json
+  $L__func_begin0	consistent	59 of 101 with SASS, 35 agreeing
+  <block 1>	consistent	40 of 56 with SASS, 25 agreeing
+  $L__BB0_3	confirmed	25 of 35 with SASS, 15 agreeing
+  <block 3>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_1	consistent	1 of 5 with SASS, 1 agreeing
+  $L__BB0_4	confirmed	62 of 78 with SASS, 44 agreeing
+  sectors	{"differ": 2, "within a bound": 4, "within a range": 4}
+  sectors differ	lines 320, 329
+tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_scan_fwd_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	237 of 364 with SASS, 142 agreeing
+  <block 1>	consistent	56 of 76 with SASS, 28 agreeing
+  $L__BB0_3	unchecked	53 of 77 with SASS, 0 agreeing
+  <block 3>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_1	consistent	6 of 6 with SASS, 6 agreeing
+  $L__BB0_4	confirmed	65 of 79 with SASS, 54 agreeing
+  sectors	{"differ": 4, "exact": 2, "within a bound": 6, "within a range": 11}
+  sectors differ	lines 634, 644, 651, 668
+tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_fwd_kernel.sm_100a.ncu.json
+  $L__func_begin0	consistent	104 of 169 with SASS, 54 agreeing
+  <block 1>	consistent	63 of 90 with SASS, 37 agreeing
+  $L__BB0_3	unchecked	56 of 78 with SASS, 0 agreeing
+  <block 3>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_1	consistent	5 of 8 with SASS, 5 agreeing
+  $L__BB0_4	confirmed	35 of 43 with SASS, 28 agreeing
+  sectors	{"exact": 2, "within a range": 11}
+tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_varlen_kernel.sm_100a.ncu.json
+  $L__func_begin0	consistent	97 of 156 with SASS, 63 agreeing
+  <block 1>	consistent	48 of 72 with SASS, 35 agreeing
+  $L__BB0_2	unchecked	53 of 79 with SASS, 0 agreeing
+  <block 3>	unchecked	1 of 2 with SASS, 0 agreeing
+  $L__BB0_4	consistent	3 of 9 with SASS, 2 agreeing
+  <block 5>	consistent	37 of 51 with SASS, 30 agreeing
+  $L__BB0_5	consistent	13 of 15 with SASS, 13 agreeing
+  $L__BB0_7	confirmed	17 of 24 with SASS, 10 agreeing
+  sectors	{"exact": 2, "within a range": 1}
+tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._state_passing_fwd_kernel.sm_100a.ncu.json
+  $L__func_begin0	consistent	17 of 25 with SASS, 10 agreeing
+  <block 1>	consistent	23 of 44 with SASS, 5 agreeing
+  $L__BB0_2	confirmed	21 of 28 with SASS, 10 agreeing
+  $L__BB0_3	consistent	1 of 1 with SASS, 1 agreeing
+  sectors	{"exact": 2, "within a range": 2}
+tests/fixtures/b200/ssm__qwen3-next-80b__decode__delta_rule_T64.fused_recurrent_delta_rule_fwd_kernel.sm_100a.ncu.json
+  $L__func_begin0	confirmed	39 of 104 with SASS, 30 agreeing
+  <block 1>	consistent	40 of 66 with SASS, 24 agreeing
+  $L__BB0_2	confirmed	271 of 371 with SASS, 242 agreeing
+  $L__BB0_3	consistent	11 of 38 with SASS, 1 agreeing
+  sectors	{"exact": 1, "within a range": 21}
+tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ncu.json
+  $L__func_begin0	consistent	10 of 14 with SASS, 7 agreeing
+  <block 1>	consistent	4 of 8 with SASS, 2 agreeing
+  <block 2>	consistent	14 of 21 with SASS, 7 agreeing
+  <block 3>	unchecked	6 of 16 with SASS, 0 agreeing
+  $L__BB0_3	consistent	17 of 22 with SASS, 17 agreeing
+  <block 5>	consistent	12 of 23 with SASS, 12 agreeing
+  <block 6>	consistent	71 of 136 with SASS, 71 agreeing
+  $L__BB0_4	consistent	2 of 8 with SASS, 2 agreeing
+  $L__BB0_7	consistent	37 of 66 with SASS, 37 agreeing
+  $L__BB0_5	consistent	35 of 69 with SASS, 35 agreeing
+  $L__BB0_10	consistent	13 of 35 with SASS, 1 agreeing
+  $L__BB0_11	unchecked	31 of 47 with SASS, 0 agreeing
+  $L__BB0_12	unchecked	1 of 1 with SASS, 0 agreeing
+  sectors	{"exact": 2, "within a bound": 10}
+tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ncu.json
+  $L__func_begin0	confirmed	13 of 16 with SASS, 4 agreeing
+  <block 1>	consistent	242 of 360 with SASS, 92 agreeing
+  $L__BB0_34	consistent	3 of 4 with SASS, 3 agreeing
+  <block 3>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_37	consistent	5 of 5 with SASS, 1 agreeing
+  $L__BB0_2	consistent	8 of 10 with SASS, 5 agreeing
+  <block 6>	consistent	2 of 2 with SASS, 2 agreeing
+  $L__tmp2	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_35	consistent	3 of 5 with SASS, 2 agreeing
+  $L__BB0_3	unchecked	2 of 4 with SASS, 0 agreeing
+  $L__BB0_5	consistent	5 of 6 with SASS, 1 agreeing
+  <block 11>	consistent	9 of 13 with SASS, 3 agreeing
+  $L__BB0_33	unchecked	12 of 14 with SASS, 0 agreeing
+  $L__BB0_7	unchecked	3 of 4 with SASS, 0 agreeing
+  <block 14>	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__BB0_8	unchecked	2 of 4 with SASS, 0 agreeing
+  $L__BB0_10	unchecked	168 of 313 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope1	unchecked	4 of 6 with SASS, 0 agreeing
+  <block 19>	unchecked	17 of 20 with SASS, 0 agreeing
+  $L__BB0_12	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope2	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 23>	unchecked	17 of 20 with SASS, 0 agreeing
+  $L__BB0_14	unchecked	17 of 18 with SASS, 0 agreeing
+  waitLoop$scope3	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope3	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 27>	unchecked	5 of 8 with SASS, 0 agreeing
+  $L__BB0_16	unchecked	17 of 17 with SASS, 0 agreeing
+  waitLoop$scope4	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope4	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope5	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope5	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope6	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope6	unchecked	156 of 196 with SASS, 0 agreeing
+  <block 35>	unchecked	5 of 9 with SASS, 0 agreeing
+  $L__BB0_18	unchecked	37 of 58 with SASS, 0 agreeing
+  <block 37>	unchecked	9 of 23 with SASS, 0 agreeing
+  $L__BB0_28	unchecked	49 of 72 with SASS, 0 agreeing
+  $L__BB0_20	unchecked	22 of 32 with SASS, 0 agreeing
+  waitLoop$scope7	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 41>	unchecked	3 of 4 with SASS, 0 agreeing
+  <block 42>	unchecked	49 of 54 with SASS, 0 agreeing
+  $L__BB0_22	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope8	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 45>	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 46>	unchecked	17 of 20 with SASS, 0 agreeing
+  $L__BB0_24	unchecked	17 of 17 with SASS, 0 agreeing
+  waitLoop$scope9	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 49>	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 50>	unchecked	5 of 8 with SASS, 0 agreeing
+  $L__BB0_26	unchecked	17 of 17 with SASS, 0 agreeing
+  waitLoop$scope10	unchecked	2 of 2 with SASS, 0 agreeing
+  waitLoop$scope11	unchecked	2 of 2 with SASS, 0 agreeing
+  waitLoop$scope12	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 55>	unchecked	75 of 110 with SASS, 0 agreeing
+  waitLoop$scope13	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 57>	unchecked	82 of 84 with SASS, 0 agreeing
+  <block 58>	unchecked	14 of 18 with SASS, 0 agreeing
+  $L__BB0_29	unchecked	19 of 19 with SASS, 0 agreeing
+  <block 60>	unchecked	17 of 26 with SASS, 0 agreeing
+  waitLoop$scope14	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__BB0_31	unchecked	223 of 273 with SASS, 0 agreeing
+  <block 63>	unchecked	1 of 3 with SASS, 0 agreeing
+  $L__BB0_38	consistent	3 of 3 with SASS, 1 agreeing
+  sectors	{"differ": 1, "exact": 2}
+  sectors differ	lines 544
+tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json
+  $L__func_begin0	unchecked	0 of 0 with SASS, 0 agreeing
+  JTI0_0	confirmed	16 of 18 with SASS, 8 agreeing
+  <block 2>	confirmed	19 of 35 with SASS, 9 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 4>	confirmed	9 of 22 with SASS, 4 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 6>	confirmed	5 of 10 with SASS, 1 agreeing
+  waitLoop$scope3	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 8>	confirmed	30 of 78 with SASS, 12 agreeing
+  <block 9>	consistent	5 of 13 with SASS, 4 agreeing
+  $L__BB0_42	unchecked	1 of 3 with SASS, 0 agreeing
+  waitLoop$scope4	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 12>	unchecked	11 of 12 with SASS, 0 agreeing
+  waitLoop$scope5	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 14>	unchecked	73 of 75 with SASS, 0 agreeing
+  waitLoop$scope6	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 16>	unchecked	518 of 583 with SASS, 0 agreeing
+  waitLoop$scope7	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 18>	unchecked	10 of 12 with SASS, 0 agreeing
+  <block 19>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_44	consistent	6 of 8 with SASS, 5 agreeing
+  waitLoop$scope8	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 22>	confirmed	4 of 5 with SASS, 3 agreeing
+  waitLoop$scope9	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 24>	confirmed	11 of 22 with SASS, 5 agreeing
+  waitLoop$scope10	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 26>	confirmed	5 of 10 with SASS, 1 agreeing
+  waitLoop$scope11	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 28>	confirmed	25 of 67 with SASS, 9 agreeing
+  <block 29>	unchecked	1 of 3 with SASS, 0 agreeing
+  $L__BB0_1	consistent	1 of 7 with SASS, 1 agreeing
+  $L__BB0_37	unchecked	3 of 4 with SASS, 0 agreeing
+  waitLoop$scope12	confirmed	2 of 2 with SASS, 2 agreeing
+  skipWait$scope12	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_22	unchecked	5 of 7 with SASS, 0 agreeing
+  $L__BB0_2	unchecked	4 of 6 with SASS, 0 agreeing
+  <block 36>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_27	unchecked	5 of 5 with SASS, 0 agreeing
+  $L__BB0_23	unchecked	10 of 12 with SASS, 0 agreeing
+  waitLoop$scope13	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope13	unchecked	13 of 20 with SASS, 0 agreeing
+  waitLoop$scope14	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope14	unchecked	5 of 10 with SASS, 0 agreeing
+  <block 43>	unchecked	2 of 4 with SASS, 0 agreeing
+  $L__BB0_25	unchecked	9 of 10 with SASS, 0 agreeing
+  waitLoop$scope15	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 46>	unchecked	8 of 13 with SASS, 0 agreeing
+  waitLoop$scope16	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope16	unchecked	7 of 11 with SASS, 0 agreeing
+  <block 49>	unchecked	0 of 1 with SASS, 0 agreeing
+  $L__BB0_7	unchecked	5 of 6 with SASS, 0 agreeing
+  <block 51>	unchecked	2 of 8 with SASS, 0 agreeing
+  $L__BB0_9	unchecked	2 of 2 with SASS, 0 agreeing
+  waitLoop$scope17	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 54>	unchecked	4 of 5 with SASS, 0 agreeing
+  waitLoop$scope18	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 56>	unchecked	152 of 156 with SASS, 0 agreeing
+  waitLoop$scope19	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 58>	unchecked	2 of 3 with SASS, 0 agreeing
+  <block 59>	unchecked	0 of 1 with SASS, 0 agreeing
+  $L__BB0_11	unchecked	7 of 9 with SASS, 0 agreeing
+  waitLoop$scope20	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope20	unchecked	3 of 6 with SASS, 0 agreeing
+  <block 63>	unchecked	45 of 50 with SASS, 0 agreeing
+  $L__BB0_13	unchecked	2 of 4 with SASS, 0 agreeing
+  waitLoop$scope21	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope21	unchecked	2 of 4 with SASS, 0 agreeing
+  waitLoop$scope22	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope22	unchecked	1 of 3 with SASS, 0 agreeing
+  <block 69>	unchecked	48 of 54 with SASS, 0 agreeing
+  $L__BB0_15	unchecked	4 of 6 with SASS, 0 agreeing
+  waitLoop$scope23	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope23	unchecked	1 of 2 with SASS, 0 agreeing
+  <block 73>	unchecked	20 of 26 with SASS, 0 agreeing
+  $L__BB0_21	unchecked	7 of 9 with SASS, 0 agreeing
+  waitLoop$scope24	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope24	unchecked	3 of 4 with SASS, 0 agreeing
+  $L__BB0_17	unchecked	7 of 8 with SASS, 0 agreeing
+  waitLoop$scope25	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 79>	unchecked	3 of 3 with SASS, 0 agreeing
+  waitLoop$scope26	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 81>	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope27	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 83>	unchecked	1 of 3 with SASS, 0 agreeing
+  <block 84>	unchecked	33 of 37 with SASS, 0 agreeing
+  $L__BB0_19	unchecked	3 of 5 with SASS, 0 agreeing
+  waitLoop$scope28	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope28	unchecked	1 of 3 with SASS, 0 agreeing
+  <block 88>	unchecked	31 of 39 with SASS, 0 agreeing
+  $L__tmp29	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_38	unchecked	10 of 12 with SASS, 0 agreeing
+  waitLoop$scope29	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope29	unchecked	10 of 20 with SASS, 0 agreeing
+  waitLoop$scope30	unchecked	0 of 2 with SASS, 0 agreeing
+  skipWait$scope30	unchecked	2 of 8 with SASS, 0 agreeing
+  <block 95>	unchecked	2 of 3 with SASS, 0 agreeing
+  waitLoop$scope31	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 97>	unchecked	6 of 9 with SASS, 0 agreeing
+  waitLoop$scope32	confirmed	2 of 2 with SASS, 2 agreeing
+  skipWait$scope32	consistent	5 of 7 with SASS, 1 agreeing
+  $L__BB0_26	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__tmp33	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_28	unchecked	5 of 6 with SASS, 0 agreeing
+  <block 103>	unchecked	3 of 6 with SASS, 0 agreeing
+  waitLoop$scope33	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 105>	unchecked	4 of 5 with SASS, 0 agreeing
+  waitLoop$scope34	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 107>	unchecked	151 of 156 with SASS, 0 agreeing
+  waitLoop$scope35	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__tmp40	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_10	unchecked	6 of 6 with SASS, 0 agreeing
+  $L__tmp41	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_30	unchecked	6 of 8 with SASS, 0 agreeing
+  waitLoop$scope36	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope36	unchecked	3 of 6 with SASS, 0 agreeing
+  $L__tmp44	unchecked	46 of 51 with SASS, 0 agreeing
+  $L__BB0_32	unchecked	1 of 3 with SASS, 0 agreeing
+  waitLoop$scope37	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope37	unchecked	0 of 3 with SASS, 0 agreeing
+  waitLoop$scope38	unchecked	0 of 2 with SASS, 0 agreeing
+  skipWait$scope38	unchecked	3 of 7 with SASS, 0 agreeing
+  waitLoop$scope39	unchecked	0 of 2 with SASS, 0 agreeing
+  skipWait$scope39	unchecked	1 of 2 with SASS, 0 agreeing
+  <block 123>	unchecked	1 of 3 with SASS, 0 agreeing
+  waitLoop$scope40	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 125>	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope41	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 127>	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope42	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 129>	unchecked	1 of 2 with SASS, 0 agreeing
+  <block 130>	unchecked	33 of 36 with SASS, 0 agreeing
+  $L__BB0_35	unchecked	2 of 4 with SASS, 0 agreeing
+  waitLoop$scope43	confirmed	2 of 2 with SASS, 2 agreeing
+  skipWait$scope43	unchecked	1 of 3 with SASS, 0 agreeing
+  <block 134>	consistent	47 of 54 with SASS, 47 agreeing
+  $L__tmp46	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_4	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_5	consistent	3 of 3 with SASS, 1 agreeing
+  $L__BB0_46	consistent	3 of 102 with SASS, 1 agreeing
+  waitLoop$scope44	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 140>	confirmed	131 of 165 with SASS, 130 agreeing
+  waitLoop$scope45	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 142>	confirmed	325 of 519 with SASS, 323 agreeing
+  waitLoop$scope46	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 144>	confirmed	390 of 455 with SASS, 389 agreeing
+  waitLoop$scope47	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 146>	confirmed	7 of 8 with SASS, 7 agreeing
+  $L__BB0_47	consistent	7 of 8 with SASS, 6 agreeing
+  waitLoop$scope48	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 149>	confirmed	4 of 5 with SASS, 3 agreeing
+  waitLoop$scope49	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 151>	confirmed	273 of 363 with SASS, 266 agreeing
+  $L__BB0_6	unchecked	1 of 1 with SASS, 0 agreeing
+tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ncu.json
+  $L__func_begin0	confirmed	35 of 53 with SASS, 20 agreeing
+  waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 2>	confirmed	30 of 56 with SASS, 15 agreeing
+  waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 4>	confirmed	3 of 4 with SASS, 2 agreeing
+  <block 5>	consistent	41 of 45 with SASS, 30 agreeing
+  $L__BB0_2	confirmed	10 of 18 with SASS, 7 agreeing
+  waitLoop$scope3	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 8>	confirmed	132 of 137 with SASS, 128 agreeing
+  waitLoop$scope4	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 10>	confirmed	87 of 89 with SASS, 85 agreeing
+  <block 11>	consistent	15 of 20 with SASS, 9 agreeing
+  $L__BB0_4	unchecked	2 of 37 with SASS, 0 agreeing
+  waitLoop$scope5	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 14>	confirmed	1 of 2 with SASS, 1 agreeing
+  <block 15>	consistent	17 of 18 with SASS, 16 agreeing
+  $L__BB0_6	consistent	42 of 48 with SASS, 31 agreeing
+  $L__BB0_7	confirmed	10 of 43 with SASS, 6 agreeing
+  $L__BB0_12	unchecked	21 of 42 with SASS, 0 agreeing
+  $L__BB0_8	unchecked	17 of 34 with SASS, 0 agreeing
+  waitLoop$scope6	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 21>	unchecked	123 of 123 with SASS, 0 agreeing
+  waitLoop$scope7	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 23>	unchecked	2 of 3 with SASS, 0 agreeing
+  waitLoop$scope8	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 25>	unchecked	88 of 90 with SASS, 0 agreeing
+  <block 26>	unchecked	16 of 20 with SASS, 0 agreeing
+  $L__BB0_10	unchecked	11 of 14 with SASS, 0 agreeing
+  waitLoop$scope9	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope9	unchecked	3 of 6 with SASS, 0 agreeing
+  <block 30>	unchecked	27 of 34 with SASS, 0 agreeing
+  $L__BB0_13	confirmed	18 of 36 with SASS, 17 agreeing
+  waitLoop$scope10	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 33>	confirmed	26 of 62 with SASS, 13 agreeing
+  waitLoop$scope11	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope11	confirmed	2 of 4 with SASS, 2 agreeing
+  <block 36>	consistent	25 of 30 with SASS, 15 agreeing
+  $L__BB0_15	confirmed	9 of 16 with SASS, 1 agreeing
+  waitLoop$scope12	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope12	confirmed	124 of 124 with SASS, 122 agreeing
+  waitLoop$scope13	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope13	confirmed	87 of 87 with SASS, 70 agreeing
+  <block 42>	consistent	15 of 20 with SASS, 9 agreeing
+  $L__BB0_17	confirmed	4 of 5 with SASS, 3 agreeing
+  waitLoop$scope14	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope14	unchecked	1 of 3 with SASS, 0 agreeing
+  <block 46>	consistent	26 of 32 with SASS, 16 agreeing
+  $L__BB0_19	confirmed	11 of 19 with SASS, 6 agreeing
+  <block 48>	consistent	3 of 14 with SASS, 2 agreeing
+  $L__BB0_25	unchecked	22 of 42 with SASS, 0 agreeing
+  $L__BB0_21	unchecked	18 of 35 with SASS, 0 agreeing
+  waitLoop$scope15	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 52>	unchecked	123 of 123 with SASS, 0 agreeing
+  waitLoop$scope16	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 54>	unchecked	2 of 3 with SASS, 0 agreeing
+  waitLoop$scope17	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 56>	unchecked	88 of 90 with SASS, 0 agreeing
+  <block 57>	unchecked	16 of 20 with SASS, 0 agreeing
+  $L__BB0_23	unchecked	11 of 14 with SASS, 0 agreeing
+  waitLoop$scope18	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope18	unchecked	3 of 6 with SASS, 0 agreeing
+  <block 61>	unchecked	27 of 34 with SASS, 0 agreeing
+  $L__BB0_26	unchecked	1 of 2 with SASS, 0 agreeing
+  $L__tmp59	consistent	20 of 37 with SASS, 19 agreeing
+  waitLoop$scope19	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__BB0_28	confirmed	59 of 103 with SASS, 44 agreeing
+  waitLoop$scope20	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope20	unchecked	1 of 4 with SASS, 0 agreeing
+  <block 68>	consistent	25 of 30 with SASS, 15 agreeing
+  $L__BB0_30	confirmed	42 of 57 with SASS, 34 agreeing
+  waitLoop$scope21	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope21	confirmed	186 of 186 with SASS, 180 agreeing
+  waitLoop$scope22	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope22	confirmed	86 of 87 with SASS, 83 agreeing
+  <block 74>	consistent	15 of 19 with SASS, 9 agreeing
+  $L__BB0_32	unchecked	1 of 19 with SASS, 0 agreeing
+  waitLoop$scope23	unchecked	2 of 2 with SASS, 0 agreeing
+  skipWait$scope23	unchecked	1 of 3 with SASS, 0 agreeing
+  <block 78>	consistent	26 of 31 with SASS, 16 agreeing
+  $L__BB0_34	confirmed	123 of 163 with SASS, 116 agreeing
+  waitLoop$scope24	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__tmp85	confirmed	215 of 230 with SASS, 213 agreeing
+  waitLoop$scope25	unchecked	2 of 2 with SASS, 0 agreeing
+  waitLoop$scope26	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 84>	confirmed	87 of 89 with SASS, 85 agreeing
+  <block 85>	consistent	15 of 18 with SASS, 9 agreeing
+  $L__BB0_36	confirmed	1 of 5 with SASS, 1 agreeing
+  waitLoop$scope27	unchecked	0 of 2 with SASS, 0 agreeing
+  skipWait$scope27	confirmed	8 of 15 with SASS, 6 agreeing
+  <block 89>	confirmed	21 of 38 with SASS, 20 agreeing
+  waitLoop$scope28	unchecked	2 of 2 with SASS, 0 agreeing
+  $L__BB0_38	confirmed	140 of 166 with SASS, 134 agreeing
+tests/fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json
+  $L__func_begin0	confirmed	77 of 174 with SASS, 65 agreeing
+  <block 1>	consistent	60 of 263 with SASS, 52 agreeing
+  $L__BB0_6	unchecked	111 of 175 with SASS, 0 agreeing
+  $L__BB0_2	unchecked	329 of 406 with SASS, 0 agreeing
+  <block 4>	unchecked	7 of 10 with SASS, 0 agreeing
+  $L__BB0_4	unchecked	58 of 59 with SASS, 0 agreeing
+  <block 6>	unchecked	7 of 11 with SASS, 0 agreeing
+  $L__BB0_7	consistent	16 of 16 with SASS, 16 agreeing
+  $L__BB0_8	confirmed	109 of 133 with SASS, 107 agreeing
+  sectors	{"within a range": 48}
+tests/fixtures/gluon/attn_bwd_post_kernel.sm_89.ncu.json
+  $L__func_begin0	consistent	158 of 261 with SASS, 149 agreeing
+  sectors	{"within a range": 32}
+tests/fixtures/gluon/attn_bwd_pre_kernel.sm_89.ncu.json
+  $L__func_begin0	confirmed	378 of 462 with SASS, 368 agreeing
+  sectors	{"within a range": 20}
+tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json
+  $L__func_begin0	consistent	15 of 30 with SASS, 4 agreeing
+  <block 1>	confirmed	62 of 93 with SASS, 39 agreeing
+  <block 2>	consistent	37 of 55 with SASS, 27 agreeing
+  $L__tmp5	consistent	3 of 7 with SASS, 3 agreeing
+  $L__tmp7	consistent	13 of 17 with SASS, 13 agreeing
+  $L__BB0_38	consistent	12 of 61 with SASS, 4 agreeing
+  $L__BB0_39	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 8>	unchecked	13 of 13 with SASS, 0 agreeing
+  $L__tmp11	unchecked	25 of 33 with SASS, 0 agreeing
+  $L__BB0_41	unchecked	4 of 72 with SASS, 0 agreeing
+  <block 11>	unchecked	14 of 84 with SASS, 0 agreeing
+  $L__BB0_55	unchecked	18 of 19 with SASS, 0 agreeing
+  $L__BB0_43	unchecked	4 of 8 with SASS, 0 agreeing
+  waitLoop$scope2	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 15>	unchecked	2 of 18 with SASS, 0 agreeing
+  <block 16>	unchecked	101 of 136 with SASS, 0 agreeing
+  <block 17>	unchecked	79 of 79 with SASS, 0 agreeing
+  $L__BB0_46	unchecked	235 of 238 with SASS, 0 agreeing
+  $L__BB0_47	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 20>	unchecked	5 of 7 with SASS, 0 agreeing
+  waitLoop$scope3	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_49	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 23>	unchecked	27 of 45 with SASS, 0 agreeing
+  <block 24>	unchecked	5 of 7 with SASS, 0 agreeing
+  $L__tmp35	unchecked	12 of 17 with SASS, 0 agreeing
+  $L__BB0_53	unchecked	1 of 1 with SASS, 0 agreeing
+  <block 27>	unchecked	105 of 115 with SASS, 0 agreeing
+  $L__BB0_56	unchecked	172 of 205 with SASS, 0 agreeing
+  <block 29>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_58	unchecked	26 of 28 with SASS, 0 agreeing
+  <block 31>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_60	unchecked	9 of 10 with SASS, 0 agreeing
+  <block 33>	unchecked	15 of 19 with SASS, 0 agreeing
+  $L__BB0_1	consistent	4 of 10 with SASS, 3 agreeing
+  $L__BB0_33	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_2	unchecked	4 of 5 with SASS, 0 agreeing
+  <block 37>	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 38>	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_5	unchecked	57 of 78 with SASS, 0 agreeing
+  <block 40>	unchecked	40 of 61 with SASS, 0 agreeing
+  $L__tmp46	unchecked	3 of 7 with SASS, 0 agreeing
+  $L__tmp48	unchecked	13 of 17 with SASS, 0 agreeing
+  $L__BB0_9	unchecked	16 of 64 with SASS, 0 agreeing
+  $L__BB0_10	unchecked	1 of 2 with SASS, 0 agreeing
+  waitLoop$scope4	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 46>	unchecked	13 of 13 with SASS, 0 agreeing
+  $L__tmp52	unchecked	25 of 33 with SASS, 0 agreeing
+  $L__BB0_12	unchecked	5 of 73 with SASS, 0 agreeing
+  <block 49>	unchecked	15 of 85 with SASS, 0 agreeing
+  $L__BB0_26	unchecked	18 of 19 with SASS, 0 agreeing
+  $L__BB0_14	unchecked	4 of 8 with SASS, 0 agreeing
+  waitLoop$scope5	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 53>	unchecked	2 of 19 with SASS, 0 agreeing
+  <block 54>	unchecked	100 of 134 with SASS, 0 agreeing
+  <block 55>	unchecked	79 of 79 with SASS, 0 agreeing
+  $L__BB0_17	unchecked	235 of 238 with SASS, 0 agreeing
+  $L__BB0_18	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 58>	unchecked	5 of 7 with SASS, 0 agreeing
+  waitLoop$scope6	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_20	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 61>	unchecked	27 of 46 with SASS, 0 agreeing
+  <block 62>	unchecked	5 of 7 with SASS, 0 agreeing
+  $L__tmp76	unchecked	12 of 17 with SASS, 0 agreeing
+  $L__BB0_24	unchecked	1 of 1 with SASS, 0 agreeing
+  <block 65>	unchecked	105 of 114 with SASS, 0 agreeing
+  $L__BB0_27	unchecked	172 of 205 with SASS, 0 agreeing
+  <block 67>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_29	unchecked	26 of 28 with SASS, 0 agreeing
+  <block 69>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_31	unchecked	9 of 11 with SASS, 0 agreeing
+  <block 71>	unchecked	15 of 19 with SASS, 0 agreeing
+  $L__tmp80	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_62	confirmed	3 of 3 with SASS, 2 agreeing
+  $L__BB0_63	unchecked	1 of 1 with SASS, 0 agreeing
+  sectors	{"within a range": 16}
+tests/fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ncu.json
+  $L__func_begin0	consistent	15 of 31 with SASS, 4 agreeing
+  <block 1>	confirmed	62 of 93 with SASS, 39 agreeing
+  <block 2>	consistent	42 of 63 with SASS, 29 agreeing
+  $L__tmp5	consistent	3 of 9 with SASS, 3 agreeing
+  $L__tmp7	consistent	17 of 21 with SASS, 17 agreeing
+  $L__BB0_38	consistent	10 of 42 with SASS, 5 agreeing
+  $L__BB0_39	unchecked	1 of 1 with SASS, 0 agreeing
+  waitLoop$scope1	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 8>	unchecked	13 of 13 with SASS, 0 agreeing
+  $L__tmp11	unchecked	25 of 33 with SASS, 0 agreeing
+  $L__BB0_41	unchecked	4 of 72 with SASS, 0 agreeing
+  <block 11>	unchecked	19 of 87 with SASS, 0 agreeing
+  $L__BB0_55	unchecked	18 of 19 with SASS, 0 agreeing
+  $L__BB0_43	unchecked	4 of 8 with SASS, 0 agreeing
+  waitLoop$scope2	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 15>	unchecked	3 of 22 with SASS, 0 agreeing
+  <block 16>	unchecked	100 of 137 with SASS, 0 agreeing
+  <block 17>	unchecked	144 of 148 with SASS, 0 agreeing
+  $L__BB0_46	unchecked	235 of 238 with SASS, 0 agreeing
+  $L__BB0_47	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 20>	unchecked	5 of 7 with SASS, 0 agreeing
+  waitLoop$scope3	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_49	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 23>	unchecked	28 of 46 with SASS, 0 agreeing
+  <block 24>	unchecked	5 of 7 with SASS, 0 agreeing
+  $L__tmp35	unchecked	17 of 21 with SASS, 0 agreeing
+  $L__BB0_53	unchecked	1 of 1 with SASS, 0 agreeing
+  <block 27>	unchecked	105 of 115 with SASS, 0 agreeing
+  $L__BB0_56	unchecked	160 of 205 with SASS, 0 agreeing
+  <block 29>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_58	unchecked	26 of 28 with SASS, 0 agreeing
+  <block 31>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_60	unchecked	10 of 11 with SASS, 0 agreeing
+  <block 33>	unchecked	19 of 23 with SASS, 0 agreeing
+  $L__BB0_1	consistent	4 of 10 with SASS, 3 agreeing
+  $L__BB0_33	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_2	unchecked	4 of 5 with SASS, 0 agreeing
+  <block 37>	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 38>	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_5	unchecked	57 of 78 with SASS, 0 agreeing
+  <block 40>	unchecked	44 of 68 with SASS, 0 agreeing
+  $L__tmp46	unchecked	3 of 9 with SASS, 0 agreeing
+  $L__tmp48	unchecked	17 of 21 with SASS, 0 agreeing
+  $L__BB0_9	unchecked	18 of 46 with SASS, 0 agreeing
+  $L__BB0_10	unchecked	1 of 2 with SASS, 0 agreeing
+  waitLoop$scope4	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 46>	unchecked	13 of 13 with SASS, 0 agreeing
+  $L__tmp52	unchecked	25 of 33 with SASS, 0 agreeing
+  $L__BB0_12	unchecked	5 of 73 with SASS, 0 agreeing
+  <block 49>	unchecked	20 of 88 with SASS, 0 agreeing
+  $L__BB0_26	unchecked	18 of 19 with SASS, 0 agreeing
+  $L__BB0_14	unchecked	4 of 8 with SASS, 0 agreeing
+  waitLoop$scope5	unchecked	3 of 3 with SASS, 0 agreeing
+  <block 53>	unchecked	3 of 23 with SASS, 0 agreeing
+  <block 54>	unchecked	100 of 136 with SASS, 0 agreeing
+  <block 55>	unchecked	144 of 148 with SASS, 0 agreeing
+  $L__BB0_17	unchecked	235 of 238 with SASS, 0 agreeing
+  $L__BB0_18	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 58>	unchecked	5 of 7 with SASS, 0 agreeing
+  waitLoop$scope6	unchecked	3 of 3 with SASS, 0 agreeing
+  $L__BB0_20	unchecked	2 of 2 with SASS, 0 agreeing
+  <block 61>	unchecked	28 of 47 with SASS, 0 agreeing
+  <block 62>	unchecked	5 of 7 with SASS, 0 agreeing
+  $L__tmp76	unchecked	17 of 21 with SASS, 0 agreeing
+  $L__BB0_24	unchecked	1 of 1 with SASS, 0 agreeing
+  <block 65>	unchecked	105 of 114 with SASS, 0 agreeing
+  $L__BB0_27	unchecked	160 of 205 with SASS, 0 agreeing
+  <block 67>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_29	unchecked	26 of 28 with SASS, 0 agreeing
+  <block 69>	unchecked	1 of 1 with SASS, 0 agreeing
+  $L__BB0_31	unchecked	10 of 12 with SASS, 0 agreeing
+  <block 71>	unchecked	19 of 23 with SASS, 0 agreeing
+  $L__tmp80	unchecked	0 of 0 with SASS, 0 agreeing
+  $L__BB0_62	confirmed	3 of 3 with SASS, 2 agreeing
+  $L__BB0_63	unchecked	1 of 1 with SASS, 0 agreeing
+  sectors	{"within a range": 16}
+tests/fixtures/gluon/ce_chunk_kernel.sm_89.ncu.json
+  $L__func_begin0	consistent	17 of 39 with SASS, 5 agreeing
+  $L__BB0_1	confirmed	121 of 143 with SASS, 92 agreeing
+  <block 2>	confirmed	63 of 83 with SASS, 55 agreeing
+  <block 3>	consistent	1 of 2 with SASS, 1 agreeing
+  $L__BB0_4	consistent	13 of 24 with SASS, 6 agreeing
+  $L__BB0_5	confirmed	220 of 263 with SASS, 155 agreeing
+  $L__tmp27	confirmed	34 of 35 with SASS, 32 agreeing
+  sectors	{"exact": 3, "within a range": 3}
+tests/fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ncu.json
+  $L__func_begin0	confirmed	313 of 388 with SASS, 252 agreeing
+  <block 1>	consistent	1 of 2 with SASS, 1 agreeing
+  $L__BB0_2	consistent	10 of 24 with SASS, 6 agreeing
+  $L__BB0_3	confirmed	217 of 265 with SASS, 173 agreeing
+  $L__tmp29	confirmed	34 of 35 with SASS, 32 agreeing
+  sectors	{"exact": 3, "within a range": 2}
+tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ncu.json
+  $L__func_begin0	confirmed	94 of 149 with SASS, 67 agreeing
+  $L__tmp11	consistent	21 of 158 with SASS, 20 agreeing
+  $L__BB0_5	consistent	7 of 7 with SASS, 2 agreeing
+  $L__BB0_3	confirmed	105 of 119 with SASS, 103 agreeing
+  <block 4>	consistent	22 of 33 with SASS, 14 agreeing
+  $L__BB0_1	consistent	2 of 129 with SASS, 2 agreeing
+  $L__BB0_6	confirmed	347 of 371 with SASS, 327 agreeing
+  sectors	{"exact": 2, "within a bound": 8, "within a range": 32}
+tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json
+  $L__func_begin0	confirmed	67 of 117 with SASS, 51 agreeing
+  $L__tmp11	consistent	33 of 125 with SASS, 27 agreeing
+  $L__BB0_5	consistent	72 of 88 with SASS, 68 agreeing
+  $L__BB0_3	confirmed	167 of 267 with SASS, 134 agreeing
+  <block 4>	consistent	10 of 16 with SASS, 8 agreeing
+  $L__BB0_1	consistent	2 of 66 with SASS, 2 agreeing
+  $L__BB0_6	consistent	64 of 64 with SASS, 63 agreeing
+  $L__BB0_7	confirmed	187 of 207 with SASS, 175 agreeing
+  sectors	{"exact": 6, "within a bound": 6, "within a range": 12}
+tests/fixtures/gluon/quantize_transpose_kernel.sm_89.ncu.json
+  $L__func_begin0	confirmed	922 of 1049 with SASS, 784 agreeing
+  sectors	{"exact": 1, "within a range": 48}
+tests/fixtures/gluon/rmsnorm_stats_kernel.sm_89.ncu.json
+  $L__func_begin0	confirmed	754 of 1146 with SASS, 735 agreeing
+  sectors	{"exact": 5, "within a range": 24}
+tests/fixtures/gluon/rope_norm_kernel.sm_89.ncu.json
+  $L__func_begin0	confirmed	744 of 878 with SASS, 716 agreeing
+  sectors	{"within a range": 16}
+tests/fixtures/k5/k5.sm_89.256.ncu.json
+  <block 0>	consistent	7 of 10 with SASS, 6 agreeing
+  <block 1>	consistent	5 of 74 with SASS, 1 agreeing
+  $L__BB0_2	confirmed	119 of 155 with SASS, 117 agreeing
+  $L__BB0_3	confirmed	97 of 111 with SASS, 83 agreeing
+  <block 4>	confirmed	7 of 8 with SASS, 5 agreeing
+  <block 5>	consistent	1 of 1 with SASS, 1 agreeing
+  $L__BB0_5	consistent	1 of 64 with SASS, 1 agreeing
+  $L__BB0_6	confirmed	400 of 412 with SASS, 366 agreeing
+  sectors	{"within a range": 144}
+tests/fixtures/micro/cp_async_src_size.ncu.json
+  <block 0>	consistent	8 of 12 with SASS, 6 agreeing
+  sectors	{"differ": 1}
+  sectors differ	lines 30
+tests/fixtures/micro/irreducible.32.ncu.json
+  <block 0>	unchecked	4 of 7 with SASS, 0 agreeing
+  $L__BB0_A	unchecked	1 of 2 with SASS, 0 agreeing
+  $L__BB0_B	unchecked	4 of 4 with SASS, 0 agreeing
+  <block 3>	unchecked	2 of 2 with SASS, 0 agreeing
+tests/lit/Inputs/ncu-two-per-line.ncu.json
+  <block 0>	consistent	6 of 7 with SASS, 3 agreeing
+  sectors	{"exact": 2}

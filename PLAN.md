@@ -590,7 +590,10 @@ One line each, with the trigger that would start it.
   text report counts the lines that agree and prints those that differ,
   none in the Gluon records, `tests/lit/gluon-ncu.test`, 26 in the B200
   records, all listed under Known limitations); not compared: a generic
-  access and a line whose count is unknown. `ci.sh` measures every record again on the GPU it
+  access and a line whose count is unknown. `tests/ncu_corpus.rs` keeps
+  every record's block verdicts, their counts and its sector lines by
+  outcome in one snapshot: 117 blocks confirmed, 231 consistent, 512
+  unchecked; 736 sector lines agree, 27 differ. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
