@@ -173,22 +173,27 @@ fn render_measured(w: &mut String, blocks: &[MeasuredBlock]) {
         return;
     }
     let count = |f: &dyn Fn(&MeasuredSectors) -> bool| checked.iter().filter(|s| f(s)).count();
+    let agrees = |s: &MeasuredSectors| s.outcome == SectorOutcome::Agrees;
     let _ = writeln!(
         w,
         "  measured L2 sectors of global accesses: {} lines agree ({} exact, {} within a range, \
-         {} within a bound), {} differ",
-        count(&|s| s.agrees),
-        count(&|s| s.agrees && !s.at_most && s.predicted.min == s.predicted.max),
-        count(&|s| s.agrees && !s.at_most && s.predicted.min < s.predicted.max),
-        count(&|s| s.agrees && s.at_most),
-        count(&|s| !s.agrees),
+         {} within a bound), {} differ, {} not compared: their global SASS ran other than predicted",
+        count(&agrees),
+        count(&|s| agrees(s) && !s.at_most && s.predicted.min == s.predicted.max),
+        count(&|s| agrees(s) && !s.at_most && s.predicted.min < s.predicted.max),
+        count(&|s| agrees(s) && s.at_most),
+        count(&|s| s.outcome == SectorOutcome::Differs),
+        count(&|s| s.outcome == SectorOutcome::ExecutionsDiffer),
     );
     let range = |c: SectorCount, at_most: bool| match (at_most, c.min == c.max) {
         (true, _) => format!("<= {}", c.max),
         (false, true) => c.min.to_string(),
         (false, false) => format!("{}–{}", c.min, c.max),
     };
-    for s in checked.iter().filter(|s| !s.agrees) {
+    for s in checked
+        .iter()
+        .filter(|s| s.outcome == SectorOutcome::Differs)
+    {
         let _ = writeln!(
             w,
             "    line {}: predicted {} (ideal {}), measured {} (ideal {})",
@@ -197,6 +202,16 @@ fn render_measured(w: &mut String, blocks: &[MeasuredBlock]) {
             range(s.ideal, s.at_most),
             s.measured,
             s.measured_ideal
+        );
+    }
+    for s in checked
+        .iter()
+        .filter(|s| s.outcome == SectorOutcome::ExecutionsDiffer)
+    {
+        let _ = writeln!(
+            w,
+            "    line {}: not compared, its global SASS executed {} thread instructions",
+            s.line, s.executions
         );
     }
 }

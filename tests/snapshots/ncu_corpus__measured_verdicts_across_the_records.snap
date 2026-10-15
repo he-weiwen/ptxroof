@@ -3,7 +3,7 @@ source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\n\\n{out}\")"
 ---
 blocks {"confirmed": 117, "consistent": 231, "unchecked": 512}
-sector lines {"differ": 27, "exact": 69, "within a bound": 70, "within a range": 597}
+sector lines {"differ": 25, "exact": 69, "not compared, its SASS ran otherwise": 2, "within a bound": 70, "within a range": 597}
 
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
   $L__func_begin0	consistent	5 of 8 with SASS, 2 agreeing
@@ -30,8 +30,8 @@ tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_
   $L__BB0_15	unchecked	26 of 30 with SASS, 0 agreeing
   <block 22>	unchecked	1 of 2 with SASS, 0 agreeing
   $L__BB0_22	unchecked	0 of 1 with SASS, 0 agreeing
-  sectors	{"differ": 1, "exact": 2}
-  sectors differ	lines 420
+  sectors	{"exact": 2, "not compared, its SASS ran otherwise": 1}
+  sectors not compared	lines 420
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage2.sm_100a.ncu.json
   $L__func_begin0	consistent	16 of 28 with SASS, 10 agreeing
   <block 1>	consistent	2 of 2 with SASS, 2 agreeing
@@ -480,8 +480,8 @@ tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ncu.json
   $L__BB0_31	unchecked	223 of 273 with SASS, 0 agreeing
   <block 63>	unchecked	1 of 3 with SASS, 0 agreeing
   $L__BB0_38	consistent	3 of 3 with SASS, 1 agreeing
-  sectors	{"differ": 1, "exact": 2}
-  sectors differ	lines 544
+  sectors	{"exact": 2, "not compared, its SASS ran otherwise": 1}
+  sectors not compared	lines 544
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json
   $L__func_begin0	unchecked	0 of 0 with SASS, 0 agreeing
   JTI0_0	confirmed	16 of 18 with SASS, 8 agreeing

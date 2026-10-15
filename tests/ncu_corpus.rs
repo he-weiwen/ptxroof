@@ -5,7 +5,7 @@
 
 use ptxroof::report::build::{AnalyzeOptions, analyze};
 use ptxroof::report::measured::NcuRecord;
-use ptxroof::report::schema::{MeasuredSectors, Verdict};
+use ptxroof::report::schema::{MeasuredSectors, SectorOutcome, Verdict};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
@@ -23,11 +23,12 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn kind(s: &MeasuredSectors) -> &'static str {
-    match (s.agrees, s.at_most, s.predicted.min == s.predicted.max) {
-        (false, _, _) => "differ",
-        (true, true, _) => "within a bound",
-        (true, false, true) => "exact",
-        (true, false, false) => "within a range",
+    match (s.outcome, s.at_most, s.predicted.min == s.predicted.max) {
+        (SectorOutcome::Differs, _, _) => "differ",
+        (SectorOutcome::ExecutionsDiffer, _, _) => "not compared, its SASS ran otherwise",
+        (SectorOutcome::Agrees, true, _) => "within a bound",
+        (SectorOutcome::Agrees, false, true) => "exact",
+        (SectorOutcome::Agrees, false, false) => "within a range",
     }
 }
 
@@ -62,6 +63,7 @@ fn measured_verdicts_across_the_records() {
             .flat_map(|k| k.measured.iter().flatten());
         let mut lines: BTreeMap<&str, u64> = BTreeMap::new();
         let mut differing = Vec::new();
+        let mut uncompared = Vec::new();
         for b in blocks {
             let verdict = format!("{:?}", b.verdict).to_lowercase();
             *verdicts.entry(verdict.clone()).or_default() += 1;
@@ -73,8 +75,10 @@ fn measured_verdicts_across_the_records() {
             for s in &b.sectors {
                 *lines.entry(kind(s)).or_default() += 1;
                 *sectors.entry(kind(s)).or_default() += 1;
-                if !s.agrees {
-                    differing.push(s.line.to_string());
+                match s.outcome {
+                    SectorOutcome::Differs => differing.push(s.line.to_string()),
+                    SectorOutcome::ExecutionsDiffer => uncompared.push(s.line.to_string()),
+                    SectorOutcome::Agrees => {}
                 }
             }
         }
@@ -83,6 +87,13 @@ fn measured_verdicts_across_the_records() {
         }
         if !differing.is_empty() {
             let _ = writeln!(out, "  sectors differ\tlines {}", differing.join(", "));
+        }
+        if !uncompared.is_empty() {
+            let _ = writeln!(
+                out,
+                "  sectors not compared\tlines {}",
+                uncompared.join(", ")
+            );
         }
     }
     assert_eq!(

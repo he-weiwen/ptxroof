@@ -408,14 +408,6 @@ its shared writes and instruction counts remain counted
 
 ### Producers and validation
 
-- **The L2 sector comparison assumes a global load's SASS runs as often
-  as its PTX statement.** ptxas may run it less often: in
-  `tma_best_Q64N64w8s3._stage1_tma`, line 544's one `LDG.E.EL` measures
-  655,360 executions and 20,480 sectors where its loop iteration runs
-  2,424,832 times (line 501's load in the same iteration measures
-  2,424,832), so the line differs from the predicted 75,776 sectors;
-  `_fwd_kernel_flash_decode_stage1_padding`'s line 420 likewise
-  measures 38,912 of 75,776.
 - **The frontend is not panic-free for arbitrary UTF-8.** An input file
   containing only `é` causes `ptxroof analyze` to exit with a panic:
   `end byte index 1 is not a char boundary`. The byte-oriented lexer
@@ -591,12 +583,18 @@ One line each, with the trigger that would start it.
   lane that runs it, a range over the address's alignment
   (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`; the
   text report counts the lines that agree and prints those that differ,
-  none in the Gluon records, `tests/lit/gluon-ncu.test`, 26 in the B200
-  records, all listed under Known limitations); not compared: a generic
-  access and a line whose count is unknown. `tests/ncu_corpus.rs` keeps
+  none in the Gluon records, `tests/lit/gluon-ncu.test`, 24 in the B200
+  records, all listed under Known limitations), once the line's global
+  SASS executed the predicted count, or within its bound. ptxas may run
+  a load less often than its statement: `tma_best_Q64N64w8s3._stage1_tma`'s
+  line 544 executes 655,360 times where its loop iteration runs
+  2,424,832 times, so it and one line of
+  `_fwd_kernel_flash_decode_stage1_padding` are listed as not compared
+  (`outcome: executions_differ`). Not compared at all: a generic access
+  and a line whose count is unknown. `tests/ncu_corpus.rs` keeps
   every record's block verdicts, their counts and its sector lines by
   outcome in one snapshot: 117 blocks confirmed, 231 consistent, 512
-  unchecked; 736 sector lines agree, 27 differ. `ci.sh` measures every record again on the GPU it
+  unchecked; 736 sector lines agree, 25 differ, 2 not compared. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed; a record of
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.

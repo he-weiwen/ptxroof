@@ -1,7 +1,9 @@
 use crate::analysis::instruction_counts::count_constraint::CountConstraint;
 use crate::ptx::ir::Module;
 use crate::report::build::BindingSpec;
-use crate::report::schema::{MeasuredBlock, MeasuredLine, MeasuredSectors, SectorCount, Verdict};
+use crate::report::schema::{
+    MeasuredBlock, MeasuredLine, MeasuredSectors, SectorCount, SectorOutcome, Verdict,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -23,6 +25,7 @@ pub struct NcuLine {
     pub l2_theoretical_sectors_global_ideal: Option<u64>,
     #[serde(default)]
     pub global_access_sizes: Vec<u32>,
+    pub global_executions: Option<u64>,
 }
 
 pub struct Prediction {
@@ -95,14 +98,26 @@ impl NcuRecord {
             };
             out.with_sass += 1;
             if let Some(s) = &p.sectors
-                && let (Some(requested), Some(ideal)) = (
+                && let (Some(requested), Some(ideal), Some(ran)) = (
                     measured.l2_theoretical_sectors_global,
                     measured.l2_theoretical_sectors_global_ideal,
+                    measured.global_executions,
                 )
                 && !measured.global_access_sizes.is_empty()
                 && measured.global_access_sizes.iter().all(|&b| b == s.bits)
             {
                 let within = |n: u64, c: SectorCount| n <= c.max && (s.at_most || c.min <= n);
+                let runs = p
+                    .executions
+                    .is_some_and(|e| ran == e || p.at_most && ran <= e);
+                let outcome = match (
+                    runs,
+                    within(requested, s.requested) && within(ideal, s.ideal),
+                ) {
+                    (false, _) => SectorOutcome::ExecutionsDiffer,
+                    (true, true) => SectorOutcome::Agrees,
+                    (true, false) => SectorOutcome::Differs,
+                };
                 out.sectors.push(MeasuredSectors {
                     line: p.line,
                     predicted: s.requested,
@@ -110,7 +125,8 @@ impl NcuRecord {
                     at_most: s.at_most,
                     measured: requested,
                     measured_ideal: ideal,
-                    agrees: within(requested, s.requested) && within(ideal, s.ideal),
+                    executions: ran,
+                    outcome,
                 });
             }
             let Some(predicted) = p.executions else {
@@ -175,6 +191,7 @@ mod tests {
             l2_theoretical_sectors_global: None,
             l2_theoretical_sectors_global_ideal: None,
             global_access_sizes: Vec::new(),
+            global_executions: None,
         };
         NcuRecord {
             kernel: "k".into(),
@@ -307,17 +324,19 @@ mod tests {
     #[test]
     fn a_line_lowered_at_its_own_width_checks_its_sectors() {
         let mut r = record(&[]);
-        for (n, sizes, measured) in [
-            (1, vec![128], Some((32, 16))),
-            (2, vec![32, 32], Some((8, 16))),
-            (3, vec![32], Some((4, 4))),
-            (4, vec![], None),
-            (5, vec![32], Some((65, 64))),
+        for (n, sizes, measured, ran) in [
+            (1, vec![128], Some((32, 16)), 64),
+            (2, vec![32, 32], Some((8, 16)), 64),
+            (3, vec![32], Some((4, 4)), 64),
+            (4, vec![], None, 64),
+            (5, vec![32], Some((65, 64)), 64),
+            (6, vec![32], Some((1, 1)), 16),
         ] {
             let mut line = record(&[(n, &["LDG.E"], 64)]).lines.remove(&n).unwrap();
             line.global_access_sizes = sizes;
             line.l2_theoretical_sectors_global = measured.map(|m| m.0);
             line.l2_theoretical_sectors_global_ideal = measured.map(|m| m.1);
+            line.global_executions = measured.map(|_| ran);
             r.lines.insert(n, line);
         }
         let count = |min, max| SectorCount { min, max };
@@ -338,10 +357,21 @@ mod tests {
                 at(3, 64, count(4, 4), count(4, 4), false),
                 at(4, 32, count(4, 4), count(4, 4), false),
                 at(5, 32, count(64, 64), count(64, 64), true),
+                at(6, 32, count(4, 4), count(4, 4), false),
             ],
         );
-        let checked: Vec<(u32, bool)> =
-            (block.sectors.iter()).map(|s| (s.line, s.agrees)).collect();
-        assert_eq!(checked, [(1, true), (2, false), (5, false)]);
+        let checked: Vec<(u32, SectorOutcome)> = (block.sectors.iter())
+            .map(|s| (s.line, s.outcome))
+            .collect();
+        use SectorOutcome::{Agrees, Differs, ExecutionsDiffer};
+        assert_eq!(
+            checked,
+            [
+                (1, Agrees),
+                (2, Differs),
+                (5, Differs),
+                (6, ExecutionsDiffer)
+            ]
+        );
     }
 }

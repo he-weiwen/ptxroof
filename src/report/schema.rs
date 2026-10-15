@@ -521,7 +521,19 @@ pub struct MeasuredSectors {
     pub at_most: bool,
     pub measured: u64,
     pub measured_ideal: u64,
-    pub agrees: bool,
+    /// The predicated-on thread instructions its global SASS executed.
+    pub executions: u64,
+    pub outcome: SectorOutcome,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SectorOutcome {
+    Agrees,
+    Differs,
+    /// Its global SASS ran other than the predicted number of times, so
+    /// its sectors are not compared.
+    ExecutionsDiffer,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
