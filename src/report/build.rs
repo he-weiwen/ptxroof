@@ -544,7 +544,16 @@ type PerRequests = HashMap<usize, PerRequest>;
 
 /// The threads that run a statement, its warps with whether they are a
 /// bound, and whether the threads are.
-type Running = (i64, Option<(i64, bool)>, bool);
+type Running<N = u64> = (N, Option<(N, bool)>, bool);
+
+/// A `Running` as the i64 counts the totals sum, when it fits.
+fn narrow((threads, warps, at_most): Running) -> Option<Running<i64>> {
+    let warps = match warps {
+        Some((w, bound)) => Some((i64::try_from(w).ok()?, bound)),
+        None => None,
+    };
+    Some((i64::try_from(threads).ok()?, warps, at_most))
+}
 
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
@@ -1205,7 +1214,7 @@ impl<'a> KernelReportBuilder<'a> {
     /// statement it guards, and whether they are a bound: per thread,
     /// per CTA with `cta`, and over the launch with `ctas` too, at the
     /// launch's own count where the grid gives one. `None` when a count
-    /// does not fit in i64.
+    /// does not fit in u64.
     fn running(
         &self,
         bm: &BlockMeasurements,
@@ -1222,17 +1231,21 @@ impl<'a> KernelReportBuilder<'a> {
         let (threads, warps, at_most, explained) = match (ctas, self.launches.get(&(b, guard))) {
             (Some(_), Some(&(t, w))) => {
                 let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
-                let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
                 (t, Some((w, bound)), bound, true)
             }
             (n, _) => {
-                let n = i64::try_from(n.unwrap_or(1)).ok()?;
+                let n = n.unwrap_or(1);
                 let (t, w, at_most, explained) = self.executing(bm, &set, chain_at_most, cta);
                 let w = match w {
-                    Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
+                    Some((w, bound)) => Some((u64::try_from(w).ok()?.checked_mul(n)?, bound)),
                     None => None,
                 };
-                (t.checked_mul(n)?, w, at_most, explained)
+                (
+                    u64::try_from(t).ok()?.checked_mul(n)?,
+                    w,
+                    at_most,
+                    explained,
+                )
             }
         };
         Some((threads, warps, at_most || guard.is_some() && !explained))
@@ -1303,8 +1316,10 @@ impl<'a> KernelReportBuilder<'a> {
             let trips = trips.as_ref();
             // A block whose count does not fit is unknown, its warps too.
             let block = self.running(bm, None, chain_at_most, cta, ctas);
-            let mult = trips.filter(|_| block.is_some());
-            let (threads, warps, block_at_most) = block.unwrap_or((0, Some((0, false)), false));
+            let narrow_block = block.and_then(narrow);
+            let mult = trips.filter(|_| narrow_block.is_some());
+            let (threads, warps, block_at_most) =
+                narrow_block.unwrap_or((0, Some((0, false)), false));
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
@@ -1332,7 +1347,7 @@ impl<'a> KernelReportBuilder<'a> {
                     continue;
                 }
                 let run = self.statement(bm, m.provenance, block, chain_at_most, cta, ctas);
-                let (threads, at_most, mult) = match run {
+                let (threads, at_most, mult) = match run.and_then(narrow) {
                     Some((threads, _, at_most)) => (threads, at_most, trips),
                     None => (0, false, None),
                 };
@@ -1781,7 +1796,7 @@ impl<'a> KernelReportBuilder<'a> {
                     true => alone.then_some((0, false)),
                     false => trips.zip(run).and_then(|(m, (_, w, _))| {
                         let (w, bound) = w?;
-                        Some((u64::try_from(m.checked_mul(w)?).ok()?, bound))
+                        Some((u64::try_from(m).ok()?.checked_mul(w)?, bound))
                     }),
                 };
                 let sectors = (self.per_request.get(&i.provenance).copied())
@@ -1807,7 +1822,7 @@ impl<'a> KernelReportBuilder<'a> {
                         true => alone.then_some(0),
                         false => trips
                             .zip(run)
-                            .and_then(|(m, (t, _, _))| u64::try_from(m.checked_mul(t)?).ok()),
+                            .and_then(|(m, (t, _, _))| u64::try_from(m).ok()?.checked_mul(t)),
                     },
                     at_most,
                     sectors,
@@ -2635,6 +2650,45 @@ mod tests {
         assert_eq!(blocks[0].with_sass, 1);
         assert_eq!(blocks[0].agreeing, 0);
         assert!(blocks[0].differing.is_empty() && blocks[0].sectors.is_empty());
+    }
+
+    /// CUDA's grid takes 2^30 by 32768 by 8192 CTAs: 32 threads each
+    /// store 2^63 times over the launch, which a u64 prediction holds.
+    #[test]
+    fn a_launch_count_between_2_63_and_2_64_is_predicted() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+            .visible .entry k(.param .u64 k_param_0)\n{\n\
+            .reg .f32 %f<2>;\n.reg .b64 %rd<2>;\n\
+            ld.param.u64 %rd1, [k_param_0];\n\
+            st.global.f32 [%rd1], %f1;\n\
+            ret;\n}\n";
+        let line = crate::report::measured::NcuLine {
+            ptx: "st.global.f32 [%rd1], %f1;".into(),
+            sass: [("STG.E".to_owned(), 1)].into(),
+            executions: 1 << 63,
+            l2_theoretical_sectors_global: Some(1),
+            l2_theoretical_sectors_global_ideal: Some(1),
+            global_access_sizes: vec![32],
+            global_executions: Some(32),
+        };
+        let record = NcuRecord {
+            kernel: "k".into(),
+            grid: [1 << 30, 32768, 8192],
+            block: [32, 1, 1],
+            params: vec!["ptr:4".into()],
+            lines: [(9, line)].into(),
+        };
+        let opts = AnalyzeOptions {
+            launch: Some(record.block),
+            grid: Some(record.grid),
+            ncu: Some(record),
+            ..Default::default()
+        };
+        let report = analyze(src, "k.ptx", &opts).expect("analyzes");
+        let blocks = report.kernels[0].measured.as_ref().expect("measured");
+        assert_eq!(blocks[0].with_sass, 1);
+        assert_eq!(blocks[0].agreeing, 1);
+        assert!(blocks[0].differing.is_empty());
     }
 
     /// A loop of 2^62 trips whose 1024 threads each read 4 bytes: the
