@@ -1,0 +1,14 @@
+# Under their records the K loops' bounds are constants, read where the
+# latch is traced with the record's parameters: w8a8's
+# max(⌈K/128⌉, 2) − 1 at K = 7168 is 55 trips, scaled_mm's at K = 8192
+# is 63. w8a8's loop blocks then agree with Nsight Compute: 131
+# single-opcode lines measure 259,522,560 = 55 trips × 36,864 CTAs × 128
+# threads.
+RUN: %ptxroof analyze %fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx --ncu %fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ncu.json | FileCheck --check-prefix=W8A8 "%s"
+RUN: %ptxroof analyze %fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx --ncu %fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ncu.json | FileCheck --check-prefix=SCALED "%s"
+W8A8: 9346754bf8.py:90 ($L__BB0_4)
+W8A8-NEXT: trips = 55
+W8A8: $L__BB0_6        confirmed
+W8A8: <block 7>        confirmed
+SCALED: a7e6c74530.py:100 ($L__BB0_4)
+SCALED-NEXT: trips = 63

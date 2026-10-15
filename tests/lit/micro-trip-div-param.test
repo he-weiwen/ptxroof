@@ -1,0 +1,10 @@
+# A loop of n / d trips: the latch is traced under the bindings, so the
+# division by the parameter d reads once d is bound. On an RTX 4090 at
+# n = 20, d = 4 the loop's barrier runs 5 times on each of 32 threads.
+RUN: %ptxroof analyze %fixtures/micro/trip_div_param.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_div_param.ptx --bind 2:d=4 | FileCheck --check-prefix=BOUND "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_div_param.ptx --ncu %fixtures/micro/trip_div_param.ncu.json | FileCheck "%s"
+FREE: trips = unknown: div by a non-constant divisor
+BOUND: trips = param_1 / 4
+CHECK: trips = 5
+CHECK: $L__BB0_2  confirmed

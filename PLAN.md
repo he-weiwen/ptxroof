@@ -272,8 +272,10 @@ its shared writes and instruction counts remain counted
   tile loop, which has a latch and an exit per partition. Bounds the
   tracer does not read, by the loop's source line: a `max` of
   non-constants (b200 `scaled_mm_kernel`, `:100`;
-  `_w8a8_block_fp8_matmul`, `:90`), a division by a
-  non-constant (b200 `_chunk_scan_fwd_kernel`, `:331`), a float
+  `_w8a8_block_fp8_matmul`, `:90`; under their records the latch is
+  traced with the parameters, 63 and 55 trips,
+  `b200-trips-bound.test`), a division by a parameter not bound
+  (`micro/trip_div_param.ptx` reads with `--bind`), a float
   immediate and an `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`).

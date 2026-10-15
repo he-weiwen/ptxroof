@@ -897,7 +897,7 @@ impl<'a> KernelReportBuilder<'a> {
         let cfg = build_cfg(module, kernel);
         let forest = loop_forest(&cfg);
         let names = loop_names(module, kernel, &cfg, &forest);
-        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names);
+        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names, bind_map);
         let blocks = collect(module, kernel, &cfg, &forest);
 
         let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();

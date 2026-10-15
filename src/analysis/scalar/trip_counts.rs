@@ -42,6 +42,7 @@ use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
+use std::collections::HashMap;
 
 /// Trip count of one loop: an expression, or a named reason there
 /// isn't one.
@@ -61,14 +62,17 @@ pub struct TripCountResults {
     pub unroll_pairs: Vec<UnrollPair>,
 }
 
+/// Every loop's trip count, its latch traced under `bindings` (`--bind`,
+/// the launch shape) where a constant is needed.
 pub fn trip_counts(
     module: &Module,
     kernel: &Kernel,
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
     names: &[LoopName],
+    bindings: &HashMap<String, i64>,
 ) -> TripCountResults {
-    let tracer = AffineValueTracer::new(module, kernel, cfg, forest);
+    let tracer = AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings);
     let trips: Vec<TripCount> = (0..forest.loops.len() as u32)
         .map(|i| loop_trips(&tracer, LoopId(i)))
         .collect();
@@ -418,7 +422,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names);
+        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
         names
             .into_iter()
             .zip(info.trips)
@@ -1009,7 +1013,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names);
+        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
         assert_eq!(info.unroll_pairs.len(), 1, "{:?}", info);
         assert_eq!(info.unroll_pairs[0].factor, 4);
         let main = info.unroll_pairs[0].main;
