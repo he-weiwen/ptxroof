@@ -1373,33 +1373,50 @@ impl<'a> KernelReportBuilder<'a> {
         })
     }
 
-    /// `b`'s loops' trip counts: the product of those that read the CTA
-    /// index, and of the others.
-    fn cta_split(&self, b: BlockId) -> (SymExpr, SymExpr) {
-        let (cta, rest): (Vec<SymExpr>, Vec<SymExpr>) = (self.chain(b).iter())
-            .map(|l| self.trip_exprs[l.0 as usize].clone())
-            .partition(|e| e.symbols().iter().any(|s| s.starts_with("%ctaid")));
-        let product = |v: Vec<SymExpr>| v.into_iter().fold(SymExpr::Const(1), SymExpr::mul);
-        (product(cta), product(rest))
+    /// `b`'s loops whose trip counts read the CTA index, and the product
+    /// of the others.
+    fn cta_split(&self, b: BlockId) -> (Vec<LoopId>, SymExpr) {
+        let (cta, rest): (Vec<LoopId>, Vec<LoopId>) = (self.chain(b).into_iter()).partition(|l| {
+            self.trip_exprs[l.0 as usize]
+                .symbols()
+                .iter()
+                .any(|s| s.starts_with("%ctaid"))
+        });
+        let rest = (rest.iter()).fold(SymExpr::Const(1), |p, l| {
+            SymExpr::mul(p, self.trip_exprs[l.0 as usize].clone())
+        });
+        (cta, rest)
     }
 
-    /// A product of counts over the CTA index, as the axes it reads and
-    /// its value at each CTA, evaluated and never negative.
-    fn cta_weight(p: &SymExpr) -> ([bool; 3], impl Fn([i64; 3]) -> Option<u64>) {
+    /// The product of the loops' counts as the axes they read and its
+    /// value at each CTA: each count evaluated and never negative, and a
+    /// `!=` latch's step dividing its distance into a positive count.
+    fn cta_weight(&self, loops: Vec<LoopId>) -> ([bool; 3], impl Fn([i64; 3]) -> Option<u64> + '_) {
         let names = SpecialVector::Ctaid.components().map(|reg| reg.name());
-        let read = names.clone().map(|n| p.symbols().contains(&n));
+        let read = names
+            .clone()
+            .map(|n| (loops.iter()).any(|l| self.trip_exprs[l.0 as usize].symbols().contains(&n)));
         let weight = move |c: [i64; 3]| {
-            let at = names.iter().cloned().zip(c).collect();
-            p.bind(&at).as_const().and_then(|n| u64::try_from(n).ok())
+            let at: HashMap<String, i64> = names.iter().cloned().zip(c).collect();
+            loops.iter().try_fold(1u64, |w, l| {
+                let n = self.trip_exprs[l.0 as usize].bind(&at).as_const()?;
+                if let Some((x, step)) = &self.trip_info.distances[l.0 as usize] {
+                    let x = x.bind(self.bind_map).bind(&at).as_const()?;
+                    if x.checked_rem(*step)? != 0 || x.checked_div(*step)? < 1 {
+                        return None;
+                    }
+                }
+                w.checked_mul(u64::try_from(n).ok()?)
+            })
         };
         (read, weight)
     }
 
     /// The weight summed over the grid; `None` without the grid or past
     /// `CTA_BUDGET` CTAs on the axes it reads.
-    fn cta_sum(&self, p: &SymExpr) -> Option<u64> {
+    fn cta_sum(&self, loops: &[LoopId]) -> Option<u64> {
         let grid = self.grid()?;
-        let (read, weight) = Self::cta_weight(p);
+        let (read, weight) = self.cta_weight(loops.to_vec());
         let n = |i: usize| if read[i] { grid[i] } else { 1 };
         if (0..3).map(|i| u64::from(n(i))).product::<u64>() > CTA_BUDGET {
             return None;
@@ -1416,8 +1433,8 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// The set's threads and warps over the launch, CTA `c` counted the
     /// weight's value there times.
-    fn weighted_launch(&self, set: &ThreadSet, p: &SymExpr) -> Option<(u64, u64)> {
-        let (read, weight) = Self::cta_weight(p);
+    fn weighted_launch(&self, set: &ThreadSet, loops: &[LoopId]) -> Option<(u64, u64)> {
+        let (read, weight) = self.cta_weight(loops.to_vec());
         set.weighted_launch(self.shape, self.grid()?, read, &weight)
     }
 
@@ -2640,19 +2657,21 @@ mod tests {
 
     /// Over a launch, a count that reads the CTA index is summed over the
     /// grid: `k < %ctaid.x` from 0 runs max(c, 1) trips in CTA c, 7 over
-    /// 4 CTAs. A negative count, here `k != 2 - %ctaid.x` at CTA 3, or
-    /// more than 2^24 CTAs on the axes it reads, leaves it unknown.
+    /// 4 CTAs. A `!=` latch's count holds where its step divides its
+    /// distance into a positive count: `k != 2 - %ctaid.x` by 1 is
+    /// unknown with CTA 2, whose counter never meets 0, and by 2 with CTA
+    /// 1; two nested loops of `1 - 2 * %ctaid.x` trips are unknown with
+    /// CTA 1, though the product of their counts is 1 there. Past 2^24
+    /// CTAs on the axes read it is unknown too.
     #[test]
     fn a_count_over_the_cta_index_is_summed_over_the_grid() {
-        let store = |bound: &str, cmp: &str, grid: [u32; 3]| {
+        let store = |body: &str, grid: [u32; 3]| {
             let src = format!(
                 ".version 8.7\n.target sm_80\n.address_size 64\n\
                  .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
                  .reqntid 32, 1, 1\n{{\n\
                  ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r5, [k_param_1];\n\
-                 mov.u32 %r1, %ctaid.x;\nmov.u32 %r6, %ctaid.y;\n{bound}\nmov.u32 %r2, 0;\n\
-                 $L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
-                 setp.{cmp}.u32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;\n}}\n"
+                 mov.u32 %r1, %ctaid.x;\nmov.u32 %r6, %ctaid.y;\n{body}\nret;\n}}\n"
             );
             let opts = AnalyzeOptions {
                 bindings: vec![parse_bind("1:n=2").expect("binding")],
@@ -2664,16 +2683,30 @@ mod tests {
             let bytes = &launch.bytes["global"].store;
             (bytes.expr.clone(), bytes.at_least)
         };
+        let one = |bound: &str, step: i64, cmp: &str| {
+            format!(
+                "{bound}\nmov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, {step};\n\
+                 st.global.u32 [%rd1], %r2;\nsetp.{cmp}.u32 %p1, %r2, %r3;\n@%p1 bra $L__L;"
+            )
+        };
         let (known, unknown) = (|n: &str| (n.to_owned(), false), ("0".to_owned(), true));
-        assert_eq!(store("mov.u32 %r3, %r1;", "lt", [4, 1, 1]), known("896"));
-        assert_eq!(store("mov.u32 %r3, %r1;", "lt", [4, 3, 1]), known("2688"));
-        assert_eq!(store("sub.s32 %r3, %r5, %r1;", "ne", [4, 1, 1]), unknown);
-        assert_eq!(
-            store("sub.s32 %r3, %r5, %r1;", "ne", [3, 1, 1]),
-            known("384")
-        );
-        let both = "add.s32 %r3, %r1, %r6;";
-        assert_eq!(store(both, "lt", [8192, 4096, 1]), unknown);
+        let below = one("mov.u32 %r3, %r1;", 1, "lt");
+        assert_eq!(store(&below, [4, 1, 1]), known("896"));
+        assert_eq!(store(&below, [4, 3, 1]), known("2688"));
+        let ne = |step| one("sub.s32 %r3, %r5, %r1;", step, "ne");
+        assert_eq!(store(&ne(1), [2, 1, 1]), known("384"));
+        assert_eq!(store(&ne(1), [3, 1, 1]), unknown);
+        assert_eq!(store(&ne(2), [1, 1, 1]), known("128"));
+        assert_eq!(store(&ne(2), [2, 1, 1]), unknown);
+        let nested = "mov.u32 %r9, 1;\nshl.b32 %r7, %r1, 1;\nsub.s32 %r3, %r9, %r7;\n\
+                      mov.u32 %r8, 0;\n$L__O:\nadd.s32 %r8, %r8, 1;\nmov.u32 %r2, 0;\n\
+                      $L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                      setp.ne.u32 %p1, %r2, %r3;\n@%p1 bra $L__L;\n\
+                      setp.ne.u32 %p2, %r8, %r3;\n@%p2 bra $L__O;";
+        assert_eq!(store(nested, [1, 1, 1]), known("128"));
+        assert_eq!(store(nested, [2, 1, 1]), unknown);
+        let both = one("add.s32 %r3, %r1, %r6;", 1, "lt");
+        assert_eq!(store(&both, [8192, 4096, 1]), unknown);
     }
 
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not

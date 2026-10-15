@@ -67,6 +67,10 @@ pub struct TripCountResults {
     /// Indexed by `LoopId`: the block each count is per execution of, the
     /// loop's guard branch or its header.
     pub entries: Vec<BlockId>,
+    /// Indexed by `LoopId`: for a `!=` latch, the distance its counter
+    /// covers and its step; the count holds where the step divides the
+    /// distance into a positive count.
+    pub distances: Vec<Option<(SymExpr, i64)>>,
     pub unroll_pairs: Vec<UnrollPair>,
 }
 
@@ -81,12 +85,16 @@ pub fn trip_counts(
     bindings: &HashMap<String, i64>,
 ) -> TripCountResults {
     let tracer = AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings);
-    let (trips, entries): (Vec<TripCount>, Vec<BlockId>) = (0..forest.loops.len() as u32)
-        .map(|i| match counted_trips(&tracer, LoopId(i)) {
-            Ok((t, entry)) => (Ok(t), entry),
-            Err(e) => (Err(e), forest.get(LoopId(i)).header),
-        })
-        .unzip();
+    let (mut trips, mut entries, mut distances) = (Vec::new(), Vec::new(), Vec::new());
+    for i in 0..forest.loops.len() as u32 {
+        let (t, entry, distance) = match counted_trips(&tracer, LoopId(i)) {
+            Ok((t, entry, distance)) => (Ok(t), entry, distance),
+            Err(e) => (Err(e), forest.get(LoopId(i)).header, None),
+        };
+        trips.push(t);
+        entries.push(entry);
+        distances.push(distance);
+    }
 
     // -- unroll main+remainder linking ----------------------------------
     let mut unroll_pairs = Vec::new();
@@ -115,6 +123,7 @@ pub fn trip_counts(
     TripCountResults {
         trips,
         entries,
+        distances,
         unroll_pairs,
     }
 }
@@ -153,15 +162,18 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
 
 /// Loop `id`'s trip count, refusing a guarded write its latch reads.
 pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
-    counted_trips(tracer, id).map(|(t, _)| t)
+    counted_trips(tracer, id).map(|(t, ..)| t)
 }
 
-/// The count and the block it is per execution of.
-fn counted_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, BlockId), String> {
+/// The count, the block it is per execution of, and a `!=` latch's
+/// distance and step.
+type Counted = (SymExpr, BlockId, Option<(SymExpr, i64)>);
+
+fn counted_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
     tracer.without_fallback(|| tracer.strictly(|| latch_trips(tracer, id)))
 }
 
-fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, BlockId), String> {
+fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
     let l = tracer.forest.get(id);
 
     // Structural requirements: one latch, one exit edge, at the latch.
@@ -205,7 +217,7 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, B
     let Some((setp_idx, setp)) = tracer.find_setp(latch, branch.0, pred.reg) else {
         return predicate_phi_trips(tracer, id, latch, branch.0, pred.reg, continue_if_true)
             .unwrap_or_else(|| Err(predicate_reason(tracer, latch, branch.0, pred.reg)))
-            .map(|t| (t, l.header));
+            .map(|t| (t, l.header, None));
     };
     if setp.predicate.is_some() {
         let name = tracer.module.interner.resolve(pred.reg);
@@ -270,12 +282,13 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, B
         return Err("latch condition never meets its `!=` bound".to_owned());
     }
     let trips = solve(cond, a1, d.base.clone())?;
+    let distance = (cond == "ne").then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
     match (below_zero(cond, d.base), guard_test(tracer, id)) {
         (Some(at_zero), Some((g, test))) if test == at_zero => {
-            Ok((SymExpr::max(trips, SymExpr::Const(0)), g))
+            Ok((SymExpr::max(trips, SymExpr::Const(0)), g, None))
         }
-        (Some(_), _) => Ok((SymExpr::max(trips, SymExpr::Const(1)), l.header)),
-        _ => Ok((trips, l.header)),
+        (Some(_), _) => Ok((SymExpr::max(trips, SymExpr::Const(1)), l.header, None)),
+        _ => Ok((trips, l.header, distance)),
     }
 }
 
