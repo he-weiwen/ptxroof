@@ -119,7 +119,9 @@ its shared writes and instruction counts remain counted
   0x7fffff00` reads `[param_0 + 4 * param_1 - 4 * ((param_1 - 256) mod
   256) - 1024]`, where for n below 256 the and is 0x7fffff00 and the
   store 2^33 bytes higher; with `--bind 1:n=100` it is refused, and the
-  address a uniform variable.
+  address a uniform variable. A mask of more runs needs the range
+  (`micro/and_runs.ptx`'s `micro_and_sign_runs`, `n & 0x7fffff0f`: a
+  uniform variable).
 - **`shfl.sync.idx` is read as if warps were rows of 32 `%tid.x`**,
   whatever the block shape: a warp is 32 consecutive
   `%tid.x + %tid.y·%ntid.x + %tid.z·%ntid.x·%ntid.y` (PTX ISA §3.1,
@@ -162,8 +164,11 @@ its shared writes and instruction counts remain counted
   addresses (every ldmatrix and cp.async destination in the Gluon GEMM
   and attention kernels, "behind `xor.b32`"); divisions of the thread
   index by a runtime value (`micro/uniform_address.ptx`'s
-  `micro_uniform_div_lanes`); masks that are not
-  one run of bits (the attention backward's dQ stores, `0xdc`); values loaded
+  `micro_uniform_div_lanes`); an and-mask's run of bits whose remainder
+  the affine form does not hold, of a form whose offset is no multiple
+  of its modulus (`micro/and_runs.ptx`'s `micro_and_offset`,
+  `(%tid.x − 4) & 0x46`: "in a mod"), or a 64-bit mask's run that starts
+  at bit 63 (`micro_and_bit63`); values loaded
   from memory (the cross-entropy's target gather: "depends on a value
   loaded from memory, behind `selp.b64`"); an `or` whose sides may
   both set a bit, by the bits the affine forms bound (`Affine::may_set`):

@@ -1,0 +1,36 @@
+# An and with a mask of several runs of bits is the sum of each run's
+# bits, x mod 2^top − x mod 2^low, as 32- and 64-bit masks up to the top
+# bit; a value negative on some threads keeps its sign through a run to
+# the top bit, read as mul.wide.s32 reads it and refused by mul.wide.u32.
+# A run from bit 63 above a clear bit 62, a remainder whose modulus does
+# not divide the form's offset, and a run that clears bit 31 of a
+# parameter, whose range is unknown, stay unknown (the parameter's
+# address a uniform variable).
+RUN: %ptxroof analyze %fixtures/micro/and_runs.ptx | FileCheck "%s"
+CHECK: kernel micro_and_dc
+CHECK: st.global.u32  global store 4 B  warp: 4–5 sectors (ideal 1)
+CHECK-SAME: [16 * ⌊(%tid.x mod 32)/4⌋ + 256 * ⌊(%tid.x mod 256)/64⌋ + param_0]
+CHECK: kernel micro_and_46
+CHECK: st.global.u16  global store 2 B  warp: 1–2 sectors (ideal 1)
+CHECK-SAME: [128 * ⌊(%tid.x mod 64)/32⌋ + 4 * (%tid.x mod 4) + param_0]
+CHECK: kernel micro_and_top
+CHECK: st.global.u32  global store 4 B  warp: 2–3 sectors (ideal 2)
+CHECK-SAME: [1024 * ⌊%tid.x/256⌋ + 4 * (%tid.x mod 16) + param_0]
+CHECK: kernel micro_and_wide
+CHECK: st.global.u32  global store 4 B  warp: 2–3 sectors (ideal 2)
+CHECK-SAME: [1024 * ⌊%tid.x/256⌋ + 4 * (%tid.x mod 16) + param_0]
+CHECK: kernel micro_and_bit63
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: and-mask 0x80000000000000ff keeps bit 63 without 62
+CHECK: kernel micro_and_offset
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: depends on special register %tid.x, in a mod
+CHECK: kernel micro_and_top_signed
+CHECK: st.global.u32  global store 4 B  warp: 2–3 sectors (ideal 2)
+CHECK-SAME: [1024 * ⌊%tid.x/256⌋ + 4 * (%tid.x mod 16) + param_0 - 1024]
+CHECK: kernel micro_and_top_unsigned
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: `mul.wide.u32` reads a value its type does not hold
+CHECK: kernel micro_and_sign_runs
+CHECK: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+CHECK-SAME: [4 * uniform(%r3@193) + param_0]

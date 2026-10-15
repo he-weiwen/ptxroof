@@ -673,23 +673,16 @@ impl<'a> AffineValueTracer<'a> {
                     (_, Some(c)) => (mask, c),
                     _ => return Err("and-mask with two non-constant operands".to_owned()),
                 };
-                // A contiguous run of ones from bit `low` up to bit `top`:
-                // x mod 2^top − x mod 2^low, and x itself when the run
-                // reaches the register's top bit; one that stops just below
-                // it keeps x for x in [0, 2^(width−1)), and in the nonneg
-                // domain when x's range is unknown.
-                let width = if mods.iter().any(|m| m.ends_with("64")) {
-                    64
-                } else {
-                    32
-                };
-                let bits = konst as u64;
-                let low = bits.trailing_zeros();
-                let run = (bits >> low).trailing_ones();
-                if bits == 0 || (bits >> low) >> run != 0 {
-                    return Err(format!("and-mask {konst:#x} is not one run of bits"));
-                }
-                let top = low + run;
+                // Each run of ones from bit `low` up to bit `top`: x mod
+                // 2^top − x mod 2^low, and x itself when the run reaches the
+                // register's top bit; one that stops just below it keeps x
+                // for x in [0, 2^(width−1)), and, when x's range is unknown
+                // and the mask is that run alone, in the nonneg domain. The
+                // runs' bits are disjoint, so the and is their sum; PTX ISA
+                // §4.5.1 converts the constant to the instruction's size.
+                let width = (mods.iter())
+                    .find_map(|m| m.strip_prefix('b')?.parse::<u32>().ok())
+                    .unwrap_or(32);
                 let modulo = |x: Affine, k: u32| -> Result<Affine, String> {
                     x.clone()
                         .modulo_const(1i64 << k)
@@ -697,25 +690,35 @@ impl<'a> AffineValueTracer<'a> {
                 };
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
                 let range = bound.range(&|v| self.bound(v));
-                let hi = if top >= width - 1 {
-                    if top == width - 1
-                        && range.is_some_and(|(lo, hi)| lo < 0 || hi >> (width - 1) != 0)
-                    {
-                        let bit = width - 1;
-                        return Err(format!(
-                            "and-mask {konst:#x} clears bit {bit} of a value that may set it"
-                        ));
-                    }
-                    affine.clone()
-                } else {
-                    modulo(affine.clone(), top)?
-                };
-                if low == 0 {
-                    return Ok(hi);
+                let all = konst as u64 & u64::MAX >> (64 - width);
+                let (mut bits, mut sum) = (all, Affine::invariant(SymExpr::Const(0)));
+                while bits != 0 {
+                    let low = bits.trailing_zeros();
+                    let top = low + (bits >> low).trailing_ones();
+                    let hi = if top >= width - 1 {
+                        let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
+                        if top == width - 1 && !held.unwrap_or(bits == all) {
+                            let bit = width - 1;
+                            return Err(format!(
+                                "and-mask {konst:#x} clears bit {bit} of a value that may set it"
+                            ));
+                        }
+                        affine.clone()
+                    } else {
+                        modulo(affine.clone(), top)?
+                    };
+                    sum = sum
+                        + match low {
+                            0 => hi,
+                            63 => {
+                                return Err(format!("and-mask {konst:#x} keeps bit 63 without 62"));
+                            }
+                            _ => (hi.clone().align_down(1i64 << low))
+                                .ok_or_else(|| refuse(&hi, id, "mod"))?,
+                        };
+                    bits &= u64::MAX.checked_shl(top).unwrap_or(0);
                 }
-                hi.clone()
-                    .align_down(1i64 << low)
-                    .ok_or_else(|| refuse(&hi, id, "mod"))
+                Ok(sum)
             }
             Opcode::Or if ops.len() == 3 => {
                 // LLVM writes an add as `or` when no bit is set on both
