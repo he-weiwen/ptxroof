@@ -1940,13 +1940,6 @@ impl<'a> KernelReportBuilder<'a> {
         Some([x?, y?, z?])
     }
 
-    /// The threads and warps that run statement `stmt` of block `b` over
-    /// the launch, where the grid is bound and they are counted.
-    fn launch(&self, b: BlockId, stmt: usize) -> Option<(u64, u64)> {
-        let guard = self.sets.guards.contains_key(&stmt).then_some(stmt);
-        self.launches.get(&(b, guard)).copied()
-    }
-
     fn measured(
         &self,
         record: &NcuRecord,
@@ -1971,39 +1964,20 @@ impl<'a> KernelReportBuilder<'a> {
                 let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
                     continue;
                 };
-                let set = self.sets.of(bm.block, i.provenance);
-                let (threads, warps, at_most, explained) =
-                    self.executing(bm, &set, chain_at_most, Some(cta));
-                let guarded = self.sets.guards.contains_key(&i.provenance);
-                let holds = self.sets.guards.get(&i.provenance) == Some(&Pred::True);
+                let run = ctas.and_then(|n| {
+                    self.running(bm, Some(i.provenance), chain_at_most, Some(cta), Some(n))
+                });
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
                 let never = !self.counted(bm.block, i.provenance);
                 let trips = mult.as_const().filter(|_| alone);
-                // Over the launch, a set counted at every CTA explains its
-                // block as an exact count per CTA does.
-                let launch = self.launch(bm.block, i.provenance);
-                let at_most = !never
-                    && match launch {
-                        Some(_) => {
-                            chain_at_most
-                                || !cta.exact
-                                || (instr.predicate.is_some() && !(holds || guarded))
-                        }
-                        None => {
-                            at_most
-                                || (instr.predicate.is_some() && !(holds || guarded && explained))
-                        }
-                    };
+                let at_most = !never && run.is_some_and(|(_, _, at_most)| at_most);
                 // Warps with a lane that runs it: each requests its sectors.
-                let requests = match (never, launch) {
-                    (true, _) => alone.then_some((0, false)),
-                    (false, Some((_, w))) => {
-                        trips.and_then(|m| Some((u64::try_from(m).ok()?.checked_mul(w)?, false)))
-                    }
-                    (false, None) => trips.zip(warps).and_then(|(m, (w, bound))| {
-                        let n = u64::try_from(m.checked_mul(w)?).ok()?.checked_mul(ctas?)?;
-                        Some((n, bound))
+                let requests = match never {
+                    true => alone.then_some((0, false)),
+                    false => trips.zip(run).and_then(|(m, (_, w, _))| {
+                        let (w, bound) = w?;
+                        Some((u64::try_from(m.checked_mul(w)?).ok()?, bound))
                     }),
                 };
                 let sectors = (self.per_request.get(&i.provenance).copied())
@@ -2025,16 +1999,11 @@ impl<'a> KernelReportBuilder<'a> {
                 predictions.push(Prediction {
                     line,
                     constraint: count_constraint(self.module, instr),
-                    executions: match (never, launch) {
-                        (true, _) => alone.then_some(0),
-                        (false, Some((n, _))) => {
-                            trips.and_then(|m| u64::try_from(m).ok()?.checked_mul(n))
-                        }
-                        (false, None) => trips.and_then(|m| {
-                            u64::try_from(m.checked_mul(threads)?)
-                                .ok()?
-                                .checked_mul(ctas?)
-                        }),
+                    executions: match never {
+                        true => alone.then_some(0),
+                        false => trips
+                            .zip(run)
+                            .and_then(|(m, (t, _, _))| u64::try_from(m.checked_mul(t)?).ok()),
                     },
                     at_most,
                     sectors,
