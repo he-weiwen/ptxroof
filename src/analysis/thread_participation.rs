@@ -907,7 +907,7 @@ impl PredicateReader<'_> {
             }
             cur = self.forest.doms.idom[d.0 as usize];
         }
-        if pred.lane_exact() && self.bypassed(b) {
+        if self.bypassed(b) {
             pred = pred.and(Pred::Unknown);
         }
         self.blocks[b.0 as usize] = Some(pred.clone());

@@ -2855,6 +2855,27 @@ mod tests {
         assert!(r.kernels[0].measured.is_some());
     }
 
+    /// A block a loop counter's mask selects, but that a short-circuit
+    /// on loaded values may also skip, is a bound per CTA however its
+    /// trips count.
+    #[test]
+    fn a_bypassed_block_under_a_counter_mask_is_a_bound() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 64, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r7, [%rd1];\n\
+                   ld.global.u32 %r8, [%rd1+4];\nmov.u32 %r2, %tid.x;\nmov.u32 %r3, 0;\n\
+                   $L__H:\nshl.b32 %r4, %r3, 6;\nadd.s32 %r5, %r4, %r2;\n\
+                   setp.ge.u32 %p2, %r5, 300;\n@%p2 bra $L__T;\n\
+                   setp.ne.u32 %p4, %r7, 0;\n@%p4 bra $L__S;\n\
+                   setp.eq.u32 %p5, %r8, 0;\n@%p5 bra $L__T;\n\
+                   $L__S:\nst.global.u32 [%rd1+8], %r5;\n\
+                   $L__T:\nadd.s32 %r3, %r3, 1;\nsetp.lt.u32 %p3, %r3, 8;\n@%p3 bra $L__H;\nret;\n}\n";
+        let r = analyze(src, "t", &AnalyzeOptions::default()).expect("analyzes");
+        let per_cta = r.kernels[0].totals_per_cta.as_ref().expect("a block shape");
+        let store = &per_cta.bytes["global"].store;
+        assert_eq!((store.expr.as_str(), store.at_most), ("2048", true));
+    }
+
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
     /// read but uniform, so each warp's lanes are still known.
     /// §10.32: `%dynamic_smem_size` is set "for the CTA … at launch time",
