@@ -1094,7 +1094,10 @@ impl<'a> KernelReportBuilder<'a> {
             let lanes = (0..threads)
                 .filter(|&t| set.contains([t % nx, (t / nx) % ny, t / (nx * ny)], self.shape))
                 .count() as u64;
-            requested += f.bytes as u64 * trips as u64 * lanes;
+            let bytes = u64::from(f.bytes)
+                .checked_mul(trips as u64)?
+                .checked_mul(lanes)?;
+            requested = requested.checked_add(bytes)?;
             at_most |= !f.guard_exact || f.conditional;
             let varies = |v: &Var| {
                 crate::analysis::scalar::lane_eval::depends_on_lane(v)
@@ -2839,5 +2842,38 @@ mod tests {
         assert_eq!(blocks[0].with_sass, 1);
         assert_eq!(blocks[0].agreeing, 0);
         assert!(blocks[0].differing.is_empty() && blocks[0].sectors.is_empty());
+    }
+
+    /// A loop of 2^62 trips whose 1024 threads each read 4 bytes: the
+    /// bytes it requests pass 2^64, so it has no byte counts.
+    #[test]
+    fn loop_bytes_past_u64_are_unknown() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+            .visible .entry k(.param .u64 k_param_0, .param .u64 k_param_1)\n{\n\
+            .reg .pred %p<2>;\n.reg .f32 %f<2>;\n.reg .b32 %r<2>;\n.reg .b64 %rd<6>;\n\
+            ld.param.u64 %rd1, [k_param_0];\n\
+            ld.param.u64 %rd2, [k_param_1];\n\
+            mov.u32 %r1, %tid.x;\n\
+            mul.wide.u32 %rd3, %r1, 4;\n\
+            add.s64 %rd4, %rd1, %rd3;\n\
+            mov.u64 %rd5, 0;\n\
+            $L__L:\n\
+            ld.global.f32 %f1, [%rd4];\n\
+            st.global.f32 [%rd4], %f1;\n\
+            add.s64 %rd5, %rd5, 1;\n\
+            setp.lt.u64 %p1, %rd5, %rd2;\n\
+            @%p1 bra $L__L;\n\
+            ret;\n}\n";
+        let opts = |n| AnalyzeOptions {
+            bindings: vec![parse_bind(&format!("1:N={n}")).expect("binding")],
+            launch: Some([1024, 1, 1]),
+            ..Default::default()
+        };
+        let bytes = |n: i64| {
+            let report = analyze(src, "k.ptx", &opts(n)).expect("analyzes");
+            report.kernels[0].loops[0].global_bytes_per_cta.clone()
+        };
+        assert_eq!(bytes(4).map(|b| b.requested), Some(32768));
+        assert_eq!(bytes(1 << 62), None);
     }
 }
