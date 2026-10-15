@@ -885,6 +885,8 @@ struct KernelReportBuilder<'a> {
     /// block's set (`None`) and of each guarded statement's, where
     /// `ThreadSet::launch` counts them.
     launches: HashMap<(BlockId, Option<usize>), (u64, u64)>,
+    /// The same for each `cp.async`'s source read, by statement.
+    source_launches: HashMap<usize, (u64, u64)>,
     /// The PTX file's lines, naming a uniform value by its statement's.
     lines: &'a LineIndex,
 }
@@ -956,6 +958,7 @@ impl<'a> KernelReportBuilder<'a> {
             unused: Vec::new(),
             shape,
             launches: HashMap::new(),
+            source_launches: HashMap::new(),
             lines,
         };
         let tracer =
@@ -973,6 +976,12 @@ impl<'a> KernelReportBuilder<'a> {
                     if let Some(n) = set.launch(shape, grid) {
                         b.launches.insert((block, stmt), n);
                     }
+                }
+            }
+            for &s in b.sets.sources.keys() {
+                let set = b.sets.of_access(tracer.block_of(s), s, 1);
+                if let Some(n) = set.launch(shape, grid) {
+                    b.source_launches.insert(s, n);
                 }
             }
         }
@@ -1661,7 +1670,10 @@ impl<'a> KernelReportBuilder<'a> {
                         Some(Pred::False) => continue,
                         Some(_) => {
                             let (set, launch) = match source {
-                                true => (self.sets.of_access(bm.block, p, 1), None),
+                                true => (
+                                    self.sets.of_access(bm.block, p, 1),
+                                    self.source_launches.get(&p).copied(),
+                                ),
                                 false => (
                                     self.sets.of(bm.block, p),
                                     self.launches.get(&(bm.block, Some(p))).copied(),

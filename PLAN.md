@@ -66,12 +66,10 @@ its shared writes and instruction counts remain counted
   counts each warp that runs the copy as a request
   (`micro/cp_async_ignore_src.ptx` under its RTX 4090 record: lines 36,
   42 and 47 predict `32–36`, `8–12` and `16–20` L2 sectors where it
-  measures 16, 4 and 8). Over the launch a copy whose reading lanes
-  differ by CTA counts the most of any CTA in each (line 55: 64 lanes in
-  each of 2 CTAs, `load <= 2944 B`, where the four lines measure 68 L2
-  sectors, 2176 B; `micro-cp-async-ignore-src.test`). Triton writes its
-  masked loads this way: 319 such `cp.async` in 16 B200 fixtures, 13,489
-  in the census.
+  measures 16, 4 and 8, though its launch totals read `load 2176 B`,
+  the four lines' 68 measured sectors; `micro-cp-async-ignore-src.test`).
+  Triton writes its masked loads this way: 319 such `cp.async` in 16
+  B200 fixtures, 13,489 in the census.
 - **Register effects are incomplete.** The affine tracer records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
