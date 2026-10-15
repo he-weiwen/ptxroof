@@ -1,16 +1,21 @@
 # LLVM's loop guard branch: micro_loop_guard skips its loop when n < 11,
 # the latch condition at k = 0, so the count is max(n − 10, 0) per
-# execution of the guard, 0 at n = 5. micro_loop_guard_other's guard
-# tests n < 6, another condition, and its count stays n − 10. On an RTX
-# 4090 at n = 20 the guarded loop runs 10 trips: its store requests 10
-# L2 sectors, as predicted.
+# execution of the guard, 0 at n = 5, and as the guard always runs the
+# totals are exact. micro_loop_guard_other's guard tests n < 6, another
+# condition, and its count stays n − 10 per entry, its totals a bound.
+# On an RTX 4090 at n = 20 the guarded loop runs 10 trips: its store
+# requests 10 L2 sectors, as predicted.
 RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx | FileCheck --check-prefix=FREE "%s"
 RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx --bind 1:n=5 | FileCheck --check-prefix=SKIPPED "%s"
 RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx --ncu %fixtures/micro/loop_guard.ncu.json | FileCheck "%s"
 FREE-LABEL: kernel micro_loop_guard
 FREE: trips = max(param_1 - 10, 0)
+FREE: totals [static]:
+FREE: global bytes: load 0 B, store 4 * max(param_1 - 10, 0) B
 FREE-LABEL: kernel micro_loop_guard_other
 FREE: trips = param_1 - 10
+FREE: totals [static]:
+FREE: global bytes: load 0 B, store <= 4 * param_1 - 40 B
 SKIPPED-LABEL: kernel micro_loop_guard
 SKIPPED: trips = 0
 CHECK-LABEL: kernel micro_loop_guard

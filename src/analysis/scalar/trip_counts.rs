@@ -59,6 +59,9 @@ pub struct UnrollPair {
 pub struct TripCountResults {
     /// Indexed by `LoopId`.
     pub trips: Vec<TripCount>,
+    /// Indexed by `LoopId`: the block each count is per execution of, the
+    /// loop's guard branch or its header.
+    pub entries: Vec<BlockId>,
     pub unroll_pairs: Vec<UnrollPair>,
 }
 
@@ -73,9 +76,12 @@ pub fn trip_counts(
     bindings: &HashMap<String, i64>,
 ) -> TripCountResults {
     let tracer = AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings);
-    let trips: Vec<TripCount> = (0..forest.loops.len() as u32)
-        .map(|i| loop_trips(&tracer, LoopId(i)))
-        .collect();
+    let (trips, entries): (Vec<TripCount>, Vec<BlockId>) = (0..forest.loops.len() as u32)
+        .map(|i| match counted_trips(&tracer, LoopId(i)) {
+            Ok((t, entry)) => (Ok(t), entry),
+            Err(e) => (Err(e), forest.get(LoopId(i)).header),
+        })
+        .unzip();
 
     // -- unroll main+remainder linking ----------------------------------
     let mut unroll_pairs = Vec::new();
@@ -103,6 +109,7 @@ pub fn trip_counts(
 
     TripCountResults {
         trips,
+        entries,
         unroll_pairs,
     }
 }
@@ -136,10 +143,15 @@ fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
 
 /// Loop `id`'s trip count, refusing a guarded write its latch reads.
 pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
+    counted_trips(tracer, id).map(|(t, _)| t)
+}
+
+/// The count and the block it is per execution of.
+fn counted_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, BlockId), String> {
     tracer.without_fallback(|| tracer.strictly(|| latch_trips(tracer, id)))
 }
 
-fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
+fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, BlockId), String> {
     let l = tracer.forest.get(id);
 
     // Structural requirements: one latch, one exit edge, at the latch.
@@ -182,7 +194,8 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     // The setp defining the branch predicate, inside the latch block.
     let Some((setp_idx, setp)) = tracer.find_setp(latch, branch.0, pred.reg) else {
         return predicate_phi_trips(tracer, id, latch, branch.0, pred.reg, continue_if_true)
-            .unwrap_or_else(|| Err(predicate_reason(tracer, latch, branch.0, pred.reg)));
+            .unwrap_or_else(|| Err(predicate_reason(tracer, latch, branch.0, pred.reg)))
+            .map(|t| (t, l.header));
     };
     if setp.predicate.is_some() {
         let name = tracer.module.interner.resolve(pred.reg);
@@ -247,20 +260,21 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
         return Err("latch condition never meets its `!=` bound".to_owned());
     }
     let trips = solve(cond, a1, d.base.clone())?;
-    match below_zero(cond, d.base) {
-        Some(at_zero) if guard_test(tracer, id).as_ref() == Some(&at_zero) => {
-            Ok(SymExpr::max(trips, SymExpr::Const(0)))
+    match (below_zero(cond, d.base), guard_test(tracer, id)) {
+        (Some(at_zero), Some((g, test))) if test == at_zero => {
+            Ok((SymExpr::max(trips, SymExpr::Const(0)), g))
         }
-        _ => Ok(trips),
+        _ => Ok((trips, l.header)),
     }
 }
 
 /// LLVM's loop guard branch (`Loop::getLoopGuardBranch`,
 /// llvm/lib/Analysis/LoopInfo.cpp): the header's one predecessor outside
-/// the loop, or that block's one predecessor, ends in a two-way branch
-/// whose other successor does not reach the header without passing it.
-/// Its test of entering the loop, as `e < 0`.
-fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<SymExpr> {
+/// the loop, or that block's one predecessor, lies in the loop's parent
+/// and ends in a two-way branch whose other successor does not reach the
+/// header without passing it. That block, and its test of entering the
+/// loop, as `e < 0`.
+fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, SymExpr)> {
     let (cfg, l) = (tracer.cfg, tracer.forest.get(id));
     let mut outside =
         (cfg.block(l.header).preds.iter()).filter(|p| l.blocks.binary_search(p).is_err());
@@ -277,7 +291,7 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<SymExpr> {
     };
     let skip = if taken == into { other } else { taken };
     let in_loop = |b: BlockId| tracer.forest.block_loop[b.0 as usize];
-    if taken == other || in_loop(g) != in_loop(pre) || tracer.path_avoiding(skip, l.header, g) {
+    if taken == other || in_loop(g) != l.parent || tracer.path_avoiding(skip, l.header, g) {
         return None;
     }
     let (pos, bra) = tracer.last_instr(g)?;
@@ -304,7 +318,10 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<SymExpr> {
     } else {
         negate(cmp)
     };
-    below_zero(cmp, form.is_invariant().then_some(form.base)?)
+    Some((
+        g,
+        below_zero(cmp, form.is_invariant().then_some(form.base)?)?,
+    ))
 }
 
 /// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
@@ -763,6 +780,44 @@ mod tests {
             unclamped
         );
         assert_eq!(trips(""), unclamped);
+    }
+
+    /// The clamped count is per execution of the guard, so the guard is
+    /// the loop's entry; a branch inside another loop runs per trip of
+    /// that loop and is not taken as the guard.
+    #[test]
+    fn a_guard_in_the_parent_is_the_loops_entry() {
+        let entries = |pre: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r3, 0;\n{pre}\n\
+                     setp.lt.s32 %p1, %r1, 11;\n@%p1 bra $L__S;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r1;\n\
+                     @%p2 bra $L__L;\n$L__E:\nret;"
+                ),
+            );
+            let m = parse(&src).expect("test source parses");
+            let k = &m.kernels[0];
+            let cfg = build_cfg(&m, k);
+            let f = loop_forest(&cfg);
+            let names = loop_names(&m, k, &cfg, &f);
+            let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
+            let at = |b: BlockId| cfg.block(b).label.map(|l| m.interner.resolve(l).to_owned());
+            (names.into_iter().zip(info.trips).zip(info.entries))
+                .map(|((n, t), e)| (n.display, t.map(|t| t.to_string()), at(e)))
+                .collect::<Vec<_>>()
+        };
+        let guard = entries("mov.u32 %r2, 10;\nbra.uni $L__G;\n$L__S:\nbra.uni $L__E;\n$L__G:");
+        assert_eq!(guard[0].1, Ok("max(param_0 - 10, 0)".to_owned()));
+        assert_eq!(guard[0].2, Some("$L__G".to_owned()));
+        let sibling = entries(
+            "$L__S:\nadd.s32 %r3, %r3, 1;\nsetp.eq.s32 %p3, %r3, 7;\n@%p3 bra $L__E;\n\
+             mov.u32 %r2, 10;",
+        );
+        let l = sibling.iter().find(|(n, ..)| n == "$L__L").expect("loop L");
+        assert_eq!(l.1, Ok("param_0 - 10".to_owned()));
+        assert_eq!(l.2, Some("$L__L".to_owned()));
     }
 
     /// PTX ISA §10.32: `%dynamic_smem_size` is fixed for the CTA at launch;

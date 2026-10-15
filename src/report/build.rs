@@ -928,7 +928,8 @@ impl<'a> KernelReportBuilder<'a> {
                     Some(p) => &forest.get(p).latches,
                     None => &exit_blocks,
                 };
-                targets.is_empty() || !targets.iter().all(|&t| forest.doms.dominates(l.header, t))
+                let entry = trip_info.entries[i];
+                targets.is_empty() || !targets.iter().all(|&t| forest.doms.dominates(entry, t))
             })
             .collect();
 
@@ -996,7 +997,7 @@ impl<'a> KernelReportBuilder<'a> {
                 Some(p) => &b.forest.get(p).latches,
                 None => &exit_blocks,
             };
-            b.cond_entry[i] &= !always(l.header, targets);
+            b.cond_entry[i] &= !always(b.trip_info.entries[i], targets);
         }
         let compile_time: HashMap<String, i64> = (SpecialVector::Ntid.components().into_iter())
             .zip(kernel.reqntid.into_iter().flatten())

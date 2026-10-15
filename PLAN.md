@@ -178,7 +178,12 @@ its shared writes and instruction counts remain counted
   with `--bind 1:n=5`. The count is 1 when the loop is entered and 0
   when a guard skips it. LLVM's loop guard branch, which skips the loop
   where its latch condition fails at k = 0, makes the count max(T, 0)
-  (`micro/loop_guard.ptx`: `max(param_1 - 10, 0)`, 0 at n = 5); a guard
+  per execution of the guard (`micro/loop_guard.ptx`: `max(param_1 -
+  10, 0)`, 0 at n = 5), T where T is never negative with every
+  parameter taken as nonnegative (`src/analysis/scalar/symexpr.rs`'s
+  doc; `micro/single_loop.ptx`'s `ld.param.u32` n read as `param_1`,
+  its totals exact, where an n of 2^31 or more, below 1 as its
+  `setp.lt.s32` compares it, runs no trips); a guard
   on another condition, or none, leaves T (`micro_loop_guard_other`:
   `param_1 - 10`, −2 at n = 8 where the loop runs once).
 - **Addresses the tracer cannot read are unknown rows**, with the
