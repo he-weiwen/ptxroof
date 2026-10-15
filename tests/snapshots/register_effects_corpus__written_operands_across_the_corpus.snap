@@ -68,6 +68,7 @@ div.u32	1	32
 elect.sync	1	342
 ex2.approx.f32	1	271
 ex2.approx.ftz.f32	1	675
+exit	0	1
 fence.proxy.async.shared::cta	0	33
 fma.rn.f32	1	1002
 fma.rn.ftz.f32	1	204
@@ -95,8 +96,8 @@ ld.param.b64	1	248
 ld.param.f32	1	20
 ld.param.s32	1	36
 ld.param.u16	1	1
-ld.param.u32	1	77
-ld.param.u64	1	213
+ld.param.u32	1	78
+ld.param.u64	1	214
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -175,7 +176,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	32
 rem.s64	1	10
 rem.u32	1	8
-ret	0	230
+ret	0	231
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	801
@@ -187,7 +188,7 @@ setp.eq.b16	1	4
 setp.eq.b32	1	148
 setp.eq.b64	1	20
 setp.eq.f32	1	34
-setp.eq.s32	1	11
+setp.eq.s32	1	12
 setp.eq.u32	1	15
 setp.ge.f32	1	2
 setp.ge.s32	1	131
@@ -234,7 +235,7 @@ st.global.b32	0	197
 st.global.b64	0	9
 st.global.f32	0	15
 st.global.u16	0	198
-st.global.u32	0	188
+st.global.u32	0	189
 st.global.u64	0	1
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2

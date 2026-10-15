@@ -344,8 +344,8 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | 9.7.13.3 | `bra` | `Control` | OK. |
 | 9.7.13.4 | `brx.idx` | `Control` (mnemonic `brx`) | OK — and CFG-side, unresolved `.branchtargets` surface as a report unknown (commit `d58b305`), so indirect branches degrade honestly. |
 | 9.7.13.5 | `call` | `Control` | OK at the classifier layer; the parser reads its `(…)` return and argument lists (`Operand::ParamList`, `micro/call_returns.ptx`), and skips `.calltargets` and `.callprototype`. ⚠ misfit §E: flops/bytes inside the callee are not attributed to the call site. Fine while the corpus is fully-inlined nvcc output; recommend a report-level named unknown when a kernel calls a function whose body the module doesn't contain (extern), so the gap is visible the day it matters. |
-| 9.7.13.6 | `ret` | `Control` | OK. |
-| 9.7.13.7 | `exit` | `Control` | OK. |
+| 9.7.13.6 | `ret` | `Control` | OK at the classifier layer. ⚠ The CFG reads a predicated `ret` as falling through, so what follows counts on every thread (PLAN.md; `micro/predicated_exit.ptx`). |
+| 9.7.13.7 | `exit` | `Control` | OK at the classifier layer. ⚠ The same for a predicated `exit` (`micro/predicated_exit.ptx`: the store after `@%p1 exit` counts 32 per CTA, none run at n = 20 on an RTX 4090). |
 
 ## §9.7.14 Parallel Synchronization and Communication Instructions
 
