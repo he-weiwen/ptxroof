@@ -1,0 +1,5 @@
+# A latch whose counter steps by −2^63 has no trip count: the solver
+# negates the step, which −2^63 does not have in 64 bits.
+RUN: %ptxroof analyze %fixtures/micro/min_step.ptx | FileCheck "%s"
+CHECK: kernel micro_min_step
+CHECK: trips = unknown: induction step is −2^63, which has no negation

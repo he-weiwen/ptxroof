@@ -231,6 +231,9 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCount {
     let a1 = coeff
         .as_const()
         .ok_or_else(|| "induction step is not a constant".to_owned())?;
+    if a1 == i64::MIN {
+        return Err("induction step is −2^63, which has no negation".to_owned());
+    }
     solve(&cmp, continue_if_true, a1, d.base)
 }
 
