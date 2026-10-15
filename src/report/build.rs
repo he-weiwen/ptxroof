@@ -1945,7 +1945,7 @@ impl<'a> KernelReportBuilder<'a> {
                             let counted = ctas.and_then(|n| t.checked_mul(n).zip(w.checked_mul(n)));
                             (
                                 counted,
-                                rest.as_const().filter(|_| alone && ctas.is_some()),
+                                rest.as_const().filter(|_| alone && counted.is_some()),
                                 0,
                             )
                         }
@@ -2722,11 +2722,10 @@ mod tests {
         assert!(r.kernels[0].loops[0].accesses[0].sectors_at_most);
     }
 
-    /// Wrong output (PLAN.md): a per-trip launch count past u64, 32
-    /// threads of 3 CTAs on 2^58 - 1 of 2^58 trips, predicts 0 executions
-    /// rather than none.
+    /// A per-trip launch count past u64, 32 threads of 3 CTAs on
+    /// 2^58 - 1 of 2^58 trips, has no prediction.
     #[test]
-    fn a_per_trip_launch_count_past_u64_predicts_zero() {
+    fn a_per_trip_launch_count_past_u64_has_no_prediction() {
         let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
                    .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
                    ld.param.u64 %rd1, [k_param_0];\nmov.u64 %rd2, 0;\n$L__H:\n\
@@ -2761,7 +2760,7 @@ mod tests {
         let predicted: Vec<u64> = (measured.iter())
             .flat_map(|b| b.differing.iter().map(|l| l.predicted))
             .collect();
-        assert_eq!(predicted, [0]);
+        assert_eq!(predicted, Vec::<u64>::new());
     }
 
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not

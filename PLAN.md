@@ -103,11 +103,6 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   measures 6,268,416, 16 more per CTA; ptxas predicates the block's two
   `LDGSTS` (`@!P0`) rather than branching around them
   (`gluon-counter-guard.test`).
-- **An ncu prediction counted trip by trip past u64 predicts 0.** Where
-  the threads a loop counter selects, summed over the trips and times
-  the CTAs, leave u64, the line predicts 0 executions instead of none
-  (`a_per_trip_launch_count_past_u64_predicts_zero`: 32 threads of 3
-  CTAs on 2^58 − 1 of 2^58 trips).
 - **A predicated `ret` or `exit` is read as falling through.** The CFG
   gives its block one successor, the next block, so what follows counts
   on every thread, exactly (`micro/predicated_exit.ptx`: the store
