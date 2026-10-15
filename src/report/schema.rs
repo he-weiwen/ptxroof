@@ -508,6 +508,26 @@ pub struct MeasuredBlock {
     pub with_sass: u64,
     pub agreeing: u64,
     pub differing: Vec<MeasuredLine>,
+    /// Lines whose global access ptxas lowered at its own width, with
+    /// their L2 sectors over the launch against Nsight Compute's.
+    pub sectors: Vec<MeasuredSectors>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredSectors {
+    pub line: u32,
+    pub predicted: SectorCount,
+    pub ideal: SectorCount,
+    pub at_most: bool,
+    pub measured: u64,
+    pub measured_ideal: u64,
+    pub agrees: bool,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+pub struct SectorCount {
+    pub min: u64,
+    pub max: u64,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]

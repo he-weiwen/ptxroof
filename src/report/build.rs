@@ -1954,6 +1954,7 @@ impl<'a> KernelReportBuilder<'a> {
                                         && !(holds || guarded && explained))
                             }
                         },
+                    sectors: None,
                 });
             }
             let name = self.cfg.block_name(self.module, bm.block);

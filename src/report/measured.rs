@@ -1,7 +1,7 @@
 use crate::analysis::instruction_counts::count_constraint::CountConstraint;
 use crate::ptx::ir::Module;
 use crate::report::build::BindingSpec;
-use crate::report::schema::{MeasuredBlock, MeasuredLine, Verdict};
+use crate::report::schema::{MeasuredBlock, MeasuredLine, MeasuredSectors, SectorCount, Verdict};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -19,12 +19,26 @@ pub struct NcuLine {
     pub ptx: String,
     pub sass: BTreeMap<String, u32>,
     pub executions: u64,
+    pub l2_theoretical_sectors_global: Option<u64>,
+    pub l2_theoretical_sectors_global_ideal: Option<u64>,
+    #[serde(default)]
+    pub global_access_sizes: Vec<u32>,
 }
 
 pub struct Prediction {
     pub line: u32,
     pub constraint: CountConstraint,
     pub executions: Option<u64>,
+    pub at_most: bool,
+    pub sectors: Option<Sectors>,
+}
+
+/// The sectors a line's one global access of `bits` requests over the
+/// launch, and the ideal number.
+pub struct Sectors {
+    pub bits: u32,
+    pub requested: SectorCount,
+    pub ideal: SectorCount,
     pub at_most: bool,
 }
 
@@ -72,6 +86,7 @@ impl NcuRecord {
             with_sass: 0,
             agreeing: 0,
             differing: Vec::new(),
+            sectors: Vec::new(),
         };
         let (mut confirmed, mut contradicted) = (false, false);
         for p in predictions {
@@ -79,6 +94,25 @@ impl NcuRecord {
                 continue;
             };
             out.with_sass += 1;
+            if let Some(s) = &p.sectors
+                && let (Some(requested), Some(ideal)) = (
+                    measured.l2_theoretical_sectors_global,
+                    measured.l2_theoretical_sectors_global_ideal,
+                )
+                && !measured.global_access_sizes.is_empty()
+                && measured.global_access_sizes.iter().all(|&b| b == s.bits)
+            {
+                let within = |n: u64, c: SectorCount| n <= c.max && (s.at_most || c.min <= n);
+                out.sectors.push(MeasuredSectors {
+                    line: p.line,
+                    predicted: s.requested,
+                    ideal: s.ideal,
+                    at_most: s.at_most,
+                    measured: requested,
+                    measured_ideal: ideal,
+                    agrees: within(requested, s.requested) && within(ideal, s.ideal),
+                });
+            }
             let Some(predicted) = p.executions else {
                 continue;
             };
@@ -138,6 +172,9 @@ mod tests {
             ptx: String::new(),
             sass: sass.iter().map(|s| (s.to_string(), 1)).collect(),
             executions,
+            l2_theoretical_sectors_global: None,
+            l2_theoretical_sectors_global_ideal: None,
+            global_access_sizes: Vec::new(),
         };
         NcuRecord {
             kernel: "k".into(),
@@ -161,6 +198,7 @@ mod tests {
             constraint,
             executions: Some(executions),
             at_most,
+            sectors: None,
         }
     }
 
@@ -257,11 +295,53 @@ mod tests {
             constraint: Constrained,
             executions: None,
             at_most: false,
+            sectors: None,
         };
         assert_eq!(
             verdict(&r, &[predict(2, Constrained, 64, false)]),
             Verdict::Unchecked
         );
         assert_eq!(verdict(&r, &[symbolic]), Verdict::Unchecked);
+    }
+
+    #[test]
+    fn a_line_lowered_at_its_own_width_checks_its_sectors() {
+        let mut r = record(&[]);
+        for (n, sizes, measured) in [
+            (1, vec![128], Some((32, 16))),
+            (2, vec![32, 32], Some((8, 16))),
+            (3, vec![32], Some((4, 4))),
+            (4, vec![], None),
+            (5, vec![32], Some((65, 64))),
+        ] {
+            let mut line = record(&[(n, &["LDG.E"], 64)]).lines.remove(&n).unwrap();
+            line.global_access_sizes = sizes;
+            line.l2_theoretical_sectors_global = measured.map(|m| m.0);
+            line.l2_theoretical_sectors_global_ideal = measured.map(|m| m.1);
+            r.lines.insert(n, line);
+        }
+        let count = |min, max| SectorCount { min, max };
+        let at = |line, bits, requested, ideal, at_most| Prediction {
+            sectors: Some(Sectors {
+                bits,
+                requested,
+                ideal,
+                at_most,
+            }),
+            ..predict(line, Free, 64, false)
+        };
+        let block = r.compare(
+            "b",
+            &[
+                at(1, 128, count(32, 40), count(16, 16), false),
+                at(2, 32, count(8, 8), count(8, 8), false),
+                at(3, 64, count(4, 4), count(4, 4), false),
+                at(4, 32, count(4, 4), count(4, 4), false),
+                at(5, 32, count(64, 64), count(64, 64), true),
+            ],
+        );
+        let checked: Vec<(u32, bool)> =
+            (block.sectors.iter()).map(|s| (s.line, s.agrees)).collect();
+        assert_eq!(checked, [(1, true), (2, false), (5, false)]);
     }
 }
