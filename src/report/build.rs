@@ -327,7 +327,8 @@ impl KernelReportBuilder<'_> {
                         .count(shape)
                         .map_or(g.exact(), |c| c.certain == c.possible)
                 });
-                let conditional = self.blocks[bid.0 as usize].qualifier == CountQualifier::AtMost
+                let conditional = (self.blocks[bid.0 as usize].qualifier == CountQualifier::AtMost
+                    || !set.lane_exact())
                     && set.count(shape).is_none_or(|c| c.certain != c.possible);
                 let threads = self
                     .sets

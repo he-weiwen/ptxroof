@@ -1,0 +1,17 @@
+# A block that an `or` of two branches off its dominator chain selects:
+# the threads below 64 reach it only when n != 0 or m != 0, so its set
+# is a bound, not the 64 threads of `%tid.x < 64`. On an RTX 4090 with
+# n = m = 0 its barrier runs on no thread, within the bound. The same
+# holds below a loop header so selected (micro_or_entry_loop), and for a
+# loop's footprint: 32 threads store 512 B, the report's bound is 1024 B.
+RUN: %ptxroof analyze %fixtures/micro/or_entry.ptx --ncu %fixtures/micro/or_entry.ncu.json | FileCheck "%s"
+CHECK-LABEL: kernel micro_or_entry
+CHECK: $L__BB0_3  (no line info)
+CHECK-SAME: <= 64 in <= 2 warps (%tid.x < 64)
+CHECK: $L__BB0_3  consistent
+CHECK: line 40: bar.sync 1, 64;  predicted <= 64, measured 0
+CHECK-LABEL: kernel micro_or_entry_loop
+CHECK: $L__BB1_4  (no line info)
+CHECK-SAME: <= 64 in <= 2 warps (%tid.x < 64)
+CHECK-LABEL: kernel micro_or_entry_footprint
+CHECK: global bytes per CTA over the loop's own blocks: requested <= 1024 B

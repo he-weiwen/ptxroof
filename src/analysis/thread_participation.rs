@@ -10,7 +10,9 @@
 //! differ. A predicate that involves anything else (a parameter, a
 //! loop counter, a loaded value) is an unknown selector, and the
 //! block's counts stay bounds; one the same for every thread empties or
-//! keeps whole warps.
+//! keeps whole warps. So is a branch off the chain that decides whether
+//! the block runs: a path from a chain branch that reaches the block and
+//! also leaves its scope around it.
 
 use crate::analysis::control_flow::dominators;
 use crate::analysis::control_flow::loops::LoopForest;
@@ -694,6 +696,7 @@ struct PredicateReader<'a> {
     uniformity: &'a Uniformity,
     memo: HashMap<usize, Pred>,
     blocks: Vec<Option<Pred>>,
+    bypass: Vec<Option<bool>>,
 }
 
 impl PredicateReader<'_> {
@@ -735,8 +738,54 @@ impl PredicateReader<'_> {
             }
             cur = self.forest.doms.idom[d.0 as usize];
         }
+        if pred.lane_exact() && self.bypassed(b) {
+            pred = pred.and(Pred::Unknown);
+        }
         self.blocks[b.0 as usize] = Some(pred.clone());
         pred
+    }
+
+    /// Whether a condition off b's dominator chain decides whether b
+    /// runs: so for b's immediate dominator, or one of its successors
+    /// reaches b without passing it and leaves b's scope around b.
+    fn bypassed(&mut self, b: BlockId) -> bool {
+        if let Some(x) = self.bypass[b.0 as usize] {
+            return x;
+        }
+        let x = match self.forest.doms.idom[b.0 as usize] {
+            Some(d) => self.skips(d, b) || self.bypassed(d),
+            None => false,
+        };
+        self.bypass[b.0 as usize] = Some(x);
+        x
+    }
+
+    /// A successor of `d` reaches `c` without passing `d`, and also an exit
+    /// of c's scope without passing `c`: a latch or exit target of c's
+    /// innermost loop (its parent's for a loop header), or a kernel exit.
+    fn skips(&self, d: BlockId, c: BlockId) -> bool {
+        let innermost = self.forest.block_loop[c.0 as usize].map(|l| self.forest.get(l));
+        let scope = match innermost {
+            Some(l) if l.header == c => l.parent.map(|p| self.forest.get(p)),
+            other => other,
+        };
+        let inside = |x: BlockId| scope.is_none_or(|s| s.blocks.binary_search(&x).is_ok());
+        let exits: Vec<BlockId> = match scope {
+            Some(s) => (s.blocks.iter())
+                .flat_map(|&x| self.cfg.block(x).succs.iter().copied())
+                .filter(|&t| !inside(t))
+                .chain(s.latches.iter().copied())
+                .collect(),
+            None => (0..self.cfg.blocks.len() as u32)
+                .map(BlockId)
+                .filter(|&x| self.cfg.block(x).succs.is_empty())
+                .collect(),
+        };
+        let around =
+            |s: BlockId, t: BlockId| t != c && (s == t || self.tracer.path_avoiding(s, t, c));
+        (self.cfg.block(d).succs.iter()).any(|&s| {
+            s != c && self.tracer.path_avoiding(s, c, d) && exits.iter().any(|&t| around(s, t))
+        })
     }
 
     fn of(&mut self, reg: Symbol, pos: usize, depth: u32) -> Pred {
@@ -923,6 +972,7 @@ pub(crate) fn thread_sets(
         uniformity,
         memo: HashMap::new(),
         blocks: vec![None; cfg.blocks.len()],
+        bypass: vec![None; cfg.blocks.len()],
     };
     let blocks: Vec<ThreadSet> = (0..cfg.blocks.len() as u32)
         .map(|b| ThreadSet {

@@ -249,9 +249,11 @@ its shared writes and instruction counts remain counted
   16–32 B, 16 B with `--bind 1:n=0`; `micro/uniform_bases.ptx`), count
   the loop's own blocks only, and need a numeric trip count, the block
   shape, constant lane and counter coefficients, and every access's
-  address (else `unique unknown`, `micro/footprint_unknown.ptx`). k5's K loop at
+  address (else `unique unknown`, `micro/footprint_unknown.ptx`), and
+  are bounds where which threads run the loop is not known. k5's K loop at
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
-  k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B.
+  k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B, a bound until M and
+  the grid are given, which its guard `x < M && y < N` reads.
 
 ### Reported as unknowns
 

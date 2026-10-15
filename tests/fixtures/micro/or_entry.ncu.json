@@ -1,0 +1,26 @@
+{
+ "ptx": "tests/fixtures/micro/or_entry.ptx",
+ "kernel": "micro_or_entry",
+ "grid": [1, 1, 1],
+ "block": [128, 1, 1],
+ "params": ["ptr:8"],
+ "gpu": "NVIDIA GeForce RTX 4090",
+ "driver": "580.178.04",
+ "arch": "sm_89",
+ "ptxas": "Cuda compilation tools, release 13.4, V13.4.92",
+ "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",
+ "lines": {
+  "29": {"ptx": "ld.param.u64 %rd2, [micro_or_entry_param_0];", "sass": {"IMAD.MOV.U32": 1}, "executions": 128},
+  "30": {"ptx": "ld.global.u32 %r1, [%rd2];", "sass": {"IMAD.MOV.U32": 2, "ULDC.64": 1, "LDG.E": 1}, "executions": 512, "l2_theoretical_sectors_global": 4, "l2_theoretical_sectors_global_ideal": 4, "global_access_sizes": [32]},
+  "31": {"ptx": "ld.global.u32 %r2, [%rd2+4];", "sass": {"LDG.E": 1}, "executions": 128, "l2_theoretical_sectors_global": 4, "l2_theoretical_sectors_global_ideal": 4, "global_access_sizes": [32]},
+  "32": {"ptx": "mov.u32 %r3, %tid.x;", "sass": {"S2R": 1}, "executions": 128},
+  "33": {"ptx": "setp.ge.u32 %p1, %r3, 64;", "sass": {"ISETP.GE.U32.AND": 1}, "executions": 128},
+  "34": {"ptx": "@%p1 bra $L__BB0_4;", "sass": {"EXIT": 1}, "executions": 64},
+  "35": {"ptx": "setp.ne.s32 %p2, %r1, 0;", "sass": {"ISETP.NE.AND": 1}, "executions": 64},
+  "36": {"ptx": "@%p2 bra $L__BB0_3;", "sass": {"BRA": 1}, "executions": 0},
+  "37": {"ptx": "setp.eq.s32 %p3, %r2, 0;", "sass": {"ISETP.NE.AND": 1}, "executions": 64},
+  "38": {"ptx": "@%p3 bra $L__BB0_4;", "sass": {"EXIT": 1}, "executions": 64},
+  "40": {"ptx": "bar.sync 1, 64;", "sass": {"BAR.SYNC.DEFER_BLOCKING": 1}, "executions": 0},
+  "42": {"ptx": "ret;", "sass": {"EXIT": 1, "BRA": 1, "NOP": 8}, "executions": 0}
+ }
+}
