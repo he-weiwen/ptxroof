@@ -262,13 +262,17 @@ its shared writes and instruction counts remain counted
 
 ### Reported as unknowns
 
-- **A block under a loop whose trip count is not read, or reads the
-  CTA index, is unknown in the totals per launch**, as its trips may
-  differ by CTA: ds2 rope's loop, whose latch reads `%ctaid.y` through
-  a `min`, moves `16640·trips` B per CTA and `+ unknown` per launch
-  (`b200-launch-totals.test`); `micro/cta_trips.ptx`'s causal loop
-  meets `32 * %ctaid.x` barriers per CTA and `0 + unknown` per launch,
-  where on an RTX 4090 with 4 CTAs it meets 192.
+- **A block under a loop whose trip count is not read is unknown in
+  the totals per launch**, as its trips may differ by CTA: ds2 rope's
+  loop, whose latch reads `%ctaid.y` through a `min`, moves
+  `16640·trips` B per CTA and `+ unknown` per launch
+  (`b200-launch-totals.test`). Under a count that reads the CTA index
+  a block is counted per CTA times the count summed over the grid
+  (`micro_cta_trips_unguarded`: 224 barriers with 4 CTAs, as measured),
+  unless which of its threads run varies by CTA:
+  `micro/cta_trips.ptx`'s causal loop, whose guard skips CTA 0, meets
+  `32 * %ctaid.x` barriers per CTA and `0 + unknown` per launch, where
+  on an RTX 4090 with 4 CTAs it meets 192.
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unroll main+remainder pair, LLVM's two-register counter and its

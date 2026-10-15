@@ -478,7 +478,7 @@ fn on_lane_only(a: &Affine) -> bool {
 
 /// The most CTAs `ThreadSet::launch` enumerates, and the most lanes it
 /// evaluates over its groups of CTAs.
-const CTA_BUDGET: u64 = 1 << 24;
+pub(crate) const CTA_BUDGET: u64 = 1 << 24;
 const LANE_BUDGET: u64 = 1 << 26;
 
 /// The thread index's values on any block, PTX ISA §10.1, §10.2:
@@ -534,6 +534,13 @@ impl ThreadSet {
 
     pub fn lane_exact(&self) -> bool {
         self.pred.lane_exact()
+    }
+
+    /// A comparison selecting the set reads the CTA index.
+    pub fn varies_by_cta(&self) -> bool {
+        let mut over = Vec::new();
+        self.pred.over_ctas(&mut over);
+        !over.is_empty()
     }
 
     /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and

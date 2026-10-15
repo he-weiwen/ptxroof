@@ -1,13 +1,20 @@
 # A causal loop: CTA c runs c trips, so the count is %ctaid.x and the
 # guard skipping CTA 0 is the loop's entry. Per CTA the totals are
-# exact in %ctaid.x; over the launch they are unknown, the trips
-# differing by CTA, where on an RTX 4090 with 4 CTAs the barrier runs
-# 192 times.
+# exact in %ctaid.x; over the launch, where which threads run the loop
+# varies by CTA, they are unknown, where on an RTX 4090 with 4 CTAs the
+# barrier runs 192 times. Without the guard CTA 0 runs once, the count
+# is max(%ctaid.x, 1), and its sum over the grid, 7, gives the 224
+# barriers the RTX 4090 runs (micro/cta_trips.unguarded.ncu.json).
 RUN: %ptxroof analyze %fixtures/micro/cta_trips.ptx | FileCheck "%s"
 RUN: %ptxroof analyze %fixtures/micro/cta_trips.ptx --ncu %fixtures/micro/cta_trips.ncu.json | FileCheck --check-prefix=REC "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_trips.ptx --ncu %fixtures/micro/cta_trips.unguarded.ncu.json | FileCheck --check-prefix=SUM "%s"
 CHECK: trips = %ctaid.x
 CHECK: totals per CTA [static]:
 CHECK: bar.sync{{ +}}32 * %ctaid.x{{ +}}%ctaid.x{{$}}
 REC: totals per launch [static]:
 REC: bar.sync{{ +}}0 + unknown{{ +}}0 + unknown{{$}}
 REC: $L__BB0_2  unchecked
+SUM-LABEL: kernel micro_cta_trips_unguarded
+SUM: trips = max(%ctaid.x, 1)
+SUM: totals per launch [static]:
+SUM: bar.sync{{ +}}224{{ +}}7{{$}}

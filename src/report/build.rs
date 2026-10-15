@@ -38,7 +38,7 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
-use crate::analysis::thread_participation::{Pred, ThreadSet, ThreadSets, thread_sets};
+use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSet, ThreadSets, thread_sets};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
@@ -1366,6 +1366,41 @@ impl<'a> KernelReportBuilder<'a> {
         out
     }
 
+    /// A loop around `b` counts trips that read the CTA index.
+    fn per_cta_trips(&self, b: BlockId) -> bool {
+        (self.chain(b).iter()).any(|l| {
+            (self.trip_exprs[l.0 as usize].symbols().iter()).any(|s| s.starts_with("%ctaid"))
+        })
+    }
+
+    /// The trips of `b`'s loops over the grid: the product of the counts
+    /// that read the CTA index summed over every CTA, each value
+    /// evaluated and never negative, times the other counts; `None`
+    /// without the grid or past `CTA_BUDGET` CTAs on the axes read.
+    fn summed_trips(&self, b: BlockId) -> Option<SymExpr> {
+        let grid = self.grid()?;
+        let (cta, rest): (Vec<SymExpr>, Vec<SymExpr>) = (self.chain(b).iter())
+            .map(|l| self.trip_exprs[l.0 as usize].clone())
+            .partition(|e| e.symbols().iter().any(|s| s.starts_with("%ctaid")));
+        let per_cta = cta.into_iter().fold(SymExpr::Const(1), SymExpr::mul);
+        let names = SpecialVector::Ctaid.components().map(|reg| reg.name());
+        let read = names.clone().map(|n| per_cta.symbols().contains(&n));
+        let n = |i: usize| if read[i] { grid[i] } else { 1 };
+        if (0..3).map(|i| u64::from(n(i))).product::<u64>() > CTA_BUDGET {
+            return None;
+        }
+        let mut sum = 0i64;
+        for c in
+            (0..n(2)).flat_map(|z| (0..n(1)).flat_map(move |y| (0..n(0)).map(move |x| [x, y, z])))
+        {
+            let at = names.iter().cloned().zip(c.map(i64::from)).collect();
+            sum = sum.checked_add(per_cta.bind(&at).as_const().filter(|&n| n >= 0)?)?;
+        }
+        let other = (0..3).filter(|&i| !read[i]).map(|i| i64::from(grid[i]));
+        let sum = { other }.try_fold(sum, i64::checked_mul)?;
+        Some(rest.into_iter().fold(SymExpr::Const(sum), SymExpr::mul))
+    }
+
     fn multiplier(&self, b: BlockId, below: Option<LoopId>) -> Option<(SymExpr, bool)> {
         let chain = self.chain(b);
         let cut = match below {
@@ -1414,8 +1449,10 @@ impl<'a> KernelReportBuilder<'a> {
     /// `ctas` too, over the launch: a block or guarded instruction at its
     /// threads and warps over the grid where they are counted, else at
     /// its count per CTA times the CTAs; one under a loop whose trip
-    /// count is not read, or reads the CTA index, is unknown, its trips
-    /// perhaps differing by CTA.
+    /// count is not read is unknown, its trips perhaps differing by CTA.
+    /// Under loops whose counts read the CTA index, a block or guarded
+    /// instruction whose threads do not is counted per CTA times those
+    /// counts summed over the grid, and is unknown otherwise.
     fn aggregates(
         &self,
         below: Option<LoopId>,
@@ -1444,12 +1481,14 @@ impl<'a> KernelReportBuilder<'a> {
                 continue;
             }
             let unread = ctas.is_some()
-                && (self.chain(bm.block).iter()).any(|l| {
-                    self.trip_info.trips[l.0 as usize].is_err()
-                        || (self.trip_exprs[l.0 as usize].symbols().iter())
-                            .any(|s| s.starts_with("%ctaid"))
-                });
-            let trips = (!unread).then_some(mult);
+                && (self.chain(bm.block).iter())
+                    .any(|l| self.trip_info.trips[l.0 as usize].is_err());
+            let summed = ctas.is_some() && self.per_cta_trips(bm.block);
+            let trips = match (unread, summed) {
+                (true, _) => None,
+                (false, true) => self.summed_trips(bm.block),
+                (false, false) => Some(mult),
+            };
             let trips = trips.as_ref();
             // None when a count over the launch does not fit in i64.
             let resolve = |set: &ThreadSet, stmt: Option<usize>| {
@@ -1457,6 +1496,9 @@ impl<'a> KernelReportBuilder<'a> {
                 let Some(n) = ctas else {
                     return Some(per_cta);
                 };
+                if summed {
+                    return (!set.varies_by_cta()).then_some(per_cta);
+                }
                 let n = i64::try_from(n).ok()?;
                 match self.launches.get(&(bm.block, stmt)) {
                     Some(&(t, w)) => {
@@ -2549,6 +2591,44 @@ mod tests {
         assert_eq!(address("shr.u32 %r5, %r4, 2;"), shifted);
         let rem = Some("8 * (%tid.x mod 2) + param_0".to_owned());
         assert_eq!(address("rem.u32 %r5, %r4, 4;"), rem);
+    }
+
+    /// Over a launch, a count that reads the CTA index is summed over the
+    /// grid: `k < %ctaid.x` from 0 runs max(c, 1) trips in CTA c, 7 over
+    /// 4 CTAs. A negative count, here `k != 2 - %ctaid.x` at CTA 3, or
+    /// more than 2^24 CTAs on the axes it reads, leaves it unknown.
+    #[test]
+    fn a_count_over_the_cta_index_is_summed_over_the_grid() {
+        let store = |bound: &str, cmp: &str, grid: [u32; 3]| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
+                 .reqntid 32, 1, 1\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r5, [k_param_1];\n\
+                 mov.u32 %r1, %ctaid.x;\nmov.u32 %r6, %ctaid.y;\n{bound}\nmov.u32 %r2, 0;\n\
+                 $L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                 setp.{cmp}.u32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;\n}}\n"
+            );
+            let opts = AnalyzeOptions {
+                bindings: vec![parse_bind("1:n=2").expect("binding")],
+                grid: Some(grid),
+                ..Default::default()
+            };
+            let r = analyze(&src, "t", &opts).expect("analyzes");
+            let launch = r.kernels[0].totals_per_launch.as_ref().expect("a grid");
+            let bytes = &launch.bytes["global"].store;
+            (bytes.expr.clone(), bytes.at_least)
+        };
+        let (known, unknown) = (|n: &str| (n.to_owned(), false), ("0".to_owned(), true));
+        assert_eq!(store("mov.u32 %r3, %r1;", "lt", [4, 1, 1]), known("896"));
+        assert_eq!(store("mov.u32 %r3, %r1;", "lt", [4, 3, 1]), known("2688"));
+        assert_eq!(store("sub.s32 %r3, %r5, %r1;", "ne", [4, 1, 1]), unknown);
+        assert_eq!(
+            store("sub.s32 %r3, %r5, %r1;", "ne", [3, 1, 1]),
+            known("384")
+        );
+        let both = "add.s32 %r3, %r1, %r6;";
+        assert_eq!(store(both, "lt", [8192, 4096, 1]), unknown);
     }
 
     /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
