@@ -2,10 +2,13 @@
 # compares the counter alone, though the loop also holds a branch on
 # the thread index; the store's mask compares it with the lanes. Per
 # CTA each trip counts its own threads: 6 trips of 64 barriers, and
-# 4 trips of 64 stores and one of 44, as the RTX 4090 measures.
+# 4 trips of 64 stores and one of 44, as the RTX 4090 measures, which
+# confirms the barrier's block.
 RUN: %ptxroof analyze %fixtures/micro/counter_guard.ptx --bind 1:n=300 | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/counter_guard.ptx --ncu %fixtures/micro/counter_guard.ncu.json | FileCheck --check-prefix=REC "%s"
 CHECK: <block 2>  (no line info)       1  <= 64 in <= 2 warps (k[$L__BB0_1] >= 3)
 CHECK: <block 4>  (no line info)       1  <= 64 in <= 2 warps (%tid.x + 64 * k[$L__BB0_1] < 364)
 CHECK: totals per CTA [static]:
 CHECK: bar.sync{{ +}}384{{ +}}12{{$}}
 CHECK: st.global.u32{{ +}}300{{ +}}10{{$}}
+REC: <block 2>  confirmed     1 instructions, 1 with SASS, 1 agreeing

@@ -99,6 +99,14 @@ its shared writes and instruction counts remain counted
   fixed source-read size even with a runtime ignore-source predicate.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
+- **lm_head_dx's predicated `cp.async` lines measure one more warp
+  request per CTA than predicted.** Counted trip by trip, their
+  12,533,760 executions agree with the record, but at 16 sectors per
+  warp request (`warp: 16–24 sectors (ideal 16)`) lines 979 and 985
+  predict an ideal of 6,266,880 L2 sectors each where the record
+  measures 6,268,416, 16 more per CTA; ptxas predicates the block's two
+  `LDGSTS` (`@!P0`) rather than branching around them
+  (`gluon-counter-guard.test`).
 - **A predicated `ret` or `exit` is read as falling through.** The CFG
   gives its block one successor, the next block, so what follows counts
   on every thread, exactly (`micro/predicated_exit.ptx`: the store
@@ -364,14 +372,15 @@ its shared writes and instruction counts remain counted
   Triton builds from `pid·BLOCK + arange` leave what they guard a bound
   (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
   is an unknown selector too (`micro/guards.ptx`: the store total stays
-  a bound). A comparison with the counter of a loop holding the block,
-  its trip count a constant, is read per trip, and the totals per CTA
-  and per launch count each trip's threads (`micro/counter_guard.ptx`:
-  384 barriers and 300 stores per CTA, as measured), but the ncu
-  predictions count it over all of the loop's trips as a bound
-  (`fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `(k < 511)`, runs on 510
-  of its loop's 512 trips, 12,533,760 times as its record measures, and
-  reads `<= 12582912`, `gluon-counter-guard.test`). The census counts by
+  a bound). A comparison with a loop counter is counted trip by trip
+  (`micro/counter_guard.ptx`: 384 barriers and 300 stores per CTA, as
+  measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `k < 511`,
+  confirmed at 12,533,760, `gluon-counter-guard.test`) only where the
+  block lies in that loop, the loop's trip count is a constant and the
+  comparison holds that one counter with the thread index; with a
+  parameter not bound (`micro/counter_guard.ptx`'s mask `64·k +
+  %tid.x < n` without `--bind`), the CTA index, or a second counter, it
+  is an unknown selector. The census counts by
   cause are in the message of commit `ccf8220`.
 
 ### Presentation

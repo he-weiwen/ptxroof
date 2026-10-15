@@ -2128,9 +2128,16 @@ impl<'a> KernelReportBuilder<'a> {
                 let never = !self.counted(bm.block, i.provenance);
                 let trips = mult.as_const().filter(|_| alone);
                 // Over the launch, a set counted at every CTA explains its
-                // block as an exact count per CTA does.
-                let (launch, trips, ctas) = match &split {
-                    Some((p, _)) if set.varies_by_cta() => {
+                // block as an exact count per CTA does, and one a loop
+                // counter selects as its sum over the trips.
+                let per_trip = split.is_none().then(|| self.per_trip(bm.block, &set, None));
+                let (launch, trips, ctas) = match (&split, per_trip.flatten()) {
+                    (_, Some((t, w, rest))) => {
+                        let n = ctas.unwrap_or(0);
+                        let counted = t.checked_mul(n).zip(w.checked_mul(n));
+                        (counted, rest.as_const().filter(|_| alone), 0)
+                    }
+                    (Some((p, _)), None) if set.varies_by_cta() => {
                         let key = guarded.then_some(i.provenance);
                         match *weighted
                             .entry(key)
