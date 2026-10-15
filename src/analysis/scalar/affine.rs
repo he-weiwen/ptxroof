@@ -288,11 +288,15 @@ impl Affine {
     pub fn render(&self, name: impl Fn(&Var) -> String) -> String {
         let mut out = String::new();
         for (v, c) in &self.terms {
-            let (k, rest) = SymExpr::split_const(c.clone());
+            let (k, rest) = match SymExpr::split_const(c.clone()) {
+                (i64::MIN, _) => (1, c.clone()),
+                split => split,
+            };
             let coeff = SymExpr::mul(SymExpr::Const(k.abs()), rest);
             let v = v.render(&name);
             let term = match coeff {
                 SymExpr::Const(1) => v,
+                SymExpr::Const(c) if c < 0 => format!("({coeff}) * {v}"),
                 SymExpr::Const(_) | SymExpr::Sym(_) => format!("{coeff} * {v}"),
                 _ => format!("({coeff}) * {v}"),
             };
@@ -308,7 +312,7 @@ impl Affine {
         }
         match &self.base {
             SymExpr::Const(0) => out,
-            SymExpr::Const(c) if *c < 0 => format!("{out} - {}", -c),
+            SymExpr::Const(c) if *c < 0 => format!("{out} - {}", c.unsigned_abs()),
             base => format!("{out} + {base}"),
         }
     }
@@ -627,6 +631,27 @@ mod tests {
 
     fn tid() -> Affine {
         Affine::var(Var::Tid(Axis::X))
+    }
+
+    #[test]
+    fn a_coefficient_or_base_of_minus_2_63_renders_whole() {
+        let min = || SymExpr::Const(i64::MIN);
+        let a = tid().scale(min()) + Affine::invariant(min());
+        assert_eq!(
+            a.to_string(),
+            "(-9223372036854775808) * %tid.x - 9223372036854775808"
+        );
+        let b = tid() + Affine::var(Var::Ctaid(Axis::X)).scale(min());
+        assert_eq!(b.to_string(), "%tid.x + (-9223372036854775808) * %ctaid.x");
+        let c = SymExpr::add(SymExpr::sym("param_0"), min());
+        assert_eq!(c.to_string(), "param_0 + -9223372036854775808");
+        // −1 times −2^63 overflows and stays a product of the two.
+        let negated = SymExpr::mul(SymExpr::Const(-1), min());
+        let d = tid().scale(negated.clone());
+        assert_eq!(d.to_string(), "-(-9223372036854775808) * %tid.x");
+        assert_eq!(negated.to_string(), "-1 * -9223372036854775808");
+        let e = SymExpr::add(SymExpr::sym("param_0"), negated);
+        assert_eq!(e.to_string(), "param_0 - (-9223372036854775808)");
     }
 
     #[test]

@@ -514,7 +514,7 @@ impl Constraint {
             "ne" => "!=",
             other => other,
         };
-        format!("{lhs} {op} {}", -c)
+        format!("{lhs} {op} {}", -i128::from(c))
     }
 }
 
@@ -1101,6 +1101,11 @@ mod tests {
     fn a_constraint_counts_and_renders() {
         let c = warps_below_4();
         assert_eq!(c.render(), "⌊%tid.x/32⌋ < 4");
+        let min = Constraint {
+            form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(i64::MIN)),
+            ..warps_below_4()
+        };
+        assert_eq!(min.render(), "%tid.x < 9223372036854775808");
         let set = ThreadSet { pred: Pred::Cmp(c) };
         assert!(set.exact());
         assert_eq!(set.count([256, 1, 1]), Some(exact(128)));

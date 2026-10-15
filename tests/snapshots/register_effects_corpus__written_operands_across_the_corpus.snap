@@ -12,7 +12,7 @@ add.rn.f32	1	564
 add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
 add.s32	1	3605
-add.s64	1	2513
+add.s64	1	2516
 add.u32	1	15
 add.u64	1	3
 addc.u32	1	1
@@ -56,7 +56,7 @@ cvt.s64.s32	1	176
 cvt.u16.u32	1	22
 cvt.u32.u16	1	48
 cvt.u32.u64	1	83
-cvt.u64.u32	1	390
+cvt.u64.u32	1	392
 cvta.param.u64	1	23
 cvta.to.global.u64	1	38
 div.approx.f32	1	2
@@ -94,7 +94,7 @@ ld.param.b64	1	248
 ld.param.f32	1	20
 ld.param.s32	1	36
 ld.param.u32	1	66
-ld.param.u64	1	155
+ld.param.u64	1	158
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -138,13 +138,13 @@ mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	107
 mov.u16	1	293
-mov.u32	1	1185
-mov.u64	1	48
+mov.u32	1	1188
+mov.u64	1	49
 mul.f32	1	1805
 mul.hi.s32	1	1
 mul.hi.u32	1	7
 mul.lo.s32	1	623
-mul.lo.s64	1	220
+mul.lo.s64	1	222
 mul.lo.u32	1	1
 mul.rn.bf16	1	532
 mul.rn.bf16x2	1	40
@@ -158,6 +158,7 @@ neg.bf16	1	12
 neg.bf16x2	1	16
 neg.f32	1	111
 neg.s32	1	6
+neg.s64	1	1
 not.b32	1	1
 not.pred	1	130
 or.b16	1	30
@@ -170,7 +171,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	31
 rem.s64	1	10
 rem.u32	1	8
-ret	0	173
+ret	0	176
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	800
@@ -216,7 +217,7 @@ shfl.sync.bfly.b32	1	1357
 shfl.sync.idx.b32	1	52
 shl.b16	1	30
 shl.b32	1	846
-shl.b64	1	449
+shl.b64	1	452
 shr.s32	1	104
 shr.s64	1	6
 shr.u32	1	222
@@ -227,7 +228,7 @@ st.global.b32	0	197
 st.global.b64	0	9
 st.global.f32	0	15
 st.global.u16	0	197
-st.global.u32	0	135
+st.global.u32	0	138
 st.global.u64	0	1
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2

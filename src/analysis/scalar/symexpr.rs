@@ -381,9 +381,9 @@ fn render(e: &SymExpr, ctx: PrintContext) -> String {
             for (i, term) in terms.iter().enumerate() {
                 // A negative summand prints as subtraction.
                 let (neg, mag) = match term {
-                    SymExpr::Const(c) if *c < 0 => (true, SymExpr::Const(-c)),
+                    SymExpr::Const(c) if *c < 0 && *c != i64::MIN => (true, SymExpr::Const(-c)),
                     SymExpr::Prod(fs) => match fs.first() {
-                        Some(SymExpr::Const(c)) if *c < 0 => {
+                        Some(SymExpr::Const(c)) if *c < 0 && *c != i64::MIN => {
                             let mut pos = fs.clone();
                             if *c == -1 && pos.len() == 2 {
                                 pos.remove(0);
@@ -408,13 +408,18 @@ fn render(e: &SymExpr, ctx: PrintContext) -> String {
                     continue;
                 }
                 out.push_str(if neg { " - " } else { " + " });
-                out.push_str(&render(&mag, PrintContext::SumTerm));
+                out.push_str(&match mag {
+                    SymExpr::Const(m) if neg && m < 0 => format!("({m})"),
+                    _ => render(&mag, PrintContext::SumTerm),
+                });
             }
             out
         }
         SymExpr::Prod(factors) => match &factors[..] {
             // A bare negation reads better than "-1 * x".
-            [SymExpr::Const(-1), x] => format!("-{}", render(x, PrintContext::ProdFactor)),
+            [SymExpr::Const(-1), x] if !matches!(x, SymExpr::Const(_)) => {
+                format!("-{}", render(x, PrintContext::ProdFactor))
+            }
             _ => factors
                 .iter()
                 .map(|f| render(f, PrintContext::ProdFactor))
