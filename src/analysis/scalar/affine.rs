@@ -348,7 +348,11 @@ impl Affine {
             };
             bound(&Var::Ctaid(axis))
         };
-        let mut range = Some(self.base.range(&sym)?);
+        let mut range = match self.base.span(&sym) {
+            Ok(r) => Some(r),
+            Err(true) => None,
+            Err(false) => return None,
+        };
         let mut groups: BTreeMap<&Var, Vec<(&Var, i128)>> = BTreeMap::new();
         for (v, c) in &self.terms {
             let x = match v {
@@ -359,8 +363,13 @@ impl Affine {
                 Some(c) => (groups.entry(x).or_default()).push((v, i128::from(c))),
                 None => {
                     let (lo, hi) = var_range(v, bound)?;
-                    let (a, b) = product(c.range(&sym)?, (i128::from(lo), i128::from(hi)));
-                    range = range.and_then(|(x, y)| Some((x.checked_add(a)?, y.checked_add(b)?)));
+                    let term = match c.span(&sym) {
+                        Ok(c) => product(c, (i128::from(lo), i128::from(hi))),
+                        Err(true) => None,
+                        Err(false) => return None,
+                    };
+                    range = (range.zip(term))
+                        .and_then(|((x, y), (a, b))| Some((x.checked_add(a)?, y.checked_add(b)?)));
                 }
             }
         }

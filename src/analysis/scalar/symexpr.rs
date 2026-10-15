@@ -119,30 +119,44 @@ impl SymExpr {
     }
 
     /// The least and the greatest value, every symbol within `sym`'s
-    /// bounds; `None` where one has none. Bounds past `i128` saturate.
+    /// bounds: `None` where one has none, the whole `i128` line where a
+    /// bound leaves it.
     pub fn range(&self, sym: &dyn Fn(&str) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
-        let pair = |x: &SymExpr, y: &SymExpr| Some((x.range(sym)?, y.range(sym)?));
-        Some(match self {
+        match self.span(sym) {
+            Ok(r) => Some(r),
+            Err(true) => Some((i128::MIN, i128::MAX)),
+            Err(false) => None,
+        }
+    }
+
+    /// The same, `Err(false)` where a symbol has no bounds and
+    /// `Err(true)` where a bound leaves `i128`.
+    pub fn span(&self, sym: &dyn Fn(&str) -> Option<(i64, i64)>) -> Result<(i128, i128), bool> {
+        let pair = |x: &SymExpr, y: &SymExpr| Ok((x.span(sym)?, y.span(sym)?));
+        let fits = |x: Option<i128>| x.ok_or(true);
+        Ok(match self {
             SymExpr::Const(c) => (i128::from(*c), i128::from(*c)),
-            SymExpr::Sym(s) => sym(s).map(|(a, b)| (i128::from(a), i128::from(b)))?,
+            SymExpr::Sym(s) => sym(s)
+                .map(|(a, b)| (i128::from(a), i128::from(b)))
+                .ok_or(false)?,
             SymExpr::Sum(ts) => ts.iter().try_fold((0i128, 0i128), |(lo, hi), t| {
-                let (a, b) = t.range(sym)?;
-                Some((lo.saturating_add(a), hi.saturating_add(b)))
+                let (a, b) = t.span(sym)?;
+                Ok((fits(lo.checked_add(a))?, fits(hi.checked_add(b))?))
             })?,
             SymExpr::Prod(fs) => {
-                (fs.iter()).try_fold((1, 1), |r, f| Some(product(r, f.range(sym)?)))?
+                (fs.iter()).try_fold((1, 1), |r, f| product(r, f.span(sym)?).ok_or(true))?
             }
             SymExpr::FloorDiv(e, c) => {
-                let (a, b) = e.range(sym)?;
+                let (a, b) = e.span(sym)?;
                 (a.div_euclid(i128::from(*c)), b.div_euclid(i128::from(*c)))
             }
             SymExpr::CeilDiv(e, c) => {
-                let up = |x: i128| -(x.saturating_neg().div_euclid(i128::from(*c)));
-                let (a, b) = e.range(sym)?;
-                (up(a), up(b))
+                let up = |x: i128| fits(x.checked_neg().map(|n| -n.div_euclid(i128::from(*c))));
+                let (a, b) = e.span(sym)?;
+                (up(a)?, up(b)?)
             }
             SymExpr::Mod(e, c) => {
-                let (c, (a, b)) = (i128::from(*c), e.range(sym)?);
+                let (c, (a, b)) = (i128::from(*c), e.span(sym)?);
                 match a.div_euclid(c) == b.div_euclid(c) {
                     true => (a.rem_euclid(c), b.rem_euclid(c)),
                     false => (0, c - 1),
@@ -448,18 +462,15 @@ enum PrintContext {
     DivOrModLeft,
 }
 
-/// The product of two ranges, saturating past `i128`.
-pub fn product((a, b): (i128, i128), (c, d): (i128, i128)) -> (i128, i128) {
+/// The product of two ranges; `None` past `i128`.
+pub fn product((a, b): (i128, i128), (c, d): (i128, i128)) -> Option<(i128, i128)> {
     let p = [
-        a.saturating_mul(c),
-        a.saturating_mul(d),
-        b.saturating_mul(c),
-        b.saturating_mul(d),
+        a.checked_mul(c)?,
+        a.checked_mul(d)?,
+        b.checked_mul(c)?,
+        b.checked_mul(d)?,
     ];
-    (
-        p.into_iter().min().unwrap_or(0),
-        p.into_iter().max().unwrap_or(0),
-    )
+    Some((p.into_iter().min()?, p.into_iter().max()?))
 }
 
 impl fmt::Display for SymExpr {
@@ -754,7 +765,7 @@ mod tests {
     }
 
     /// Ranges by interval arithmetic, `param_2` in [0, 100], `n` not
-    /// bounded; a product past i128 saturates.
+    /// bounded; past i128 the whole line, though a remainder follows.
     #[test]
     fn ranges_over_bounded_symbols() {
         let sym = |s: &str| (s == "param_2").then_some((0, 100));
