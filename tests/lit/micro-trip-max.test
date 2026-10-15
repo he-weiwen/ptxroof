@@ -9,7 +9,7 @@ RUN: %ptxroof analyze %fixtures/micro/trip_max.ptx --ncu %fixtures/micro/trip_ma
 FREE-LABEL: kernel micro_trip_max
 FREE: trips = max(param_1, 2)
 FREE-LABEL: kernel micro_trip_min_unsigned
-FREE: trips = min(param_1 - 4, 8)
+FREE: trips = max(min(param_1 - 4, 8), 1)
 CHECK-LABEL: kernel micro_trip_max
 CHECK: trips = 2
 CHECK: $L__BB0_1  confirmed

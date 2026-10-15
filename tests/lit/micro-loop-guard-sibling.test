@@ -12,8 +12,8 @@ CHECK: trips = max(param_1 - 10, 0)
 CHECK: totals [static]:
 CHECK: st.global.u32{{ +}}max(param_1 - 10, 0){{$}}
 CHECK-LABEL: kernel micro_loop_guard_sibling_exit
-CHECK: trips = param_1 - 10
+CHECK: trips = max(param_1 - 10, 1)
 CHECK: totals [static]:
-CHECK: st.global.u32{{ +}}<= param_1 - 10{{$}}
+CHECK: st.global.u32{{ +}}<= max(param_1 - 10, 1){{$}}
 REC-LABEL: kernel micro_loop_guard_sibling
 REC: measured L2 sectors of global accesses: 1 lines agree (1 exact, 0 within a range, 0 within a bound), 0 differ

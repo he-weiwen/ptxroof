@@ -120,7 +120,7 @@ fn a_triangular_nest_is_an_honest_unknown() {
     assert_eq!(
         sorted,
         [
-            "ok: param_0",
+            "ok: max(param_0, 1)",
             "unknown: latch condition depends on an enclosing loop's counter",
         ]
     );
@@ -129,7 +129,7 @@ fn a_triangular_nest_is_an_honest_unknown() {
 #[test]
 fn scoped_labels_are_separate_loops() {
     let (trips, _) = info_of("micro/scoped_labels.ptx");
-    assert_eq!(trips, ["ok: param_0", "ok: param_1"]);
+    assert_eq!(trips, ["ok: max(param_0, 1)", "ok: max(param_1, 1)"]);
 }
 
 #[test]

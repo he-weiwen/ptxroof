@@ -10,10 +10,10 @@ or through LLVM's two-register form; some behind LLVM's loop guard,
 which skips the loop when its latch condition fails before the first
 trip. A Python interpreter of the same loop gives the trip count for
 each binding of the parameter; the tool's symbolic count, bound with
---bind, must equal it wherever the loop actually iterates, and for a
-guarded loop at every binding, 0 where the guard skips it. A shape the
-tool refuses is counted as unsupported, never as a failure: the
-property is that it is never wrong.
+--bind, must equal it at every binding: at least 1 for a loop entered
+unconditionally, 0 where a guard skips it. A shape the tool refuses is
+counted as unsupported, never as a failure: the property is that it
+is never wrong.
 
 Usage: gen_loops.py [--seed N] [--count N] [--bin PATH] [--keep DIR]
 """
@@ -161,10 +161,8 @@ def main():
             path = (opts.keep or Path(tmp)) / f"gen_{opts.seed}_{k}.ptx"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(ptx)
-            # A guarded loop at every binding; an unguarded one only where it
-            # iterates twice, as its first test may fail.
             cases = [(n, simulate(shape, n)) for n in BINDINGS]
-            cases = [(n, t) for n, t in cases if t is not None and (t >= 2 or shape["guard"])]
+            cases = [(n, t) for n, t in cases if t is not None]
             for n, expected in cases:
                 got = tool_trips(opts.bin, path, n)
                 if isinstance(got, int):

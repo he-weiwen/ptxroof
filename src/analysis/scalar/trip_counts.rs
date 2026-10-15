@@ -17,7 +17,12 @@
 //! solve to:  `ne` → −A0/A1 (exact division — compiler-generated
 //! not-equal latches step in divisor units; a constant −A0/A1 that is
 //! not a positive integer is refused);  `lt` → ceildiv(−A0, A1);
-//! `le` → floordiv(−A0, A1) + 1;  `gt`/`ge` → mirrored.
+//! `le` → floordiv(−A0, A1) + 1;  `gt`/`ge` → mirrored. An ordered
+//! latch's count T is max(T, 0) per execution of a guard branch that
+//! skips the loop where the latch fails at k = 0, and max(T, 1) per
+//! entry otherwise, as ScalarEvolution counts a rotated loop's backedges
+//! from max(RHS, Start) unless a guard covers it
+//! (llvm/lib/Analysis/ScalarEvolution.cpp:13628–13643 at e32776a129f5).
 //!
 //! Anything else — multiple exits, exits not at the latch, latch
 //! values loaded in the loop, dependence on a special register that is
@@ -269,6 +274,7 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<(SymExpr, B
         (Some(at_zero), Some((g, test))) if test == at_zero => {
             Ok((SymExpr::max(trips, SymExpr::Const(0)), g))
         }
+        (Some(_), _) => Ok((SymExpr::max(trips, SymExpr::Const(1)), l.header)),
         _ => Ok((trips, l.header)),
     }
 }
@@ -642,7 +648,7 @@ mod tests {
              setp.lt.s32 %p1, %r2, %r1;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -785,8 +791,8 @@ mod tests {
         };
         let ok = |s: &str| Ok(s.to_owned());
         assert_eq!(bound("max.s32 %r3, %r1, 2;"), ok("max(param_0, 2)"));
-        assert_eq!(bound("min.s32 %r3, 2, %r1;"), ok("min(2, param_0)"));
-        assert_eq!(bound("min.u32 %r3, %r1, 8;"), ok("min(param_0, 8)"));
+        assert_eq!(bound("min.s32 %r3, 2, %r1;"), ok("max(min(2, param_0), 1)"));
+        assert_eq!(bound("min.u32 %r3, %r1, 8;"), ok("max(min(param_0, 8), 1)"));
         assert_eq!(bound("mov.u32 %r4, 5;\nmin.s32 %r3, %r4, 8;"), ok("5"));
         assert_eq!(
             bound("mov.u32 %r4, -1;\nmin.u32 %r3, %r4, 8;"),
@@ -841,7 +847,8 @@ mod tests {
 
     /// LLVM's loop guard: a branch before the loop that skips it when its
     /// latch condition fails at k = 0 makes the count max(T, 0), however
-    /// it writes the test; a guard on another condition leaves T.
+    /// it writes the test; a guard on another condition, or none, leaves
+    /// the count per entry, max(T, 1).
     #[test]
     fn a_guard_testing_the_latch_at_zero_clamps_the_count_at_zero() {
         let trips = |guard: &str| {
@@ -863,7 +870,7 @@ mod tests {
             trips("setp.gt.s32 %p1, %r1, 10;\n@!%p1 bra $L__E;"),
             clamped
         );
-        let unclamped = Ok("param_0 - 10".to_owned());
+        let unclamped = Ok("max(param_0 - 10, 1)".to_owned());
         assert_eq!(
             trips("setp.lt.s32 %p1, %r1, 6;\n@%p1 bra $L__E;"),
             unclamped
@@ -904,7 +911,7 @@ mod tests {
              mov.u32 %r2, 10;",
         );
         let l = sibling.iter().find(|(n, ..)| n == "$L__L").expect("loop L");
-        assert_eq!(l.1, Ok("param_0 - 10".to_owned()));
+        assert_eq!(l.1, Ok("max(param_0 - 10, 1)".to_owned()));
         assert_eq!(l.2, "$L__L");
     }
 
@@ -933,7 +940,7 @@ mod tests {
         );
         assert_eq!(
             entry("setp.lt.s32 %p1, %r1, 5;"),
-            at("param_0 - 10", "$L__L")
+            at("max(param_0 - 10, 1)", "$L__L")
         );
     }
 
@@ -973,7 +980,7 @@ mod tests {
         let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
         assert_eq!(entry(""), at("max(param_0 - 10, 0)", "<block 0>"));
         let join = "mov.u32 %r2, 10;\nsetp.eq.s32 %p3, %r1, 3;\n@%p3 bra $L__B;";
-        assert_eq!(entry(join), at("param_0 - 10", "$L__L"));
+        assert_eq!(entry(join), at("max(param_0 - 10, 1)", "$L__L"));
     }
 
     /// A guard skipping a loop from 0 below n where `n == 0` tests its
@@ -991,17 +998,18 @@ mod tests {
                 ),
             );
             let loops = entries_of(&src);
-            assert_eq!(loops[0].1, Ok("⌈param_0/8⌉".to_owned()));
-            loops[0].2.clone()
+            (loops[0].1.clone().unwrap_or_default(), loops[0].2.clone())
         };
         let guard = |g: &str| format!("setp.{g};\n@%p1 bra $L__E;");
-        assert_eq!(entry(&guard("eq.s32 %p1, %r1, 0")), "<block 0>");
-        assert_eq!(
-            entry("setp.ne.s32 %p1, 0, %r1;\n@!%p1 bra $L__E;"),
-            "<block 0>"
+        let at = |t: &str, b: &str| (t.to_owned(), b.to_owned());
+        let (entered, unguarded) = (
+            at("⌈param_0/8⌉", "<block 0>"),
+            at("max(⌈param_0/8⌉, 1)", "$L__L"),
         );
-        assert_eq!(entry(&guard("ne.s32 %p1, %r1, 0")), "$L__L");
-        assert_eq!(entry(&guard("eq.s32 %p1, %r1, 5")), "$L__L");
+        assert_eq!(entry(&guard("eq.s32 %p1, %r1, 0")), entered);
+        assert_eq!(entry("setp.ne.s32 %p1, 0, %r1;\n@!%p1 bra $L__E;"), entered);
+        assert_eq!(entry(&guard("ne.s32 %p1, %r1, 0")), unguarded);
+        assert_eq!(entry(&guard("eq.s32 %p1, %r1, 5")), unguarded);
     }
 
     /// A loop from 0 below ⌊n/16⌋ is entered where n ≥ 16, and one below
@@ -1028,7 +1036,7 @@ mod tests {
         assert_eq!(entry(floor, "setp.lt.s32 %p1, %r3, 1;"), entered);
         assert_eq!(
             entry(floor, "setp.lt.s32 %p1, %r1, 15;"),
-            at("param_0 / 16", "$L__L")
+            at("max(param_0 / 16, 1)", "$L__L")
         );
         assert_eq!(
             entry(ceil, "setp.lt.s32 %p1, %r1, 1;"),
@@ -1036,7 +1044,7 @@ mod tests {
         );
         assert_eq!(
             entry(ceil, "setp.lt.s32 %p1, %r1, 8;"),
-            at("⌈param_0/8⌉", "$L__L")
+            at("max(⌈param_0/8⌉, 1)", "$L__L")
         );
     }
 
@@ -1061,7 +1069,7 @@ mod tests {
         };
         assert_eq!(
             trips("%dynamic_smem_size"),
-            Ok("⌈%dynamic_smem_size/4⌉".to_owned())
+            Ok("max(⌈%dynamic_smem_size/4⌉, 1)".to_owned())
         );
         assert_eq!(
             trips("%clock"),
@@ -1105,7 +1113,7 @@ mod tests {
                 .map_err(Clone::clone)
         };
         let second = Err("latch predicate is not `setp.lt.s32`'s first output".to_owned());
-        assert_eq!(trips("%p1|%p2", "%p1"), Ok("param_0".to_owned()));
+        assert_eq!(trips("%p1|%p2", "%p1"), Ok("max(param_0, 1)".to_owned()));
         assert_eq!(trips("%p2|%p1", "%p1"), second);
         assert_eq!(trips("_|%p1", "%p1"), second);
     }
@@ -1163,7 +1171,10 @@ mod tests {
              setp.lt.u32 %p1, %r2, %r1;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "⌈param_0/8⌉");
+        assert_eq!(
+            trips[0].1.as_ref().unwrap().to_string(),
+            "max(⌈param_0/8⌉, 1)"
+        );
     }
 
     #[test]
@@ -1180,7 +1191,10 @@ mod tests {
              setp.lt.u32 %p1, %r6, %r5;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0 / 16");
+        assert_eq!(
+            trips[0].1.as_ref().unwrap().to_string(),
+            "max(param_0 / 16, 1)"
+        );
     }
 
     #[test]
@@ -1195,7 +1209,7 @@ mod tests {
              setp.lt.u32 %p1, %r2, %r1;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -1219,7 +1233,7 @@ mod tests {
              setp.lt.s64 %p1, %rd2, %rd1;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -1267,7 +1281,7 @@ mod tests {
              setp.ge.s32 %p1, %r2, %r1;\n@!%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
-        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(trips[0].1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -1384,7 +1398,7 @@ mod tests {
             .iter()
             .find(|(n, _)| n == "$L__O")
             .expect("outer loop");
-        assert_eq!(outer.1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(outer.1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
     #[test]
@@ -1420,7 +1434,7 @@ mod tests {
         );
         assert_eq!(
             trips_of(&src)[0].1.as_ref().unwrap().to_string(),
-            "(param_0 / 8) mod 32"
+            "max((param_0 / 8) mod 32, 1)"
         );
         // div and rem by a constant; and-masks as one run of bits.
         let src = kernel_with(
@@ -1431,7 +1445,7 @@ mod tests {
         );
         assert_eq!(
             trips_of(&src)[0].1.as_ref().unwrap().to_string(),
-            "param_0 / 8 + param_0 mod 64"
+            "max(param_0 / 8 + param_0 mod 64, 1)"
         );
         // A step that is a loop-invariant register: the count is not a
         // constant multiple, so it is refused with that reason.
@@ -1451,7 +1465,10 @@ mod tests {
              mov.u32 %r4, 0;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r4, 0;\n$L__J:\n\
              $L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r1;\n@%p1 bra $L__L;\nret;",
         );
-        assert_eq!(trips_of(&src)[0].1.as_ref().unwrap().to_string(), "param_0");
+        assert_eq!(
+            trips_of(&src)[0].1.as_ref().unwrap().to_string(),
+            "max(param_0, 1)"
+        );
     }
 
     #[test]

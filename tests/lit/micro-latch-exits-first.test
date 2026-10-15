@@ -1,16 +1,23 @@
-# Wrong output (PLAN.md): a do-while loop whose latch is false at its
-# first evaluation runs once (ptxas, and on an RTX 4090), but its trip
-# count solves to 5 - 10 = -5, so its counts are negative. With the
-# parameter unbound the second loop reads `trips = param_1 - 10`.
+# A do-while loop whose latch is false at its first evaluation runs
+# once (ptxas, and on an RTX 4090): with no guard before it, its count
+# is max(T, 1) per entry, as LLVM's ScalarEvolution counts a rotated
+# loop's backedges from max(RHS, Start), so 1 where the latch solves to
+# 5 - 10 = -5. With the parameter unbound the second loop reads
+# `max(param_1 - 10, 1)`. The RTX 4090 record at n = 5 agrees on both
+# stores' L2 sectors.
 RUN: %ptxroof analyze %fixtures/micro/latch_exits_first.ptx | FileCheck --check-prefix=FREE "%s"
 RUN: %ptxroof analyze %fixtures/micro/latch_exits_first.ptx --bind 1:n=5 | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/latch_exits_first.ptx --ncu %fixtures/micro/latch_exits_first.ncu.json | FileCheck --check-prefix=REC "%s"
 CHECK-LABEL: kernel micro_latch_exits_first
-CHECK: trips = -5
+CHECK: trips = 1
 CHECK: totals [static]:
-CHECK: global bytes: load 0 B, store -40 B
+CHECK: global bytes: load 0 B, store 8 B
 CHECK-LABEL: kernel micro_latch_exits_first_param
-CHECK: trips = -5
+CHECK: trips = 1
 CHECK: totals [static]:
-CHECK: global bytes: load 0 B, store -40 B
+CHECK: global bytes: load 0 B, store 8 B
 FREE-LABEL: kernel micro_latch_exits_first_param
-FREE: trips = param_1 - 10
+FREE: trips = max(param_1 - 10, 1)
+REC-LABEL: kernel micro_latch_exits_first_param
+REC: trips = 1
+REC: measured L2 sectors of global accesses: 2 lines agree (2 exact, 0 within a range, 0 within a bound), 0 differ
