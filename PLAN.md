@@ -557,8 +557,9 @@ One line each, with the trigger that would start it.
   `tools/ncu/measure.py` records one launch per PTX line, the SASS
   ptxas attributes to the line and their predicated-on thread
   instructions executed, and on a line with a global memory
-  instruction Nsight Compute's L2 theoretical sectors, their ideal and
-  each such SASS's access size (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
+  instruction Nsight Compute's L2 theoretical sectors, their ideal,
+  each such SASS's access size and their predicated-on thread
+  instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
   every Gluon kernel's first launch, `tests/fixtures/gluon/*.ncu.json`).
   The B200 records (`tests/fixtures/b200/*.ncu.json`) come from
   sol-study's reports instead: `import_reports.py` attributes their

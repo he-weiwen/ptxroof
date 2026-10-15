@@ -15,7 +15,7 @@
   "24": {"ptx": "add.s64 %rd3, %rd1, %rd2;", "sass": {"MOV": 1, "ULDC.64": 1, "IMAD.WIDE.U32": 1}, "executions": 192},
   "26": {"ptx": "shl.b32 %r3, %r1, 4;", "sass": {"SHF.L.U32": 1}, "executions": 64},
   "28": {"ptx": "setp.lt.u32 %p1, %r1, 16;", "sass": {"ISETP.GE.U32.AND": 1}, "executions": 64},
-  "30": {"ptx": "cp.async.cg.shared.global [%r4], [%rd3], 16, %r5;", "sass": {"LDGSTS.E.BYPASS.128": 1}, "executions": 64, "l2_theoretical_sectors_global": 8, "l2_theoretical_sectors_global_ideal": 8, "global_access_sizes": [128]},
+  "30": {"ptx": "cp.async.cg.shared.global [%r4], [%rd3], 16, %r5;", "sass": {"LDGSTS.E.BYPASS.128": 1}, "executions": 64, "l2_theoretical_sectors_global": 8, "l2_theoretical_sectors_global_ideal": 8, "global_access_sizes": [128], "global_executions": 64},
   "31": {"ptx": "cp.async.wait_all;", "sass": {"LDGDEPBAR": 1, "DEPBAR.LE": 1}, "executions": 128},
   "32": {"ptx": "ret;", "sass": {"EXIT": 1, "BRA": 1, "NOP": 12}, "executions": 64}
  }

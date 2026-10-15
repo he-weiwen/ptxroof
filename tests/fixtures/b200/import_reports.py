@@ -3,8 +3,9 @@
 Compute reports that reports.txt selects: its PTX with a provenance header,
 and a tools/ncu/measure.py record of the report's predicated-on thread
 instructions executed per PTX line and, on a line with a global memory
-instruction, the L2 sectors they request, the ideal number and each such
-instruction's access size in bits. A TMA instruction, whose access size the
+instruction, the L2 sectors they request, the ideal number, each such
+instruction's access size in bits and their predicated-on thread
+instructions executed. A TMA instruction, whose access size the
 report leaves out and whose sectors it counts as 0, is not one.
 
 A report's kernel is matched to the PTX it ran by SASS and block size among
@@ -214,6 +215,7 @@ def import_reports(sol, corpus, launches_path, out):
                     line["l2_theoretical_sectors_global"] = line.get("l2_theoretical_sectors_global", 0) + requested
                     line["l2_theoretical_sectors_global_ideal"] = line.get("l2_theoretical_sectors_global_ideal", 0) + ideal
                     line.setdefault("global_access_sizes", []).append(bits)
+                    line["global_executions"] = line.get("global_executions", 0) + executed
             for n in timing_dependent(text):
                 if str(n) in lines:
                     lines[str(n)]["timing_dependent"] = True

@@ -11,9 +11,9 @@
  "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",
  "lines": {
   "15": {"ptx": "ld.param.u64 %rd1, [two_per_line_param_0];", "sass": {"MOV": 1}, "executions": 32},
-  "17": {"ptx": "ld.global.f32 %f1, [%rd2];", "sass": {"MOV": 2, "ULDC.64": 1, "LDG.E": 1}, "executions": 128, "l2_theoretical_sectors_global": 1, "l2_theoretical_sectors_global_ideal": 1, "global_access_sizes": [32]},
+  "17": {"ptx": "ld.global.f32 %f1, [%rd2];", "sass": {"MOV": 2, "ULDC.64": 1, "LDG.E": 1}, "executions": 128, "l2_theoretical_sectors_global": 1, "l2_theoretical_sectors_global_ideal": 1, "global_access_sizes": [32], "global_executions": 32},
   "18": {"ptx": "fma.rn.f32 %f2, %f1, %f1, %f1; fma.rn.f32 %f1, %f2, %f2, %f2;", "sass": {"FFMA": 2}, "executions": 64},
-  "19": {"ptx": "st.global.f32 [%rd2], %f1;", "sass": {"STG.E": 1}, "executions": 32, "l2_theoretical_sectors_global": 1, "l2_theoretical_sectors_global_ideal": 1, "global_access_sizes": [32]},
+  "19": {"ptx": "st.global.f32 [%rd2], %f1;", "sass": {"STG.E": 1}, "executions": 32, "l2_theoretical_sectors_global": 1, "l2_theoretical_sectors_global_ideal": 1, "global_access_sizes": [32], "global_executions": 32},
   "20": {"ptx": "ret;", "sass": {"EXIT": 1, "BRA": 1, "NOP": 14}, "executions": 32}
  }
 }

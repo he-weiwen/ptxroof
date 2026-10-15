@@ -9,8 +9,8 @@ the original's SASS. The record is rewritten with the GPU and tools,
 and per PTX line that has SASS: the line's text, the SASS opcodes ptxas
 attributed to it, and their predicated-on thread instructions executed;
 on a line with a global memory instruction also the L2 sectors they
-request, the ideal number, and each such instruction's access size in
-bits.
+request, the ideal number, each such instruction's access size in
+bits, and their predicated-on thread instructions executed.
 Lines of a loop that branches back on an mbarrier test_wait or try_wait
 result are marked timing_dependent. With --check the record is measured
 again on the GPU it names, if this is that GPU, and must not change but
@@ -96,11 +96,13 @@ def per_line(table):
                 line["l2_theoretical_sectors_global"] = int(r[column["L2 Theoretical Sectors Global"]])
                 line["l2_theoretical_sectors_global_ideal"] = int(r[column["L2 Theoretical Sectors Global Ideal"]])
                 line["global_access_sizes"] = []
+                line["global_executions"] = 0
         elif r[2].startswith("0x"):
             op = re.sub(r"^@!?U?P\w+\s+", "", r[3].strip()).split()[0]
             line["sass"][op] = line["sass"].get(op, 0) + 1
             if in_global(r):
                 line["global_access_sizes"].append(int(r[column["Access Size"]]))
+                line["global_executions"] += int(r[executed])
     return lines
 
 
