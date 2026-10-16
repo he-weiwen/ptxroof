@@ -10,6 +10,8 @@
  "arch": "sm_89",
  "ptxas": "Cuda compilation tools, release 13.4, V13.4.92",
  "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",
+ "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum": 203520,
+ "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum": 196608,
  "lines": {
   "39": {"ptx": "ld.param.b64 %rd50, [quantize_transpose_kernel_param_0];", "sass": {"IMAD.MOV.U32": 1}, "executions": 24576},
   "43": {"ptx": "mov.u32 %r266, %ctaid.x;", "sass": {"S2UR": 1, "ULDC.64": 1}, "executions": 49152},

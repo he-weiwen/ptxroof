@@ -9,6 +9,8 @@
  "arch": "sm_89",
  "ptxas": "Cuda compilation tools, release 13.4, V13.4.92",
  "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",
+ "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum": 0,
+ "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum": 2,
  "lines": {
   "28": {"ptx": "ld.param.u64 %rd1, [micro_trip_max_param_0];", "sass": {"IMAD.MOV.U32": 1}, "executions": 32},
   "30": {"ptx": "max.s32 %r2, %r1, 2;", "sass": {"ULDC": 1, "UISETP.LT.AND": 1, "USEL": 1}, "executions": 96},

@@ -9,6 +9,8 @@
  "arch": "sm_89",
  "ptxas": "Cuda compilation tools, release 13.4, V13.4.92",
  "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",
+ "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum": 81920,
+ "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum": 32768,
  "lines": {
   "47": {"ptx": "ld.param.u32 %r7, [_Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0__param_1];", "sass": {"MOV": 1}, "executions": 1024},
   "52": {"ptx": "mov.u32 %r9, %ctaid.y;", "sass": {"S2UR": 1}, "executions": 1024},

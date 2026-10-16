@@ -8,7 +8,10 @@ instruction's access size in bits and their predicated-on thread
 instructions executed. A TMA instruction, whose access size the
 report leaves out and whose sectors it counts as 0, is not one. A line
 with an LDGSTS reading P0 keeps no sectors (measure.py's
-ldgsts_reading_p0).
+ldgsts_reading_p0). For the launch it keeps the L1TEX hardware counts
+of the sectors its global loads and stores request, unless the report
+reads its L1TEX global load requests as nan: the gated rmsnorm report's
+L1TEX, L2 and DRAM counters read 0 or nan although its loads ran.
 
 A report's kernel is matched to the PTX it ran by SASS and block size among
 the study's Triton caches, nearest its own run first, and to its launch by
@@ -41,7 +44,7 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "tools" / "ncu"))
 import sass  # noqa: E402
-from measure import SECTORS, ldgsts_reading_p0, numbered, timing_dependent  # noqa: E402
+from measure import L1TEX_SECTORS, SECTORS, integral, ldgsts_reading_p0, numbered, timing_dependent  # noqa: E402
 
 def run(*cmd):
     return subprocess.run([str(c) for c in cmd], capture_output=True, text=True, check=True).stdout
@@ -72,6 +75,8 @@ def report_kernels(rep):
             "sass": sass.normalize([r[1] for r in instrs], int(instrs[0][0], 16)),
             "executed": [int(r[column["Predicated-On Thread Instructions Executed"]]) for r in instrs],
             "global": [in_global(r) and [int(r[column[c]]) for c in sectors] for r in instrs],
+            "counters": {m: integral(row[raw[0].index(m)]) for m in L1TEX_SECTORS}
+            if row[raw[0].index("l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum")] != "nan" else {},
         }
 
 
@@ -230,7 +235,7 @@ def import_reports(sol, corpus, launches_path, out):
                 "ptx": str(ptx.resolve().relative_to(REPO)), "kernel": k["kernel"], "grid": k["grid"],
                 "block": k["block"], "shared": mine[0]["shared"], "params": list(params.pop()), "gpu": "NVIDIA B200",
                 "arch": "sm_100a", "ptxas": f"{tool} {release}", "ptxas_flags": flags, "ncu": ncu,
-                "sass_sha256": digest, "lines": dict(sorted(lines.items(), key=lambda kv: int(kv[0]))),
+                "sass_sha256": digest, **k["counters"], "lines": dict(sorted(lines.items(), key=lambda kv: int(kv[0]))),
             })
             print(name)
 

@@ -11,7 +11,9 @@ attributed to it, and their predicated-on thread instructions executed;
 on a line with a global memory instruction also the L2 sectors they
 request, the ideal number, each such instruction's access size in
 bits, and their predicated-on thread instructions executed, though not
-the sectors where one is an LDGSTS reading P0.
+the sectors where one is an LDGSTS reading P0; and for the launch the
+L1TEX hardware counts of the sectors its global loads and stores
+request.
 Lines of a loop that branches back on an mbarrier test_wait or try_wait
 result are marked timing_dependent. With --check the record is measured
 again on the GPU it names, if this is that GPU, and must not change but
@@ -81,6 +83,15 @@ def sass(cubin):
 
 
 SECTORS = ("l2_theoretical_sectors_global", "l2_theoretical_sectors_global_ideal")
+L1TEX_SECTORS = ("l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum", "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum")
+
+
+def integral(text):
+    """A count as the raw page prints it, `1,024` or `1879965696.000000`."""
+    whole, _, fraction = text.replace(",", "").partition(".")
+    if fraction.strip("0"):
+        sys.exit(f"measure.py: {text} is not a count")
+    return int(whole)
 
 
 def ldgsts_reading_p0(sass):
@@ -150,9 +161,11 @@ def main(path, check):
         dims = [",".join(map(str, record[k])) for k in ("grid", "block")]
         launch = [tmp / "launch", tmp / "numbered.cubin", record["kernel"], *dims, record.get("shared", 0)]
         launch += record["params"]
-        run("ncu", "--section", "SourceCounters", "--import-source", "yes", "-o", tmp / "report", *launch)
+        run("ncu", "--section", "SourceCounters", "--metrics", ",".join(L1TEX_SECTORS), "--import-source", "yes",
+            "-o", tmp / "report", *launch)
         report = next(tmp.glob("report.*"))
         table = run("ncu", "--import", report, "--page", "source", "--print-source", "cuda,sass", "--csv")
+        raw = list(csv.reader(run("ncu", "--import", report, "--page", "raw", "--csv").splitlines()))
     ptxas = next(l for l in run("ptxas", "--version").splitlines() if "release" in l)
     ncu = run("ncu", "--version").splitlines()[-1]
     lines = per_line(table)
@@ -161,7 +174,9 @@ def main(path, check):
         lines[str(n)]["timing_dependent"] = True
         if str(n) in stored:
             lines[str(n)]["executions"] = stored[str(n)]["executions"]
-    record.update(gpu=gpu, driver=driver, arch=arch, ptxas=ptxas, ncu=ncu, lines=lines)
+    record.update(gpu=gpu, driver=driver, arch=arch, ptxas=ptxas, ncu=ncu)
+    record.update((m, integral(raw[2][raw[0].index(m)])) for m in L1TEX_SECTORS)
+    record["lines"] = lines
     entry = lambda k, v, indent: f"{indent}{json.dumps(k)}: {json.dumps(v, ensure_ascii=False)}"
     fields = ",\n".join(entry(k, v, " ") for k, v in record.items() if k != "lines")
     lines = ",\n".join(entry(k, v, "  ") for k, v in record["lines"].items())

@@ -11,6 +11,8 @@
  "ptxas_flags": ["-lineinfo", "-arch", "sm_100a", "-fmad", "false", "--regAllocOptLevel=2"],
  "ncu": "2025.1.1.0",
  "sass_sha256": "3147e06d9271bb09e313b0cac9354308ebbfa7944d8c4545ba0e63a824f76255",
+ "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum": 23007360,
+ "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum": 4202496,
  "lines": {
   "41": {"ptx": "mov.u32 %r20, %ctaid.x;", "sass": {"LDC": 1, "S2UR": 1}, "executions": 9437184},
   "43": {"ptx": "mov.u32 %r1, %ctaid.y;", "sass": {"S2UR": 1}, "executions": 4718592},

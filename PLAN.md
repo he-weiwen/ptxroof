@@ -619,13 +619,19 @@ One line each, with the trigger that would start it.
   instructions executed, and on a line with a global memory
   instruction Nsight Compute's L2 theoretical sectors, their ideal,
   each such SASS's access size and their predicated-on thread
-  instructions executed (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
+  instructions executed, and for the launch the L1TEX hardware counts
+  of the sectors its global loads and stores request
+  (`l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum`, `…_op_st.sum`)
+  (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
   every Gluon kernel's first launch, `tests/fixtures/gluon/*.ncu.json`).
   The B200 records (`tests/fixtures/b200/*.ncu.json`) come from
   sol-study's reports instead: `import_reports.py` attributes their
   per-SASS counts and sectors to PTX lines, leaving out a TMA
   instruction, whose access size the report omits and whose sectors it
-  counts as 0, through the same `.loc` recompile under
+  counts as 0, and keeps the report's two L1TEX counts but where it
+  reads the L1TEX global load requests as nan (the gated rmsnorm
+  report, whose L1TEX, L2 and DRAM counters read 0 or nan although its
+  loads ran), through the same `.loc` recompile under
   Triton's ptxas command, and takes each launch's parameters from a
   replay of the report's own command as the B200, matched by SASS and
   grid, with `i64:`, `i1:` and `tensormap:128` for the parameters of a
