@@ -4,7 +4,8 @@
 # trips x 256 threads x 96 CTAs = 12,533,760, as Nsight Compute
 # measures. Its two `cp.async` lines, 979 and 985, are `@!P0 LDGSTS`,
 # whose L2 sectors Nsight Compute miscounts, so the record keeps none
-# for them (micro/ldgsts_p0.ptx, PLAN.md).
+# for them (micro/ldgsts_p0.ptx, PLAN.md). The launch's L1TEX load
+# count, 62,916,096, is the least of the predictions summed with them.
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx --ncu %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json | FileCheck "%s"
 CHECK: <block 4>{{ +}}gluon_fp8.py:201{{ +}}16  <= 256 in <= 8 warps (k[gluon_fp8.py:173] < 511)
 CHECK: <block 4>        confirmed     16 instructions, 10 with SASS, 8 agreeing
@@ -12,3 +13,4 @@ CHECK-NOT: line 973:
 CHECK: $L__BB0_1
 CHECK-NOT: contradicted
 CHECK: measured L2 sectors of global accesses: 22 lines agree (10 exact, 12 within a range, 0 within a bound), 0 differ
+CHECK: measured L1TEX sectors of global loads over the launch: predicted 62916096–69207552, measured 62916096

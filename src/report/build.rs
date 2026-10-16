@@ -455,6 +455,7 @@ impl KernelReportBuilder<'_> {
                     {
                         let r = PerRequest {
                             bits: b * 8,
+                            store: direction == "store",
                             sectors,
                             ideal,
                             at_most: sectors_at_most,
@@ -533,6 +534,7 @@ impl KernelReportBuilder<'_> {
 #[derive(Clone, Copy)]
 struct PerRequest {
     bits: u32,
+    store: bool,
     sectors: CountRange,
     ideal: CountRange,
     at_most: bool,
@@ -1899,7 +1901,7 @@ impl<'a> KernelReportBuilder<'a> {
         record: &NcuRecord,
         lines: &LineIndex,
         cta: &LaunchInfo,
-    ) -> Vec<MeasuredBlock> {
+    ) -> (Vec<MeasuredBlock>, Option<MeasuredTotals>) {
         let grid = (record.grid.iter()).try_fold(1u64, |n, &d| n.checked_mul(d.into()));
         let mut per_line: HashMap<u32, usize> = HashMap::new();
         for stmt in &self.kernel.stmts {
@@ -1908,7 +1910,7 @@ impl<'a> KernelReportBuilder<'a> {
             }
         }
         let reducible = self.forest.irreducible_edges.is_empty();
-        let mut blocks = Vec::new();
+        let (mut blocks, mut all) = (Vec::new(), Vec::new());
         for bm in &self.blocks {
             let Some((mult, chain_at_most)) = self.multiplier(bm.block, None, (true, true)) else {
                 continue;
@@ -2016,6 +2018,7 @@ impl<'a> KernelReportBuilder<'a> {
                         };
                         Some(Sectors {
                             bits: r.bits,
+                            store: r.store,
                             requested: total(r.sectors)?,
                             ideal: total(r.ideal)?,
                             at_most: at_most || bound || r.at_most,
@@ -2037,12 +2040,14 @@ impl<'a> KernelReportBuilder<'a> {
                     },
                     at_most,
                     sectors,
+                    atomic: matches!(instr.mnemonic, Opcode::Atom | Opcode::Red),
                 });
             }
             let name = self.cfg.block_name(self.module, bm.block);
             blocks.push(record.compare(&name, &predictions));
+            all.extend(predictions);
         }
-        blocks
+        (blocks, record.compare_totals(&all))
     }
 
     fn build(
@@ -2093,8 +2098,10 @@ impl<'a> KernelReportBuilder<'a> {
             (launch.as_ref().zip(ctas)).map(|(l, n)| self.aggregates(None, Some(l), Some(n)));
 
         let unknowns = self.unknowns();
-        let measured = (ncu.filter(|(r, _)| r.kernel == name).zip(launch.as_ref()))
-            .map(|((record, lines), cta)| self.measured(record, lines, cta));
+        let (measured, measured_totals) =
+            (ncu.filter(|(r, _)| r.kernel == name).zip(launch.as_ref()))
+                .map(|((record, lines), cta)| self.measured(record, lines, cta))
+                .unzip();
 
         KernelReport {
             demangled: demangle(&name),
@@ -2137,6 +2144,7 @@ impl<'a> KernelReportBuilder<'a> {
                 })
                 .collect(),
             measured,
+            measured_totals: measured_totals.flatten(),
         }
     }
 }
@@ -2669,6 +2677,8 @@ mod tests {
             block: [32, 1, 1],
             params: vec!["ptr:4".to_owned()],
             lines: Default::default(),
+            load_sectors: None,
+            store_sectors: None,
         };
         let opts = AnalyzeOptions {
             grid: Some([2, 1, 1]),
@@ -2749,6 +2759,8 @@ mod tests {
             block: [32, 1, 1],
             params: vec!["ptr:4".to_owned()],
             lines: [(15, line("bar.sync 0;"))].into_iter().collect(),
+            load_sectors: None,
+            store_sectors: None,
         };
         let opts = AnalyzeOptions {
             grid: Some([3, 1, 1]),
@@ -3070,6 +3082,8 @@ mod tests {
             block: [32, 1, 1],
             params: vec!["ptr:4".into()],
             lines: [(9, line)].into(),
+            load_sectors: None,
+            store_sectors: None,
         };
         let opts = AnalyzeOptions {
             launch: Some(record.block),
@@ -3109,6 +3123,8 @@ mod tests {
             block: [32, 1, 1],
             params: vec!["ptr:4".into()],
             lines: [(9, line)].into(),
+            load_sectors: None,
+            store_sectors: None,
         };
         let opts = AnalyzeOptions {
             launch: Some(record.block),

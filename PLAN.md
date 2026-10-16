@@ -667,10 +667,21 @@ One line each, with the trigger that would start it.
   (`outcome: executions_differ`). Not compared at all: a generic access,
   a line whose count is unknown, and a line with an `LDGSTS` reading `P0`,
   whose record keeps no sectors (Known limitations, Producers and
-  validation). `tests/ncu_corpus.rs` keeps
-  every record's block verdicts, their counts and its sector lines by
-  outcome in one snapshot: 137 blocks confirmed, 274 consistent, 499
-  unchecked; 949 sector lines agree, none differ, 2 not compared. `ci.sh` measures every record again on the GPU it
+  validation). Over the launch, the predicted global load and store
+  sectors, each line's prediction summed once over the record's lines
+  with global SASS, are compared with the record's L1TEX counts when
+  every such line but an atomic's is predicted at its recorded width
+  and executions (`kernels[].measured_totals`; the text's `measured
+  L1TEX sectors of global loads over the launch`;
+  `tests/lit/micro-ldgsts-p0.test`, `gluon-counter-guard.test`: the
+  sum includes the lines the `P0` rule leaves without sectors). In 36
+  records both agree. 27 have a line not predicted so (ce_chunk's
+  `ld.global.b64` that ptxas loads as 32-bit `LDG.E`), and the gated
+  rmsnorm record has no counts. `tests/ncu_corpus.rs` keeps
+  every record's block verdicts, their counts, its sector lines by
+  outcome and its launch totals in one snapshot: 137 blocks confirmed,
+  274 consistent, 499 unchecked; 949 sector lines agree, none differ,
+  2 not compared; 36 launches' totals agree. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed; a record of
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.

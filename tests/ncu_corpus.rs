@@ -1,11 +1,12 @@
 //! Every Nsight Compute record's comparison in one reviewable snapshot:
-//! each block's verdict and counts, and each record's L2 sector lines,
-//! those that differ by line. A block that loses its verdict or a line
-//! that stops agreeing changes it as a contradiction would.
+//! each block's verdict and counts, each record's L2 sector lines,
+//! those that differ by line, and its launch's load and store sectors
+//! against the L1TEX counts. A block that loses its verdict or a line
+//! or total that stops agreeing changes it as a contradiction would.
 
 use ptxroof::report::build::{AnalyzeOptions, analyze};
 use ptxroof::report::measured::NcuRecord;
-use ptxroof::report::schema::{MeasuredSectors, SectorOutcome, Verdict};
+use ptxroof::report::schema::{MeasuredSectors, MeasuredTotal, SectorOutcome, Verdict};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
@@ -41,6 +42,7 @@ fn measured_verdicts_across_the_records() {
     records.sort();
     let mut verdicts: BTreeMap<String, u64> = BTreeMap::new();
     let mut sectors: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut totals: BTreeMap<String, u64> = BTreeMap::new();
     let mut out = String::new();
     for path in &records {
         let text = fs::read_to_string(path).expect("record readable");
@@ -58,6 +60,23 @@ fn measured_verdicts_across_the_records() {
         let report = analyze(&src, ptx, &opts).expect("record analyzes");
         let rel = path.strip_prefix(&root).expect("under the repo").display();
         let _ = writeln!(out, "{rel}");
+        let outcome = |t: &Option<MeasuredTotal>| match t {
+            Some(t) if t.agrees => "agrees",
+            Some(_) => "differs",
+            None => "not compared",
+        };
+        let launches = (report.kernels.iter())
+            .filter(|k| k.name == kernel)
+            .filter_map(|k| k.measured_totals.as_ref());
+        for t in launches {
+            let line = match t.incomplete {
+                Some(n) => format!("not compared, line {n}"),
+                None => format!("loads {}, stores {}", outcome(&t.loads), outcome(&t.stores)),
+            };
+            let key = line.split(", line").next().unwrap_or_default().to_owned();
+            *totals.entry(key).or_default() += 1;
+            let _ = writeln!(out, "  launch sectors\t{line}");
+        }
         let blocks = (report.kernels.iter())
             .filter(|k| k.name == kernel)
             .flat_map(|k| k.measured.iter().flatten());
@@ -101,6 +120,6 @@ fn measured_verdicts_across_the_records() {
         None
     );
     insta::assert_snapshot!(format!(
-        "blocks {verdicts:?}\nsector lines {sectors:?}\n\n{out}"
+        "blocks {verdicts:?}\nsector lines {sectors:?}\nlaunch sectors {totals:?}\n\n{out}"
     ));
 }

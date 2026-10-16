@@ -451,6 +451,8 @@ fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
                 block: [64, 1, 1],
                 params: vec!["ptr:1024".to_owned(), "u32:0".to_owned()],
                 lines: [(line, measured)].into(),
+                load_sectors: None,
+                store_sectors: None,
             };
             let opts = AnalyzeOptions {
                 grid: Some([1, 1, 1]),
@@ -503,6 +505,8 @@ fn a_uniform_ignore_src_predicts_a_bound_of_sectors() {
         block: [64, 1, 1],
         params: vec!["ptr:1024".to_owned(), "u32:7".to_owned()],
         lines: [(line, measured)].into(),
+        load_sectors: None,
+        store_sectors: None,
     };
     let opts = AnalyzeOptions {
         grid: Some([1, 1, 1]),

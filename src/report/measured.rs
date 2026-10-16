@@ -2,10 +2,11 @@ use crate::analysis::instruction_counts::count_constraint::CountConstraint;
 use crate::ptx::ir::Module;
 use crate::report::build::BindingSpec;
 use crate::report::schema::{
-    MeasuredBlock, MeasuredLine, MeasuredSectors, SectorCount, SectorOutcome, Verdict,
+    MeasuredBlock, MeasuredLine, MeasuredSectors, MeasuredTotal, MeasuredTotals, SectorCount,
+    SectorOutcome, Verdict,
 };
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Deserialize)]
 pub struct NcuRecord {
@@ -14,6 +15,10 @@ pub struct NcuRecord {
     pub block: [u32; 3],
     pub params: Vec<String>,
     pub lines: BTreeMap<u32, NcuLine>,
+    #[serde(rename = "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum")]
+    pub load_sectors: Option<u64>,
+    #[serde(rename = "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum")]
+    pub store_sectors: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,12 +39,15 @@ pub struct Prediction {
     pub executions: Option<u64>,
     pub at_most: bool,
     pub sectors: Option<Sectors>,
+    /// An `atom` or `red`, whose sectors the load and store counts leave out.
+    pub atomic: bool,
 }
 
 /// The sectors a line's one global access of `bits` requests over the
 /// launch, and the ideal number.
 pub struct Sectors {
     pub bits: u32,
+    pub store: bool,
     pub requested: SectorCount,
     pub ideal: SectorCount,
     pub at_most: bool,
@@ -79,6 +87,59 @@ impl NcuRecord {
             }
         }
         Ok(())
+    }
+
+    /// The launch's predicted global load and store sectors against the
+    /// L1TEX hardware counts, each summed over the record's lines with
+    /// global SASS, a line's one prediction once. A line other than an
+    /// atomic's with no prediction, another access width or other
+    /// executions leaves both uncompared, and is named.
+    pub fn compare_totals(&self, predictions: &[Prediction]) -> Option<MeasuredTotals> {
+        let (Some(loads), Some(stores)) = (self.load_sectors, self.store_sectors) else {
+            return None;
+        };
+        let mut by_line: HashMap<u32, Vec<&Prediction>> = HashMap::new();
+        for p in predictions {
+            by_line.entry(p.line).or_default().push(p);
+        }
+        let mut sums = [(SectorCount { min: 0, max: 0 }, false); 2];
+        for (&n, line) in (self.lines.iter()).filter(|(_, l)| !l.global_access_sizes.is_empty()) {
+            let incomplete = MeasuredTotals {
+                incomplete: Some(n),
+                loads: None,
+                stores: None,
+            };
+            let Some([p]) = by_line.get(&n).map(Vec::as_slice) else {
+                return Some(incomplete);
+            };
+            if p.atomic {
+                continue;
+            }
+            let (Some(s), Some(predicted), Some(ran)) =
+                (&p.sectors, p.executions, line.global_executions)
+            else {
+                return Some(incomplete);
+            };
+            let runs = ran == predicted || p.at_most && ran <= predicted;
+            if !runs || line.global_access_sizes.iter().any(|&b| b != s.bits) {
+                return Some(incomplete);
+            }
+            let (sum, at_most) = &mut sums[usize::from(s.store)];
+            sum.min = sum.min.checked_add(s.requested.min)?;
+            sum.max = sum.max.checked_add(s.requested.max)?;
+            *at_most |= s.at_most;
+        }
+        let total = |(predicted, at_most): (SectorCount, bool), measured: u64| MeasuredTotal {
+            predicted,
+            at_most,
+            measured,
+            agrees: measured <= predicted.max && (at_most || predicted.min <= measured),
+        };
+        Some(MeasuredTotals {
+            incomplete: None,
+            loads: Some(total(sums[0], loads)),
+            stores: Some(total(sums[1], stores)),
+        })
     }
 
     pub fn compare(&self, block: &str, predictions: &[Prediction]) -> MeasuredBlock {
@@ -199,6 +260,8 @@ mod tests {
             lines: (lines.iter())
                 .map(|&(n, sass, executions)| (n, line(sass, executions)))
                 .collect(),
+            load_sectors: None,
+            store_sectors: None,
         }
     }
 
@@ -214,6 +277,7 @@ mod tests {
             executions: Some(executions),
             at_most,
             sectors: None,
+            atomic: false,
         }
     }
 
@@ -311,6 +375,7 @@ mod tests {
             executions: None,
             at_most: false,
             sectors: None,
+            atomic: false,
         };
         assert_eq!(
             verdict(&r, &[predict(2, Constrained, 64, false)]),
@@ -344,6 +409,7 @@ mod tests {
                 requested,
                 ideal,
                 at_most,
+                store: false,
             }),
             ..predict(line, Free, 64, false)
         };
@@ -371,5 +437,60 @@ mod tests {
                 (6, ExecutionsDiffer)
             ]
         );
+    }
+
+    #[test]
+    fn the_launch_totals_sum_each_recorded_line_once() {
+        let global = |n, sizes: Vec<u32>, sectors: Option<u64>| {
+            let mut line = record(&[(n, &["LDG.E"], 64)]).lines.remove(&n).unwrap();
+            line.global_access_sizes = sizes;
+            line.global_executions = Some(64);
+            line.l2_theoretical_sectors_global = sectors;
+            line.l2_theoretical_sectors_global_ideal = sectors;
+            line
+        };
+        let at = |line, store, min, max| Prediction {
+            sectors: Some(Sectors {
+                bits: 32,
+                store,
+                requested: SectorCount { min, max },
+                ideal: SectorCount { min, max: min },
+                at_most: false,
+            }),
+            ..predict(line, Free, 64, false)
+        };
+        let mut r = record(&[]);
+        r.lines.insert(1, global(1, vec![32], Some(8)));
+        r.lines.insert(2, global(2, vec![32], None));
+        r.lines.insert(3, global(3, vec![32], Some(4)));
+        r.lines.insert(4, global(4, vec![32], Some(2)));
+        (r.load_sectors, r.store_sectors) = (Some(12), Some(4));
+        let atomic = Prediction {
+            atomic: true,
+            ..at(4, true, 2, 2)
+        };
+        let both = [
+            at(1, false, 8, 10),
+            at(2, false, 4, 4),
+            at(3, true, 4, 4),
+            atomic,
+        ];
+        let totals = r.compare_totals(&both).unwrap();
+        let summed =
+            |t: Option<MeasuredTotal>| t.map(|t| (t.predicted.min, t.predicted.max, t.agrees));
+        assert_eq!(summed(totals.loads), Some((12, 14, true)));
+        assert_eq!(summed(totals.stores), Some((4, 4, true)));
+        let wider = [
+            at(1, false, 8, 10),
+            Prediction {
+                sectors: None,
+                ..at(2, false, 4, 4)
+            },
+        ];
+        assert_eq!(r.compare_totals(&wider).unwrap().incomplete, Some(2));
+        r.lines.get_mut(&3).unwrap().global_access_sizes = vec![64];
+        assert_eq!(r.compare_totals(&both).unwrap().incomplete, Some(3));
+        r.load_sectors = None;
+        assert!(r.compare_totals(&both).is_none());
     }
 }

@@ -121,6 +121,9 @@ pub fn render(report: &Report) -> String {
         if let Some(blocks) = &k.measured {
             render_measured(w, blocks);
         }
+        if let Some(totals) = &k.measured_totals {
+            render_totals(w, totals);
+        }
     }
 
     let _ = writeln!(w);
@@ -185,11 +188,6 @@ fn render_measured(w: &mut String, blocks: &[MeasuredBlock]) {
         count(&|s| s.outcome == SectorOutcome::Differs),
         count(&|s| s.outcome == SectorOutcome::ExecutionsDiffer),
     );
-    let range = |c: SectorCount, at_most: bool| match (at_most, c.min == c.max) {
-        (true, _) => format!("<= {}", c.max),
-        (false, true) => c.min.to_string(),
-        (false, false) => format!("{}–{}", c.min, c.max),
-    };
     for s in checked
         .iter()
         .filter(|s| s.outcome == SectorOutcome::Differs)
@@ -213,6 +211,36 @@ fn render_measured(w: &mut String, blocks: &[MeasuredBlock]) {
             "    line {}: not compared, its global SASS executed {} thread instructions",
             s.line, s.executions
         );
+    }
+}
+
+fn range(c: SectorCount, at_most: bool) -> String {
+    match (at_most, c.min == c.max) {
+        (true, _) => format!("<= {}", c.max),
+        (false, true) => c.min.to_string(),
+        (false, false) => format!("{}–{}", c.min, c.max),
+    }
+}
+
+fn render_totals(w: &mut String, t: &MeasuredTotals) {
+    if let Some(n) = t.incomplete {
+        let _ = writeln!(
+            w,
+            "  measured L1TEX sectors of global loads and stores: not compared, line {n} is not \
+             predicted as recorded"
+        );
+    }
+    for (what, total) in [("loads", &t.loads), ("stores", &t.stores)] {
+        if let Some(x) = total {
+            let differs = if x.agrees { "" } else { ", differs" };
+            let _ = writeln!(
+                w,
+                "  measured L1TEX sectors of global {what} over the launch: predicted {}, \
+                 measured {}{differs}",
+                range(x.predicted, x.at_most),
+                x.measured
+            );
+        }
     }
 }
 

@@ -109,6 +109,8 @@ pub struct KernelReport {
     pub unused: Vec<UnusedInstruction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub measured: Option<Vec<MeasuredBlock>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured_totals: Option<MeasuredTotals>,
 }
 
 #[derive(Debug, Serialize)]
@@ -501,6 +503,29 @@ pub struct MeasuredBlock {
     /// Lines whose global access ptxas lowered at its own width, with
     /// their L2 sectors over the launch against Nsight Compute's.
     pub sectors: Vec<MeasuredSectors>,
+}
+
+/// The launch's global load and store sectors: the predictions summed
+/// over the record's lines against the L1TEX hardware counts.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredTotals {
+    /// The first line with global SASS whose sectors are not predicted as
+    /// recorded; then neither total is compared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incomplete: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loads: Option<MeasuredTotal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stores: Option<MeasuredTotal>,
+}
+
+/// Predicted sectors over the launch against an L1TEX hardware count.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredTotal {
+    pub predicted: SectorCount,
+    pub at_most: bool,
+    pub measured: u64,
+    pub agrees: bool,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
