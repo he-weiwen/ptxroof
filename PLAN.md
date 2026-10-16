@@ -95,14 +95,6 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   The CFG treats `trap` as fallthrough.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
-- **lm_head_dx's predicated `cp.async` lines measure one more warp
-  request per CTA than predicted.** Counted trip by trip, their
-  12,533,760 executions agree with the record, but at 16 sectors per
-  warp request (`warp: 16–24 sectors (ideal 16)`) lines 979 and 985
-  predict an ideal of 6,266,880 L2 sectors each where the record
-  measures 6,268,416, 16 more per CTA; ptxas predicates the block's two
-  `LDGSTS` (`@!P0`) rather than branching around them
-  (`gluon-counter-guard.test`).
 - **A predicated `ret` or `exit` is read as falling through.** The CFG
   gives its block one successor, the next block, so what follows counts
   on every thread, exactly (`micro/predicated_exit.ptx`: the store
@@ -394,12 +386,6 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
     them: 84 read all, 48 on a thread-index condition, 34 trip by trip,
     40 partly, 113 not at all (49 in loops).
 
-  In the B200 records 14 such copies in two kernels are predicted as
-  every lane reading, a range rather than a bound, and measure fewer
-  L2 sectors (`ssd_pass_tlrange._state_passing_fwd_kernel`'s line 184:
-  20,480–21,760 predicted, 20,368 measured; six lines of
-  `scaled_mm_kernel`, 1,835,008–2,293,760 against 1,823,328 to
-  1,832,880).
 
   A src-size register is a bound on which threads read and how much
   (`micro/cp_async_src_size.ptx`: `global load <= 16 B (predicated)
@@ -460,6 +446,28 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 
 ### Producers and validation
 
+- **Nsight Compute miscounts the L2 sectors of an `LDGSTS` that reads
+  `P0`**, as its guard or unnegated as its source predicate: its L2
+  Theoretical Sectors Global follow neither its predicated-on threads
+  nor the L1TEX hardware counters. `micro/ldgsts_p0.ptx`, on an RTX 4090
+  under Nsight Compute 2026.3.1 and 2025.3.1:
+  - its `@!P0` copy reads 64 sectors where its 16 threads request 8;
+  - `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum` is 64, the
+    8 + 24 + 8 + 24 its threads request.
+
+  `measure.py` and `import_reports.py` keep no sectors for such a line,
+  so it is not compared:
+  - lm_head_dx's lines 979 and 985 read 6,268,416 each where the
+    prediction is 6,266,880. The kernel's L1TEX load sectors,
+    62,916,096, equal the sum of the predictions.
+  - attn_bwd's eight `@!P0` copies.
+  - 14 B200 copies that read `P0` as their source predicate, which
+    measure fewer than predicted. Their reports' L1TEX load sectors
+    exceed the sum over the lines by exactly that shortfall: 31,152 for
+    `scaled_mm_kernel`, 6,896 for `ssd_pass_tlrange`.
+
+  A copy reading `!P0` counts as requested
+  (`micro/cp_async_ignore_src.ptx`).
 - **A launch count past the lane budget is rejected late.**
   `ThreadSet::weighted_launch` counts a group of CTAs' threads when it
   first meets the group, so a set whose CTAs form more groups than 2^26
@@ -643,19 +651,20 @@ One line each, with the trigger that would start it.
   lane that runs it, a range over the address's alignment
   (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`; the
   text report counts the lines that agree and prints those that differ,
-  two in the Gluon records, lm_head_dx's (`tests/lit/gluon-ncu.test`),
-  and 14 in the B200 records, all listed under Known limitations), once
+  none in the records, `tests/lit/gluon-ncu.test`), once
   the line's global SASS executed the predicted count, or within its
   bound. ptxas may run
   a load less often than its statement: `tma_best_Q64N64w8s3._stage1_tma`'s
   line 544 executes 655,360 times where its loop iteration runs
   2,424,832 times, so it and one line of
   `_fwd_kernel_flash_decode_stage1_padding` are listed as not compared
-  (`outcome: executions_differ`). Not compared at all: a generic access
-  and a line whose count is unknown. `tests/ncu_corpus.rs` keeps
+  (`outcome: executions_differ`). Not compared at all: a generic access,
+  a line whose count is unknown, and a line with an `LDGSTS` reading `P0`,
+  whose record keeps no sectors (Known limitations, Producers and
+  validation). `tests/ncu_corpus.rs` keeps
   every record's block verdicts, their counts and its sector lines by
-  outcome in one snapshot: 137 blocks confirmed, 273 consistent, 499
-  unchecked; 956 sector lines agree, 16 differ, 2 not compared. `ci.sh` measures every record again on the GPU it
+  outcome in one snapshot: 137 blocks confirmed, 274 consistent, 499
+  unchecked; 949 sector lines agree, none differ, 2 not compared. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed; a record of
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.

@@ -2,8 +2,8 @@
 source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\n\\n{out}\")"
 ---
-blocks {"confirmed": 137, "consistent": 273, "unchecked": 499}
-sector lines {"differ": 16, "exact": 86, "not compared, its SASS ran otherwise": 2, "within a bound": 122, "within a range": 748}
+blocks {"confirmed": 137, "consistent": 274, "unchecked": 499}
+sector lines {"exact": 86, "not compared, its SASS ran otherwise": 2, "within a bound": 112, "within a range": 751}
 
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
   $L__func_begin0	consistent	5 of 8 with SASS, 2 agreeing
@@ -149,8 +149,7 @@ tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_k
   $L__BB0_7	unchecked	1 of 7 with SASS, 0 agreeing
   waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
   $L__BB0_9	confirmed	405 of 681 with SASS, 229 agreeing
-  sectors	{"differ": 6, "within a bound": 16, "within a range": 60}
-  sectors differ	lines 676, 711, 718, 725, 752, 759
+  sectors	{"within a bound": 16, "within a range": 60}
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ncu.json
   $L__func_begin0	confirmed	27 of 36 with SASS, 17 agreeing
   <block 1>	consistent	2 of 2 with SASS, 2 agreeing
@@ -350,8 +349,7 @@ tests/fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ncu.json
   <block 1>	consistent	32 of 49 with SASS, 11 agreeing
   $L__BB0_2	confirmed	72 of 102 with SASS, 38 agreeing
   $L__BB0_3	confirmed	3 of 3 with SASS, 3 agreeing
-  sectors	{"differ": 8, "exact": 8, "within a range": 12}
-  sectors differ	lines 184, 244, 251, 296, 303, 317, 476, 483
+  sectors	{"exact": 8, "within a range": 12}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._bmm_chunk_fwd_kernel.sm_100a.ncu.json
   $L__func_begin0	consistent	59 of 101 with SASS, 35 agreeing
   <block 1>	consistent	40 of 56 with SASS, 25 agreeing
@@ -359,7 +357,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._bmm_chunk_fwd_kernel.sm_100a
   <block 3>	consistent	1 of 1 with SASS, 1 agreeing
   $L__BB0_1	consistent	1 of 5 with SASS, 1 agreeing
   $L__BB0_4	confirmed	62 of 78 with SASS, 44 agreeing
-  sectors	{"within a bound": 10}
+  sectors	{"within a bound": 9}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_scan_fwd_kernel.sm_100a.ncu.json
   $L__func_begin0	confirmed	237 of 364 with SASS, 142 agreeing
   <block 1>	consistent	56 of 76 with SASS, 28 agreeing
@@ -367,7 +365,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_scan_fwd_kernel.sm_100
   <block 3>	consistent	1 of 1 with SASS, 1 agreeing
   $L__BB0_1	consistent	6 of 6 with SASS, 6 agreeing
   $L__BB0_4	confirmed	65 of 79 with SASS, 54 agreeing
-  sectors	{"exact": 2, "within a bound": 18, "within a range": 7}
+  sectors	{"exact": 2, "within a bound": 17, "within a range": 7}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_fwd_kernel.sm_100a.ncu.json
   $L__func_begin0	consistent	104 of 169 with SASS, 54 agreeing
   <block 1>	consistent	63 of 90 with SASS, 37 agreeing
@@ -738,7 +736,7 @@ tests/fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json
   <block 6>	consistent	7 of 11 with SASS, 7 agreeing
   $L__BB0_7	consistent	16 of 16 with SASS, 16 agreeing
   $L__BB0_8	confirmed	109 of 133 with SASS, 107 agreeing
-  sectors	{"within a bound": 8, "within a range": 88}
+  sectors	{"within a range": 88}
 tests/fixtures/gluon/attn_bwd_post_kernel.sm_89.ncu.json
   $L__func_begin0	consistent	158 of 261 with SASS, 149 agreeing
   sectors	{"within a range": 32}
@@ -933,8 +931,7 @@ tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json
   $L__BB0_1	consistent	2 of 66 with SASS, 2 agreeing
   $L__BB0_6	consistent	64 of 64 with SASS, 63 agreeing
   $L__BB0_7	confirmed	187 of 207 with SASS, 175 agreeing
-  sectors	{"differ": 2, "exact": 10, "within a range": 12}
-  sectors differ	lines 979, 985
+  sectors	{"exact": 10, "within a range": 12}
 tests/fixtures/gluon/quantize_transpose_kernel.sm_89.ncu.json
   $L__func_begin0	confirmed	922 of 1049 with SASS, 784 agreeing
   sectors	{"exact": 1, "within a range": 48}
@@ -996,6 +993,9 @@ tests/fixtures/micro/latch_exits_first.ncu.json
   $L__BB1_1	consistent	6 of 6 with SASS, 3 agreeing
   <block 2>	consistent	1 of 1 with SASS, 1 agreeing
   sectors	{"exact": 2}
+tests/fixtures/micro/ldgsts_p0.ncu.json
+  <block 0>	consistent	18 of 23 with SASS, 15 agreeing
+  sectors	{"within a range": 3}
 tests/fixtures/micro/loop_guard.ncu.json
   <block 0>	consistent	3 of 4 with SASS, 2 agreeing
   <block 1>	consistent	1 of 1 with SASS, 1 agreeing

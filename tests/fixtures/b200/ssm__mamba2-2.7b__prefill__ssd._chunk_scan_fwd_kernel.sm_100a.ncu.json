@@ -220,7 +220,7 @@
   "551": {"ptx": "setp.gt.s64 %p22, %rd16, 0;", "sass": {"IMAD.U32": 1, "ISETP.LT.U32.AND": 1, "ISETP.GT.AND.EX": 1}, "executions": 62914560},
   "559": {"ptx": "bar.sync 0;", "sass": {"BAR.SYNC.DEFER_BLOCKING": 1}, "executions": 20971520},
   "561": {"ptx": "add.s32 %r108, %r174, %r237;", "sass": {"LEA": 1}, "executions": 20971520},
-  "565": {"ptx": "cp.async.ca.shared.global [ %r108 + 0 ], [ %rd42 + 0 ], 0x8, %p7;", "sass": {"LDS": 3, "LDGSTS.E.64": 1}, "executions": 20971520, "l2_theoretical_sectors_global": 5242880, "l2_theoretical_sectors_global_ideal": 5242880, "global_access_sizes": [64], "global_executions": 20971520},
+  "565": {"ptx": "cp.async.ca.shared.global [ %r108 + 0 ], [ %rd42 + 0 ], 0x8, %p7;", "sass": {"LDS": 3, "LDGSTS.E.64": 1}, "executions": 20971520, "global_access_sizes": [64], "global_executions": 20971520},
   "568": {"ptx": "cp.async.commit_group;", "sass": {"LDGDEPBAR": 1}, "executions": 20971520},
   "572": {"ptx": "setp.eq.b32 %p12, %r8, 0;", "sass": {"ISETP.NE.U32.AND": 1}, "executions": 20971520},
   "574": {"ptx": "add.s32 %r13, %r174, %r238;", "sass": {"LEA": 1}, "executions": 20971520},

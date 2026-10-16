@@ -68,7 +68,7 @@
   "188": {"ptx": "add.s32 %r55, %r18, -16;", "sass": {"UIADD3": 1, "ISETP.LT.U32.AND": 1}, "executions": 2097152},
   "200": {"ptx": "cp.async.ca.shared.global [ %r27 + 0 ], [ %rd17 + 0 ], 0x4, %p3;", "sass": {"LDGSTS.E": 1}, "executions": 1048576, "l2_theoretical_sectors_global": 131072, "l2_theoretical_sectors_global_ideal": 131072, "global_access_sizes": [32], "global_executions": 1048576},
   "203": {"ptx": "cp.async.commit_group;", "sass": {"LDGDEPBAR": 1}, "executions": 1048576},
-  "213": {"ptx": "cp.async.ca.shared.global [ %r28 + 0 ], [ %rd18 + 0 ], 0x4, %p4;", "sass": {"LDGSTS.E": 1}, "executions": 1048576, "l2_theoretical_sectors_global": 131072, "l2_theoretical_sectors_global_ideal": 131072, "global_access_sizes": [32], "global_executions": 1048576},
+  "213": {"ptx": "cp.async.ca.shared.global [ %r28 + 0 ], [ %rd18 + 0 ], 0x4, %p4;", "sass": {"LDGSTS.E": 1}, "executions": 1048576, "global_access_sizes": [32], "global_executions": 1048576},
   "216": {"ptx": "cp.async.commit_group;", "sass": {"LDGDEPBAR": 1, "BRA.U": 1}, "executions": 2097152},
   "217": {"ptx": "shl.b32 %r13, %r5, 5;", "sass": {"IMAD.SHL.U32": 1}, "executions": 1048576},
   "222": {"ptx": "cvt.s64.s32 %rd5, %r39;", "sass": {"USHF.R.S32.HI": 1}, "executions": 1048576},

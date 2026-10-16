@@ -1,0 +1,32 @@
+{
+ "ptx": "tests/fixtures/micro/ldgsts_p0.ptx",
+ "kernel": "micro_ldgsts_p0",
+ "grid": [1, 1, 1],
+ "block": [128, 1, 1],
+ "params": ["ptr:8192"],
+ "gpu": "NVIDIA GeForce RTX 4090",
+ "driver": "580.178.04",
+ "arch": "sm_89",
+ "ptxas": "Cuda compilation tools, release 13.4, V13.4.92",
+ "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",
+ "lines": {
+  "29": {"ptx": "ld.param.u64 %rd1, [micro_ldgsts_p0_param_0];", "sass": {"IMAD.MOV.U32": 1}, "executions": 128},
+  "30": {"ptx": "mov.u32 %r1, %tid.x;", "sass": {"S2R": 1}, "executions": 128},
+  "32": {"ptx": "add.s64 %rd3, %rd1, %rd2;", "sass": {"IMAD.MOV.U32": 1, "ULDC.64": 1, "IMAD.WIDE.U32": 1}, "executions": 384},
+  "34": {"ptx": "shl.b32 %r3, %r1, 4;", "sass": {"SHF.L.U32": 1}, "executions": 128},
+  "36": {"ptx": "setp.lt.u32 %p1, %r1, 16;", "sass": {"ISETP.GE.U32.AND": 1}, "executions": 128},
+  "37": {"ptx": "setp.lt.u32 %p2, %r1, 48;", "sass": {"ISETP.GE.U32.AND": 1}, "executions": 128},
+  "38": {"ptx": "@%p1 cp.async.cg.shared.global [%r4], [%rd3], 16, 16;", "sass": {"LDGSTS.E.BYPASS.128": 1}, "executions": 16, "global_access_sizes": [128], "global_executions": 16},
+  "39": {"ptx": "@%p2 cp.async.cg.shared.global [%r4+2048], [%rd3+2048], 16, 16;", "sass": {"IADD3": 1, "IMAD.X": 1, "LDGSTS.E.BYPASS.128": 1}, "executions": 144, "l2_theoretical_sectors_global": 24, "l2_theoretical_sectors_global_ideal": 24, "global_access_sizes": [128], "global_executions": 48},
+  "40": {"ptx": "cp.async.wait_all;", "sass": {"LDGDEPBAR": 1, "DEPBAR.LE": 1}, "executions": 256},
+  "41": {"ptx": "@%p1 ld.global.v4.u32 {%r5, %r6, %r7, %r8}, [%rd3];", "sass": {"LDG.E.128": 1}, "executions": 16, "l2_theoretical_sectors_global": 8, "l2_theoretical_sectors_global_ideal": 8, "global_access_sizes": [128], "global_executions": 16},
+  "42": {"ptx": "@%p2 ld.global.v4.u32 {%r9, %r10, %r11, %r12}, [%rd3+2048];", "sass": {"LDG.E.128": 1}, "executions": 48, "l2_theoretical_sectors_global": 24, "l2_theoretical_sectors_global_ideal": 24, "global_access_sizes": [128], "global_executions": 48},
+  "44": {"ptx": "add.s32 %r14, %r7, %r8;", "sass": {"IADD3": 1}, "executions": 128},
+  "46": {"ptx": "add.s32 %r16, %r11, %r12;", "sass": {"IMAD.IADD": 1}, "executions": 128},
+  "47": {"ptx": "add.s32 %r17, %r13, %r14;", "sass": {"IADD3": 1}, "executions": 128},
+  "48": {"ptx": "add.s32 %r18, %r15, %r16;", "sass": {"IADD3": 1}, "executions": 128},
+  "49": {"ptx": "add.s32 %r19, %r17, %r18;", "sass": {"IADD3": 1}, "executions": 128},
+  "50": {"ptx": "st.shared.u32 [%r4], %r19;", "sass": {"STS": 1}, "executions": 128},
+  "51": {"ptx": "ret;", "sass": {"EXIT": 1, "BRA": 1, "NOP": 8}, "executions": 128}
+ }
+}

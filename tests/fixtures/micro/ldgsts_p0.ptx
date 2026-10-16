@@ -1,0 +1,52 @@
+//
+// HAND-WRITTEN: two predicated cp.async copies of 16 B per thread in a
+// 128-thread block, copy A on threads 0..15 and copy B on threads 0..47,
+// each kept predicated by a global load under the same predicate. ptxas
+// 13.4 (sm_89) guards copy A with P0 and copy B with P1:
+// `@!P0 LDGSTS.E.BYPASS.128 [R15], [R2.64]`,
+// `@!P1 LDGSTS.E.BYPASS.128 [R15+0x800], [R12.64+-0x800]`. On an RTX
+// 4090, Nsight Compute 2026.3.1 and 2025.3.1 report L2 Theoretical
+// Sectors Global 64 for copy A, as if all 128 threads copied, where its
+// 16 threads request 8; 24 for copy B and 8 and 24 for the loads, as
+// requested. l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum is 64, the
+// 8 + 24 + 8 + 24 the threads request; sm__sass_data_bytes_mem_global_
+// op_ldgsts.sum is 2816 B, copy A again counted as 128 threads.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_ldgsts_p0(
+	.param .u64 micro_ldgsts_p0_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<20>;
+	.reg .b64 	%rd<4>;
+	.shared .align 16 .b8 buf[8192];
+
+	ld.param.u64 	%rd1, [micro_ldgsts_p0_param_0];
+	mov.u32 	%r1, %tid.x;
+	mul.wide.u32 	%rd2, %r1, 16;
+	add.s64 	%rd3, %rd1, %rd2;
+	mov.u32 	%r2, buf;
+	shl.b32 	%r3, %r1, 4;
+	add.s32 	%r4, %r2, %r3;
+	setp.lt.u32 	%p1, %r1, 16;
+	setp.lt.u32 	%p2, %r1, 48;
+	@%p1 cp.async.cg.shared.global 	[%r4], [%rd3], 16, 16;
+	@%p2 cp.async.cg.shared.global 	[%r4+2048], [%rd3+2048], 16, 16;
+	cp.async.wait_all;
+	@%p1 ld.global.v4.u32 	{%r5, %r6, %r7, %r8}, [%rd3];
+	@%p2 ld.global.v4.u32 	{%r9, %r10, %r11, %r12}, [%rd3+2048];
+	add.s32 	%r13, %r5, %r6;
+	add.s32 	%r14, %r7, %r8;
+	add.s32 	%r15, %r9, %r10;
+	add.s32 	%r16, %r11, %r12;
+	add.s32 	%r17, %r13, %r14;
+	add.s32 	%r18, %r15, %r16;
+	add.s32 	%r19, %r17, %r18;
+	st.shared.u32 	[%r4], %r19;
+	ret;
+}

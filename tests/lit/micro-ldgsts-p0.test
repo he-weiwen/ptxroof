@@ -1,0 +1,21 @@
+# micro/ldgsts_p0's copy A (`@!P0 LDGSTS`, 16 threads) keeps no sectors
+# in its record: Nsight Compute counts it as 64 where its threads
+# request 8. Copy B (`@!P1 LDGSTS`, 48 threads) and the two loads are
+# compared and agree.
+RUN: %ptxroof analyze %fixtures/micro/ldgsts_p0.ptx --ncu %fixtures/micro/ldgsts_p0.ncu.json --json | %check-report "%s"
+{
+  "kernels": [
+    {
+      "measured": [
+        {
+          "name": "<block 0>",
+          "sectors": [
+            {"line": 39, "outcome": "agrees", "measured": 24},
+            {"line": 41, "outcome": "agrees", "measured": 8},
+            {"line": 42, "outcome": "agrees", "measured": 24}
+          ]
+        }
+      ]
+    }
+  ]
+}

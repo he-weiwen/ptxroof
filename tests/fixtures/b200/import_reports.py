@@ -6,7 +6,9 @@ instructions executed per PTX line and, on a line with a global memory
 instruction, the L2 sectors they request, the ideal number, each such
 instruction's access size in bits and their predicated-on thread
 instructions executed. A TMA instruction, whose access size the
-report leaves out and whose sectors it counts as 0, is not one.
+report leaves out and whose sectors it counts as 0, is not one. A line
+with an LDGSTS reading P0 keeps no sectors (measure.py's
+ldgsts_reading_p0).
 
 A report's kernel is matched to the PTX it ran by SASS and block size among
 the study's Triton caches, nearest its own run first, and to its launch by
@@ -39,7 +41,7 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO / "tools" / "ncu"))
 import sass  # noqa: E402
-from measure import numbered, timing_dependent  # noqa: E402
+from measure import SECTORS, ldgsts_reading_p0, numbered, timing_dependent  # noqa: E402
 
 def run(*cmd):
     return subprocess.run([str(c) for c in cmd], capture_output=True, text=True, check=True).stdout
@@ -202,7 +204,7 @@ def import_reports(sol, corpus, launches_path, out):
                     got = assemble(bin_dir / tool, flags, source_ptx, tmp / "out.cubin")
                     assert got == k["sass"], f"{source_ptx.name} of {name} assembles to other SASS than the report's"
                 attributed = line_of_each_instruction(bin_dir / "nvdisasm", tmp / "out.cubin")
-            lines, ptx_lines = {}, text.split("\n")
+            lines, ptx_lines, unreliable = {}, text.split("\n"), set()
             for n, instr, executed, access in zip(attributed, k["sass"], k["executed"], k["global"], strict=True):
                 if n is None:
                     continue
@@ -216,6 +218,11 @@ def import_reports(sol, corpus, launches_path, out):
                     line["l2_theoretical_sectors_global_ideal"] = line.get("l2_theoretical_sectors_global_ideal", 0) + ideal
                     line.setdefault("global_access_sizes", []).append(bits)
                     line["global_executions"] = line.get("global_executions", 0) + executed
+                if ldgsts_reading_p0(instr):
+                    unreliable.add(str(n))
+            for n in unreliable:
+                for key in SECTORS:
+                    lines[n].pop(key, None)
             for n in timing_dependent(text):
                 if str(n) in lines:
                     lines[str(n)]["timing_dependent"] = True

@@ -10,7 +10,8 @@ and per PTX line that has SASS: the line's text, the SASS opcodes ptxas
 attributed to it, and their predicated-on thread instructions executed;
 on a line with a global memory instruction also the L2 sectors they
 request, the ideal number, each such instruction's access size in
-bits, and their predicated-on thread instructions executed.
+bits, and their predicated-on thread instructions executed, though not
+the sectors where one is an LDGSTS reading P0.
 Lines of a loop that branches back on an mbarrier test_wait or try_wait
 result are marked timing_dependent. With --check the record is measured
 again on the GPU it names, if this is that GPU, and must not change but
@@ -79,19 +80,34 @@ def sass(cubin):
     return [l for l in run("cuobjdump", "-sass", cubin).splitlines() if not l.lstrip().startswith("/* 0x")]
 
 
+SECTORS = ("l2_theoretical_sectors_global", "l2_theoretical_sectors_global_ideal")
+
+
+def ldgsts_reading_p0(sass):
+    """Nsight Compute counts the L2 sectors of an LDGSTS guarded by P0, or reading P0 unnegated as its
+    source predicate, otherwise than its predicated-on threads request them, where the L1TEX hardware
+    counters agree with those threads: 2025.3 and 2026.3 on an RTX 4090 for the guard
+    (tests/fixtures/micro/ldgsts_p0.ptx), 2025.1 on a B200 for the source predicate (PLAN.md). One
+    reading `!P0` as its source predicate is counted as requested."""
+    sass = sass.strip()
+    return "LDGSTS" in sass and (re.match(r"@!?P0\s", sass) or re.search(r"[,\s]P0\s*;?$", sass)) is not None
+
+
 def per_line(table):
     """Nsight Compute's memory_l2_theoretical_sectors_global is the "theoretical number of sectors
     requested in L2 from global memory instructions", its _ideal "assuming each not predicated-off
-    thread performed the operation" (Profiling Guide, Source Counters)."""
+    thread performed the operation" (Profiling Guide, Source Counters). A line with an LDGSTS reading
+    P0 keeps neither."""
     rows = list(csv.reader(table.splitlines()))
     head = next(i for i, r in enumerate(rows) if r[:1] == ["Line No"])
     column = {c: i for i, c in enumerate(rows[head])}
     executed = column["Predicated-On Thread Instructions Executed"]
     in_global = lambda r: "Address Space" in column and "Global" in re.findall(r"\w+", r[column["Address Space"]])
-    lines = {}
+    lines, unreliable = {}, set()
     for r in rows[head + 1 :]:
         if r[0]:
-            line = lines[r[0]] = {"ptx": " ".join(r[1].split()), "sass": {}, "executions": int(r[executed])}
+            n = r[0]
+            line = lines[n] = {"ptx": " ".join(r[1].split()), "sass": {}, "executions": int(r[executed])}
             if in_global(r):
                 line["l2_theoretical_sectors_global"] = int(r[column["L2 Theoretical Sectors Global"]])
                 line["l2_theoretical_sectors_global_ideal"] = int(r[column["L2 Theoretical Sectors Global Ideal"]])
@@ -103,6 +119,11 @@ def per_line(table):
             if in_global(r):
                 line["global_access_sizes"].append(int(r[column["Access Size"]]))
                 line["global_executions"] += int(r[executed])
+            if ldgsts_reading_p0(r[3]):
+                unreliable.add(n)
+    for n in unreliable:
+        for key in SECTORS:
+            lines[n].pop(key, None)
     return lines
 
 
