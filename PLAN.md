@@ -288,7 +288,13 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   parameter not bound (`micro/trip_div_param.ptx` reads with `--bind`),
   a float immediate and an `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
-  (`01542.ptx` `:223`).
+  (`01542.ptx` `:223`). In `gluon/attn_fwd_ws_kernel.sm_89.ptx` the
+  persistent loops (`gluon_attn_fwd.py:126`, exit not at the latch;
+  `:213`, several latches) and the causal loop (`:143`, latch reads
+  `%ctaid.x`) are unknown, so under its record the tensor FLOPs over
+  the launch read `0` as a lower bound, where the record's
+  `mma.m16n8k16` lines run 3,244,032 warp instructions, 13,287,555,072
+  FLOPs.
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
   inferred arguments), 953 have a trip count: 1,445 are mbarrier waits
   and 411 read loaded values, 40 depend on `%ctaid` (15 through a
@@ -446,6 +452,10 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 
 ### Producers and validation
 
+- **`tests/ncu_corpus.rs` fails only on a contradicted block.** A
+  block that loses its verdict, a sector line that starts to differ or
+  a launch's sectors that stop agreeing change its snapshot, which
+  `cargo insta accept` takes like any other change.
 - **Nsight Compute miscounts the L2 sectors of an `LDGSTS` that reads
   `P0`**, as its guard or unnegated as its source predicate: its L2
   Theoretical Sectors Global follow neither its predicated-on threads
@@ -690,6 +700,20 @@ One line each, with the trigger that would start it.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures
   exist (`tests/fixtures/b200`), sm_90 ones do not.
+  `blk_mx_128x256_s4w4.mx_block_scaled` counts 224 `tcgen05.mma` per
+  CTA and no FLOPs for them. A TMA copy's bytes need its descriptor's
+  shape, strides, box and swizzle: the B200 records keep `tensormap:128`
+  only (`record_launches.py`), and the reports give TMA instructions no
+  access size and 0 sectors.
+- Values loaded from memory as inputs: a loop bounded by one has no
+  count (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
+  the sequence length its `ld.global` at line 64 reads: "latch condition
+  depends on a value loaded from memory"). Trigger: wanting such a
+  kernel's count for given lengths.
+- A coverage summary per metric over a corpus: how many trip counts,
+  FLOPs, byte totals, addresses and sector lines are exact, bounds or
+  unknown. Trigger: comparing coverage between commits, so far done by
+  scripts outside the repository.
 
 ## Acceptance scenarios
 
