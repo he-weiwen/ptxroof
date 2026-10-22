@@ -18,7 +18,7 @@
 use crate::analysis::control_flow::dominators;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::instruction_counts::classify::cp_async_size_operand;
-use crate::analysis::scalar::affine::{Affine, Axis, Var};
+use crate::analysis::scalar::affine::{Affine, Axis, Cmp, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::AffineValueTracer;
@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, HashMap};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Constraint {
     pub form: Affine,
-    pub cmp: String,
+    pub cmp: Cmp,
     pub cta: Option<(i128, i128)>,
     pub trip: Option<(LoopId, (i128, i128))>,
 }
@@ -105,7 +105,7 @@ impl std::ops::Not for Pred {
             Pred::Uniform => Pred::Uniform,
             Pred::Cmp(c) => Pred::Cmp(Constraint {
                 form: c.form,
-                cmp: negate(&c.cmp).to_owned(),
+                cmp: c.cmp.inverse(),
                 cta: c.cta,
                 trip: c.trip,
             }),
@@ -149,7 +149,7 @@ impl Pred {
                 let x = at(&c.form, tid);
                 let (lo, hi) = c.cta.map_or((x, x), |(a, b)| (x + a, x + b));
                 let (lo, hi) = c.trip.map_or((lo, hi), |(_, (a, b))| (lo + a, hi + b));
-                decide(&c.cmp, lo, hi)
+                decide(c.cmp, lo, hi)
             }
             Pred::Elect(active) => match leader {
                 Leader::Lowest => elected(active, tid, shape),
@@ -195,7 +195,7 @@ impl Pred {
                             .collect(),
                         base: SymExpr::Const(base),
                     },
-                    cmp: k.cmp.clone(),
+                    cmp: k.cmp,
                     cta: None,
                     trip: None,
                 })
@@ -400,18 +400,6 @@ pub struct ThreadSet {
     pub pred: Pred,
 }
 
-fn negate(cmp: &str) -> &str {
-    match cmp {
-        "lt" => "ge",
-        "ge" => "lt",
-        "le" => "gt",
-        "gt" => "le",
-        "eq" => "ne",
-        "ne" => "eq",
-        other => other,
-    }
-}
-
 /// `form` at thread `tid` in i128: an i64 base plus i64 coefficients
 /// times thread indices below 1024 keeps every partial sum far inside
 /// it, so a comparison of 64-bit operands reads exactly.
@@ -424,12 +412,12 @@ fn at(form: &Affine, tid: [i64; 3]) -> i128 {
 /// Whether `x cmp 0` holds for every `x` in [lo, hi], for none, or for
 /// some: the values that satisfy an `lt`, `le`, `gt` or `ge` and those
 /// that do not are each an interval, so the ends decide.
-fn decide(cmp: &str, lo: i128, hi: i128) -> Tri {
+fn decide(cmp: Cmp, lo: i128, hi: i128) -> Tri {
     let zero = lo == 0 && hi == 0;
     let apart = lo > 0 || hi < 0;
     let (all, none) = match cmp {
-        "eq" => (zero, apart),
-        "ne" => (apart, zero),
+        Cmp::Eq => (zero, apart),
+        Cmp::Ne => (apart, zero),
         _ => (
             holds(cmp, lo) && holds(cmp, hi),
             !holds(cmp, lo) && !holds(cmp, hi),
@@ -442,15 +430,14 @@ fn decide(cmp: &str, lo: i128, hi: i128) -> Tri {
     }
 }
 
-fn holds(cmp: &str, x: i128) -> bool {
+fn holds(cmp: Cmp, x: i128) -> bool {
     match cmp {
-        "lt" => x < 0,
-        "le" => x <= 0,
-        "gt" => x > 0,
-        "ge" => x >= 0,
-        "eq" => x == 0,
-        "ne" => x != 0,
-        _ => false,
+        Cmp::Lt => x < 0,
+        Cmp::Le => x <= 0,
+        Cmp::Gt => x > 0,
+        Cmp::Ge => x >= 0,
+        Cmp::Eq => x == 0,
+        Cmp::Ne => x != 0,
     }
 }
 
@@ -501,7 +488,7 @@ fn on_index(a: &Affine) -> bool {
 /// unbounded.
 fn across_ctas(
     form: &Affine,
-    cmp: &str,
+    cmp: Cmp,
     range: &dyn Fn(&Var) -> Option<(i64, i64)>,
 ) -> Option<Pred> {
     let (lo, hi) = form.range(range)?;
@@ -524,13 +511,13 @@ fn across_ctas(
                 terms: lanes,
                 base: SymExpr::Const(i64::try_from(base + lo).ok()?),
             },
-            cmp: cmp.to_owned(),
+            cmp,
             cta: None,
             trip: None,
         },
         false => Constraint {
             form: form.clone(),
-            cmp: cmp.to_owned(),
+            cmp,
             cta: Some((lo, hi)),
             trip: None,
         },
@@ -582,14 +569,13 @@ impl Constraint {
             terms: self.form.terms.clone(),
             base: crate::analysis::scalar::symexpr::SymExpr::Const(0),
         };
-        let op = match self.cmp.as_str() {
-            "lt" => "<",
-            "le" => "<=",
-            "gt" => ">",
-            "ge" => ">=",
-            "eq" => "==",
-            "ne" => "!=",
-            other => other,
+        let op = match self.cmp {
+            Cmp::Lt => "<",
+            Cmp::Le => "<=",
+            Cmp::Gt => ">",
+            Cmp::Ge => ">=",
+            Cmp::Eq => "==",
+            Cmp::Ne => "!=",
         };
         format!("{} {op} {}", lhs.render(name), -i128::from(c))
     }
@@ -702,7 +688,7 @@ impl ThreadSet {
                     let key: Vec<(Tri, i128)> = (over.iter().zip(&lanes))
                         .map(|(k, &(lo, hi))| {
                             let u = k.cta_part(c);
-                            match decide(&k.cmp, lo + u, hi + u) {
+                            match decide(k.cmp, lo + u, hi + u) {
                                 Tri::Maybe => (Tri::Maybe, u),
                                 t => (t, 0),
                             }
@@ -1264,11 +1250,10 @@ fn condition(
         .iter()
         .map(|&m| module.interner.resolve(m))
         .collect();
-    let cmp = mods.first()?.to_string();
+    let cmp = Cmp::from_name(mods.first()?)?;
     let ty = *mods.last()?;
     // PTX ISA §9.7.6.2, §9.7.7.2: a floating-point `setp` compares floats, a packed one per half.
-    if !matches!(cmp.as_str(), "lt" | "le" | "gt" | "ge" | "eq" | "ne")
-        || ty.starts_with('f')
+    if ty.starts_with('f')
         || ty.starts_with("bf")
         || mods.iter().any(|m| matches!(*m, "and" | "or" | "xor"))
     {
@@ -1294,16 +1279,14 @@ fn condition(
     };
     let (sign, width) = ty.split_at_checked(1).unwrap_or_default();
     let comparable = |a: &Affine, b: &Affine| {
-        width
-            .parse::<u32>()
-            .is_ok_and(|w| match (cmp.as_str(), sign) {
-                ("eq" | "ne", _) => fits(&(a.clone() - b.clone()), 1 - (1 << w), 1 << w),
-                (_, "u") => fits(a, 0, 1 << w) && fits(b, 0, 1 << w),
-                (_, "s") => {
-                    fits(a, -1 << (w - 1), 1 << (w - 1)) && fits(b, -1 << (w - 1), 1 << (w - 1))
-                }
-                _ => false,
-            })
+        width.parse::<u32>().is_ok_and(|w| match (cmp, sign) {
+            (Cmp::Eq | Cmp::Ne, _) => fits(&(a.clone() - b.clone()), 1 - (1 << w), 1 << w),
+            (_, "u") => fits(a, 0, 1 << w) && fits(b, 0, 1 << w),
+            (_, "s") => {
+                fits(a, -1 << (w - 1), 1 << (w - 1)) && fits(b, -1 << (w - 1), 1 << (w - 1))
+            }
+            _ => false,
+        })
     };
     let constant = |op| {
         (tracer.trace_operand(op, def, None, 0).ok())
@@ -1314,7 +1297,7 @@ fn condition(
         && comparable(&x, &y)
     {
         let d = (x - y).base.as_const()?;
-        return Some(if holds(&cmp, d.into()) {
+        return Some(if holds(cmp, d.into()) {
             Pred::True
         } else {
             Pred::False
@@ -1340,7 +1323,7 @@ fn condition(
         }))
     } else if on_index(&form)
         && comparable(&a, &b)
-        && let Some(p) = across_ctas(&form, &cmp, &|v| tracer.bound(v).or_else(|| any_block(v)))
+        && let Some(p) = across_ctas(&form, cmp, &|v| tracer.bound(v).or_else(|| any_block(v)))
     {
         Some(p)
     } else if !lanes {
@@ -1393,7 +1376,7 @@ mod tests {
         let warp = Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32));
         Constraint {
             form: warp + Affine::invariant(SymExpr::Const(-4)),
-            cmp: "lt".to_owned(),
+            cmp: Cmp::Lt,
             cta: None,
             trip: None,
         }
@@ -1408,7 +1391,7 @@ mod tests {
         let counter = |rest: Affine| {
             Pred::Cmp(Constraint {
                 form: Affine::var(Var::Iter(LoopId(0))) + rest,
-                cmp: "lt".to_owned(),
+                cmp: Cmp::Lt,
                 cta: None,
                 trip: Some((LoopId(0), (1, 512))),
             })
@@ -1443,11 +1426,11 @@ mod tests {
     #[test]
     fn a_set_over_trips_sums_each_trip_s_threads() {
         let l = LoopId(0);
-        let cmp = |step: i64, lanes: Affine, cmp: &str, n: i128| {
+        let cmp = |step: i64, lanes: Affine, cmp: Cmp, n: i128| {
             let (a, b) = (i128::from(step), i128::from(step) * n);
             Pred::Cmp(Constraint {
                 form: Affine::var(Var::Iter(l)).scale(SymExpr::Const(step)) + lanes,
-                cmp: cmp.to_owned(),
+                cmp,
                 cta: None,
                 trip: Some((l, (a.min(b), a.max(b)))),
             })
@@ -1468,7 +1451,7 @@ mod tests {
         let shape = [128, 1, 1];
         for n in [1u64, 7, 40] {
             let n128 = i128::from(n);
-            for op in ["lt", "le", "gt", "ge", "eq", "ne"] {
+            for op in [Cmp::Lt, Cmp::Le, Cmp::Gt, Cmp::Ge, Cmp::Eq, Cmp::Ne] {
                 for (step, lanes) in [(1, c(-5)), (64, lane(64) + c(-300)), (-3, lane(32) + c(40))]
                 {
                     let set = ThreadSet {
@@ -1477,17 +1460,17 @@ mod tests {
                     assert_eq!(
                         set.over_trips(shape, l, n),
                         brute(&set, shape, n),
-                        "{op} {step} {n}"
+                        "{op:?} {step} {n}"
                     );
                 }
             }
             let both = ThreadSet {
-                pred: cmp(1, c(-3), "ge", n128).and(cmp(64, lane(64) + c(-1000), "lt", n128)),
+                pred: cmp(1, c(-3), Cmp::Ge, n128).and(cmp(64, lane(64) + c(-1000), Cmp::Lt, n128)),
             };
             assert_eq!(both.over_trips(shape, l, n), brute(&both, shape, n));
         }
         let k_below_511 = ThreadSet {
-            pred: cmp(1, c(-511), "lt", 512),
+            pred: cmp(1, c(-511), Cmp::Lt, 512),
         };
         assert_eq!(
             k_below_511.over_trips([256, 1, 1], l, 512),
@@ -1512,7 +1495,7 @@ mod tests {
         let lane0 = ThreadSet {
             pred: Pred::Cmp(Constraint {
                 form: Affine::var(Var::Tid(Axis::X)),
-                cmp: "eq".to_owned(),
+                cmp: Cmp::Eq,
                 cta: None,
                 trip: None,
             }),
@@ -1549,7 +1532,7 @@ mod tests {
     fn or_and_not_evaluate_three_valued_and_render() {
         let lane0 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)),
-            cmp: "eq".to_owned(),
+            cmp: Cmp::Eq,
             cta: None,
             trip: None,
         });
@@ -1608,7 +1591,7 @@ mod tests {
         assert_eq!(all.pred.eval([0, 0, 0], [0, 0, 0]), Tri::Maybe);
         let upper = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-40)),
-            cmp: "ge".to_owned(),
+            cmp: Cmp::Ge,
             cta: None,
             trip: None,
         });
@@ -1618,7 +1601,7 @@ mod tests {
         assert_eq!(of_upper.count([128, 1, 1]), Some(exact(3)));
         let warp0 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
-            cmp: "eq".to_owned(),
+            cmp: Cmp::Eq,
             cta: None,
             trip: None,
         });
@@ -1634,7 +1617,7 @@ mod tests {
         // A lane-varying one is not: the leader may or may not be lane 0.
         let lane0 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)),
-            cmp: "eq".to_owned(),
+            cmp: Cmp::Eq,
             cta: None,
             trip: None,
         });
@@ -1675,13 +1658,13 @@ mod tests {
     }
 
     /// `a·%tid.x + b·%ctaid.x + base cmp 0`, `%ctaid.x` below `ctas`.
-    fn over_ctas(a: i64, b: i64, base: i64, cmp: &str, ctas: i64) -> Pred {
+    fn over_ctas(a: i64, b: i64, base: i64, cmp: Cmp, ctas: i64) -> Pred {
         let (lo, hi) = (0, i128::from(b) * i128::from(ctas - 1));
         Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)).scale(SymExpr::Const(a))
                 + Affine::var(Var::Ctaid(Axis::X)).scale(SymExpr::Const(b))
                 + Affine::invariant(SymExpr::Const(base)),
-            cmp: cmp.to_owned(),
+            cmp,
             cta: Some((lo.min(hi), lo.max(hi))),
             trip: None,
         })
@@ -1691,13 +1674,13 @@ mod tests {
     fn a_launch_sums_each_cta_s_threads_and_warps() {
         let set = |pred| ThreadSet { pred };
         // t < 2c over CTAs 0..4: 0, 2, 4 and 6 threads in 0, 1, 1, 1 warps.
-        let below = over_ctas(1, -2, 0, "lt", 4);
+        let below = over_ctas(1, -2, 0, Cmp::Lt, 4);
         assert_eq!(
             set(below.clone()).launch([32, 1, 1], [4, 1, 1]),
             Some((12, 3))
         );
         assert_eq!(
-            set(over_ctas(1, -2, 0, "eq", 4)).launch([32, 1, 1], [4, 1, 1]),
+            set(over_ctas(1, -2, 0, Cmp::Eq, 4)).launch([32, 1, 1], [4, 1, 1]),
             Some((4, 4))
         );
         // An axis no comparison reads multiplies.
@@ -1708,7 +1691,7 @@ mod tests {
         // A set free of %ctaid: its count at every CTA.
         let lanes = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-16)),
-            cmp: "lt".to_owned(),
+            cmp: Cmp::Lt,
             cta: None,
             trip: None,
         });
@@ -1725,7 +1708,7 @@ mod tests {
         );
         // An election of one lane per warp counts; one among lanes that a
         // comparison then splits does not.
-        let first_two = over_ctas(0, 1, -2, "lt", 4);
+        let first_two = over_ctas(0, 1, -2, Cmp::Lt, 4);
         let elected = Pred::Elect(Box::new(Pred::True));
         assert_eq!(
             set(first_two.and(elected.clone())).launch([64, 1, 1], [4, 1, 1]),
@@ -1734,9 +1717,9 @@ mod tests {
         assert_eq!(set(below.and(elected)).launch([32, 1, 1], [4, 1, 1]), None);
         // Past the budgets: 2^24 CTAs on the axis read, or 130,944 groups of
         // a lane-dependent comparison times 1024 lanes.
-        let one = over_ctas(1, -1, 0, "lt", (1 << 24) + 1);
+        let one = over_ctas(1, -1, 0, Cmp::Lt, (1 << 24) + 1);
         assert_eq!(set(one).launch([32, 1, 1], [(1 << 24) + 1, 1, 1]), None);
-        let spread = over_ctas(128, -1, 0, "lt", 1 << 17);
+        let spread = over_ctas(128, -1, 0, Cmp::Lt, 1 << 17);
         assert_eq!(set(spread).launch([1024, 1, 1], [1 << 17, 1, 1]), None);
     }
 
@@ -1748,7 +1731,7 @@ mod tests {
     #[test]
     fn a_weighted_launch_counts_each_cta_its_weight_times() {
         let below = ThreadSet {
-            pred: over_ctas(1, -2, 0, "lt", 4),
+            pred: over_ctas(1, -2, 0, Cmp::Lt, 4),
         };
         let by_x = |c: [i64; 3]| u64::try_from(c[0]).ok();
         let launch = |grid, read, weight: &dyn Fn([i64; 3]) -> Option<u64>| {
@@ -1781,30 +1764,30 @@ mod tests {
     #[test]
     fn a_comparison_over_ctas_holds_on_a_lane_at_every_cta_none_or_some() {
         // %tid.x − 2·%ctaid.x with %ctaid.x in 0..=3: 2·%ctaid.x spans 0..=6.
-        let at = |cmp: &str| ThreadSet {
+        let at = |cmp: Cmp| ThreadSet {
             pred: Pred::Cmp(Constraint {
                 form: Affine::var(Var::Tid(Axis::X))
                     + Affine::var(Var::Ctaid(Axis::X)).scale(SymExpr::Const(-2)),
-                cmp: cmp.to_owned(),
+                cmp,
                 cta: Some((-6, 0)),
                 trip: None,
             }),
         };
         let range = |certain, possible| Some(Counted { certain, possible });
-        assert_eq!(at("lt").count([32, 1, 1]), range(0, 6));
-        assert_eq!(at("le").count([32, 1, 1]), range(1, 7));
-        assert_eq!(at("gt").count([32, 1, 1]), range(25, 31));
-        assert_eq!(at("ge").count([32, 1, 1]), range(26, 32));
-        assert_eq!(at("eq").count([32, 1, 1]), range(0, 7));
-        assert_eq!(at("ne").count([32, 1, 1]), range(25, 32));
-        assert_eq!((!at("lt").pred).eval([3, 0, 0], [32, 1, 1]), Tri::Maybe);
-        assert_eq!((!at("lt").pred).eval([7, 0, 0], [32, 1, 1]), Tri::Yes);
-        assert!(!at("lt").exact() && !at("lt").lane_exact());
+        assert_eq!(at(Cmp::Lt).count([32, 1, 1]), range(0, 6));
+        assert_eq!(at(Cmp::Le).count([32, 1, 1]), range(1, 7));
+        assert_eq!(at(Cmp::Gt).count([32, 1, 1]), range(25, 31));
+        assert_eq!(at(Cmp::Ge).count([32, 1, 1]), range(26, 32));
+        assert_eq!(at(Cmp::Eq).count([32, 1, 1]), range(0, 7));
+        assert_eq!(at(Cmp::Ne).count([32, 1, 1]), range(25, 32));
+        assert_eq!((!at(Cmp::Lt).pred).eval([3, 0, 0], [32, 1, 1]), Tri::Maybe);
+        assert_eq!((!at(Cmp::Lt).pred).eval([7, 0, 0], [32, 1, 1]), Tri::Yes);
+        assert!(!at(Cmp::Lt).exact() && !at(Cmp::Lt).lane_exact());
         // Of the CTA index alone: whole warps, so the lanes stay known.
         let cta = ThreadSet {
             pred: Pred::Cmp(Constraint {
                 form: Affine::var(Var::Ctaid(Axis::X)) + Affine::invariant(SymExpr::Const(-2)),
-                cmp: "lt".to_owned(),
+                cmp: Cmp::Lt,
                 cta: Some((0, 3)),
                 trip: None,
             }),
@@ -1817,13 +1800,13 @@ mod tests {
     fn warps_count_the_groups_of_32_with_a_lane_in_the_set() {
         let warp0 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
-            cmp: "eq".to_owned(),
+            cmp: Cmp::Eq,
             cta: None,
             trip: None,
         });
         let lane0 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)),
-            cmp: "eq".to_owned(),
+            cmp: Cmp::Eq,
             cta: None,
             trip: None,
         });
@@ -1838,7 +1821,7 @@ mod tests {
         // 100 threads span four warps, the last one partial.
         let below_100 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-100)),
-            cmp: "lt".to_owned(),
+            cmp: Cmp::Lt,
             cta: None,
             trip: None,
         });
