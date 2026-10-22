@@ -1,131 +1,96 @@
 # ptxroof
 
-Static roofline analysis for PTX kernels. Point it at a `.ptx` file
-(from nvcc, or any producer emitting standard PTX) and it reports, per
-loop, the steady-state instructions, flops, bytes, and arithmetic
-intensity — as *symbolic expressions* over the kernel's parameters, so
-the answer holds for every problem size.
+Static analysis of PTX kernels for roofline questions: how many
+instructions, flops and bytes a kernel's loops execute, which threads run
+which code, and how each global access coalesces. It reads the PTX only:
+nothing is run, and there is no cache or timing model. For measured
+traffic and time, use Nsight Compute; ptxroof can compare its predictions
+with a recorded launch.
+
+Counts are symbolic in the kernel's parameters until they are bound; with
+a block shape and a grid they become per-CTA and per-launch numbers. A
+number is exact, an upper bound (`<=`), or a total with an unknown part
+(`+ unknown`); what cannot be derived is reported as a named unknown.
+
+## Quick start
+
+```sh
+cargo install --path .       # the toolchain pinned in rust-toolchain.toml
+nvcc -ptx -lineinfo kernel.cu  # or the .ptx in Triton's kernel cache
+
+ptxroof analyze kernel.ptx                    # symbolic, per loop and per kernel
+ptxroof analyze kernel.ptx --bind 2:K=4096 --launch 128,1,1 --grid 64,32,1
+                                              # parameter 2, block shape, grid
+ptxroof analyze kernel.ptx --ncu record.json  # a launch tools/ncu/measure.py
+                                              # recorded, against its counts
+ptxroof analyze kernel.ptx --json             # the same result as JSON
+```
+
+Without `-lineinfo`, loops are named by their label instead of a source
+line.
+
+## Example
+
+A 2D-tiled half-precision GEMM at M = N = K = 256, 64 threads per CTA and
+4×4 CTAs, against its RTX 4090 record (`tests/fixtures/k5`). Abridged; the
+output format is still changing.
 
 ```text
-$ ptxroof analyze kernel.ptx
-kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(int, int, int, float, ...)
-  blocks (program order; loops are named by their header block):
-           block      lines                       instrs  successors            loop
-    /----  <block 0>  5_2d_blocktiling.cuh:10-39      10  $L__BB0_5, <block 1>
-    |      <block 1>  5_2d_blocktiling.cuh:23-24      74  $L__BB0_2
-    |/-->  $L__BB0_2  5_2d_blocktiling.cuh:17-48     155  $L__BB0_3             5_2d_blocktiling.cuh:39 (header)
-    ||<->  $L__BB0_3  5_2d_blocktiling.cuh:42-60     111  $L__BB0_3, <block 4>  5_2d_blocktiling.cuh:53 (header, latch)
-    |\---  <block 4>  5_2d_blocktiling.cuh:39-62       8  $L__BB0_2, <block 5>  5_2d_blocktiling.cuh:39 (latch)
-    | /--  <block 5>  5_2d_blocktiling.cuh:39          1  $L__BB0_6
-    \--->  $L__BB0_5  (no line info)                  64  $L__BB0_6
-      \->  $L__BB0_6  5_2d_blocktiling.cuh:13-72     412  (end)
-  loop with the most instructions (static): 5_2d_blocktiling.cuh:39
-  shared memory [static]: 2048 B per CTA
+$ ptxroof analyze tests/fixtures/k5/k5.sm_89.ptx --ncu tests/fixtures/k5/k5.sm_89.256.ncu.json
+kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(int, int, int, float, __half const*, __half const*, float, __half*)
   loop 5_2d_blocktiling.cuh:39 ($L__BB0_2)
-    trips = ⌈param_2/8⌉
+    trips = 32
     per iteration:
-      instructions = 1051
-        cuda-core f32       512
-          fma.rn.f32        512
-        integer arithmetic  212
-          add.s32            70
-          shl.b32            49
-          ...
-        conversion          128
-          cvt.f32.f16       128
-        shared load 2 B     128
-          ld.shared.u16     128
-        ...
       flops = 1024  (f32 1024)
       global bytes: load 32 B, store 0 B
       AI(global) = 32 flop/B
     accesses:
-      5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B  warp: ? (the coefficient of ⌊%tid.x/8⌋ is 2 * param_2; bind it)       [(128 * param_2) * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + (2 * param_2) * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]                      k[5_2d_blocktiling.cuh:39]: +16 B/iter
-      5_2d_blocktiling.cuh:42  st.shared.u16  shared store 2 B                                                                      [2 * %tid.x + As]                                                                                                                                    k[5_2d_blocktiling.cuh:39]: invariant
-      ...
-    ...
+      5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B   warp: 4–8 sectors (ideal 2)    [32768 * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]
+      5_2d_blocktiling.cuh:46  ld.global.u16  global load 2 B   warp: 2–3 sectors (ideal 2)    [128 * %ctaid.x + 4096 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/64⌋ + 2 * (%tid.x mod 64) + param_5 - 4096]
+    global bytes per CTA over the loop's own blocks: requested 65536 B, unique 65536 B, in sectors 98304–147456 B
+  totals per launch [static]:
+    flops = 33751040  (f32 33751040)
+    global bytes: load 1179648 B, store 131072 B
+    AI(global) = 25.75 flop/B
+  measured L1TEX sectors of global loads over the launch: predicted 81920–131072, measured 81920
 ```
 
-## Install
+## Scope
 
-```sh
-cargo install --path .       # uses the toolchain pinned in rust-toolchain.toml
-```
+- PTX from nvcc, Triton and Gluon; fixtures target sm_80, sm_89, sm_90
+  and sm_100a.
+- Trip counts of nvcc's and LLVM's loop shapes, guarded loops and loops
+  whose counts depend on the CTA index; instructions, warp instructions,
+  flops by pipe and precision, and bytes by state space, per loop
+  iteration and per thread, CTA or launch.
+- Which threads run each block and guarded instruction, from conditions
+  on the thread and CTA indices, warp-specialized kernels included.
+- Each memory access's address as an affine form, the sectors one warp's
+  request touches, and per loop the bytes requested and touched.
+- An instruction whose results nothing reads counts in no total.
 
-## Usage
+Not covered, among others: `tcgen05` and `wgmma` flops, TMA bytes, loops
+bounded by a loaded value or an mbarrier wait, a cache or DRAM model, and
+kernels shipped only as SASS. `PLAN.md` lists every known limitation and
+missing feature with its evidence.
 
-```sh
-ptxroof analyze kernel.ptx                 # text report
-ptxroof analyze kernel.ptx --json          # the same result tree as JSON
-ptxroof analyze kernel.ptx --bind 2:K=4096 # numeric columns: bind kernel
-                                           # param 2 (positional) to 4096
-ptxroof analyze kernel.ptx --launch 16,16,1  # per-CTA totals, and with the
-                                           # block shape the sectors each
-                                           # warp's request touches, and
-                                           # the fewest it needs
-ptxroof analyze kernel.ptx --grid 128,1,1  # the launch's CTAs: %nctaid,
-                                           # and %ctaid's range
-ptxroof analyze kernel.ptx --ncu rec.json  # the launch tools/ncu/measure.py
-                                           # recorded: its grid, block shape
-                                           # and u32 parameters, and per block
-                                           # the measured counts against
-                                           # the predicted ones
-ptxroof analyze kernel.ptx --dump-ast      # parsed module, canonical PTX
-```
+## How the output is checked
 
-Generate PTX with `nvcc -ptx -lineinfo kernel.cu`; without
-`-lineinfo`, loops are named by label instead of source line.
-
-Counts are static; per-thread counts describe what the PTX requests, not what
-the hardware moves (a warp-collective instruction contributes its warp
-total over the 32 lanes). Per-CTA totals also count warp instructions,
-one issue per warp that has a thread in the block, the unit of Nsight
-Compute's `inst_executed` metrics. With a block shape and a numeric trip count
-each loop also reports the global bytes one CTA requests over it, the
-bytes of the sectors those requests move, and the distinct bytes it
-touches, the difference between the last two being the most a cache
-could reuse within the CTA. `<=` marks an upper bound from a conditional
-path, `+ unknown` a total that the scope's unclassified instructions or
-unquantified bytes could raise; whatever cannot be derived is reported
-as a named unknown.
-Requested bytes are not DRAM bytes, since cache reuse and uncoalesced
-access move the real figure in either direction; for measured traffic
-and for what a part sustains, use Nsight Compute.
-
-Each instruction retains one category in the instruction breakdown. Entries
-with multiple contributions show their work per thread per execution:
-
-```text
-  atom.global.add.f32  32
-    per thread per execution: global load 4 B; global store 4 B; atomic f32 FLOPs 1
-```
-
-The instruction count is issued work; the annotation describes work when its
-guard is true, and a `cp.async`'s global read on a thread that reads its
-source, at most cp-size with a src-size register (`global load <= 16 B`).
-Different contributions under the same opcode (for example,
-`cp.async` copies with different source sizes) appear as separate variants.
-JSON retains the existing `opcodes` counts and adds `contribution_variants`,
-whose issued counts sum to each opcode's count. Contributions are available for
-single-contribution entries too; ignored instructions have an empty list and
-unsupported instructions have an explicit unknown contribution.
-
-FP atomic/reduction add/min/max count one FLOP per scalar element, including
-packed and vector elements, in a separate `atomic_flops` table. AI includes
-these FLOPs. Requested bytes retain the convention of read+write for `atom`
-and write-only for `red`; neither estimates internal atomic or DRAM traffic.
+- 64 Nsight Compute records (RTX 4090 launches of the Gluon kernels, k5
+  and micro kernels, and imported B200 reports): `--ncu` compares each
+  PTX line's predicted executions and L2 sectors and the launch's L1TEX
+  sectors, and `tests/ncu_corpus.rs` keeps every verdict.
+- Every fixture's re-printed PTX (`--dump-ast`) must assemble to the
+  original's SASS, but for the cases `tests/roundtrip-allowlist.txt`
+  lists.
+- Generated loop kernels' trip counts are checked against a simulator
+  (`tests/gen_loops.py`).
 
 ## Development
 
-`./ci.sh` runs everything: rustfmt, clippy (warnings deny), unit and
-corpus tests, the lit tests in `tests/lit` (LLVM's lit and FileCheck,
-found by `tests/lit.sh`; with the CUDA toolkit on PATH they include a
-ptxas round trip of every fixture's `--dump-ast` output against its
-SASS) and generated loop kernels checked against a simulator
-(`tests/gen_loops.py`), and, where `ncu` and a GPU are present, a fresh
-measurement of every
-Nsight Compute record (`tools/ncu/measure.py --check`). `cargo mutants`
-also runs the lit tests, through the ignored test in
-`tests/cli_suite.rs` that `.cargo/mutants.toml` includes. Known limitations, missing features and the scope
-boundary are listed in `PLAN.md`. The [source layout and SSA migration plan](docs/architecture.md)
-describes module ownership, dependency boundaries, and canonical public paths.
+`./ci.sh` runs rustfmt, clippy, the unit and corpus tests, the lit tests
+in `tests/lit` (LLVM's lit and FileCheck) and, with a GPU and Nsight
+Compute, a fresh measurement of every RTX 4090 record. `cargo mutants`
+runs the lit tests too, through `tests/cli_suite.rs`. `PLAN.md` lists the
+known limitations and missing features; `docs/architecture.md` describes
+the module layout.

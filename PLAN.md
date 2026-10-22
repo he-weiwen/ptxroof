@@ -48,9 +48,18 @@ Text and JSON views of the same tree. Counts are static: per-thread
 unless labeled per-CTA or per-warp, as requested by the PTX; nothing
 is measured (README). Each instruction has one category and independent
 contributions; text expands instructions with multiple contributions and JSON
-retains variants for differing immediate sizes. Atomic FP arithmetic contributes
-to `atomic_flops` and AI, with the existing atom read+write / red write-only byte
-convention (`tests/instruction_contributions.rs`). A `cp.async` with immediate
+retains variants for differing immediate sizes in `contribution_variants`, whose
+issued counts sum to the opcode's
+(`same_opcode_preserves_copy_size_variants_and_address_associations`); an
+ignored instruction has no contribution and
+an unsupported one an unknown contribution
+(`ignored_unknown_and_unquantified_contributions_stay_distinct`). A
+warp-collective instruction (the tensor families) contributes its warp total
+over the 32 lanes (`src/analysis/instruction_counts/measurement.rs`). Atomic FP
+arithmetic contributes one flop per scalar element, packed and vector elements
+included (`atomics_keep_byte_policy_and_count_fp_elements`), to `atomic_flops`
+and AI, with the existing atom read+write / red write-only byte convention
+(`tests/instruction_contributions.rs`). A `cp.async` with immediate
 source size zero has zero global sectors per request and over the loop;
 its shared writes and instruction counts remain counted
 (`zero_source_copy_has_no_global_sectors_but_keeps_shared_writes` in that test).

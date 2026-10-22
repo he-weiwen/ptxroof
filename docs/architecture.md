@@ -1,8 +1,7 @@
-# Source layout and SSA migration plan
+# Source layout
 
-The current refactor changes source ownership and module paths only. Function
-bodies and data structures retain their behavior; no SSA representation or new
-analysis framework is introduced.
+Module ownership, dependency boundaries and canonical paths, and the register
+SSA the analyses read.
 
 ## Current ownership
 
@@ -24,6 +23,8 @@ analysis framework is introduced.
 | `analysis/scalar/recurrences` | Loop counters as recurrences on register SSA values | new |
 | `analysis/scalar/trip_counts` | Loop trip matching and unroll pairing | `trips` |
 | `analysis/thread_participation` | Threads that execute a block | `threads` |
+| `analysis/register_effects` | Registers, CC included, a statement writes | new |
+| `analysis/uniformity` | Register reads the executing lanes see alike | new |
 | `analysis/dead_code` | Instructions whose results nothing with an effect reads | new |
 | `analysis/memory_footprint` | Sectors touched by a warp request; a loop's requested, distinct and sector bytes per CTA | remaining `footprint` |
 | `analysis/instruction_counts` | Classification, measurements, and collection | `classify`, `core/measurement`, `report/collect` |
@@ -64,8 +65,8 @@ points (`report::analyze`, its options/errors, and `report::Report`) remain.
   Unit tests may parse PTX to construct fixtures.
 - Analyses do not depend on report construction or rendering.
 - Report construction can depend on all analyses and the parser.
-- The report schema currently embeds the memory-footprint `CountRange` type; that
-  dependency is preserved.
+- The report schema embeds the memory-footprint `CountRange`, `LoopBytes` and
+  `ByteRange` types.
 
 The CFG lives in `ptx/cfg.rs`: its blocks reference ranges in `Kernel::stmts`,
 and its accessors expose PTX instructions. `build_cfg` constructs that
