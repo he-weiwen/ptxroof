@@ -571,6 +571,16 @@ impl<'a> Per<'a> {
     }
 }
 
+/// What a count over a block multiplies by (`KernelReportBuilder::multiplier`).
+struct Multiplier {
+    at_most: bool,
+    /// Over the launch, a loop around the block has no trip count.
+    unread: bool,
+    split: Option<Vec<LoopId>>,
+    trips: SymExpr,
+    ctas: Option<u64>,
+}
+
 /// The direction a count is known in; `None` when bounded in neither.
 fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
     match (at_most, at_least) {
@@ -1297,8 +1307,9 @@ impl<'a> KernelReportBuilder<'a> {
     /// The product of `b`'s loops' trip counts up to `below`, and whether
     /// a loop among them may not be entered: one entered conditionally,
     /// unless its header's threads are counted, per CTA or at every CTA
-    /// of the launch.
-    fn multiplier(&self, b: BlockId, below: Option<LoopId>, per: Per) -> Option<(SymExpr, bool)> {
+    /// of the launch. Over the launch, the loops whose counts read the
+    /// CTA index are `split` out and summed over the grid as `ctas`.
+    fn multiplier(&self, b: BlockId, below: Option<LoopId>, per: Per) -> Option<Multiplier> {
         let chain = self.chain(b);
         let cut = match below {
             Some(l) => chain.iter().position(|&x| x == l)?,
@@ -1315,7 +1326,18 @@ impl<'a> KernelReportBuilder<'a> {
                 || (matches!(per, Per::Launch(..)) && self.launches.contains_key(&(header, None)));
             at_most |= self.cond_entry[l.0 as usize] && !entered;
         }
-        Some((mult, at_most))
+        let launch = matches!(per, Per::Launch(..));
+        let unread = launch && (chain.iter()).any(|l| self.trip_info.trips[l.0 as usize].is_err());
+        let split = (launch && self.per_cta_trips(b)).then(|| self.cta_split(b));
+        let ctas = split.as_ref().map_or(per.ctas(), |(p, _)| self.cta_sum(p));
+        let (split, trips) = split.map_or((None, mult), |(p, rest)| (Some(p), rest));
+        Some(Multiplier {
+            at_most,
+            unread,
+            split,
+            trips,
+            ctas,
+        })
     }
 
     // A block selected by thread-index branches runs on exactly
@@ -1372,27 +1394,15 @@ impl<'a> KernelReportBuilder<'a> {
         }
 
         for bm in &self.blocks {
-            let Some((mult, chain_at_most)) = self.multiplier(bm.block, below, per) else {
+            let Some(m) = self.multiplier(bm.block, below, per) else {
                 continue;
             };
             if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
                 continue;
             }
-            let unread = ctas.is_some()
-                && (self.chain(bm.block).iter())
-                    .any(|l| self.trip_info.trips[l.0 as usize].is_err());
-            let split =
-                (ctas.is_some() && self.per_cta_trips(bm.block)).then(|| self.cta_split(bm.block));
-            let trips = match (unread, &split) {
-                (true, _) => None,
-                (false, Some((_, rest))) => Some(rest.clone()),
-                (false, None) => Some(mult),
-            };
+            let (chain_at_most, unread, split, per_launch) = (m.at_most, m.unread, m.split, m.ctas);
+            let trips = (!unread).then_some(m.trips);
             let trips = trips.as_ref();
-            let per_launch = match &split {
-                Some((p, _)) => self.cta_sum(p),
-                None => ctas,
-            };
             // None when a count over the launch does not fit in i64; with
             // the trips it is counted over where they are its own.
             let resolve = |set: &ThreadSet, launch: Option<(u64, u64)>| {
@@ -1412,7 +1422,7 @@ impl<'a> KernelReportBuilder<'a> {
                     return Some((per_cta, None));
                 }
                 let counted = match &split {
-                    Some((p, _)) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
+                    Some(p) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
                     Some(_) => None,
                     None => launch,
                 };
@@ -1926,18 +1936,10 @@ impl<'a> KernelReportBuilder<'a> {
         let reducible = self.forest.irreducible_edges.is_empty();
         let (mut blocks, mut all) = (Vec::new(), Vec::new());
         for bm in &self.blocks {
-            let Some((mult, chain_at_most)) =
-                self.multiplier(bm.block, None, Per::Launch(cta, grid))
-            else {
+            let Some(m) = self.multiplier(bm.block, None, Per::Launch(cta, grid)) else {
                 continue;
             };
-            let split = self
-                .per_cta_trips(bm.block)
-                .then(|| self.cta_split(bm.block));
-            let (mult, ctas) = match &split {
-                Some((p, rest)) => (rest.clone(), self.cta_sum(p)),
-                None => (mult, grid),
-            };
+            let (mult, chain_at_most, split, ctas) = (m.trips, m.at_most, m.split, m.ctas);
             let mut weighted = HashMap::new();
             let mut predictions = Vec::new();
             for i in &bm.instructions {
@@ -1977,7 +1979,7 @@ impl<'a> KernelReportBuilder<'a> {
                     }
                 };
                 let stmt_weighted = match &split {
-                    Some((p, _)) if set.varies_by_cta() => Some(
+                    Some(p) if set.varies_by_cta() => Some(
                         *(weighted.entry(guarded.then_some(i.provenance)))
                             .or_insert_with(|| self.weighted_launch(&set, p)),
                     ),
@@ -2003,7 +2005,7 @@ impl<'a> KernelReportBuilder<'a> {
                     let set = self.sets.of_access(bm.block, i.provenance, 1);
                     let (_, w, _, explained) = self.executing(bm, &set, chain_at_most, Some(cta));
                     let weighted = match &split {
-                        Some((p, _)) if set.varies_by_cta() => Some(self.weighted_launch(&set, p)),
+                        Some(p) if set.varies_by_cta() => Some(self.weighted_launch(&set, p)),
                         _ => None,
                     };
                     let launch = self.source_launches.get(&i.provenance).copied();
