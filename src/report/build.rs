@@ -686,9 +686,9 @@ impl CountAccumulator {
             })
     }
 
-    fn count(&self) -> Count {
+    fn count(&self, name: &dyn Fn(&Leaf) -> String) -> Count {
         Count {
-            expr: self.expr().to_string(),
+            expr: self.expr().render(name),
             at_most: self.at_most,
             at_least: self.at_least,
         }
@@ -821,8 +821,8 @@ impl IssueAccumulator {
         }
     }
 
-    fn warps(&self) -> Option<Count> {
-        self.warps.touched.then(|| self.warps.count())
+    fn warps(&self, name: &dyn Fn(&Leaf) -> String) -> Option<Count> {
+        self.warps.touched.then(|| self.warps.count(name))
     }
 }
 
@@ -861,13 +861,13 @@ impl FlopAccumulator {
         self.total.add_unknown();
     }
 
-    fn counts(&self) -> BTreeMap<String, Count> {
+    fn counts(&self, name: &dyn Fn(&Leaf) -> String) -> BTreeMap<String, Count> {
         let mut out: BTreeMap<String, Count> = self
             .by_precision
             .iter()
-            .map(|(p, v)| (p.key().to_owned(), v.count()))
+            .map(|(p, v)| (p.key().to_owned(), v.count(name)))
             .collect();
-        out.insert("total".to_owned(), self.total.count());
+        out.insert("total".to_owned(), self.total.count(name));
         out
     }
 }
@@ -882,8 +882,8 @@ struct KernelReportBuilder<'a> {
     trip_info: TripCountResults,
     blocks: Vec<BlockMeasurements>,
     bind_map: &'a HashMap<Leaf, i64>,
-    /// Trip expression per loop for aggregation (opaque symbol when
-    /// unresolved), already bound.
+    /// Trip expression per loop for aggregation (an opaque symbol when
+    /// unresolved, one per loop name), already bound.
     trip_exprs: Vec<SymExpr>,
     /// Loop is conditionally entered within its parent scope.
     cond_entry: Vec<bool>,
@@ -937,7 +937,10 @@ impl<'a> KernelReportBuilder<'a> {
             .enumerate()
             .map(|(i, t)| match t {
                 Ok(e) => e.bind(bind_map),
-                Err(_) => SymExpr::sym(format!("trips({})", display[i])),
+                Err(_) => {
+                    let named = display.iter().position(|d| *d == display[i]);
+                    SymExpr::Sym(Leaf::Trips(LoopId(named.unwrap_or(i) as u32)))
+                }
             })
             .collect();
 
@@ -1151,6 +1154,15 @@ impl<'a> KernelReportBuilder<'a> {
         match p {
             Leaf::Param(i) if direct && pointer(p) => Some(*i),
             _ => None,
+        }
+    }
+
+    /// A symbol as the report prints it: a loop's unknown count by the
+    /// loop's name.
+    fn leaf_name(&self, leaf: &Leaf) -> String {
+        match leaf {
+            Leaf::Trips(l) => format!("trips({})", self.display[l.0 as usize]),
+            other => other.to_string(),
         }
     }
 
@@ -1665,14 +1677,15 @@ impl<'a> KernelReportBuilder<'a> {
             .values()
             .map(|t| t.total.expr())
             .fold(SymExpr::Const(0), SymExpr::add);
+        let name = |l: &Leaf| self.leaf_name(l);
         let bytes_out: BTreeMap<String, DirectionCounts> = bytes
             .iter()
             .map(|(k, (l, s))| {
                 (
                     k.to_string(),
                     DirectionCounts {
-                        load: l.count(),
-                        store: s.count(),
+                        load: l.count(&name),
+                        store: s.count(&name),
                     },
                 )
             })
@@ -1697,22 +1710,23 @@ impl<'a> KernelReportBuilder<'a> {
         };
 
         Aggregates {
-            flops: flops[&Pipe::CudaCore].counts(),
-            tensor_flops: flops[&Pipe::Tensor].counts(),
-            sfu_flops: flops[&Pipe::Sfu].counts(),
-            atomic_flops: flops[&Pipe::Atomic].counts(),
+            flops: flops[&Pipe::CudaCore].counts(&name),
+            tensor_flops: flops[&Pipe::Tensor].counts(&name),
+            sfu_flops: flops[&Pipe::Sfu].counts(&name),
+            atomic_flops: flops[&Pipe::Atomic].counts(&name),
             bytes: bytes_out,
-            conversions: conversions.count(),
+            conversions: conversions.count(&name),
             ai_global,
             unrolled_source_lines: self.unrolled_lines(below),
             instructions: InstructionCounts {
-                all: Some(instruction_all.threads.count())
-                    .filter(|all| *all != instruction_total.threads.count()),
-                all_warps: (instruction_all.threads.count() != instruction_total.threads.count())
-                    .then(|| instruction_all.warps())
-                    .flatten(),
-                total: instruction_total.threads.count(),
-                warps: instruction_total.warps(),
+                all: Some(instruction_all.threads.count(&name))
+                    .filter(|all| *all != instruction_total.threads.count(&name)),
+                all_warps: (instruction_all.threads.count(&name)
+                    != instruction_total.threads.count(&name))
+                .then(|| instruction_all.warps(&name))
+                .flatten(),
+                total: instruction_total.threads.count(&name),
+                warps: instruction_total.warps(&name),
                 by_kind: instructions
                     .iter()
                     .map(|(k, acc)| {
@@ -1723,8 +1737,8 @@ impl<'a> KernelReportBuilder<'a> {
                                 .entry(opcode.clone())
                                 .or_default()
                                 .push(InstructionVariant {
-                                    issued: issued.threads.count(),
-                                    warps: issued.warps(),
+                                    issued: issued.threads.count(&name),
+                                    warps: issued.warps(&name),
                                     contributions_per_execution: contributions
                                         .iter()
                                         .map(contribution_details)
@@ -1734,17 +1748,17 @@ impl<'a> KernelReportBuilder<'a> {
                         (
                             k.clone(),
                             KindCounts {
-                                total: acc.total.threads.count(),
-                                warps: acc.total.warps(),
+                                total: acc.total.threads.count(&name),
+                                warps: acc.total.warps(&name),
                                 opcodes: acc
                                     .opcodes
                                     .iter()
-                                    .map(|(o, v)| (o.clone(), v.threads.count()))
+                                    .map(|(o, v)| (o.clone(), v.threads.count(&name)))
                                     .collect(),
                                 opcode_warps: acc
                                     .opcodes
                                     .iter()
-                                    .filter_map(|(o, v)| v.warps().map(|w| (o.clone(), w)))
+                                    .filter_map(|(o, v)| v.warps(&name).map(|w| (o.clone(), w)))
                                     .collect(),
                                 contribution_variants,
                             },
@@ -1799,7 +1813,7 @@ impl<'a> KernelReportBuilder<'a> {
             Ok(e) => {
                 let bound = e.bind(self.bind_map);
                 Trips {
-                    expr: Some(bound.to_string()),
+                    expr: Some(bound.render(&|l| self.leaf_name(l))),
                     unknown: None,
                 }
             }
@@ -1874,7 +1888,7 @@ impl<'a> KernelReportBuilder<'a> {
                     LoopId(i as u32),
                     RankEntry {
                         loop_name: name,
-                        instructions: w.to_string(),
+                        instructions: w.render(&|l| self.leaf_name(l)),
                     },
                 )
             })

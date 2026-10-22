@@ -26,6 +26,7 @@
 //! parenthesize sums and divisions, a `-c·x` summand prints as
 //! `- c * x`, and a min or max as `max(a, b)`.
 
+use crate::analysis::control_flow::loops::LoopId;
 use crate::ptx::ir::SpecialReg;
 use std::collections::HashMap;
 use std::fmt;
@@ -38,6 +39,8 @@ pub enum Leaf {
     /// A special register one for the CTA: the launch shape, the CTA's
     /// index.
     Special(SpecialReg),
+    /// The trip count of a loop whose count is not known.
+    Trips(LoopId),
     /// Any other value, by its name.
     Symbol(String),
 }
@@ -47,6 +50,7 @@ impl fmt::Display for Leaf {
         match self {
             Leaf::Param(i) => write!(f, "param_{i}"),
             Leaf::Special(reg) => f.write_str(&reg.name()),
+            Leaf::Trips(l) => write!(f, "trips(loop {})", l.0),
             Leaf::Symbol(name) => f.write_str(name),
         }
     }
@@ -497,7 +501,7 @@ pub fn product((a, b): (i128, i128), (c, d): (i128, i128)) -> Option<(i128, i128
 
 impl fmt::Display for SymExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", render(self, PrintContext::Top))
+        f.write_str(&self.render(&|leaf| leaf.to_string()))
     }
 }
 
@@ -517,10 +521,17 @@ fn parens_needed(e: &SymExpr, ctx: PrintContext) -> bool {
     }
 }
 
-fn render(e: &SymExpr, ctx: PrintContext) -> String {
+impl SymExpr {
+    /// The expression with each symbol printed by `name`.
+    pub fn render(&self, name: &dyn Fn(&Leaf) -> String) -> String {
+        render(self, PrintContext::Top, name)
+    }
+}
+
+fn render(e: &SymExpr, ctx: PrintContext, name: &dyn Fn(&Leaf) -> String) -> String {
     let body = match e {
         SymExpr::Const(c) => c.to_string(),
-        SymExpr::Sym(leaf) => leaf.to_string(),
+        SymExpr::Sym(leaf) => name(leaf),
         SymExpr::Sum(terms) => {
             let mut out = String::new();
             for (i, term) in terms.iter().enumerate() {
@@ -548,17 +559,17 @@ fn render(e: &SymExpr, ctx: PrintContext) -> String {
                 if i == 0 {
                     if neg {
                         out.push_str("-(");
-                        out.push_str(&render(&mag, PrintContext::SumTerm));
+                        out.push_str(&render(&mag, PrintContext::SumTerm, name));
                         out.push(')');
                         continue;
                     }
-                    out.push_str(&render(&mag, PrintContext::SumTerm));
+                    out.push_str(&render(&mag, PrintContext::SumTerm, name));
                     continue;
                 }
                 out.push_str(if neg { " - " } else { " + " });
                 out.push_str(&match mag {
                     SymExpr::Const(m) if neg && m < 0 => format!("({m})"),
-                    _ => render(&mag, PrintContext::SumTerm),
+                    _ => render(&mag, PrintContext::SumTerm, name),
                 });
             }
             out
@@ -566,19 +577,19 @@ fn render(e: &SymExpr, ctx: PrintContext) -> String {
         SymExpr::Prod(factors) => match &factors[..] {
             // A bare negation reads better than "-1 * x".
             [SymExpr::Const(-1), x] if !matches!(x, SymExpr::Const(_)) => {
-                format!("-{}", render(x, PrintContext::ProdFactor))
+                format!("-{}", render(x, PrintContext::ProdFactor, name))
             }
             _ => factors
                 .iter()
-                .map(|f| render(f, PrintContext::ProdFactor))
+                .map(|f| render(f, PrintContext::ProdFactor, name))
                 .collect::<Vec<_>>()
                 .join(" * "),
         },
-        SymExpr::CeilDiv(e, c) => format!("⌈{}/{c}⌉", render(e, PrintContext::DivOrModLeft)),
-        SymExpr::FloorDiv(e, c) => format!("{} / {c}", render(e, PrintContext::DivOrModLeft)),
-        SymExpr::Mod(e, c) => format!("{} mod {c}", render(e, PrintContext::DivOrModLeft)),
-        SymExpr::Min(a, b) => format!("min({a}, {b})"),
-        SymExpr::Max(a, b) => format!("max({a}, {b})"),
+        SymExpr::CeilDiv(e, c) => format!("⌈{}/{c}⌉", render(e, PrintContext::DivOrModLeft, name)),
+        SymExpr::FloorDiv(e, c) => format!("{} / {c}", render(e, PrintContext::DivOrModLeft, name)),
+        SymExpr::Mod(e, c) => format!("{} mod {c}", render(e, PrintContext::DivOrModLeft, name)),
+        SymExpr::Min(a, b) => format!("min({}, {})", a.render(name), b.render(name)),
+        SymExpr::Max(a, b) => format!("max({}, {})", a.render(name), b.render(name)),
     };
     if parens_needed(e, ctx) {
         format!("({body})")
