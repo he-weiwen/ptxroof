@@ -61,6 +61,8 @@ pub(crate) struct AffineValueTracer<'a> {
     /// Reading a latch: a `min` or `max` holds its operands' CTA-index
     /// terms as symbols, one value per CTA.
     pub(crate) cta_symbols: Cell<bool>,
+    /// A value's name in a trip count's symbol, `%r19@69`.
+    value_names: Option<&'a dyn Fn(Value) -> String>,
 }
 
 impl<'a> AffineValueTracer<'a> {
@@ -129,6 +131,7 @@ impl<'a> AffineValueTracer<'a> {
             uniformity: OnceCell::new(),
             fallback: Cell::new(false),
             cta_symbols: Cell::new(false),
+            value_names: None,
         }
     }
 
@@ -195,6 +198,16 @@ impl<'a> AffineValueTracer<'a> {
     pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<String, i64>) -> Self {
         self.bindings = Some(bindings);
         self
+    }
+
+    pub(crate) fn with_value_names(mut self, names: &'a dyn Fn(Value) -> String) -> Self {
+        self.value_names = Some(names);
+        self
+    }
+
+    pub(crate) fn value_name(&self, v: Value) -> String {
+        self.value_names
+            .map_or_else(|| format!("{v:?}"), |name| name(v))
     }
 
     /// `f` of `a`, or of `a` under the bindings where `f` needs a

@@ -918,7 +918,8 @@ impl<'a> KernelReportBuilder<'a> {
         let cfg = build_cfg(module, kernel);
         let forest = loop_forest(&cfg);
         let names = loop_names(module, kernel, &cfg, &forest);
-        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names, bind_map);
+        let name = |v| Self::value_name(module, kernel, &cfg, lines, v);
+        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names, bind_map, &name);
         let blocks = collect(module, kernel, &cfg, &forest);
 
         let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
@@ -1268,20 +1269,21 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// A loop around `b` counts trips that read the CTA index.
     fn per_cta_trips(&self, b: BlockId) -> bool {
-        (self.chain(b).iter()).any(|l| {
-            (self.trip_exprs[l.0 as usize].symbols().iter()).any(|s| s.starts_with("%ctaid"))
-        })
+        (self.chain(b).iter()).any(|l| self.trips_per_cta(*l))
+    }
+
+    /// Loop `l`'s count reads the CTA index, or a uniform value, one per
+    /// CTA.
+    fn trips_per_cta(&self, l: LoopId) -> bool {
+        (self.trip_exprs[l.0 as usize].symbols().iter())
+            .any(|s| s.starts_with("%ctaid") || s.starts_with("uniform("))
     }
 
     /// `b`'s loops whose trip counts read the CTA index, and the product
     /// of the others.
     fn cta_split(&self, b: BlockId) -> (Vec<LoopId>, SymExpr) {
-        let (cta, rest): (Vec<LoopId>, Vec<LoopId>) = (self.chain(b).into_iter()).partition(|l| {
-            self.trip_exprs[l.0 as usize]
-                .symbols()
-                .iter()
-                .any(|s| s.starts_with("%ctaid"))
-        });
+        let (cta, rest): (Vec<LoopId>, Vec<LoopId>) =
+            (self.chain(b).into_iter()).partition(|&l| self.trips_per_cta(l));
         let rest = (rest.iter()).fold(SymExpr::Const(1), |p, l| {
             SymExpr::mul(p, self.trip_exprs[l.0 as usize].clone())
         });

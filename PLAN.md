@@ -112,12 +112,14 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `min` or `max`'s operands, are
   refused when the value's range, over constants, the block shape
   `.reqntid` or `--launch` gives, the grid `--grid` gives, and constant
-  trip counts, leaves the type (`micro/mul_wrap.ptx`: `mul.lo.s32` of
-  2^30 and 4, the same for every thread, so its address reads
-  `uniform(%r2@24)`; `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` +
-  2^32; `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`;
+  trip counts, leaves the type, and read as a value of its own where it
+  is the same for every thread (`micro/mul_wrap.ptx`: `mul.lo.s32` of
+  2^30 and 4, so its address reads `uniform(%r2@24)`;
+  `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` + 2^32;
+  `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`;
   `micro/trip_max.ptx`: `min.u32` of n − 4 under `--bind 1:n=2`, where
-  the loop runs 8 trips, unbound `max(min(param_1 - 4, 8), 1)`); one
+  the loop runs 8 trips, `max(uniform(%r3@54), 1)`, unbound
+  `max(min(param_1 - 4, 8), 1)`); one
   through a parameter, `%ctaid` with no grid given or a symbolic trip
   count keeps the tracer's documented assumption
   (`src/analysis/scalar/trace.rs`, module doc). A conversion to or from
@@ -175,8 +177,9 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   parameters.** A loop is counted max(T, 0) per execution of a guard
   that skips it where its latch fails at k = 0 (`micro/loop_guard.ptx`),
   and max(T, 1) per entry otherwise (`micro/latch_exits_first.ptx`);
-  the max is dropped where T is never below it with every parameter
-  taken as nonnegative (`src/analysis/scalar/symexpr.rs`'s doc):
+  the max is dropped where T is never below it with every parameter,
+  and every value a count reads as `uniform(…)`, taken as nonnegative
+  (`src/analysis/scalar/symexpr.rs`'s doc):
   `micro/single_loop.ptx` reads its `ld.param.u32` n as `param_1`,
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
@@ -283,10 +286,16 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   floating-point values"), a bound through a `selp` or shift of the
   CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
-  tile loop, which has a latch and an exit per partition. Bounds the
-  tracer does not read, by the loop's source line: a division by a
-  parameter not bound (`micro/trip_div_param.ptx` reads with `--bind`),
-  a float immediate and an `and.pred` latch predicate (sol-study census
+  tile loop, which has a latch and an exit per partition. A bound the
+  tracer does not read, the same for every thread, is the value of the
+  register whose trace fails, `uniform(%r3@30)` for a division by a
+  parameter not bound (`micro/trip_div_param.ptx`, `param_1 / 4` with
+  `--bind 2:d=4`), taken as one value per CTA, so the totals per launch
+  under it are unknown (`micro-trip-div-param.test`), and unknown where
+  a loop holding the latch defines it or threads leave the loop defining
+  it at different trips (`micro/trip_uniform.ptx`). Bounds the tracer
+  does not read, by the loop's source line: a float immediate and an
+  `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`). In `gluon/attn_fwd_ws_kernel.sm_89.ptx` the
   persistent loops (`gluon_attn_fwd.py:126`, exit not at the latch;
@@ -296,10 +305,10 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `mma.m16n8k16` lines run 3,244,032 warp instructions, 13,287,555,072
   FLOPs.
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 953 have a trip count: 1,445 are mbarrier waits
-  and 411 read loaded values, 40 depend on `%ctaid` (15 through a
-  `selp`, 7 a shift), 93 are grid-stride loops, 1 unpack, 20 atomics,
-  20 divisions, 17 multi-exit.
+  inferred arguments), 987 have a trip count: 1,445 are mbarrier waits
+  and 399 read loaded values, 24 depend on `%ctaid` (10 through a
+  `selp`, 2 a shift), 95 are grid-stride loops, 1 unpack, 20 atomics,
+  4 divisions, 17 multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,

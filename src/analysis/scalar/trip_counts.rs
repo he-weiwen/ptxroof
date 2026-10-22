@@ -75,7 +75,8 @@ pub struct TripCountResults {
 }
 
 /// Every loop's trip count, its latch traced under `bindings` (`--bind`,
-/// the launch shape) where a constant is needed.
+/// the launch shape) where a constant is needed, a uniform value it
+/// cannot read named by `value_name`.
 pub fn trip_counts(
     module: &Module,
     kernel: &Kernel,
@@ -83,8 +84,10 @@ pub fn trip_counts(
     forest: &LoopForest,
     names: &[LoopName],
     bindings: &HashMap<String, i64>,
+    value_name: &dyn Fn(Value) -> String,
 ) -> TripCountResults {
-    let tracer = AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings);
+    let tracer = (AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings))
+        .with_value_names(value_name);
     let (mut trips, mut entries, mut distances) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..forest.loops.len() as u32 {
         let (t, entry, distance) = match counted_trips(&tracer, LoopId(i)) {
@@ -169,9 +172,13 @@ pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCoun
 /// distance and step.
 type Counted = (SymExpr, BlockId, Option<(SymExpr, i64)>);
 
+/// The latch read strictly, else with each uniform value it cannot read
+/// a variable, keeping the first reason.
 fn counted_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
     let outer = tracer.cta_symbols.replace(true);
-    let counted = tracer.without_fallback(|| tracer.strictly(|| latch_trips(tracer, id)));
+    let latch = || tracer.strictly(|| latch_trips(tracer, id));
+    let counted = (tracer.without_fallback(latch))
+        .or_else(|why| tracer.with_fallback(latch).map_err(|_| why));
     tracer.cta_symbols.set(outer);
     counted
 }
@@ -257,7 +264,9 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, St
     }) {
         return Err("latch condition compares floating-point values".to_owned());
     }
-    let d = per_cta(a - b); // D = A − B; condition is `D cmp 0`
+    let d = uniform_symbols(tracer, id, setp_idx, a - b)
+        .ok_or_else(|| "latch condition depends on a value an enclosing loop defines".to_owned())?;
+    let d = per_cta(d); // D = A − B; condition is `D cmp 0`
 
     // D(k) = A1·k + A0 in this loop's iteration number alone.
     let k = Var::Iter(id);
@@ -351,9 +360,12 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, Sy
     {
         return None;
     }
-    let form = per_cta(
+    let form = per_cta(uniform_symbols(
+        tracer,
+        id,
+        def,
         tracer.trace_operand(a, def, None, 0).ok()? - tracer.trace_operand(b, def, None, 0).ok()?,
-    );
+    )?);
     let cmp = *mods.first()?;
     let cmp = if (taken == into) != pred.negated {
         cmp
@@ -415,6 +427,28 @@ pub(crate) fn per_cta(a: Affine) -> Affine {
     as_symbols(a, &|v| {
         matches!(v, Var::Ctaid(_)).then(|| SymExpr::sym(v.to_string()))
     })
+}
+
+/// `a`, read at `pos`, with each uniform value as a symbol: one value at
+/// every trip of every entry of loop `id` where it is defined outside
+/// the loops holding `id` and every lane executing `pos` sees it alike.
+fn uniform_symbols(
+    tracer: &AffineValueTracer<'_>,
+    id: LoopId,
+    pos: usize,
+    a: Affine,
+) -> Option<Affine> {
+    let top = std::iter::successors(Some(id), |&l| tracer.forest.get(l).parent).last()?;
+    let alike = |u: Value| {
+        !tracer.defined_in(u, top) && tracer.uniformity().value_uniform_at(tracer, u, pos).is_ok()
+    };
+    if !a.terms.keys().filter_map(Var::uniform).all(alike) {
+        return None;
+    }
+    Some(as_symbols(a, &|v| match v {
+        Var::Uniform(u) => Some(SymExpr::sym(format!("uniform({})", tracer.value_name(*u)))),
+        _ => None,
+    }))
 }
 
 /// `a` with each term in a variable `leaf` names, or a floor or mod of
@@ -664,12 +698,24 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
+        let info = trip_counts(&m, k, &cfg, &f, &names, bindings, &register(&m));
         names
             .into_iter()
             .zip(info.trips)
             .map(|(n, t)| (n.display, t))
             .collect()
+    }
+
+    /// A value by its register's name.
+    fn register(m: &Module) -> impl Fn(Value) -> String + '_ {
+        |v| match v {
+            Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg) => {
+                match reg {
+                    Register::Named(r) => m.interner.resolve(r).to_owned(),
+                    Register::Cc => "CC.CF".to_owned(),
+                }
+            }
+        }
     }
 
     /// Every loop's name, count and the block the count is per execution of.
@@ -679,7 +725,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
+        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new(), &register(&m));
         (names.into_iter().zip(info.trips).zip(info.entries))
             .map(|((n, t), e)| (n.display, t.map(|t| t.to_string()), cfg.block_name(&m, e)))
             .collect()
@@ -781,9 +827,10 @@ mod tests {
     }
 
     /// A 32-bit bound computed past its width: a shift by more than 32
-    /// leaves 0 (PTX ISA §9.7.8.8), a product past 2^32 is refused.
+    /// leaves 0 (PTX ISA §9.7.8.8), a product past 2^32 is not read and
+    /// stays the value it computes, the same for every thread.
     #[test]
-    fn a_bound_past_its_register_width_wraps_or_is_refused() {
+    fn a_bound_past_its_register_width_wraps_or_is_a_uniform_value() {
         let bound = |compute: &str| {
             let src = kernel_with(
                 N_PARAM,
@@ -799,7 +846,7 @@ mod tests {
         assert_eq!(bound("mul.lo.u32 %r4, %r3, 2;"), Ok("13".to_owned()));
         assert_eq!(
             bound("mul.lo.u32 %r4, %r3, 1073741824;"),
-            Err("`mul.lo.u32` leaves 32 bits".to_owned())
+            Ok("uniform(%r4) + 5".to_owned())
         );
     }
 
@@ -830,7 +877,7 @@ mod tests {
 
     /// PTX ISA §9.7.1.13, §9.7.1.14: a min or max of invariants is one
     /// too; a `.relu` one, or one of a value its type does not read, is
-    /// no bound.
+    /// not read and stays a uniform value.
     #[test]
     fn a_min_or_max_bound_is_symbolic() {
         let bound = |minmax: &str| {
@@ -851,11 +898,11 @@ mod tests {
         assert_eq!(bound("mov.u32 %r4, 5;\nmin.s32 %r3, %r4, 8;"), ok("5"));
         assert_eq!(
             bound("mov.u32 %r4, -1;\nmin.u32 %r3, %r4, 8;"),
-            Err("`min.u32` of a value its type does not hold".to_owned())
+            ok("max(uniform(%r3), 1)")
         );
         assert_eq!(
             bound("min.relu.s32 %r3, %r1, 8;"),
-            Err("value defined by unsupported instruction `min`".to_owned())
+            ok("max(uniform(%r3), 1)")
         );
     }
 
@@ -877,7 +924,7 @@ mod tests {
                    setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;";
         assert_eq!(trips(bfe, None), Ok("max(param_0, 1)".to_owned()));
         assert_eq!(trips(bfe, Some(100)), Ok("100".to_owned()));
-        let leaves = Err("bfe of 8 bits leaves them".to_owned());
+        let leaves = Ok("max(uniform(%r3), 1)".to_owned());
         assert_eq!(trips(bfe, Some(128)), leaves);
         let step = "ld.param.u32 %r1, [k_param_0];\nmax.s32 %r2, %r1, 1;\nmov.u32 %r4, 0;\n\
                     $L__L:\nadd.s32 %r4, %r4, %r2;\nsetp.lt.s32 %p1, %r4, 1024;\n\
@@ -1077,7 +1124,7 @@ mod tests {
     /// A latch's `min` or `max` of the CTA index is one value per CTA, a
     /// row range's `min(16·%ctaid.y + 16, n) - 16·%ctaid.y`; ranged over
     /// the grid, a `max.u32(%ctaid.x, 1)` shifted by 31, or times
-    /// `%ctaid.x` and shifted, leaves 32 bits with 3 CTAs.
+    /// `%ctaid.x` and shifted, leaves 32 bits with 3 CTAs and is not read.
     #[test]
     fn a_latch_min_or_max_of_the_cta_index_is_one_per_cta() {
         let trips = |bound: &str, grid: Option<i64>| {
@@ -1106,14 +1153,11 @@ mod tests {
         assert!(trips(shifted, None).is_ok());
         assert_eq!(
             trips(shifted, Some(3)),
-            Err("`shl.b32` leaves 32 bits".to_owned())
+            Ok("max(uniform(%r9), 1)".to_owned())
         );
         let times = "max.u32 %r3, %r2, 1;\nmul.lo.u32 %r4, %r3, %r2;\nshl.b32 %r9, %r4, 31;";
         assert!(trips(times, None).is_ok());
-        assert_eq!(
-            trips(times, Some(3)),
-            Err("`shl.b32` leaves 32 bits".to_owned())
-        );
+        assert_eq!(trips(times, Some(3)), Ok("max(uniform(%r9), 1)".to_owned()));
     }
 
     /// A guard skipping a loop from 0 below n where `n == 0` tests its
@@ -1468,14 +1512,15 @@ mod tests {
         );
         let err = trips_of(&src)[0].1.clone().unwrap_err();
         assert_eq!(err, "latch condition depends on a value loaded from memory");
-        // Nothing fundamental behind it: the instruction is still named.
+        // Nothing fundamental behind it, the same for every thread: the
+        // value, unread.
         let src = kernel_with(
             N_PARAM,
             "ld.param.u32 %r1, [k_param_0];\nor.b32 %r3, %r1, 1;\nmov.u32 %r4, 0;\n\
              $L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
         );
-        let err = trips_of(&src)[0].1.clone().unwrap_err();
-        assert_eq!(err, "or whose sides may both set bit 0");
+        let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
+        assert_eq!(trips, Ok("max(uniform(%r3), 1)".to_owned()));
     }
 
     #[test]
@@ -1534,17 +1579,27 @@ mod tests {
         assert_eq!(outer.1.as_ref().unwrap().to_string(), "max(param_0, 1)");
     }
 
+    /// A value two paths set apart is not read: one branch on a
+    /// parameter selects it alike for every thread, one on the thread
+    /// index does not.
     #[test]
-    fn a_value_merged_from_two_paths_is_refused() {
-        let src = kernel_with(
-            N_PARAM,
-            "ld.param.u32 %r1, [k_param_0];\nsetp.lt.s32 %p2, %r1, 8;\n@%p2 bra $L__A;\n\
-             mov.u32 %r3, 5;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r3, 7;\n$L__J:\nmov.u32 %r2, 0;\n\
-             $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;",
-        );
-        let trips = trips_of(&src);
-        let err = trips[0].1.clone().unwrap_err();
-        assert_eq!(err, "%r3 has more than one reaching definition");
+    fn a_value_merged_from_two_paths_is_a_uniform_value() {
+        let merged = |on: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r6, %tid.x;\n\
+                     setp.lt.s32 %p2, {on}, 8;\n@%p2 bra $L__A;\n\
+                     mov.u32 %r3, 5;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r3, 7;\n$L__J:\n\
+                     mov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, 1;\n\
+                     setp.lt.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        assert_eq!(merged("%r1"), Ok("max(uniform(%r3), 1)".to_owned()));
+        let why = "%r3 has more than one reaching definition";
+        assert_eq!(merged("%r6"), Err(why.to_owned()));
     }
 
     #[test]
@@ -1646,7 +1701,7 @@ mod tests {
             let cfg = build_cfg(&m, k);
             let f = loop_forest(&cfg);
             let names = loop_names(&m, k, &cfg, &f);
-            let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
+            let info = trip_counts(&m, k, &cfg, &f, &names, bindings, &register(&m));
             let main = info.unroll_pairs.first().map(|p| {
                 let trips = info.trips[p.main.0 as usize].as_ref();
                 (p.factor, trips.unwrap().to_string())

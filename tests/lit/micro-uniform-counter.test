@@ -26,7 +26,7 @@ CHECK-SAME: k[$L__BB2_2]: +256 B/iter, k[$L__BB2_1]: varies
 CHECK-LABEL: kernel micro_uniform_inner_bound
 CHECK: [4 * %tid.x + 256 * uniform(%r6@$L__BB3_1) + param_0]
 CHECK-SAME: k[$L__BB3_1]: varies
-CHECK: trips = unknown: div by a non-constant divisor
+CHECK: trips = max(uniform(%r4@142), 1)
 CHECK-LABEL: kernel micro_uniform_differences
 CHECK: [4 * %tid.x + param_0]
 CHECK: [4 * %tid.x + 256 * uniform(%r4@175) - 256 * uniform(%r6@177) + param_0]
