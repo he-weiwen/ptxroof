@@ -2001,8 +2001,9 @@ impl<'a> KernelReportBuilder<'a> {
                     (false, Some((_, w))) => read_trips
                         .and_then(|m| Some((u64::try_from(m).ok()?.checked_mul(w)?, false))),
                     (false, None) => read_trips.zip(read_warps).and_then(|(m, (w, bound))| {
-                        let n = u64::try_from(m.checked_mul(w)?)
+                        let n = u64::try_from(m)
                             .ok()?
+                            .checked_mul(u64::try_from(w).ok()?)?
                             .checked_mul(read_ctas)?;
                         Some((n, bound))
                     }),
@@ -2033,8 +2034,9 @@ impl<'a> KernelReportBuilder<'a> {
                             trips.and_then(|m| u64::try_from(m).ok()?.checked_mul(n))
                         }
                         (false, None) => trips.and_then(|m| {
-                            u64::try_from(m.checked_mul(threads)?)
+                            u64::try_from(m)
                                 .ok()?
+                                .checked_mul(u64::try_from(threads).ok()?)?
                                 .checked_mul(ctas)
                         }),
                     },
@@ -3137,6 +3139,61 @@ mod tests {
         assert_eq!(blocks[0].with_sass, 1);
         assert_eq!(blocks[0].agreeing, 1);
         assert!(blocks[0].differing.is_empty());
+    }
+
+    /// Two nested loops of 2^29 trips each on one CTA of 32 threads: the
+    /// store runs 2^58 times per thread and 2^63 times over the launch,
+    /// past i64 before the CTAs multiply in, which a u64 prediction holds.
+    #[test]
+    fn trips_times_threads_between_2_63_and_2_64_is_predicted() {
+        let src = ".version 8.7\n.target sm_89\n.address_size 64\n\
+            .visible .entry k(.param .u64 k_param_0, .param .u32 k_param_1)\n{\n\
+            .reg .pred %p<3>;\n.reg .b32 %r<4>;\n.reg .b64 %rd<2>;\n\
+            ld.param.u64 %rd1, [k_param_0];\n\
+            ld.param.u32 %r1, [k_param_1];\n\
+            mov.u32 %r2, 0;\n\
+            $L__O:\n\
+            mov.u32 %r3, 0;\n\
+            $L__I:\n\
+            st.global.u32 [%rd1], %r3;\n\
+            add.s32 %r3, %r3, 1;\n\
+            setp.lt.u32 %p1, %r3, %r1;\n\
+            @%p1 bra $L__I;\n\
+            add.s32 %r2, %r2, 1;\n\
+            setp.lt.u32 %p2, %r2, %r1;\n\
+            @%p2 bra $L__O;\n\
+            ret;\n}\n";
+        let line = crate::report::measured::NcuLine {
+            ptx: "st.global.u32 [%rd1], %r3;".into(),
+            sass: [("STG.E".to_owned(), 1)].into(),
+            executions: 1 << 63,
+            l2_theoretical_sectors_global: None,
+            l2_theoretical_sectors_global_ideal: None,
+            global_access_sizes: Vec::new(),
+            global_executions: None,
+        };
+        let record = NcuRecord {
+            kernel: "k".into(),
+            grid: [1, 1, 1],
+            block: [32, 1, 1],
+            params: vec!["ptr:4".into(), format!("u32:{}", 1 << 29)],
+            lines: [(15, line)].into(),
+            load_sectors: None,
+            store_sectors: None,
+        };
+        let opts = AnalyzeOptions {
+            bindings: record.bindings(),
+            launch: Some(record.block),
+            grid: Some(record.grid),
+            ncu: Some(record),
+        };
+        let report = analyze(src, "k.ptx", &opts).expect("analyzes");
+        let blocks = report.kernels[0].measured.as_ref().expect("measured");
+        let inner = blocks
+            .iter()
+            .find(|b| b.name == "$L__I")
+            .expect("inner loop");
+        assert_eq!((inner.with_sass, inner.agreeing), (1, 1));
     }
 
     /// A loop of 2^62 trips whose 1024 threads each read 4 bytes: the
