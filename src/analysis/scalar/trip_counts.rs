@@ -411,17 +411,24 @@ fn exits_some(tracer: &AffineValueTracer<'_>, b: BlockId) -> bool {
 /// `a` with its terms in the CTA index as symbols of its base: `%ctaid`
 /// is the CTA's identifier, one value per CTA, never negative (PTX ISA
 /// §10.6).
-pub(crate) fn per_cta(mut a: Affine) -> Affine {
-    fn symbol(v: &Var) -> Option<SymExpr> {
+pub(crate) fn per_cta(a: Affine) -> Affine {
+    as_symbols(a, &|v| {
+        matches!(v, Var::Ctaid(_)).then(|| SymExpr::sym(v.to_string()))
+    })
+}
+
+/// `a` with each term in a variable `leaf` names, or a floor or mod of
+/// one, as that symbol in its base.
+fn as_symbols(mut a: Affine, leaf: &dyn Fn(&Var) -> Option<SymExpr>) -> Affine {
+    fn symbol(v: &Var, leaf: &dyn Fn(&Var) -> Option<SymExpr>) -> Option<SymExpr> {
         match v {
-            Var::Ctaid(_) => Some(SymExpr::sym(v.to_string())),
-            Var::Div(v, d) => symbol(v).map(|e| SymExpr::floor_div(e, *d)),
-            Var::Mod(v, m) => symbol(v).map(|e| SymExpr::modulo(e, *m)),
-            _ => None,
+            Var::Div(v, d) => symbol(v, leaf).map(|e| SymExpr::floor_div(e, *d)),
+            Var::Mod(v, m) => symbol(v, leaf).map(|e| SymExpr::modulo(e, *m)),
+            v => leaf(v),
         }
     }
     for (v, c) in std::mem::take(&mut a.terms) {
-        match symbol(&v) {
+        match symbol(&v, leaf) {
             Some(e) => a.base = SymExpr::add(a.base, SymExpr::mul(c, e)),
             None => {
                 a.terms.insert(v, c);

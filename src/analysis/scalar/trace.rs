@@ -514,11 +514,17 @@ impl<'a> AffineValueTracer<'a> {
         id: Option<LoopId>,
     ) -> Result<Affine, String> {
         self.trace_operand(op, pos, id, 0).or_else(|why| {
-            self.fallback.set(true);
-            let a = self.strictly(|| self.trace_operand(op, pos, id, 0));
-            self.fallback.set(false);
+            let a = self.with_fallback(|| self.strictly(|| self.trace_operand(op, pos, id, 0)));
             a.map_err(|_| why)
         })
+    }
+
+    /// `f` with each uniform read it cannot interpret a variable.
+    pub(crate) fn with_fallback<T>(&self, f: impl FnOnce() -> T) -> T {
+        let on = self.fallback.replace(true);
+        let t = f();
+        self.fallback.set(on);
+        t
     }
 
     /// `f` with no uniform variable.
@@ -1184,6 +1190,16 @@ impl<'a> AffineValueTracer<'a> {
             Operand::Special(reg) => special_obstacle(*reg),
             _ => None,
         }
+    }
+
+    /// Value `v` is defined in loop `l`, and may differ between its trips.
+    pub(crate) fn defined_in(&self, v: Value, l: LoopId) -> bool {
+        let b = match v {
+            Value::Result { op, .. } => self.block_of(op),
+            Value::Argument { block, .. } => block,
+            Value::Undef(_) => return false,
+        };
+        self.forest.get(l).blocks.binary_search(&b).is_ok()
     }
 
     pub(crate) fn in_loop(&self, id: LoopId, stmt: usize) -> bool {

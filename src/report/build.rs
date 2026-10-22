@@ -278,17 +278,11 @@ impl KernelReportBuilder<'_> {
         let mut per_request = PerRequests::new();
         let name = |v: &Var| match v {
             Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
-            Var::Uniform(u) => format!("uniform({})", self.value_name(*u)),
+            Var::Uniform(u) => format!(
+                "uniform({})",
+                Self::value_name(self.module, self.kernel, &self.cfg, self.lines, *u)
+            ),
             other => other.to_string(),
-        };
-        // A uniform value defined in loop `l` may differ between its trips.
-        let defined_in = |u: Value, l: LoopId| {
-            let b = match u {
-                Value::Result { op, .. } => tracer.block_of(op),
-                Value::Argument { block, .. } => block,
-                Value::Undef(_) => return false,
-            };
-            forest.get(l).blocks.binary_search(&b).is_ok()
         };
         // A shared array's mangled name reads as its source name.
         let arrays: Vec<(String, String)> = kernel
@@ -465,7 +459,7 @@ impl KernelReportBuilder<'_> {
                     if let Some(b) = bytes.filter(|_| !self.unused[pos]) {
                         let uniform_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
                             v.uniform()
-                                .is_some_and(|u| scope.is_some_and(|l| defined_in(u, l)))
+                                .is_some_and(|u| scope.is_some_and(|l| tracer.defined_in(u, l)))
                         });
                         forms.entry(scope).or_default().push(AccessForm {
                             form: form.clone(),
@@ -484,7 +478,7 @@ impl KernelReportBuilder<'_> {
                         while let Some(l) = cur {
                             let stepped = (a.terms.keys()).any(|v| {
                                 (*v != Var::Iter(l) && at_trip(v, l, 0).is_some())
-                                    || v.uniform().is_some_and(|u| defined_in(u, l))
+                                    || v.uniform().is_some_and(|u| tracer.defined_in(u, l))
                             });
                             reuse.push(Reuse {
                                 r#loop: display[l.0 as usize].clone(),
@@ -1062,14 +1056,20 @@ impl<'a> KernelReportBuilder<'a> {
     /// `%r83@106`: a value's register and the PTX line of its statement,
     /// with the statement's index on the line when it shares it;
     /// `%r34@$L__BB0_5` for a φ, its block.
-    fn value_name(&self, v: Value) -> String {
+    fn value_name(
+        module: &Module,
+        kernel: &Kernel,
+        cfg: &ControlFlowGraph,
+        lines: &LineIndex,
+        v: Value,
+    ) -> String {
         let reg = |r: Register| match r {
-            Register::Named(s) => self.module.interner.resolve(s).to_owned(),
+            Register::Named(s) => module.interner.resolve(s).to_owned(),
             Register::Cc => "CC.CF".to_owned(),
         };
-        let line = |i: usize| match &self.kernel.stmts[i] {
-            Stmt::Instr(instr) => Some(self.lines.line(instr.offset)),
-            Stmt::Unparsed { offset, .. } => Some(self.lines.line(*offset)),
+        let line = |i: usize| match &kernel.stmts[i] {
+            Stmt::Instr(instr) => Some(lines.line(instr.offset)),
+            Stmt::Unparsed { offset, .. } => Some(lines.line(*offset)),
             _ => None,
         };
         match v {
@@ -1077,7 +1077,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let Some(at) = line(op) else {
                     return reg(r);
                 };
-                let on: Vec<usize> = (0..self.kernel.stmts.len())
+                let on: Vec<usize> = (0..kernel.stmts.len())
                     .filter(|&i| line(i) == Some(at))
                     .collect();
                 match on.iter().position(|&i| i == op) {
@@ -1086,7 +1086,7 @@ impl<'a> KernelReportBuilder<'a> {
                 }
             }
             Value::Argument { block, reg: r } => {
-                format!("{}@{}", reg(r), self.cfg.block_name(self.module, block))
+                format!("{}@{}", reg(r), cfg.block_name(module, block))
             }
             Value::Undef(r) => reg(r),
         }
