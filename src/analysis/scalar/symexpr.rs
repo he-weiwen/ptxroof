@@ -45,7 +45,8 @@ pub enum Leaf {
     Uniform(Value),
     /// The trip count of a loop whose count is not known.
     Trips(LoopId),
-    /// Any other value, by its name.
+    /// A named location's address: a shared array, the dynamic shared
+    /// base.
     Symbol(String),
 }
 

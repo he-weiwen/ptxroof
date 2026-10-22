@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(modulo.range(&bound), Some((0, 3)));
         let ctaid = Affine::var(Var::Ctaid(Axis::X));
         assert_eq!(ctaid.range(&bound), None);
-        let param = Affine::invariant(SymExpr::sym("param_0"));
+        let param = Affine::invariant(SymExpr::Sym(Leaf::Param(0)));
         assert_eq!(param.range(&bound), None);
     }
 
@@ -605,13 +605,13 @@ mod tests {
         assert_eq!(Affine::var(tid()).scale(c(16)).may_set(&block), 0x7f0);
         // A parameter's bits are unknown, a negative constant's all high.
         assert_eq!(
-            Affine::invariant(SymExpr::sym("param_0")).may_set(&block),
+            Affine::invariant(SymExpr::Sym(Leaf::Param(0))).may_set(&block),
             u64::MAX
         );
         assert_eq!(Affine::invariant(c(-4)).may_set(&block), !0x3);
         assert_eq!(Affine::invariant(c(0)).may_set(&block), 0);
         // A symbolic coefficient known a multiple of 64.
-        let p = SymExpr::mul(c(64), SymExpr::sym("param_1"));
+        let p = SymExpr::mul(c(64), SymExpr::Sym(Leaf::Param(1)));
         assert_eq!(
             (Affine::var(Var::Ctaid(Axis::X)).scale(p) + modulo(16)).may_set(&block),
             !0x30
@@ -664,14 +664,14 @@ mod tests {
         );
         let b = tid() + Affine::var(Var::Ctaid(Axis::X)).scale(min());
         assert_eq!(b.to_string(), "%tid.x + (-9223372036854775808) * %ctaid.x");
-        let c = SymExpr::add(SymExpr::sym("param_0"), min());
+        let c = SymExpr::add(SymExpr::Sym(Leaf::Param(0)), min());
         assert_eq!(c.to_string(), "param_0 + -9223372036854775808");
         // −1 times −2^63 overflows and stays a product of the two.
         let negated = SymExpr::mul(SymExpr::Const(-1), min());
         let d = tid().scale(negated.clone());
         assert_eq!(d.to_string(), "-(-9223372036854775808) * %tid.x");
         assert_eq!(negated.to_string(), "-1 * -9223372036854775808");
-        let e = SymExpr::add(SymExpr::sym("param_0"), negated);
+        let e = SymExpr::add(SymExpr::Sym(Leaf::Param(0)), negated);
         assert_eq!(e.to_string(), "param_0 - (-9223372036854775808)");
     }
 
@@ -686,7 +686,7 @@ mod tests {
 
     #[test]
     fn terms_combine_cancel_and_scale_symbolically() {
-        let k = SymExpr::sym("param_2");
+        let k = SymExpr::Sym(Leaf::Param(2));
         let a = tid().scale(SymExpr::Const(2)) + Affine::invariant(SymExpr::Const(8));
         assert_eq!(a.to_string(), "2 * %tid.x + 8");
         assert_eq!(

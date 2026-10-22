@@ -476,6 +476,7 @@ pub fn at_trip(v: &Var, id: LoopId, k: i64) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::scalar::symexpr::Leaf;
     use crate::analysis::thread_participation::Pred;
 
     fn tid() -> Affine {
@@ -663,7 +664,7 @@ mod tests {
 
     #[test]
     fn unknown_shape_or_symbolic_lane_coefficient_is_refused() {
-        let k = Affine::var(Var::Tid(Axis::Y)).scale(SymExpr::sym("param_2"));
+        let k = Affine::var(Var::Tid(Axis::Y)).scale(SymExpr::Sym(Leaf::Param(2)));
         assert!(
             warp_footprint(&k, 2, 2, [32, 32, 1], |_| true)
                 .unwrap_err()
@@ -686,7 +687,7 @@ mod tests {
     fn a_loop_requests_and_touches_its_lanes_bytes_at_every_trip() {
         let c = |n: i64| SymExpr::Const(n);
         let id = LoopId(0);
-        let form = Affine::invariant(SymExpr::sym("param_0"))
+        let form = Affine::invariant(SymExpr::Sym(Leaf::Param(0)))
             + tid().scale(c(4))
             + Affine::var(Var::Iter(id)).scale(c(512));
         let access = |form: &Affine| AccessForm {
@@ -726,7 +727,7 @@ mod tests {
                 max: 2048
             })
         );
-        let shifted = form.clone() + Affine::invariant(SymExpr::sym("param_2"));
+        let shifted = form.clone() + Affine::invariant(SymExpr::Sym(Leaf::Param(2)));
         let forms = [access(&form), access(&shifted)];
         let two = loop_bytes(id, 4, [128, 1, 1], &forms, on_param).unwrap();
         assert_eq!(
