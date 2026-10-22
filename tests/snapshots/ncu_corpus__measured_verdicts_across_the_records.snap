@@ -3,8 +3,8 @@ source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
 blocks {"confirmed": 137, "consistent": 274, "unchecked": 499}
-sector lines {"exact": 86, "not compared, its SASS ran otherwise": 2, "within a bound": 112, "within a range": 751}
-launch sectors {"loads agrees, stores agrees": 36, "not compared": 27}
+sector lines {"exact": 89, "not compared, its SASS ran otherwise": 2, "within a bound": 173, "within a range": 754}
+launch sectors {"loads agrees, stores agrees": 37, "not compared": 26}
 
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
   launch sectors	not compared, line 420
@@ -35,7 +35,7 @@ tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_
   sectors	{"exact": 2, "not compared, its SASS ran otherwise": 1}
   sectors not compared	lines 420
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage2.sm_100a.ncu.json
-  launch sectors	not compared, line 138
+  launch sectors	not compared, line 225
   $L__func_begin0	consistent	16 of 28 with SASS, 10 agreeing
   <block 1>	consistent	2 of 2 with SASS, 2 agreeing
   $L__BB0_1	consistent	2 of 4 with SASS, 1 agreeing
@@ -68,7 +68,7 @@ tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_st
   $L__BB0_3	consistent	9 of 9 with SASS, 3 agreeing
   sectors	{"exact": 1, "within a range": 1}
 tests/fixtures/b200/attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cache.sm_100a.ncu.json
-  launch sectors	not compared, line 178
+  launch sectors	not compared, line 581
   $L__func_begin0	confirmed	104 of 160 with SASS, 70 agreeing
   <block 1>	consistent	106 of 142 with SASS, 84 agreeing
   $L__BB0_7	unchecked	1 of 1 with SASS, 0 agreeing
@@ -82,9 +82,9 @@ tests/fixtures/b200/attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cach
   <block 10>	unchecked	9 of 12 with SASS, 0 agreeing
   $L__BB0_1	consistent	7 of 7 with SASS, 7 agreeing
   $L__BB0_8	confirmed	168 of 177 with SASS, 144 agreeing
-  sectors	{"exact": 2}
+  sectors	{"exact": 2, "within a bound": 16}
 tests/fixtures/b200/attn_sglang__llama3-8b__extend._fwd_kernel.sm_100a.ncu.json
-  launch sectors	not compared, line 243
+  launch sectors	not compared, line 611
   $L__func_begin0	confirmed	20 of 28 with SASS, 7 agreeing
   <block 1>	consistent	79 of 151 with SASS, 41 agreeing
   <block 2>	consistent	57 of 104 with SASS, 46 agreeing
@@ -110,7 +110,7 @@ tests/fixtures/b200/attn_sglang__llama3-8b__extend._fwd_kernel.sm_100a.ncu.json
   <block 22>	unchecked	5 of 8 with SASS, 0 agreeing
   $L__BB0_16	consistent	105 of 117 with SASS, 82 agreeing
   $L__BB0_2	consistent	1 of 1 with SASS, 1 agreeing
-  sectors	{"exact": 4}
+  sectors	{"exact": 4, "within a bound": 8}
 tests/fixtures/b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
   $L__func_begin0	confirmed	62 of 136 with SASS, 29 agreeing
@@ -231,7 +231,7 @@ tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.s
   <block 34>	consistent	68 of 101 with SASS, 67 agreeing
   $L__BB0_32	consistent	110 of 187 with SASS, 80 agreeing
   $L__BB0_2	unchecked	1 of 1 with SASS, 0 agreeing
-  sectors	{"exact": 1, "within a bound": 14}
+  sectors	{"exact": 1, "within a bound": 16}
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 423
   $L__func_begin0	confirmed	31 of 39 with SASS, 19 agreeing
@@ -272,7 +272,7 @@ tests/fixtures/b200/quant__deepseek-v3__prefill__sglang_group_quant_fp8_hidden._
 tests/fixtures/b200/rca_small__ropec.rope_cache_tile_flip.sm_100a.ncu.json
   launch sectors	not compared, line 120
   $L__func_begin0	confirmed	558 of 695 with SASS, 473 agreeing
-  sectors	{"exact": 2, "within a range": 11}
+  sectors	{"exact": 2, "within a range": 13}
 tests/fixtures/b200/rmsnorm_sglang__deepseek-v3__prefill.fused_rmsnorm_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
   $L__func_begin0	confirmed	97 of 131 with SASS, 88 agreeing
@@ -285,9 +285,9 @@ tests/fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm
   $L__BB0_3	consistent	1 of 1 with SASS, 1 agreeing
   sectors	{"within a range": 120}
 tests/fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json
-  launch sectors	not compared, line 93
+  launch sectors	loads agrees, stores agrees
   $L__func_begin0	consistent	20 of 29 with SASS, 14 agreeing
-  sectors	{"exact": 1, "within a range": 1}
+  sectors	{"exact": 1, "within a range": 2}
 tests/fixtures/b200/rope_kv__qwen3-30b-a3b__prefill__sgl_rope_cache._fused_qk_rope_reshape_and_cache_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 148
   $L__func_begin0	consistent	8 of 25 with SASS, 7 agreeing
@@ -298,7 +298,7 @@ tests/fixtures/b200/rope_kv__qwen3-30b-a3b__prefill__sgl_rope_cache._fused_qk_ro
   <block 5>	consistent	7 of 9 with SASS, 7 agreeing
   <block 6>	consistent	30 of 41 with SASS, 30 agreeing
   $L__BB0_7	unchecked	1 of 1 with SASS, 0 agreeing
-  sectors	{"exact": 2, "within a bound": 3, "within a range": 2}
+  sectors	{"exact": 2, "within a bound": 5, "within a range": 2}
 tests/fixtures/b200/routing__deepseek-v3__prefill__grouped_topk.grouped_topk_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
   $L__func_begin0	confirmed	5229 of 6781 with SASS, 4952 agreeing
@@ -366,7 +366,7 @@ tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ncu.
   <block 6>	consistent	1 of 1 with SASS, 1 agreeing
   $L__BB0_7	consistent	16 of 21 with SASS, 16 agreeing
   $L__BB0_8	consistent	2 of 2 with SASS, 2 agreeing
-  sectors	{"exact": 3, "within a bound": 2}
+  sectors	{"exact": 3, "within a bound": 8}
 tests/fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 526
   $L__func_begin0	consistent	83 of 160 with SASS, 35 agreeing
@@ -402,7 +402,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_fwd_kernel.sm_10
   $L__BB0_4	confirmed	35 of 43 with SASS, 28 agreeing
   sectors	{"exact": 2, "within a bound": 15, "within a range": 1}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_varlen_kernel.sm_100a.ncu.json
-  launch sectors	not compared, line 183
+  launch sectors	not compared, line 493
   $L__func_begin0	consistent	97 of 156 with SASS, 63 agreeing
   <block 1>	consistent	48 of 72 with SASS, 35 agreeing
   $L__BB0_2	unchecked	53 of 79 with SASS, 0 agreeing
@@ -411,7 +411,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_varlen_kernel.sm
   <block 5>	consistent	37 of 51 with SASS, 30 agreeing
   $L__BB0_5	consistent	13 of 15 with SASS, 13 agreeing
   $L__BB0_7	confirmed	17 of 24 with SASS, 10 agreeing
-  sectors	{"exact": 2, "within a range": 1}
+  sectors	{"exact": 3, "within a bound": 9, "within a range": 1}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._state_passing_fwd_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 200
   $L__func_begin0	consistent	17 of 25 with SASS, 10 agreeing
@@ -427,7 +427,7 @@ tests/fixtures/b200/ssm__qwen3-next-80b__decode__delta_rule_T64.fused_recurrent_
   $L__BB0_3	consistent	11 of 38 with SASS, 1 agreeing
   sectors	{"exact": 1, "within a range": 21}
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ncu.json
-  launch sectors	not compared, line 131
+  launch sectors	not compared, line 783
   $L__func_begin0	consistent	10 of 14 with SASS, 7 agreeing
   <block 1>	consistent	4 of 8 with SASS, 2 agreeing
   <block 2>	consistent	14 of 21 with SASS, 7 agreeing
@@ -441,7 +441,7 @@ tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kern
   $L__BB0_10	consistent	13 of 35 with SASS, 1 agreeing
   $L__BB0_11	unchecked	31 of 47 with SASS, 0 agreeing
   $L__BB0_12	unchecked	1 of 1 with SASS, 0 agreeing
-  sectors	{"exact": 2, "within a bound": 10}
+  sectors	{"exact": 2, "within a bound": 28}
 tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ncu.json
   launch sectors	not compared, line 544
   $L__func_begin0	confirmed	13 of 16 with SASS, 4 agreeing
@@ -945,7 +945,7 @@ tests/fixtures/gluon/ce_chunk_kernel.sm_89.ncu.json
   $L__BB0_4	consistent	13 of 24 with SASS, 6 agreeing
   $L__BB0_5	confirmed	220 of 263 with SASS, 155 agreeing
   $L__tmp27	confirmed	34 of 35 with SASS, 32 agreeing
-  sectors	{"exact": 3, "within a range": 3}
+  sectors	{"exact": 4, "within a range": 3}
 tests/fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ncu.json
   launch sectors	not compared, line 63
   $L__func_begin0	confirmed	313 of 388 with SASS, 252 agreeing
@@ -953,7 +953,7 @@ tests/fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ncu.json
   $L__BB0_2	consistent	10 of 24 with SASS, 6 agreeing
   $L__BB0_3	confirmed	217 of 265 with SASS, 173 agreeing
   $L__tmp29	confirmed	34 of 35 with SASS, 32 agreeing
-  sectors	{"exact": 3, "within a range": 2}
+  sectors	{"exact": 4, "within a range": 2}
 tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ncu.json
   launch sectors	loads agrees, stores agrees
   $L__func_begin0	confirmed	94 of 149 with SASS, 67 agreeing

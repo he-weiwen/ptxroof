@@ -205,8 +205,10 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   signed `bfe` of one bit (`micro/and_bit_select.ptx`'s
   `micro_and_select_bfe`: "bfe at 2 of 1 bits"; 1,227 census rows stop
   at a one-bit signed `bfe`); values loaded
-  from memory (the cross-entropy's target gather: "depends on a value
-  loaded from memory, behind `selp.b64`"); an `or` whose sides may
+  from memory that may differ between threads (the fused MoE kernel's
+  `cp.async` of the rows `sorted_token_ids` selects, its source line
+  262, `moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel`:
+  "depends on a value loaded from memory"); an `or` whose sides may
   both set a bit, by the bits the affine forms bound (`Affine::may_set`):
   a bitwise or that is no add (`micro/or_disjoint.ptx`'s
   `128·⌊%tid.x/32⌋ | 16·%tid.x`: "or whose sides may both set bit 7"),
@@ -244,14 +246,21 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   bytes unknown (`micro/uniform_address.ptx`, `micro_uniform_in_loop`:
   requested 2048 B, unique unknown).
 - **A global load is taken to read one value for every thread of the
-  CTA** where its address is the same for them and the kernel writes no
-  global memory; PTX ISA §8.5 makes no warp or CTA one observer ("the
-  warp is not a scope"), so this assumes nothing else writes it during
-  the launch: the host, another stream, or a grid before
-  `griddepcontrol.wait`. A store, a `call`, an unclassified instruction
-  naming `.global` and a statement not parsed count as writing; a
-  `.volatile`, `.relaxed`, `.acquire`, `.mmio` or generic load is never
-  one value (`a_global_load_nothing_writes_is_lane_wise`).
+  CTA** where its address is the same for them and no store of the
+  kernel writes through its pointer parameter; PTX ISA §8.5 makes no
+  warp or CTA one observer ("the warp is not a scope"), so this assumes
+  nothing else writes it during the launch: a store through another
+  pointer parameter aliasing it (as the loop footprint assumes, below),
+  the host, another stream, or a grid before `griddepcontrol.wait`. A
+  store whose pointer is not traced to parameters (loaded, from an
+  atomic or another operation the trace does not follow, a symbol, a
+  vector), a `call` and an unclassified instruction naming `.global`
+  count as writing everything; a `.volatile`, `.relaxed`, `.acquire`,
+  `.mmio` or generic load is never one value
+  (`a_global_load_through_a_pointer_nothing_writes_is_lane_wise`). The
+  cross-entropy's target column, its index loaded through param_1, reads
+  `[65536 * %ctaid.x + 2 * uniform(%rd14@86) + param_0]`, 1 sector, as
+  its record measures (`gluon-ce-chunk.test`).
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B
@@ -314,10 +323,10 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `mma.m16n8k16` lines run 3,244,032 warp instructions, 13,287,555,072
   FLOPs.
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 987 have a trip count: 1,445 are mbarrier waits
-  and 399 read loaded values, 24 depend on `%ctaid` (10 through a
-  `selp`, 2 a shift), 95 are grid-stride loops, 1 unpack, 20 atomics,
-  4 divisions, 17 multi-exit.
+  inferred arguments), 1,227 have a trip count: 1,445 are mbarrier
+  waits and 177 read loaded values, 12 depend on `%ctaid` (1 through a
+  `selp`), 95 are grid-stride loops, 1 unpack, 20 atomics, 2
+  divisions, 17 multi-exit.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
@@ -723,11 +732,11 @@ One line each, with the trigger that would start it.
   shape, strides, box and swizzle: the B200 records keep `tensormap:128`
   only (`record_launches.py`), and the reports give TMA instructions no
   access size and 0 sectors.
-- Values loaded from memory as inputs: a loop bounded by one has no
-  count (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
-  the sequence length its `ld.global` at line 64 reads: "latch condition
-  depends on a value loaded from memory"). Trigger: wanting such a
-  kernel's count for given lengths.
+- Values loaded from memory as inputs: a loop bounded by one counts in
+  a symbol `--bind` cannot set
+  (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
+  `uniform(%r4@79)` from the sequence length its `ld.global` at line 64
+  reads). Trigger: wanting such a kernel's count for given lengths.
 - A coverage summary per metric over a corpus: how many trip counts,
   FLOPs, byte totals, addresses and sector lines are exact, bounds or
   unknown. Trigger: comparing coverage between commits, so far done by

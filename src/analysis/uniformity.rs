@@ -20,7 +20,7 @@ use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, SpecialReg, St
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Node {
@@ -43,21 +43,21 @@ pub(crate) struct Uniformity {
 impl Uniformity {
     pub(crate) fn new(t: &AffineValueTracer) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
-        let writes_global = writes_global(t);
+        let written = written(t);
         let defs: BTreeSet<usize> = (t.writes.iter())
             .filter(|(r, _)| matches!(r, Register::Named(_)))
             .flat_map(|(_, ds)| ds.iter().copied())
             .collect();
         for d in defs {
             reads.extend(
-                def_reads(t, d, false, writes_global)
+                def_reads(t, d, false, written.as_ref())
                     .into_iter()
                     .map(|r| (Node::Def(d), r)),
             );
         }
         for &d in t.writes.get(&Register::Cc).into_iter().flatten() {
             reads.extend(
-                def_reads(t, d, true, writes_global)
+                def_reads(t, d, true, written.as_ref())
                     .into_iter()
                     .map(|r| (Node::Carry(d), r)),
             );
@@ -176,13 +176,18 @@ impl Uniformity {
 /// What the registers statement `d` writes depend on, or with
 /// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
 /// guard and the value it keeps where the guard is false.
-fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool, writes_global: bool) -> Vec<Read> {
+fn def_reads(
+    t: &AffineValueTracer,
+    d: usize,
+    carry_out: bool,
+    written: Option<&BTreeSet<usize>>,
+) -> Vec<Read> {
     let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
         return vec![Read::Divergent(
             "comes from a statement not parsed".to_owned(),
         )];
     };
-    if !lane_wise(t, instr, writes_global) {
+    if !lane_wise(t, instr, written) {
         return vec![Read::Divergent(format!(
             "comes from `{}`",
             t.module.opcode(instr)
@@ -303,8 +308,9 @@ fn exits<'a>(t: &'a AffineValueTracer, id: LoopId) -> impl Iterator<Item = Node>
 /// parameter is read-only and one per grid, a function's `.param`, a
 /// call's return value among them, one per thread (PTX ISA §5.1.6,
 /// Table 7). A weak global load reads one value at an address where
-/// nothing writes it during the launch (PTX ISA §8, §9.7.9.8).
-fn lane_wise(t: &AffineValueTracer, instr: &Instr, writes_global: bool) -> bool {
+/// nothing writes it during the launch (PTX ISA §8, §9.7.9.8): its
+/// address points into kernel parameters `written` does not hold.
+fn lane_wise(t: &AffineValueTracer, instr: &Instr, written: Option<&BTreeSet<usize>>) -> bool {
     let module = t.module;
     let mods: Vec<&str> = (module.modifiers(instr).iter())
         .map(|&m| module.interner.resolve(m))
@@ -313,7 +319,7 @@ fn lane_wise(t: &AffineValueTracer, instr: &Instr, writes_global: bool) -> bool 
         && mods.contains(&"global")
         && !(mods.iter()).any(|m| matches!(*m, "volatile" | "relaxed" | "acquire" | "mmio"))
     {
-        return !writes_global;
+        return pointees(t, instr).is_some_and(|p| written.is_some_and(|w| w.is_disjoint(&p)));
     }
     let c = classify(module, instr);
     match c.category {
@@ -329,35 +335,6 @@ fn lane_wise(t: &AffineValueTracer, instr: &Instr, writes_global: bool) -> bool 
         }),
         _ => kernel_param(t, instr).is_some(),
     }
-}
-
-/// The kernel may write global memory: a store, a `call`, an instruction
-/// the classifier does not handle that names `.global`, or a statement
-/// not parsed.
-fn writes_global(t: &AffineValueTracer) -> bool {
-    let module = t.module;
-    (t.cfg.blocks.iter_enumerated()).any(|(_, b)| {
-        t.kernel.stmts[b.start..b.end].iter().any(|stmt| {
-            let instr = match stmt {
-                Stmt::Instr(instr) => instr,
-                Stmt::Unparsed { .. } => return true,
-                _ => return false,
-            };
-            let c = classify(module, instr);
-            let global =
-                (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "global");
-            let stores = c.contributions.iter().any(|k| match k.kind {
-                MeasureKind::Bytes { space, direction }
-                | MeasureKind::UnquantifiedBytes { space, direction } => {
-                    matches!(space, Space::Global | Space::Generic) && direction == Direction::Store
-                }
-                _ => false,
-            });
-            stores
-                || instr.mnemonic == Opcode::Call
-                || c.category == InstructionCategory::Unknown && global
-        })
-    })
 }
 
 /// The kernel parameter an `ld.param` reads.
@@ -376,6 +353,106 @@ fn kernel_param(t: &AffineValueTracer, instr: &Instr) -> Option<usize> {
             _ => None,
         }
     })
+}
+
+/// The kernel parameters the addresses of `instr` may point into, as
+/// LLVM's `getUnderlyingObjects` (llvm/lib/Analysis/ValueTracking.cpp)
+/// collects them; `None` where one is not traced to them.
+fn pointees(t: &AffineValueTracer, instr: &Instr) -> Option<BTreeSet<usize>> {
+    let (mut seen, mut out) = (HashSet::new(), BTreeSet::new());
+    for &o in t.module.operand_ids(instr.operands) {
+        if let Operand::Memory { base, rest, .. } = t.module.operand(o) {
+            for &r in std::iter::once(base).chain(t.module.operand_ids(*rest)) {
+                reach(t, r, &mut seen, &mut out)?;
+            }
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Through every write of a register, the operands of `mov`, `cvta`,
+/// `add`, `sub`, `and`, `or`, `xor`, `min`, `max` and a 64-bit `cvt`,
+/// `selp`'s values and a `mad`'s addend, to the kernel parameters
+/// `ld.param` reads; `mul`, `shl`, `shr`, `div`, `rem`, `neg`, `not`,
+/// `bfe` and a narrower `cvt` make offsets. `None` at anything else, a
+/// symbol, a vector or a statement not parsed.
+fn reach(
+    t: &AffineValueTracer,
+    op: OperandId,
+    seen: &mut HashSet<Symbol>,
+    out: &mut BTreeSet<usize>,
+) -> Option<()> {
+    let reg = match t.module.operand(op) {
+        Operand::Register(r) => *r,
+        Operand::SymbolRef(_) | Operand::VectorList { .. } => return None,
+        _ => return Some(()),
+    };
+    if !seen.insert(reg) {
+        return Some(());
+    }
+    for &d in t.writes.get(&Register::Named(reg)).into_iter().flatten() {
+        let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
+            return None;
+        };
+        let ops = t.module.operand_ids(instr.operands);
+        let wide = (t.module.modifiers(instr).last())
+            .is_some_and(|&m| t.module.interner.resolve(m).ends_with("64"));
+        let from = match instr.mnemonic {
+            Opcode::Mov | Opcode::Cvta | Opcode::Add | Opcode::Sub => &ops[1..],
+            Opcode::And | Opcode::Or | Opcode::Xor | Opcode::Min | Opcode::Max => &ops[1..],
+            Opcode::Cvt if wide => &ops[1..],
+            Opcode::Selp => ops.get(1..3)?,
+            Opcode::Mad => &ops[ops.len() - 1..],
+            Opcode::Ld => {
+                out.insert(kernel_param(t, instr)?);
+                &[]
+            }
+            Opcode::Mul | Opcode::Shl | Opcode::Shr | Opcode::Div | Opcode::Rem => &[],
+            Opcode::Neg | Opcode::Not | Opcode::Bfe | Opcode::Cvt => &[],
+            _ => return None,
+        };
+        for &o in from {
+            reach(t, o, seen, out)?;
+        }
+    }
+    Some(())
+}
+
+/// The kernel parameters a store may write global memory through; `None`
+/// where one may write anywhere: a store `pointees` does not trace, a
+/// `call`, an instruction the classifier does not handle that names
+/// `.global`, or a statement not parsed.
+fn written(t: &AffineValueTracer) -> Option<BTreeSet<usize>> {
+    let module = t.module;
+    let mut out = BTreeSet::new();
+    for (_, b) in t.cfg.blocks.iter_enumerated() {
+        for stmt in &t.kernel.stmts[b.start..b.end] {
+            let instr = match stmt {
+                Stmt::Instr(instr) => instr,
+                Stmt::Unparsed { .. } => return None,
+                _ => continue,
+            };
+            let c = classify(module, instr);
+            let global =
+                (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "global");
+            if instr.mnemonic == Opcode::Call
+                || c.category == InstructionCategory::Unknown && global
+            {
+                return None;
+            }
+            let stores = c.contributions.iter().any(|k| match k.kind {
+                MeasureKind::Bytes { space, direction }
+                | MeasureKind::UnquantifiedBytes { space, direction } => {
+                    matches!(space, Space::Global | Space::Generic) && direction == Direction::Store
+                }
+                _ => false,
+            });
+            if stores {
+                out.extend(pointees(t, instr)?);
+            }
+        }
+    }
+    Some(out)
 }
 
 fn read_special(reg: SpecialReg) -> Read {
@@ -502,10 +579,10 @@ mod tests {
     }
 
     /// A weak global load is one value for the CTA where its address is
-    /// and the kernel writes no global memory; `%rd1` is param_0 +
-    /// 4·%ctaid.x.
+    /// and no store of the kernel may write through its pointer
+    /// parameter; `%rd1` is param_0 + 4·%ctaid.x.
     #[test]
-    fn a_global_load_nothing_writes_is_lane_wise() {
+    fn a_global_load_through_a_pointer_nothing_writes_is_lane_wise() {
         let load = |ld: &str, rest: &str| {
             let src = format!(
                 ".version 8.7\n.target sm_80\n.address_size 64\n\
@@ -520,10 +597,29 @@ mod tests {
         assert_eq!(load("ld.global.u32", ""), Ok(()));
         assert_eq!(load("ld.global.nc.L1::evict_last.u32", ""), Ok(()));
         let elsewhere = "st.global.u32 [%rd9], 0;";
-        assert_eq!(load("ld.global.u32", elsewhere), from("ld.global.u32"));
+        assert_eq!(load("ld.global.u32", elsewhere), Ok(()));
+        let written = "st.global.u32 [%rd1], 0;";
+        assert_eq!(load("ld.global.u32", written), from("ld.global.u32"));
         let volatile = "ld.volatile.global.u32";
         assert_eq!(load(volatile, ""), from(volatile));
         assert_eq!(load("ld.u32", ""), from("ld.u32"));
+        // A store through a pointer loaded from memory may write anywhere;
+        // an index loaded from memory is an offset from its pointer.
+        let scatter = "ld.global.u64 %rd5, [%rd9];\nst.global.u32 [%rd5], 0;";
+        assert_eq!(load("ld.global.u32", scatter), from("ld.global.u32"));
+        let gather = "ld.global.u32 %r5, [%rd9];\nmul.wide.u32 %rd6, %r5, 4;\n\
+                      add.s64 %rd7, %rd9, %rd6;\nst.global.u32 [%rd7], 0;";
+        assert_eq!(load("ld.global.u32", gather), Ok(()));
+        let masked = "and.b64 %rd8, %rd0, -16;\nst.global.u32 [%rd8], 0;";
+        assert_eq!(load("ld.global.u32", masked), from("ld.global.u32"));
+        // A pointer through `cvt.u64.s64` keeps its parameter, and one
+        // from an atomic may point anywhere.
+        let selected = "cvt.u64.s64 %rd3, %rd0;\nselp.b64 %rd4, %rd9, %rd3, %p1;\n\
+                        st.global.u32 [%rd4], 0;";
+        assert_eq!(load("ld.global.u32", selected), from("ld.global.u32"));
+        let swapped = "atom.global.exch.b64 %rd3, [%rd9], 0;\n\
+                       selp.b64 %rd4, %rd9, %rd3, %p1;\nst.global.u32 [%rd4], 0;";
+        assert_eq!(load("ld.global.u32", swapped), from("ld.global.u32"));
     }
 
     #[test]
