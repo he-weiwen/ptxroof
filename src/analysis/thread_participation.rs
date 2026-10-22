@@ -21,7 +21,7 @@ use crate::analysis::instruction_counts::classify::cp_async_size_operand;
 use crate::analysis::scalar::affine::{Affine, Axis, Cmp, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
 use crate::analysis::scalar::symexpr::SymExpr;
-use crate::analysis::scalar::trace::AffineValueTracer;
+use crate::analysis::scalar::trace::{AffineValueTracer, IntKind, IntType};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Kernel, Module, Opcode, Operand, Register, Stmt};
@@ -1274,18 +1274,20 @@ fn condition(
         Var::Ctaid(_) | Var::Iter(_) => tracer.bound(v),
         _ => any_block(v),
     };
-    let fits = |x: &Affine, min: i128, end: i128| {
+    let fits = |x: &Affine, (min, end): (i128, i128)| {
         (x.range(&range)).is_some_and(|(lo, hi)| min <= lo && hi < end)
     };
-    let (sign, width) = ty.split_at_checked(1).unwrap_or_default();
+    let int = IntType::from_name(ty);
     let comparable = |a: &Affine, b: &Affine| {
-        width.parse::<u32>().is_ok_and(|w| match (cmp, sign) {
-            (Cmp::Eq | Cmp::Ne, _) => fits(&(a.clone() - b.clone()), 1 - (1 << w), 1 << w),
-            (_, "u") => fits(a, 0, 1 << w) && fits(b, 0, 1 << w),
-            (_, "s") => {
-                fits(a, -1 << (w - 1), 1 << (w - 1)) && fits(b, -1 << (w - 1), 1 << (w - 1))
+        int.is_some_and(|int| match (cmp, int.kind) {
+            (Cmp::Eq | Cmp::Ne, _) => {
+                let w = 1i128 << int.width;
+                fits(&(a.clone() - b.clone()), (1 - w, w))
             }
-            _ => false,
+            (_, IntKind::Unsigned | IntKind::Signed) => {
+                fits(a, int.values()) && fits(b, int.values())
+            }
+            (_, IntKind::Bits) => false,
         })
     };
     let constant = |op| {

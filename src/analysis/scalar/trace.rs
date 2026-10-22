@@ -630,25 +630,17 @@ impl<'a> AffineValueTracer<'a> {
             // conversion changes the value's bits.
             Opcode::Cvt => {
                 let opcode = self.module.opcode(instr);
-                let types: Vec<(u32, i128, i128)> =
-                    mods.iter().filter_map(|m| int_type_range(m)).collect();
+                let types: Vec<IntType> =
+                    mods.iter().filter_map(|m| IntType::from_name(m)).collect();
                 let numeric = mods.iter().filter(|m| m.contains(char::is_numeric)).count();
-                let [to, from] = types[..] else {
+                let (&[to, from], 2) = (&types[..], numeric) else {
                     return Err(format!("`{opcode}` is not an integer conversion"));
                 };
-                if numeric != 2 {
-                    return Err(format!("`{opcode}` is not an integer conversion"));
-                }
                 let a =
                     self.trace_operand(*ops.last().expect("cvt has operands"), def, id, depth + 1)?;
-                let bound_a = match self.bindings {
-                    Some(b) => a.bind(b),
-                    None => a.clone(),
-                };
-                let range = bound_a.range(&|v| self.bound(v));
-                for (width, lo, hi) in [from, to] {
-                    if range.is_some_and(|(x, y)| x < lo || y >= hi) {
-                        return Err(format!("`{opcode}` leaves {width} bits"));
+                for ty in [from, to] {
+                    if !self.within(&a, ty.values()) {
+                        return Err(format!("`{opcode}` leaves {} bits", ty.width));
                     }
                 }
                 Ok(a)
@@ -764,7 +756,7 @@ impl<'a> AffineValueTracer<'a> {
                 let signed = mods.iter().any(|m| m.starts_with('s'));
                 if signed && pos == 0 {
                     let half = 1i128 << (len.clamp(1, 64) - 1);
-                    return match self.within(&a, -half, half) {
+                    return match self.within(&a, (-half, half)) {
                         false => Err(format!("bfe of {len} bits leaves them")),
                         true => Ok(a),
                     };
@@ -798,9 +790,12 @@ impl<'a> AffineValueTracer<'a> {
                 // PTX ISA §9.7.8.9: "Signed shifts fill with the sign bit,
                 // unsigned and untyped shifts fill with 0", of the value as
                 // the type reads it.
-                if let Some(&ty) = mods.iter().find(|m| int_type_range(m).is_some())
-                    && let Some((_, lo, hi)) = int_type_range(ty)
-                    && !self.within(&v, if ty.starts_with('s') { lo } else { 0 }, hi)
+                if let Some(ty) = IntType::of(&mods)
+                    && let read = match ty.kind {
+                        IntKind::Signed => ty.values(),
+                        IntKind::Unsigned | IntKind::Bits => ty.nonnegative(),
+                    }
+                    && !self.within(&v, read)
                 {
                     let opcode = self.module.opcode(instr);
                     return Err(format!("`{opcode}` reads a value its type does not hold"));
@@ -825,7 +820,7 @@ impl<'a> AffineValueTracer<'a> {
                 // bit" — in this tracer's nonnegative domain that bit is 0
                 // unless the value is known negative, so shifting it down is
                 // nvcc's `x / 2^n` sign fix-up.
-                if signed_width == Some(c + 1) && self.within(&v, 0, i128::MAX) {
+                if signed_width == Some(c + 1) && self.within(&v, (0, i128::MAX)) {
                     return Ok(Affine::invariant(SymExpr::Const(0)));
                 }
                 if (0..63).contains(&c) {
@@ -838,8 +833,8 @@ impl<'a> AffineValueTracer<'a> {
                 let (a, b) = (arg(1)?, arg(2)?);
                 // PTX ISA §9.7.1.10: a negative number's remainder, and so
                 // the quotient's rounding, is machine-dependent.
-                if let Some((_, _, hi)) = mods.iter().find_map(|m| int_type_range(m))
-                    && !(self.within(&a, 0, hi) && self.within(&b, 0, hi))
+                if let Some(ty) = IntType::of(&mods)
+                    && !(self.within(&a, ty.nonnegative()) && self.within(&b, ty.nonnegative()))
                 {
                     let opcode = self.module.opcode(instr);
                     return Err(format!("`{opcode}` of a value that may be negative"));
@@ -927,14 +922,14 @@ impl<'a> AffineValueTracer<'a> {
             // that type reads both operands; `.relu` and the packed types
             // are other operations.
             Opcode::Min | Opcode::Max
-                if ops.len() == 3 && mods.len() == 1 && int_type_range(mods[0]).is_some() =>
+                if ops.len() == 3 && mods.len() == 1 && IntType::of(&mods).is_some() =>
             {
                 let (a, b) = (per_cta(arg(1)?), per_cta(arg(2)?));
                 if !(a.is_invariant() && b.is_invariant()) {
                     return Err(refuse(&(a + b), id, mnemonic.name()));
                 }
-                if let Some((_, lo, hi)) = int_type_range(mods[0])
-                    && !(self.within(&a, lo, hi) && self.within(&b, lo, hi))
+                if let Some(ty) = IntType::of(&mods)
+                    && !(self.within(&a, ty.values()) && self.within(&b, ty.values()))
                 {
                     let opcode = self.module.opcode(instr);
                     return Err(format!("`{opcode}` of a value its type does not hold"));
@@ -1051,14 +1046,14 @@ impl<'a> AffineValueTracer<'a> {
     /// §9.7.1.3, §9.7.1.4): one whose range over the known launch and
     /// constant trip counts the type does not hold is refused.
     fn wide_operands(&self, ops: &[&Affine], instr: &Instr, mods: &[&str]) -> Result<(), String> {
-        let Some((_, lo, hi)) = (mods.contains(&"wide"))
-            .then(|| mods.iter().find_map(|m| int_type_range(m)))
+        let Some(ty) = (mods.contains(&"wide"))
+            .then(|| IntType::of(mods))
             .flatten()
         else {
             return Ok(());
         };
         for a in ops {
-            if !self.within(a, lo, hi) {
+            if !self.within(a, ty.values()) {
                 let opcode = self.module.opcode(instr);
                 return Err(format!("`{opcode}` reads a value its type does not hold"));
             }
@@ -1068,7 +1063,7 @@ impl<'a> AffineValueTracer<'a> {
 
     /// `a`'s range over the known launch and constant trip counts lies in
     /// [lo, hi), or is unknown.
-    fn within(&self, a: &Affine, lo: i128, hi: i128) -> bool {
+    fn within(&self, a: &Affine, (lo, hi): (i128, i128)) -> bool {
         let bound = self.bindings.map_or(a.clone(), |m| a.bind(m));
         (bound.range(&|v| self.bound(v))).is_none_or(|(x, y)| lo <= x && y < hi)
     }
@@ -1082,18 +1077,13 @@ impl<'a> AffineValueTracer<'a> {
             Opcode::Mul | Opcode::Mad => mods.contains(&"lo"),
             _ => false,
         };
-        let Some((width, lo, hi)) = mods.iter().rev().find_map(|m| type_range(m)) else {
-            return Ok(value);
-        };
-        let bound = |v: &Var| self.bound(v);
-        let bound_value = match self.bindings {
-            Some(b) => value.bind(b),
-            None => value.clone(),
-        };
-        match bound_value.range(&bound) {
-            Some((a, b)) if checked && (a < lo || b >= hi) => Err(format!(
-                "`{}` leaves {width} bits",
-                self.module.opcode(instr)
+        let ty = (mods.iter().rev())
+            .find_map(|m| IntType::from_name(m).filter(|ty| matches!(ty.width, 16 | 32)));
+        match ty {
+            Some(ty) if checked && !self.within(&value, ty.values()) => Err(format!(
+                "`{}` leaves {} bits",
+                self.module.opcode(instr),
+                ty.width
             )),
             _ => Ok(value),
         }
@@ -1194,26 +1184,56 @@ impl<'a> AffineValueTracer<'a> {
     }
 }
 
-/// A 16- or 32-bit integer type's width and the values it reads, a `b`
-/// bit pattern either way.
-fn type_range(m: &str) -> Option<(u32, i128, i128)> {
-    int_type_range(m).filter(|(w, _, _)| matches!(w, 16 | 32))
+/// An integer type of 8 to 64 bits: unsigned `.u`, signed `.s`, or a
+/// `.b` bit pattern (PTX ISA §5.2.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct IntType {
+    pub(crate) kind: IntKind,
+    pub(crate) width: u32,
 }
 
-/// An integer type's width and the values it reads: `u`, `s`, and a `b`
-/// bit pattern either way.
-fn int_type_range(m: &str) -> Option<(u32, i128, i128)> {
-    let (kind, width) = m.split_at_checked(1)?;
-    let width: u32 = width
-        .parse()
-        .ok()
-        .filter(|w| matches!(w, 8 | 16 | 32 | 64))?;
-    let (lo, hi) = (-(1i128 << (width - 1)), 1i128 << width);
-    match kind {
-        "u" => Some((width, 0, hi)),
-        "s" => Some((width, lo, 1i128 << (width - 1))),
-        "b" => Some((width, lo, hi)),
-        _ => None,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IntKind {
+    Unsigned,
+    Signed,
+    Bits,
+}
+
+impl IntType {
+    /// The type a modifier names, `u32`.
+    pub(crate) fn from_name(m: &str) -> Option<IntType> {
+        let (kind, width) = m.split_at_checked(1)?;
+        let width = width
+            .parse()
+            .ok()
+            .filter(|w| matches!(w, 8 | 16 | 32 | 64))?;
+        let kind = match kind {
+            "u" => IntKind::Unsigned,
+            "s" => IntKind::Signed,
+            "b" => IntKind::Bits,
+            _ => return None,
+        };
+        Some(IntType { kind, width })
+    }
+
+    /// The first integer type among an instruction's modifiers.
+    fn of(mods: &[&str]) -> Option<IntType> {
+        mods.iter().find_map(|m| IntType::from_name(m))
+    }
+
+    /// The values the type reads, [lo, hi): a bit pattern as either sign.
+    pub(crate) fn values(self) -> (i128, i128) {
+        let (half, full) = (1i128 << (self.width - 1), 1i128 << self.width);
+        match self.kind {
+            IntKind::Unsigned => (0, full),
+            IntKind::Signed => (-half, half),
+            IntKind::Bits => (-half, full),
+        }
+    }
+
+    /// The values it reads that are not negative.
+    fn nonnegative(self) -> (i128, i128) {
+        (0, self.values().1)
     }
 }
 
