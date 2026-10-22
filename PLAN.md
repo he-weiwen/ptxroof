@@ -711,14 +711,14 @@ One line each, with the trigger that would start it.
   and executions (`kernels[].measured_totals`; the text's `measured
   L1TEX sectors of global loads over the launch`;
   `tests/lit/micro-ldgsts-p0.test`, `gluon-counter-guard.test`: the
-  sum includes the lines the `P0` rule leaves without sectors). In 36
-  records both agree. 27 have a line not predicted so (ce_chunk's
+  sum includes the lines the `P0` rule leaves without sectors). In 38
+  records both agree. 25 have a line not predicted so (ce_chunk's
   `ld.global.b64` that ptxas loads as 32-bit `LDG.E`), and the gated
   rmsnorm record has no counts. `tests/ncu_corpus.rs` keeps
   every record's block verdicts, their counts, its sector lines by
   outcome and its launch totals in one snapshot: 137 blocks confirmed,
-  274 consistent, 499 unchecked; 949 sector lines agree, none differ,
-  2 not compared; 36 launches' totals agree. `ci.sh` measures every record again on the GPU it
+  274 consistent, 499 unchecked; 1,414 sector lines agree, none differ,
+  2 not compared; 38 launches' totals agree. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed; a record of
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.

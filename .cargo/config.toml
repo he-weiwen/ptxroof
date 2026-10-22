@@ -1,0 +1,6 @@
+# A test runs on a thread of 2 MiB unless RUST_MIN_STACK says otherwise
+# (https://doc.rust-lang.org/std/thread/#stack-size); an unoptimized
+# value trace takes about 26 KiB per definition it follows, 3.5 MiB for
+# the rope_kv record's deepest address.
+[env]
+RUST_MIN_STACK = "8388608"

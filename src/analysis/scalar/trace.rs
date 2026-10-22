@@ -31,6 +31,9 @@ use crate::support::intern::Symbol;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 
+/// How many definitions deep a trace follows a value before giving up.
+const DEPTH_LIMIT: u32 = 256;
+
 pub(crate) struct AffineValueTracer<'a> {
     pub(crate) module: &'a Module,
     pub(crate) kernel: &'a Kernel,
@@ -572,7 +575,7 @@ impl<'a> AffineValueTracer<'a> {
     }
 
     fn trace_value(&self, v: Value, id: Option<LoopId>, depth: u32) -> Result<Affine, String> {
-        if depth > 32 {
+        if depth > DEPTH_LIMIT {
             return Err("value trace exceeds depth limit".to_owned());
         }
         let (def, reg) = match v {
@@ -1040,7 +1043,7 @@ impl<'a> AffineValueTracer<'a> {
         let Stmt::Instr(instr) = &self.kernel.stmts[op] else {
             return None;
         };
-        if instr.mnemonic != Opcode::Mov || depth > 32 {
+        if instr.mnemonic != Opcode::Mov || depth > DEPTH_LIMIT {
             return None;
         }
         if self.strict.get() > 0 && instr.predicate.is_some() {
