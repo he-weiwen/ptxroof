@@ -1165,6 +1165,22 @@ mod tests {
         assert_eq!(trips(times, Some(3)), Ok("max(uniform(%r9), 1)".to_owned()));
     }
 
+    /// A guard that sums its bound in the other order than the latch
+    /// tests the same value.
+    #[test]
+    fn a_guard_summing_in_the_other_order_is_the_loops_guard() {
+        let src = kernel_with(
+            ".param .u32 k_param_0,\n.param .u32 k_param_1",
+            "ld.param.u32 %r1, [k_param_0];\nld.param.u32 %r5, [k_param_1];\n\
+             add.s32 %r6, %r1, %r5;\nadd.s32 %r7, %r5, %r1;\n\
+             setp.lt.s32 %p1, %r6, 11;\n@%p1 bra $L__E;\nmov.u32 %r2, 10;\n\
+             $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p2, %r2, %r7;\n\
+             @%p2 bra $L__L;\n$L__E:\nret;",
+        );
+        let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
+        assert_eq!(trips, Ok("max(param_0 + param_1 - 10, 0)".to_owned()));
+    }
+
     /// A guard skipping a loop from 0 below n where `n == 0` tests its
     /// latch at k = 0, `0 < n`, as n is never negative; one where `n != 0`
     /// or `n == 5` does not.

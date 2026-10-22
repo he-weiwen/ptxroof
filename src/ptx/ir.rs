@@ -133,7 +133,7 @@ impl SpecialVector {
 
 /// A vector element: "`.x`, `.y`, `.z` and `.w`, as well as the typical
 /// color fields `.r`, `.g`, `.b` and `.a`" (PTX ISA §6.4.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Element {
     X,
     Y,
@@ -163,7 +163,7 @@ impl Element {
 }
 
 /// A special register, as listed at the head of PTX ISA §10.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SpecialReg {
     /// `None` reads the whole vector.
     Vector(SpecialVector, Option<Element>),

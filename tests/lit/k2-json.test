@@ -19,17 +19,17 @@ RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx --json | %check-report "%s"
       ],
       "totals": {
         "flops": {
-          "total": {"expr": "8 * ((param_2 - param_2 mod 4) / 4) + 2 * (param_2 mod 4) + 3", "at_most": true},
-          "f32": {"expr": "8 * ((param_2 - param_2 mod 4) / 4) + 2 * (param_2 mod 4) + 3", "at_most": true},
+          "total": {"expr": "2 * (param_2 mod 4) + 8 * ((param_2 - param_2 mod 4) / 4) + 3", "at_most": true},
+          "f32": {"expr": "2 * (param_2 mod 4) + 8 * ((param_2 - param_2 mod 4) / 4) + 3", "at_most": true},
           "f16": {"expr": "0", "at_most": false}
         },
         "bytes": {
           "global": {
-            "load": {"expr": "16 * ((param_2 - param_2 mod 4) / 4) + 4 * (param_2 mod 4) + 2", "at_most": true},
+            "load": {"expr": "4 * (param_2 mod 4) + 16 * ((param_2 - param_2 mod 4) / 4) + 2", "at_most": true},
             "store": {"expr": "2", "at_most": true}
           }
         },
-        "conversions": {"expr": "8 * ((param_2 - param_2 mod 4) / 4) + 2 * (param_2 mod 4) + 2", "at_most": true}
+        "conversions": {"expr": "2 * (param_2 mod 4) + 8 * ((param_2 - param_2 mod 4) / 4) + 2", "at_most": true}
       },
       "unknowns": []
     }

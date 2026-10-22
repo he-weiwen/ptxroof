@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 /// What a symbol stands for.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Leaf {
     /// Kernel parameter `i`'s value, `param_i`.
     Param(usize),
@@ -61,16 +61,18 @@ impl fmt::Display for Leaf {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SymExpr {
     Const(i64),
     Sym(Leaf),
-    /// n-ary sum; invariant: ≥ 2 terms, no nested `Sum`, constants
-    /// folded into one trailing term while they fit in `i64` (an
-    /// overflowing constant stays as its own term — never wraps).
+    /// n-ary sum; invariant: ≥ 2 terms in `Ord` order, positive ones
+    /// first, no nested `Sum`, constants folded into one trailing term
+    /// while they fit in `i64` (an overflowing constant stays as its own
+    /// term — never wraps).
     Sum(Vec<SymExpr>),
     /// n-ary product; invariant: ≥ 2 factors, no nested `Prod`,
-    /// constants folded into one leading factor while they fit.
+    /// constants folded into one leading factor while they fit, the
+    /// others in `Ord` order.
     Prod(Vec<SymExpr>),
     /// `⌈e/c⌉`, c > 0.
     CeilDiv(Box<SymExpr>, i64),
@@ -252,11 +254,13 @@ impl SymExpr {
             }
         }
         terms.extend(kept);
+        terms.sort();
         if konst != 0 || terms.is_empty() {
             terms.push(SymExpr::Const(konst));
         }
-        // Canonical order: positive terms first, negated terms last
-        // (stable), so differences print as `a - b`, never `-(b) + a`.
+        // Positive terms first, negated terms last, each in `Ord` order:
+        // equal sums are equal, and differences print as `a - b`, never
+        // `-(b) + a`.
         terms.sort_by_key(|t| match t {
             SymExpr::Const(c) => *c < 0,
             SymExpr::Prod(fs) => matches!(fs.first(), Some(SymExpr::Const(c)) if *c < 0),
@@ -316,6 +320,7 @@ impl SymExpr {
                 other => factors.push(other),
             }
         }
+        factors.sort();
         factors.extend(overflowed);
         if konst == 0 {
             return SymExpr::Const(0);
@@ -703,7 +708,7 @@ mod tests {
         let total = E::add(E::add(main, rem), E::Const(3));
         assert_eq!(
             total.to_string(),
-            "8 * ((param_2 - param_2 mod 4) / 4) + 2 * (param_2 mod 4) + 3"
+            "2 * (param_2 mod 4) + 8 * ((param_2 - param_2 mod 4) / 4) + 3"
         );
         assert_eq!(total.bind(&bindings(&[(2, 4096)])), E::Const(8195));
         // 8*1024 + 2*0 + 3
@@ -768,13 +773,22 @@ mod tests {
     }
 
     #[test]
+    fn sums_and_products_in_either_order_are_equal() {
+        let (p, q) = (E::sym("p"), E::sym("q"));
+        assert_eq!(E::add(p.clone(), q.clone()), E::add(q.clone(), p.clone()));
+        assert_eq!(E::mul(p.clone(), q.clone()), E::mul(q.clone(), p.clone()));
+        let four_p = E::mul(E::Const(4), p);
+        assert_eq!(E::add(four_p.clone(), q.clone()), E::add(q, four_p));
+    }
+
+    #[test]
     fn symbols_are_collected_once_in_order() {
         let e = E::add(
             E::mul(E::sym("b"), E::sym("a")),
             E::ceil_div(E::sym("a"), 4),
         );
         let name = |s: &str| Leaf::Symbol(s.to_owned());
-        assert_eq!(e.symbols(), [name("b"), name("a")]);
+        assert_eq!(e.symbols(), [name("a"), name("b")]);
         assert_eq!(E::Const(3).symbols(), []);
     }
 
