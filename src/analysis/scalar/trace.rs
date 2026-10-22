@@ -28,7 +28,7 @@ use crate::ptx::ir::{
 use crate::ptx::literal::parse_int;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
-use std::cell::{Cell, OnceCell, RefCell};
+use std::cell::{OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 /// How many definitions deep a trace follows a value before giving up.
@@ -55,9 +55,9 @@ pub(crate) struct AffineValueTracer<'a> {
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<String, i64>>,
     uniformity: OnceCell<Uniformity>,
-    /// Tracing an address that does not read otherwise: a uniform read
-    /// the trace cannot interpret is a `Var::Uniform`.
-    fallback: Cell<bool>,
+    /// Why the trace in progress first read a uniform value it cannot
+    /// interpret as a `Var::Uniform`.
+    unread: RefCell<Option<String>>,
     /// A value's name in a trip count's symbol, `%r19@69`.
     value_names: Option<&'a dyn Fn(Value) -> String>,
 }
@@ -125,7 +125,7 @@ impl<'a> AffineValueTracer<'a> {
             trips: RefCell::new(HashMap::new()),
             bindings: None,
             uniformity: OnceCell::new(),
-            fallback: Cell::new(false),
+            unread: RefCell::new(None),
             value_names: None,
         }
     }
@@ -361,11 +361,11 @@ impl<'a> AffineValueTracer<'a> {
         };
         match self.trace_value(v, id, depth) {
             Ok(a) => Ok(self.after_exits(a, pos)),
-            Err(_)
-                if self.fallback.get()
-                    && !matches!(v, Value::Undef(_))
+            Err(why)
+                if !matches!(v, Value::Undef(_))
                     && self.uniformity().is_uniform(self, reg, pos).is_ok() =>
             {
+                self.unread.borrow_mut().get_or_insert(why);
                 Ok(Affine::var(Var::Uniform(v)))
             }
             Err(why) => Err(why),
@@ -488,7 +488,7 @@ impl<'a> AffineValueTracer<'a> {
     fn step(&self, l: LoopId, step: &Step, depth: u32) -> Result<SymExpr, Option<String>> {
         let mut sum = SymExpr::Const(step.constant);
         for &(reg, at, sign) in &step.registers {
-            let s = self.without_fallback(|| self.trace_reg(reg, at, Some(l), depth + 1));
+            let s = self.first_reason(|| self.trace_reg(reg, at, Some(l), depth + 1));
             let s = s.map_err(|_| None)?;
             if !s.is_invariant() {
                 return Err(None);
@@ -509,34 +509,26 @@ impl<'a> AffineValueTracer<'a> {
         self.uniformity.get_or_init(|| Uniformity::new(self))
     }
 
-    /// Memory operand `op`'s address at `pos`; one that does not read is
-    /// read again, each uniform read it cannot interpret a variable.
+    /// Memory operand `op`'s address at `pos`.
     pub(crate) fn trace_address(
         &self,
         op: OperandId,
         pos: usize,
         id: Option<LoopId>,
     ) -> Result<Affine, String> {
-        self.trace_operand(op, pos, id, 0).or_else(|why| {
-            let a = self.with_fallback(|| self.trace_operand(op, pos, id, 0));
-            a.map_err(|_| why)
-        })
+        self.first_reason(|| self.trace_operand(op, pos, id, 0))
     }
 
-    /// `f` with each uniform read it cannot interpret a variable.
-    pub(crate) fn with_fallback<T>(&self, f: impl FnOnce() -> T) -> T {
-        let on = self.fallback.replace(true);
+    /// `f`, failing for the first reason it read a uniform value as a
+    /// variable, if it did.
+    pub(crate) fn first_reason<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let outer = self.unread.take();
         let t = f();
-        self.fallback.set(on);
-        t
-    }
-
-    /// `f` with no uniform variable.
-    pub(crate) fn without_fallback<T>(&self, f: impl FnOnce() -> T) -> T {
-        let on = self.fallback.replace(false);
-        let t = f();
-        self.fallback.set(on);
-        t
+        let first = self.unread.replace(outer);
+        t.map_err(|why| first.unwrap_or(why))
     }
 
     /// Loop `l`'s trip count when it is a constant of at least 1 under the

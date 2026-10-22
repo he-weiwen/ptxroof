@@ -172,11 +172,10 @@ pub(crate) fn loop_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> TripCoun
 /// distance and step.
 type Counted = (SymExpr, BlockId, Option<(SymExpr, i64)>);
 
-/// The latch read, else with each uniform value it cannot read a
-/// variable, keeping the first reason.
+/// The latch read with each uniform value it cannot interpret a
+/// variable.
 fn counted_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
-    let latch = || latch_trips(tracer, id);
-    (tracer.without_fallback(latch)).or_else(|why| tracer.with_fallback(latch).map_err(|_| why))
+    tracer.first_reason(|| latch_trips(tracer, id))
 }
 
 fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
