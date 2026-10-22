@@ -921,8 +921,7 @@ impl<'a> KernelReportBuilder<'a> {
         let cfg = build_cfg(module, kernel);
         let forest = loop_forest(&cfg);
         let names = loop_names(module, kernel, &cfg, &forest);
-        let name = |v| Self::value_name(module, kernel, &cfg, lines, v);
-        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names, bind_map, &name);
+        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names, bind_map);
         let blocks = collect(module, kernel, &cfg, &forest);
 
         let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
@@ -1158,10 +1157,14 @@ impl<'a> KernelReportBuilder<'a> {
     }
 
     /// A symbol as the report prints it: a loop's unknown count by the
-    /// loop's name.
+    /// loop's name, a uniform value by its register and line.
     fn leaf_name(&self, leaf: &Leaf) -> String {
         match leaf {
             Leaf::Trips(l) => format!("trips({})", self.display[l.0 as usize]),
+            Leaf::Uniform(v) => format!(
+                "uniform({})",
+                Self::value_name(self.module, self.kernel, &self.cfg, self.lines, *v)
+            ),
             other => other.to_string(),
         }
     }
@@ -1293,10 +1296,11 @@ impl<'a> KernelReportBuilder<'a> {
     /// Loop `l`'s count reads the CTA index, or a uniform value, one per
     /// CTA.
     fn trips_per_cta(&self, l: LoopId) -> bool {
-        (self.trip_exprs[l.0 as usize].symbols().iter()).any(|s| match s {
-            Leaf::Special(SpecialReg::Vector(SpecialVector::Ctaid, _)) => true,
-            Leaf::Symbol(name) => name.starts_with("uniform("),
-            _ => false,
+        (self.trip_exprs[l.0 as usize].symbols().iter()).any(|s| {
+            matches!(
+                s,
+                Leaf::Special(SpecialReg::Vector(SpecialVector::Ctaid, _)) | Leaf::Uniform(_)
+            )
         })
     }
 

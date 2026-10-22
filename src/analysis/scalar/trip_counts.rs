@@ -75,8 +75,7 @@ pub struct TripCountResults {
 }
 
 /// Every loop's trip count, its latch traced under `bindings` (`--bind`,
-/// the launch shape) where a constant is needed, a uniform value it
-/// cannot read named by `value_name`.
+/// the launch shape) where a constant is needed.
 pub fn trip_counts(
     module: &Module,
     kernel: &Kernel,
@@ -84,10 +83,8 @@ pub fn trip_counts(
     forest: &LoopForest,
     names: &[LoopName],
     bindings: &HashMap<Leaf, i64>,
-    value_name: &dyn Fn(Value) -> String,
 ) -> TripCountResults {
-    let tracer = (AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings))
-        .with_value_names(value_name);
+    let tracer = AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings);
     let (mut trips, mut entries, mut distances) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..forest.loops.len() as u32 {
         let (t, entry, distance) = match counted_trips(&tracer, LoopId(i)) {
@@ -443,7 +440,7 @@ fn uniform_symbols(
         return None;
     }
     Some(as_symbols(a, &|v| match v {
-        Var::Uniform(u) => Some(SymExpr::sym(format!("uniform({})", tracer.value_name(*u)))),
+        Var::Uniform(u) => Some(SymExpr::Sym(Leaf::Uniform(*u))),
         _ => None,
     }))
 }
@@ -695,12 +692,32 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, bindings, &register(&m));
+        let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
         names
             .into_iter()
             .zip(info.trips)
-            .map(|(n, t)| (n.display, t))
+            .map(|(n, t)| (n.display, t.map(|t| by_register(&m, t))))
             .collect()
+    }
+
+    /// `e` with each uniform value a symbol named by its register.
+    fn by_register(m: &Module, e: SymExpr) -> SymExpr {
+        let all = |es: Vec<SymExpr>, f: fn(SymExpr, SymExpr) -> SymExpr| {
+            (es.into_iter().map(|x| by_register(m, x)))
+                .reduce(f)
+                .expect("a sum or product has terms")
+        };
+        match e {
+            SymExpr::Sym(Leaf::Uniform(v)) => SymExpr::sym(format!("uniform({})", register(m)(v))),
+            SymExpr::Sum(ts) => all(ts, SymExpr::add),
+            SymExpr::Prod(fs) => all(fs, SymExpr::mul),
+            SymExpr::CeilDiv(x, c) => SymExpr::ceil_div(by_register(m, *x), c),
+            SymExpr::FloorDiv(x, c) => SymExpr::floor_div(by_register(m, *x), c),
+            SymExpr::Mod(x, c) => SymExpr::modulo(by_register(m, *x), c),
+            SymExpr::Min(a, b) => SymExpr::min(by_register(m, *a), by_register(m, *b)),
+            SymExpr::Max(a, b) => SymExpr::max(by_register(m, *a), by_register(m, *b)),
+            other => other,
+        }
     }
 
     /// A value by its register's name.
@@ -722,9 +739,12 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new(), &register(&m));
+        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
         (names.into_iter().zip(info.trips).zip(info.entries))
-            .map(|((n, t), e)| (n.display, t.map(|t| t.to_string()), cfg.block_name(&m, e)))
+            .map(|((n, t), e)| {
+                let t = t.map(|t| by_register(&m, t).to_string());
+                (n.display, t, cfg.block_name(&m, e))
+            })
             .collect()
     }
 
@@ -1699,7 +1719,7 @@ mod tests {
             let cfg = build_cfg(&m, k);
             let f = loop_forest(&cfg);
             let names = loop_names(&m, k, &cfg, &f);
-            let info = trip_counts(&m, k, &cfg, &f, &names, bindings, &register(&m));
+            let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
             let main = info.unroll_pairs.first().map(|p| {
                 let trips = info.trips[p.main.0 as usize].as_ref();
                 (p.factor, trips.unwrap().to_string())

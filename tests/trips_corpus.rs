@@ -8,7 +8,6 @@ use ptxroof::analysis::loop_names::loop_names;
 use ptxroof::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
-use ptxroof::ssa::Value;
 use std::fs;
 use std::path::PathBuf;
 
@@ -22,9 +21,7 @@ fn info_of(fixture: &str) -> (Vec<String>, TripCountResults) {
     let cfg = build_cfg(&m, k);
     let f = loop_forest(&cfg);
     let names = loop_names(&m, k, &cfg, &f);
-    let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default(), &|v: Value| {
-        format!("{v:?}")
-    });
+    let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default());
     let rendered = info
         .trips
         .iter()

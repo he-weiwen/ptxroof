@@ -28,6 +28,7 @@
 
 use crate::analysis::control_flow::loops::LoopId;
 use crate::ptx::ir::SpecialReg;
+use crate::ssa::Value;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -39,6 +40,9 @@ pub enum Leaf {
     /// A special register one for the CTA: the launch shape, the CTA's
     /// index.
     Special(SpecialReg),
+    /// A register value the tracer cannot interpret, one for every lane
+    /// of the CTA reading it.
+    Uniform(Value),
     /// The trip count of a loop whose count is not known.
     Trips(LoopId),
     /// Any other value, by its name.
@@ -50,6 +54,7 @@ impl fmt::Display for Leaf {
         match self {
             Leaf::Param(i) => write!(f, "param_{i}"),
             Leaf::Special(reg) => f.write_str(&reg.name()),
+            Leaf::Uniform(v) => write!(f, "uniform({v:?})"),
             Leaf::Trips(l) => write!(f, "trips(loop {})", l.0),
             Leaf::Symbol(name) => f.write_str(name),
         }

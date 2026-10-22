@@ -33,7 +33,6 @@ use ptxroof::ptx::parse::parser::parse;
 use ptxroof::report::measured::NcuRecord;
 use ptxroof::report::schema::{Aggregates, Count, LoopNode};
 use ptxroof::report::{AnalyzeOptions, BindingSpec, Report, analyze};
-use ptxroof::ssa::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -210,9 +209,7 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default(), &|v: Value| {
-            format!("{v:?}")
-        });
+        let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default());
         let bind_map: HashMap<Leaf, i64> = [(Leaf::Param(param), value)].into_iter().collect();
         let trips_num: Vec<i64> = info
             .trips
