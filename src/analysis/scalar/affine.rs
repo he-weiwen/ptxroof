@@ -103,6 +103,46 @@ impl fmt::Display for Var {
     }
 }
 
+/// A signed integer comparison, `a cmp b` (PTX ISA §9.3.1.1, Table 22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Cmp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Cmp {
+    /// The comparison a `setp` modifier names: `eq`, `ne`, `lt`, `le`,
+    /// `gt` or `ge`.
+    pub fn from_name(name: &str) -> Option<Cmp> {
+        Some(match name {
+            "eq" => Cmp::Eq,
+            "ne" => Cmp::Ne,
+            "lt" => Cmp::Lt,
+            "le" => Cmp::Le,
+            "gt" => Cmp::Gt,
+            "ge" => Cmp::Ge,
+            _ => return None,
+        })
+    }
+
+    /// The comparison that holds exactly when this one does not (LLVM's
+    /// `CmpInst::getInversePredicate`).
+    pub fn inverse(self) -> Cmp {
+        match self {
+            Cmp::Eq => Cmp::Ne,
+            Cmp::Ne => Cmp::Eq,
+            Cmp::Lt => Cmp::Ge,
+            Cmp::Ge => Cmp::Lt,
+            Cmp::Le => Cmp::Gt,
+            Cmp::Gt => Cmp::Le,
+        }
+    }
+}
+
 /// `Σ coeff·var + base`; a missing variable has coefficient 0.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Affine {

@@ -39,7 +39,7 @@
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::loop_names::LoopName;
-use crate::analysis::scalar::affine::{Affine, Var};
+use crate::analysis::scalar::affine::{Affine, Cmp, Var};
 use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -276,17 +276,17 @@ fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, St
     if a1 == i64::MIN {
         return Err("induction step is −2^63, which has no negation".to_owned());
     }
-    let cond = if continue_if_true {
-        cmp.as_str()
-    } else {
-        negate(&cmp)
+    let Some(cmp) = Cmp::from_name(&cmp) else {
+        return Err(format!("unsupported latch comparison `{cmp}`"));
     };
+    let cond = if continue_if_true { cmp } else { cmp.inverse() };
     let bound = tracer.bindings.and_then(|b| d.base.bind(b).as_const());
-    if cond == "ne" && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
+    if cond == Cmp::Ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
         return Err("latch condition never meets its `!=` bound".to_owned());
     }
     let trips = solve(cond, a1, d.base.clone())?;
-    let distance = (cond == "ne").then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
+    let distance =
+        (cond == Cmp::Ne).then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
     match (below_zero(cond, d.base), guard_test(tracer, id)) {
         (Some(at_zero), Some((g, test))) if test == at_zero => {
             Ok((SymExpr::max(trips, SymExpr::Const(0)), g, None))
@@ -358,23 +358,23 @@ fn guard_test(tracer: &AffineValueTracer<'_>, id: LoopId) -> Option<(BlockId, Sy
         def,
         tracer.trace_operand(a, def, None, 0).ok()? - tracer.trace_operand(b, def, None, 0).ok()?,
     )?);
-    let cmp = *mods.first()?;
+    let cmp = Cmp::from_name(mods.first()?)?;
     let cmp = if (taken == into) != pred.negated {
         cmp
     } else {
-        negate(cmp)
+        cmp.inverse()
     };
     let e = form.is_invariant().then_some(form.base)?;
     let nonneg = |e: &SymExpr| e.least().is_some_and(|l| l >= 0);
     let (cmp, e) = match cmp {
-        "ne" | "eq" => {
+        Cmp::Ne | Cmp::Eq => {
             let e = if nonneg(&e) {
                 e
             } else {
                 SymExpr::mul(SymExpr::Const(-1), e)
             };
             (
-                if cmp == "ne" { "gt" } else { "le" },
+                if cmp == Cmp::Ne { Cmp::Gt } else { Cmp::Le },
                 nonneg(&e).then_some(e)?,
             )
         }
@@ -467,14 +467,14 @@ fn as_symbols(mut a: Affine, leaf: &dyn Fn(&Var) -> Option<SymExpr>) -> Affine {
 }
 
 /// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
-fn below_zero(cmp: &str, e: SymExpr) -> Option<SymExpr> {
+fn below_zero(cmp: Cmp, e: SymExpr) -> Option<SymExpr> {
     let minus = |e: SymExpr| SymExpr::mul(SymExpr::Const(-1), e);
     Some(undivided(match cmp {
-        "lt" => e,
-        "le" => SymExpr::sub(e, SymExpr::Const(1)),
-        "gt" => minus(e),
-        "ge" => SymExpr::sub(minus(e), SymExpr::Const(1)),
-        _ => return None,
+        Cmp::Lt => e,
+        Cmp::Le => SymExpr::sub(e, SymExpr::Const(1)),
+        Cmp::Gt => minus(e),
+        Cmp::Ge => SymExpr::sub(minus(e), SymExpr::Const(1)),
+        Cmp::Eq | Cmp::Ne => return None,
     }))
 }
 
@@ -506,19 +506,6 @@ fn undivided(e: SymExpr) -> SymExpr {
     match i64::try_from(k) {
         Ok(k) => SymExpr::add(x, SymExpr::Const(k)),
         Err(_) => e,
-    }
-}
-
-/// The comparison that holds exactly when `cmp` does not.
-fn negate(cmp: &str) -> &str {
-    match cmp {
-        "lt" => "ge",
-        "le" => "gt",
-        "gt" => "le",
-        "ge" => "lt",
-        "ne" => "eq",
-        "eq" => "ne",
-        other => other,
     }
 }
 
@@ -633,12 +620,12 @@ fn predicate_phi_trips(
 
 /// Solve `continue while A1·k + A0 cmp 0` (k = 1, 2, ...) for the
 /// iteration count.
-fn solve(cond: &str, a1: i64, a0: SymExpr) -> TripCount {
+fn solve(cond: Cmp, a1: i64, a0: SymExpr) -> TripCount {
     let neg = |e: SymExpr| SymExpr::mul(SymExpr::Const(-1), e);
 
     match cond {
         // D ≠ 0: exits exactly when A1·k = −A0.
-        "ne" => {
+        Cmp::Ne => {
             if a1 == 0 {
                 return Err("latch condition does not involve an induction variable".to_owned());
             }
@@ -651,13 +638,13 @@ fn solve(cond: &str, a1: i64, a0: SymExpr) -> TripCount {
             Ok(SymExpr::floor_div(num, a1.abs()))
         }
         // D < 0: false at the smallest k with A1·k ≥ −A0.
-        "lt" => match a1 {
+        Cmp::Lt => match a1 {
             a1 if a1 > 0 => Ok(SymExpr::ceil_div(neg(a0), a1)),
             0 => Err("latch condition does not involve an induction variable".to_owned()),
             _ => Err("loop bound moves away from the exit condition".to_owned()),
         },
         // D ≤ 0: false at the smallest k with A1·k > −A0.
-        "le" => match a1 {
+        Cmp::Le => match a1 {
             a1 if a1 > 0 => Ok(SymExpr::add(
                 SymExpr::floor_div(neg(a0), a1),
                 SymExpr::Const(1),
@@ -666,10 +653,11 @@ fn solve(cond: &str, a1: i64, a0: SymExpr) -> TripCount {
             _ => Err("loop bound moves away from the exit condition".to_owned()),
         },
         // D > 0 ⇔ −D < 0;   D ≥ 0 ⇔ −D ≤ 0.
-        "gt" => solve("lt", -a1, neg(a0)),
-        "ge" => solve("le", -a1, neg(a0)),
-        "eq" => Err("loop continues only while values are equal — shape not recognized".to_owned()),
-        other => Err(format!("unsupported latch comparison `{other}`")),
+        Cmp::Gt => solve(Cmp::Lt, -a1, neg(a0)),
+        Cmp::Ge => solve(Cmp::Le, -a1, neg(a0)),
+        Cmp::Eq => {
+            Err("loop continues only while values are equal — shape not recognized".to_owned())
+        }
     }
 }
 
