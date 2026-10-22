@@ -546,6 +546,31 @@ type PerRequests = HashMap<usize, PerRequest>;
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
 
+/// How far a count is summed: over one thread, over one CTA of the
+/// launch shape, or over the launch, whose CTA count may not fit in u64.
+#[derive(Clone, Copy)]
+enum Per<'a> {
+    Thread,
+    Cta(&'a LaunchInfo),
+    Launch(&'a LaunchInfo, Option<u64>),
+}
+
+impl<'a> Per<'a> {
+    fn cta(self) -> Option<&'a LaunchInfo> {
+        match self {
+            Per::Thread => None,
+            Per::Cta(c) | Per::Launch(c, _) => Some(c),
+        }
+    }
+
+    fn ctas(self) -> Option<u64> {
+        match self {
+            Per::Launch(_, n) => n,
+            _ => None,
+        }
+    }
+}
+
 /// The direction a count is known in; `None` when bounded in neither.
 fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
     match (at_most, at_least) {
@@ -1335,12 +1360,8 @@ impl<'a> KernelReportBuilder<'a> {
     /// Under loops whose counts read the CTA index, a block or guarded
     /// instruction whose threads do not is counted per CTA times those
     /// counts summed over the grid, and is unknown otherwise.
-    fn aggregates(
-        &self,
-        below: Option<LoopId>,
-        cta: Option<&LaunchInfo>,
-        ctas: Option<u64>,
-    ) -> Aggregates {
+    fn aggregates(&self, below: Option<LoopId>, per: Per) -> Aggregates {
+        let (cta, ctas) = (per.cta(), per.ctas());
         let mut flops: BTreeMap<Pipe, FlopAccumulator> = Pipe::ALL
             .iter()
             .map(|&p| (p, FlopAccumulator::new()))
@@ -1688,7 +1709,7 @@ impl<'a> KernelReportBuilder<'a> {
             depth: self.forest.get(id).depth,
             trips,
             unroll,
-            per_iteration: self.aggregates(Some(id), None, None),
+            per_iteration: self.aggregates(Some(id), Per::Thread),
             accesses: self.accesses.get(&Some(id)).cloned().unwrap_or_default(),
             global_bytes_per_cta: self.loop_bytes(id),
             loops: self
@@ -2090,14 +2111,12 @@ impl<'a> KernelReportBuilder<'a> {
                 source: source.to_owned(),
                 exact: source != ".maxntid",
             });
-        let totals_per_cta = launch
-            .as_ref()
-            .map(|l| self.aggregates(None, Some(l), None));
+        let totals_per_cta = launch.as_ref().map(|l| self.aggregates(None, Per::Cta(l)));
         let ctas = self
             .grid()
             .and_then(|g| g.iter().try_fold(1u64, |n, &d| n.checked_mul(d.into())));
-        let totals_per_launch =
-            (launch.as_ref().zip(ctas)).map(|(l, n)| self.aggregates(None, Some(l), Some(n)));
+        let totals_per_launch = (launch.as_ref().zip(ctas))
+            .map(|(l, n)| self.aggregates(None, Per::Launch(l, Some(n))));
 
         let unknowns = self.unknowns();
         let (measured, measured_totals) =
@@ -2134,7 +2153,7 @@ impl<'a> KernelReportBuilder<'a> {
                 .into_iter()
                 .map(|t| self.loop_node(t))
                 .collect(),
-            totals: self.aggregates(None, None, None),
+            totals: self.aggregates(None, Per::Thread),
             unknowns,
             unused: (self.kernel.stmts.iter().enumerate())
                 .filter_map(|(s, stmt)| match stmt {
