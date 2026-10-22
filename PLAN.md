@@ -714,6 +714,12 @@ One line each, with the trigger that would start it.
   FLOPs, byte totals, addresses and sector lines are exact, bounds or
   unknown. Trigger: comparing coverage between commits, so far done by
   scripts outside the repository.
+- Totals per warp role. A warp-specialized kernel selects its blocks by
+  warp index (`gluon/attn_fwd_ws_kernel.sm_89.ptx`, 8 warps: 34 blocks
+  on `⌊%tid.x/32⌋ < 4`, 38 on `⌊%tid.x/32⌋ >= 4`), and every total sums
+  all roles; grouping blocks by the warp-index condition their thread
+  sets name would give each role's FLOPs, bytes and instructions.
+  Trigger: wanting to know which role's work bounds such a kernel.
 
 ## Acceptance scenarios
 
