@@ -138,7 +138,7 @@ pub fn analyze(
                 .into_iter()
                 .zip(dims.into_iter().flatten())
             {
-                bind_map.insert(reg.name(), i64::from(n));
+                bind_map.insert(Leaf::Special(reg), i64::from(n));
             }
         }
         let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
@@ -178,7 +178,7 @@ fn resolve_bindings(
     kernel: &Kernel,
     binds: &[BindingSpec],
     echo: &mut Vec<Binding>,
-) -> Result<HashMap<String, i64>, AnalyzeError> {
+) -> Result<HashMap<Leaf, i64>, AnalyzeError> {
     let mut map = HashMap::new();
     for spec in binds {
         let index = match spec.index {
@@ -212,7 +212,7 @@ fn resolve_bindings(
                 kernel.params.len()
             )));
         }
-        map.insert(format!("param_{index}"), spec.value);
+        map.insert(Leaf::Param(index), spec.value);
         if !echo.iter().any(|b: &Binding| b.param == index) {
             echo.push(Binding {
                 param: index,
@@ -305,9 +305,12 @@ impl KernelReportBuilder<'_> {
             }
             text
         };
-        let shape = SpecialVector::Ntid
-            .components()
-            .map(|reg| bind_map.get(&reg.name()).map(|&v| v as u32).unwrap_or(0));
+        let shape = SpecialVector::Ntid.components().map(|reg| {
+            bind_map
+                .get(&Leaf::Special(reg))
+                .map(|&v| v as u32)
+                .unwrap_or(0)
+        });
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
         for (bid, block) in cfg.blocks.iter_enumerated() {
             let scope = forest.block_loop[bid.0 as usize];
@@ -878,7 +881,7 @@ struct KernelReportBuilder<'a> {
     names: Vec<LoopName>,
     trip_info: TripCountResults,
     blocks: Vec<BlockMeasurements>,
-    bind_map: &'a HashMap<String, i64>,
+    bind_map: &'a HashMap<Leaf, i64>,
     /// Trip expression per loop for aggregation (opaque symbol when
     /// unresolved), already bound.
     trip_exprs: Vec<SymExpr>,
@@ -912,7 +915,7 @@ impl<'a> KernelReportBuilder<'a> {
     fn new(
         module: &'a Module,
         kernel: &'a Kernel,
-        bind_map: &'a HashMap<String, i64>,
+        bind_map: &'a HashMap<Leaf, i64>,
         lines: &'a LineIndex,
     ) -> Self {
         let cfg = build_cfg(module, kernel);
@@ -954,9 +957,12 @@ impl<'a> KernelReportBuilder<'a> {
             })
             .collect();
 
-        let shape = SpecialVector::Ntid
-            .components()
-            .map(|reg| bind_map.get(&reg.name()).map(|&v| v as u32).unwrap_or(0));
+        let shape = SpecialVector::Ntid.components().map(|reg| {
+            bind_map
+                .get(&Leaf::Special(reg))
+                .map(|&v| v as u32)
+                .unwrap_or(0)
+        });
         let mut b = KernelReportBuilder {
             module,
             kernel,
@@ -1027,9 +1033,9 @@ impl<'a> KernelReportBuilder<'a> {
             };
             b.cond_entry[i] &= !always(b.trip_info.entries[i], targets);
         }
-        let compile_time: HashMap<String, i64> = (SpecialVector::Ntid.components().into_iter())
+        let compile_time: HashMap<Leaf, i64> = (SpecialVector::Ntid.components().into_iter())
             .zip(kernel.reqntid.into_iter().flatten())
-            .map(|(reg, n)| (reg.name(), i64::from(n)))
+            .map(|(reg, n)| (Leaf::Special(reg), i64::from(n)))
             .collect();
         let static_sets;
         let sets = match compile_time == *bind_map {
@@ -1302,9 +1308,8 @@ impl<'a> KernelReportBuilder<'a> {
             let leaf = Leaf::Special(reg);
             (loops.iter()).any(|l| self.trip_exprs[l.0 as usize].symbols().contains(&leaf))
         });
-        let names = regs.map(|reg| reg.name());
         let weight = move |c: [i64; 3]| {
-            let at: HashMap<String, i64> = names.iter().cloned().zip(c).collect();
+            let at: HashMap<Leaf, i64> = regs.map(Leaf::Special).into_iter().zip(c).collect();
             loops.iter().try_fold(1u64, |w, l| {
                 let n = self.trip_exprs[l.0 as usize].bind(&at).as_const()?;
                 if let Some((x, step)) = &self.trip_info.distances[l.0 as usize] {
@@ -1851,10 +1856,10 @@ impl<'a> KernelReportBuilder<'a> {
                     weight.add(instrs, Some(&mult), false);
                 }
                 let weight = weight.expr();
-                let approx: HashMap<String, i64> = weight
+                let approx: HashMap<Leaf, i64> = weight
                     .symbols()
                     .into_iter()
-                    .map(|s| (s.to_string(), (1 << 20) + 3))
+                    .map(|s| (s, (1 << 20) + 3))
                     .collect();
                 let key = weight.bind(&approx).as_const().unwrap_or(i64::MAX);
                 (i, self.display[i].clone(), weight, key)
@@ -2014,7 +2019,7 @@ impl<'a> KernelReportBuilder<'a> {
     fn grid(&self) -> Option<[u32; 3]> {
         let [x, y, z] = (SpecialVector::Nctaid.components()).map(|reg| {
             self.bind_map
-                .get(&reg.name())
+                .get(&Leaf::Special(reg))
                 .and_then(|&n| u32::try_from(n).ok())
         });
         Some([x?, y?, z?])

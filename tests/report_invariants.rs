@@ -25,6 +25,7 @@ use ptxroof::analysis::instruction_counts::classify::Precision;
 use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
 use ptxroof::analysis::loop_names::loop_names;
+use ptxroof::analysis::scalar::symexpr::Leaf;
 use ptxroof::analysis::scalar::trip_counts::trip_counts;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::ir::Stmt;
@@ -212,8 +213,7 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
         let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default(), &|v: Value| {
             format!("{v:?}")
         });
-        let bind_map: HashMap<String, i64> =
-            [(format!("param_{param}"), value)].into_iter().collect();
+        let bind_map: HashMap<Leaf, i64> = [(Leaf::Param(param), value)].into_iter().collect();
         let trips_num: Vec<i64> = info
             .trips
             .iter()

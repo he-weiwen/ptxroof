@@ -146,7 +146,7 @@ impl Affine {
     }
 
     /// Substitute bound symbols in every coefficient and the base.
-    pub fn bind(&self, bindings: &std::collections::HashMap<String, i64>) -> Affine {
+    pub fn bind(&self, bindings: &std::collections::HashMap<Leaf, i64>) -> Affine {
         let mut out = Affine::invariant(self.base.bind(bindings));
         for (v, c) in &self.terms {
             out = out + Affine::term(v.clone(), c.bind(bindings));

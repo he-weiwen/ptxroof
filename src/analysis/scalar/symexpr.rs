@@ -416,10 +416,10 @@ impl SymExpr {
 
     /// Substitute symbols by value and re-simplify. Unbound symbols
     /// survive; a fully-bound expression collapses to `Const`.
-    pub fn bind(&self, bindings: &HashMap<String, i64>) -> SymExpr {
+    pub fn bind(&self, bindings: &HashMap<Leaf, i64>) -> SymExpr {
         match self {
             SymExpr::Const(c) => SymExpr::Const(*c),
-            SymExpr::Sym(leaf) => match bindings.get(&leaf.to_string()) {
+            SymExpr::Sym(leaf) => match bindings.get(leaf) {
                 Some(&v) => SymExpr::Const(v),
                 None => SymExpr::Sym(leaf.clone()),
             },
@@ -596,8 +596,8 @@ mod tests {
         E::Sym(Leaf::Param(2))
     }
 
-    fn bindings(pairs: &[(&str, i64)]) -> HashMap<String, i64> {
-        pairs.iter().map(|(n, v)| (n.to_string(), *v)).collect()
+    fn bindings(pairs: &[(usize, i64)]) -> HashMap<Leaf, i64> {
+        pairs.iter().map(|&(i, v)| (Leaf::Param(i), v)).collect()
     }
 
     #[test]
@@ -676,11 +676,11 @@ mod tests {
         // (K - K mod 4) / 4 — the verified k2 shape.
         let trips = E::floor_div(E::sub(k(), E::modulo(k(), 4)), 4);
         assert_eq!(trips.to_string(), "(param_2 - param_2 mod 4) / 4");
-        assert_eq!(trips.bind(&bindings(&[("param_2", 4096)])), E::Const(1024));
-        assert_eq!(trips.bind(&bindings(&[("param_2", 4099)])), E::Const(1024));
-        assert_eq!(trips.bind(&bindings(&[("param_2", 3)])), E::Const(0));
+        assert_eq!(trips.bind(&bindings(&[(2, 4096)])), E::Const(1024));
+        assert_eq!(trips.bind(&bindings(&[(2, 4099)])), E::Const(1024));
+        assert_eq!(trips.bind(&bindings(&[(2, 3)])), E::Const(0));
         // Unbound symbol survives binding of others.
-        assert_eq!(trips.bind(&bindings(&[("other", 7)])), trips);
+        assert_eq!(trips.bind(&bindings(&[(5, 7)])), trips);
         assert_eq!(trips.eval(), None);
     }
 
@@ -690,9 +690,9 @@ mod tests {
         assert_eq!(trips.to_string(), "⌈param_2/8⌉");
         let shifted = E::ceil_div(E::add(k(), E::Const(1)), 8);
         assert_eq!(shifted.to_string(), "⌈(param_2 + 1)/8⌉");
-        assert_eq!(trips.bind(&bindings(&[("param_2", 4096)])), E::Const(512));
-        assert_eq!(trips.bind(&bindings(&[("param_2", 4097)])), E::Const(513));
-        assert_eq!(trips.bind(&bindings(&[("param_2", 0)])), E::Const(0));
+        assert_eq!(trips.bind(&bindings(&[(2, 4096)])), E::Const(512));
+        assert_eq!(trips.bind(&bindings(&[(2, 4097)])), E::Const(513));
+        assert_eq!(trips.bind(&bindings(&[(2, 0)])), E::Const(0));
     }
 
     #[test]
@@ -705,7 +705,7 @@ mod tests {
             total.to_string(),
             "8 * ((param_2 - param_2 mod 4) / 4) + 2 * (param_2 mod 4) + 3"
         );
-        assert_eq!(total.bind(&bindings(&[("param_2", 4096)])), E::Const(8195));
+        assert_eq!(total.bind(&bindings(&[(2, 4096)])), E::Const(8195));
         // 8*1024 + 2*0 + 3
     }
 
@@ -733,7 +733,7 @@ mod tests {
     #[test]
     fn mod_by_negative_binding_stays_in_range() {
         let m = E::modulo(k(), 4);
-        assert_eq!(m.bind(&bindings(&[("param_2", -1)])), E::Const(3));
+        assert_eq!(m.bind(&bindings(&[(2, -1)])), E::Const(3));
     }
 
     #[test]
@@ -839,8 +839,8 @@ mod tests {
         assert_eq!(m.to_string(), "max(⌈param_2/128⌉, 2)");
         let trips = E::sub(m.clone(), E::Const(1));
         assert_eq!(trips.to_string(), "max(⌈param_2/128⌉, 2) - 1");
-        assert_eq!(trips.bind(&bindings(&[("param_2", 7168)])), E::Const(55));
-        assert_eq!(m.bind(&bindings(&[("param_2", 100)])), E::Const(2));
+        assert_eq!(trips.bind(&bindings(&[(2, 7168)])), E::Const(55));
+        assert_eq!(m.bind(&bindings(&[(2, 100)])), E::Const(2));
         assert_eq!(E::min(E::Const(3), E::Const(-1)), E::Const(-1));
         assert_eq!(
             E::mul(E::Const(2), E::min(k(), E::sym("n"))).to_string(),
@@ -859,6 +859,6 @@ mod tests {
             4,
         );
         // K = 10: 2*10 + (10/2 mod 8) = 20 + 5 = 25; ceildiv(25,4) = 7.
-        assert_eq!(e.bind(&bindings(&[("param_2", 10)])), E::Const(7));
+        assert_eq!(e.bind(&bindings(&[(2, 10)])), E::Const(7));
     }
 }

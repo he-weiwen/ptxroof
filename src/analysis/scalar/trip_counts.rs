@@ -83,7 +83,7 @@ pub fn trip_counts(
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
     names: &[LoopName],
-    bindings: &HashMap<String, i64>,
+    bindings: &HashMap<Leaf, i64>,
     value_name: &dyn Fn(Value) -> String,
 ) -> TripCountResults {
     let tracer = (AffineValueTracer::new(module, kernel, cfg, forest).with_bindings(bindings))
@@ -689,7 +689,7 @@ mod tests {
         trips_under(src, &HashMap::new())
     }
 
-    fn trips_under(src: &str, bindings: &HashMap<String, i64>) -> Vec<(String, TripCount)> {
+    fn trips_under(src: &str, bindings: &HashMap<Leaf, i64>) -> Vec<(String, TripCount)> {
         let m = parse(src).expect("test source parses");
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
@@ -773,7 +773,7 @@ mod tests {
              $L__L:\nadd.s32 %r2, %r2, 2;\nsetp.ne.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;",
         );
         let at = |n: i64| {
-            let bound = [("param_0".to_owned(), n)].into_iter().collect();
+            let bound = [(Leaf::Param(0), n)].into_iter().collect();
             trips_under(&src, &bound)[0]
                 .1
                 .clone()
@@ -909,8 +909,7 @@ mod tests {
     #[test]
     fn a_bound_min_or_max_is_read_at_its_value() {
         let trips = |body: &str, n: Option<i64>| {
-            let bound: HashMap<String, i64> =
-                n.map(|n| ("param_0".to_owned(), n)).into_iter().collect();
+            let bound: HashMap<Leaf, i64> = n.map(|n| (Leaf::Param(0), n)).into_iter().collect();
             let t = trips_under(&kernel_with(N_PARAM, body), &bound)[0]
                 .1
                 .clone();
@@ -935,7 +934,7 @@ mod tests {
                       $L__O:\nmov.u32 %r3, 0;\n$L__I:\nadd.s32 %r3, %r3, 1;\nadd.s32 %r2, %r2, 1;\n\
                       setp.lt.s32 %p1, %r3, %r9;\n@%p1 bra $L__I;\n\
                       setp.lt.s32 %p2, %r2, 100;\n@%p2 bra $L__O;\nret;";
-        let bound = [("param_0".to_owned(), 4)].into_iter().collect();
+        let bound = [(Leaf::Param(0), 4)].into_iter().collect();
         let outer = trips_under(&kernel_with(N_PARAM, nested), &bound);
         let outer = outer
             .iter()
@@ -1133,9 +1132,10 @@ mod tests {
                      setp.lt.u32 %p1, %r8, %r9;\n@%p1 bra $L__L;\nret;"
                 ),
             );
-            let grid = grid
-                .into_iter()
-                .flat_map(|n| [("%nctaid.x".to_owned(), n), ("%nctaid.y".to_owned(), 1)]);
+            let grid = grid.into_iter().flat_map(|n| {
+                let [x, y, _] = SpecialVector::Nctaid.components().map(Leaf::Special);
+                [(x, n), (y, 1)]
+            });
             let bindings = grid.collect();
             trips_under(&src, &bindings)[0]
                 .1
@@ -1693,7 +1693,7 @@ mod tests {
              setp.ne.s32 %p2, %r4, 0;\n@%p2 bra $L__R;\n\
              ret;\n}\n.file 1 \"kern.cu\"\n",
         );
-        let pairs = |src: &str, bindings: &HashMap<String, i64>| {
+        let pairs = |src: &str, bindings: &HashMap<Leaf, i64>| {
             let m = parse(src).expect("parses");
             let k = &m.kernels[0];
             let cfg = build_cfg(&m, k);
@@ -1714,7 +1714,7 @@ mod tests {
             "ld.param.u32 %r1, [k_param_0];",
             "ld.param.u32 %r0, [k_param_0];\nmin.s32 %r1, %r0, 8;",
         );
-        let bound = [("param_0".to_owned(), 100)].into_iter().collect();
+        let bound = [(Leaf::Param(0), 100)].into_iter().collect();
         assert_eq!(pairs(&src, &free), shape("min(param_0, 8)"));
         assert_eq!(pairs(&src, &bound), shape("min(param_0, 8)"));
         // A unit-step main loop below (X − X mod 4)/4, behind a guard that

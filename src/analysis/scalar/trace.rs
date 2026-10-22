@@ -53,7 +53,7 @@ pub(crate) struct AffineValueTracer<'a> {
     /// exits; `None` while one is being solved, or when it is not one.
     trips: RefCell<HashMap<LoopId, Option<i64>>>,
     /// `--bind` values, applied where a trace needs a constant.
-    pub(crate) bindings: Option<&'a HashMap<String, i64>>,
+    pub(crate) bindings: Option<&'a HashMap<Leaf, i64>>,
     uniformity: OnceCell<Uniformity>,
     /// Why the trace in progress first read a uniform value it cannot
     /// interpret as a `Var::Uniform`.
@@ -186,11 +186,11 @@ impl<'a> AffineValueTracer<'a> {
     fn one_dimensional(&self) -> bool {
         self.bindings.is_some_and(|b| {
             let [_, y, z] = SpecialVector::Ntid.components();
-            b.get(&y.name()) == Some(&1) && b.get(&z.name()) == Some(&1)
+            b.get(&Leaf::Special(y)) == Some(&1) && b.get(&Leaf::Special(z)) == Some(&1)
         })
     }
 
-    pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<String, i64>) -> Self {
+    pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<Leaf, i64>) -> Self {
         self.bindings = Some(bindings);
         self
     }
@@ -1122,7 +1122,7 @@ impl<'a> AffineValueTracer<'a> {
                 Axis::Y => 1,
                 Axis::Z => 2,
             };
-            let n = *self.bindings?.get(&vector.components()[i].name())?;
+            let n = *self.bindings?.get(&Leaf::Special(vector.components()[i]))?;
             (n >= 1).then_some((0, n - 1))
         };
         match v {
