@@ -314,18 +314,26 @@ fn lane_wise(t: &AffineValueTracer, instr: &Instr) -> bool {
                 }
             )
         }),
-        _ => {
-            instr.mnemonic == Opcode::Ld
-                && module
-                    .modifiers(instr)
-                    .iter()
-                    .any(|&m| module.interner.resolve(m) == "param")
-                && (module.operand_ids(instr.operands).iter()).any(|&o| {
-                    matches!(module.operand(o), Operand::Memory { base, .. }
-                        if matches!(module.operand(*base), Operand::SymbolRef(s) if t.params.contains_key(s)))
-                })
-        }
+        _ => kernel_param(t, instr).is_some(),
     }
+}
+
+/// The kernel parameter an `ld.param` reads.
+fn kernel_param(t: &AffineValueTracer, instr: &Instr) -> Option<usize> {
+    let module = t.module;
+    let param = (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "param");
+    if instr.mnemonic != Opcode::Ld || !param {
+        return None;
+    }
+    module.operand_ids(instr.operands).iter().find_map(|&o| {
+        let Operand::Memory { base, .. } = module.operand(o) else {
+            return None;
+        };
+        match module.operand(*base) {
+            Operand::SymbolRef(s) => t.params.get(s).copied(),
+            _ => None,
+        }
+    })
 }
 
 fn read_special(reg: SpecialReg) -> Read {
