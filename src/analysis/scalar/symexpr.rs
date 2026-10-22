@@ -144,7 +144,7 @@ impl SymExpr {
     /// The least and the greatest value, every symbol within `sym`'s
     /// bounds: `None` where one has none, the whole `i128` line where a
     /// bound leaves it.
-    pub fn range(&self, sym: &dyn Fn(&str) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
+    pub fn range(&self, sym: &dyn Fn(&Leaf) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
         match self.span(sym) {
             Ok(r) => Some(r),
             Err(true) => Some((i128::MIN, i128::MAX)),
@@ -154,12 +154,12 @@ impl SymExpr {
 
     /// The same, `Err(false)` where a symbol has no bounds and
     /// `Err(true)` where a bound leaves `i128`.
-    pub fn span(&self, sym: &dyn Fn(&str) -> Option<(i64, i64)>) -> Result<(i128, i128), bool> {
+    pub fn span(&self, sym: &dyn Fn(&Leaf) -> Option<(i64, i64)>) -> Result<(i128, i128), bool> {
         let pair = |x: &SymExpr, y: &SymExpr| Ok((x.span(sym)?, y.span(sym)?));
         let fits = |x: Option<i128>| x.ok_or(true);
         Ok(match self {
             SymExpr::Const(c) => (i128::from(*c), i128::from(*c)),
-            SymExpr::Sym(s) => sym(&s.to_string())
+            SymExpr::Sym(s) => sym(s)
                 .map(|(a, b)| (i128::from(a), i128::from(b)))
                 .ok_or(false)?,
             SymExpr::Sum(ts) => ts.iter().try_fold((0i128, 0i128), |(lo, hi), t| {
@@ -594,7 +594,7 @@ mod tests {
     use super::*;
 
     fn k() -> E {
-        E::sym("param_2")
+        E::Sym(Leaf::Param(2))
     }
 
     fn bindings(pairs: &[(&str, i64)]) -> HashMap<String, i64> {
@@ -791,7 +791,7 @@ mod tests {
     /// bounded; past i128 the whole line, though a remainder follows.
     #[test]
     fn ranges_over_bounded_symbols() {
-        let sym = |s: &str| (s == "param_2").then_some((0, 100));
+        let sym = |s: &Leaf| (*s == Leaf::Param(2)).then_some((0, 100));
         let row = E::sub(
             E::min(
                 E::add(E::mul(E::Const(16), k()), E::Const(16)),
@@ -808,7 +808,7 @@ mod tests {
         assert_eq!(E::modulo(k(), 64).range(&sym), Some((0, 63)));
         assert_eq!(E::max(k(), E::Const(1)).range(&sym), Some((1, 100)));
         assert_eq!(E::add(k(), E::sym("n")).range(&sym), None);
-        let huge = E::mul(E::Const(i64::MAX), E::mul(k(), E::sym("param_2")));
+        let huge = E::mul(E::Const(i64::MAX), E::mul(k(), k()));
         assert_eq!(
             huge.range(&|_| Some((i64::MIN, i64::MAX))).map(|r| r.1),
             Some(i128::MAX)

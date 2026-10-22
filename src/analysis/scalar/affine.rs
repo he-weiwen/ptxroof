@@ -7,7 +7,7 @@
 //! read latch conditions, addresses, and branch conditions in this form.
 
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::scalar::symexpr::{SymExpr, product};
+use crate::analysis::scalar::symexpr::{Leaf, SymExpr, product};
 use crate::ptx::ir::{Element, SpecialReg, SpecialVector};
 use crate::ssa::Value;
 use std::collections::BTreeMap;
@@ -339,14 +339,11 @@ impl Affine {
     /// as its variable's, and no other symbol is left; `None` when one is
     /// unbounded, the whole `i128` line when a partial sum leaves it.
     pub fn range(&self, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
-        let sym = |s: &str| {
-            let axis = match s.strip_prefix("%ctaid.")? {
-                "x" => Axis::X,
-                "y" => Axis::Y,
-                "z" => Axis::Z,
-                _ => return None,
-            };
-            bound(&Var::Ctaid(axis))
+        let sym = |s: &Leaf| match s {
+            Leaf::Special(reg @ SpecialReg::Vector(SpecialVector::Ctaid, _)) => {
+                bound(&Var::special(*reg)?)
+            }
+            _ => None,
         };
         let mut range = match self.base.span(&sym) {
             Ok(r) => Some(r),
