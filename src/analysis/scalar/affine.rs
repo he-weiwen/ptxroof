@@ -75,6 +75,16 @@ impl Var {
         }
     }
 
+    /// The variable's value, `leaf` giving each thread or CTA index's,
+    /// counter's and uniform value's.
+    pub fn eval(&self, leaf: &dyn Fn(&Var) -> i64) -> i64 {
+        match self {
+            Var::Div(v, d) => v.eval(leaf).div_euclid(*d),
+            Var::Mod(v, m) => v.eval(leaf).rem_euclid(*m),
+            v => leaf(v),
+        }
+    }
+
     /// The variable with the leaf indices printed by `name`.
     pub fn render(&self, name: &impl Fn(&Var) -> String) -> String {
         match self {

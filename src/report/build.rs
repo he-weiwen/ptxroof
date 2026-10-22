@@ -31,9 +31,7 @@ use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQuali
 use crate::analysis::instruction_counts::count_constraint::count_constraint;
 use crate::analysis::instruction_counts::measurement::{Contribution, MeasureKind};
 use crate::analysis::loop_names::{LoopName, loop_names};
-use crate::analysis::memory_footprint::{
-    AccessForm, CountRange, at_trip, loop_bytes, warp_footprint,
-};
+use crate::analysis::memory_footprint::{AccessForm, CountRange, loop_bytes, warp_footprint};
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::scalar::trace::AffineValueTracer;
@@ -480,7 +478,7 @@ impl KernelReportBuilder<'_> {
                         let mut cur = scope;
                         while let Some(l) = cur {
                             let stepped = (a.terms.keys()).any(|v| {
-                                (*v != Var::Iter(l) && at_trip(v, l, 0).is_some())
+                                (*v != Var::Iter(l) && v.counter() == Some(l))
                                     || v.uniform().is_some_and(|u| tracer.defined_in(u, l))
                             });
                             reuse.push(Reuse {

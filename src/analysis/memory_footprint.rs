@@ -9,7 +9,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::Space;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
-use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
+use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::thread_participation::ThreadSet;
 use serde::Serialize;
@@ -111,7 +111,12 @@ pub fn warp_footprint(
             (warp * 32..((warp + 1) * 32).min(threads))
                 .map(|t| [t % nx, (t / nx) % ny, t / (nx * ny)])
                 .filter(|&tid| executes(tid))
-                .map(|tid| lane_terms.iter().map(|(v, k)| k * eval(v, tid)).sum())
+                .map(|tid| {
+                    lane_terms
+                        .iter()
+                        .map(|(v, k)| k * v.eval(&lanes(tid)))
+                        .sum()
+                })
                 .collect()
         })
         .filter(|offsets: &Vec<i64>| !offsets.is_empty())
@@ -316,7 +321,7 @@ pub fn loop_bytes(
         requested = requested.checked_add(bytes)?;
         at_most |= !f.guard_exact || f.conditional;
         let varies = |v: &Var| {
-            crate::analysis::scalar::lane_eval::depends_on_lane(v) || at_trip(v, id, 0).is_some()
+            crate::analysis::scalar::lane_eval::depends_on_lane(v) || v.counter() == Some(id)
         };
         let bound = |v: &Var| match v {
             Var::Iter(l) if *l == id => Some((0, trips)),
@@ -335,7 +340,7 @@ pub fn loop_bytes(
         // value at each trip.
         let mut stepped = Vec::new();
         for (v, c) in &form.terms {
-            if *v != Var::Iter(id) && at_trip(v, id, 0).is_some() {
+            if *v != Var::Iter(id) && v.counter() == Some(id) {
                 stepped.push((v, c.as_const()?));
             }
         }
@@ -347,7 +352,7 @@ pub fn loop_bytes(
         let shift = |k: i64| -> i64 {
             stride * k
                 + (stepped.iter())
-                    .map(|(v, c)| c * at_trip(v, id, k).unwrap_or(0))
+                    .map(|(v, c)| c * v.eval(&|_| k))
                     .sum::<i64>()
         };
         if form.terms.iter().any(|(v, c)| {
@@ -368,7 +373,7 @@ pub fn loop_bytes(
         }
         let mut key = form.clone();
         key.terms.retain(|v, _| {
-            !crate::analysis::scalar::lane_eval::depends_on_lane(v) && at_trip(v, id, 0).is_none()
+            !crate::analysis::scalar::lane_eval::depends_on_lane(v) && v.counter() != Some(id)
         });
         key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
         let intervals = per_base.entry(key.clone()).or_default();
@@ -460,17 +465,6 @@ fn union_len(mut intervals: Vec<(i64, i64)>) -> i64 {
         }
     }
     len + cur.map_or(0, |(cs, ce)| ce - cs)
-}
-
-/// `v` at trip `k` of loop `id`, when `v` is that loop's counter or a
-/// floor or mod of it.
-pub fn at_trip(v: &Var, id: LoopId, k: i64) -> Option<i64> {
-    match v {
-        Var::Iter(l) if *l == id => Some(k),
-        Var::Div(inner, d) => at_trip(inner, id, k).map(|x| x.div_euclid(*d)),
-        Var::Mod(inner, m) => at_trip(inner, id, k).map(|x| x.rem_euclid(*m)),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

@@ -363,21 +363,11 @@ impl<'a> AffineValueTracer<'a> {
     /// one latch exit comes after a constant number of trips, is that
     /// number.
     fn after_exits(&self, mut a: Affine, pos: usize) -> Affine {
-        fn at(v: &Var, n: i64) -> Option<(LoopId, i64)> {
-            match v {
-                Var::Iter(l) => Some((*l, n)),
-                Var::Div(inner, d) => at(inner, n).map(|(l, x)| (l, x.div_euclid(*d))),
-                Var::Mod(inner, m) => at(inner, n).map(|(l, x)| (l, x.rem_euclid(*m))),
-                _ => None,
-            }
-        }
-        let escaped: Vec<Var> = (a.terms.keys())
-            .filter(|v| at(v, 0).is_some_and(|(l, _)| !self.in_loop(l, pos)))
-            .cloned()
+        let escaped: Vec<(Var, LoopId)> = (a.terms.keys())
+            .filter_map(|v| Some((v.clone(), v.counter().filter(|&l| !self.in_loop(l, pos))?)))
             .collect();
-        for v in escaped {
-            let Some((l, _)) = at(&v, 0) else { continue };
-            let Some((_, x)) = self.constant_trips(l).and_then(|n| at(&v, n)) else {
+        for (v, l) in escaped {
+            let Some(x) = self.constant_trips(l).map(|n| v.eval(&|_| n)) else {
                 continue;
             };
             let c = a.terms.remove(&v).expect("an escaped term");

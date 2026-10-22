@@ -19,7 +19,7 @@ use crate::analysis::control_flow::dominators;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::instruction_counts::classify::cp_async_size_operand;
 use crate::analysis::scalar::affine::{Affine, Axis, Cmp, Var};
-use crate::analysis::scalar::lane_eval::{depends_on_lane, eval};
+use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::{AffineValueTracer, IntKind, IntType};
 use crate::analysis::uniformity::Uniformity;
@@ -405,7 +405,7 @@ pub struct ThreadSet {
 /// it, so a comparison of 64-bit operands reads exactly.
 fn at(form: &Affine, tid: [i64; 3]) -> i128 {
     (form.terms.iter()).fold(i128::from(form.base.const_part()), |x, (v, c)| {
-        x + i128::from(c.as_const().unwrap_or(0)) * i128::from(eval(v, tid))
+        x + i128::from(c.as_const().unwrap_or(0)) * i128::from(v.eval(&lanes(tid)))
     })
 }
 
@@ -438,18 +438,6 @@ fn holds(cmp: Cmp, x: i128) -> bool {
         Cmp::Ge => x >= 0,
         Cmp::Eq => x == 0,
         Cmp::Ne => x != 0,
-    }
-}
-
-/// `v`, a CTA index or a floor or remainder of one, at the CTA `c`.
-fn cta_index(v: &Var, c: [i64; 3]) -> i64 {
-    match v {
-        Var::Ctaid(Axis::X) => c[0],
-        Var::Ctaid(Axis::Y) => c[1],
-        Var::Ctaid(Axis::Z) => c[2],
-        Var::Div(x, d) => cta_index(x, c).div_euclid(*d),
-        Var::Mod(x, m) => cta_index(x, c).rem_euclid(*m),
-        _ => 0,
     }
 }
 
@@ -551,9 +539,15 @@ fn any_block(v: &Var) -> Option<(i64, i64)> {
 impl Constraint {
     /// The value of the form's `%ctaid` terms at the CTA `c`.
     fn cta_part(&self, c: [i64; 3]) -> i128 {
+        let index = |v: &Var| match v {
+            Var::Ctaid(Axis::X) => c[0],
+            Var::Ctaid(Axis::Y) => c[1],
+            Var::Ctaid(Axis::Z) => c[2],
+            _ => 0,
+        };
         (self.form.terms.iter())
             .filter(|(v, _)| on_cta(v))
-            .map(|(v, k)| i128::from(k.as_const().unwrap_or(0)) * i128::from(cta_index(v, c)))
+            .map(|(v, k)| i128::from(k.as_const().unwrap_or(0)) * i128::from(v.eval(&index)))
             .sum()
     }
 

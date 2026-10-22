@@ -17,17 +17,17 @@ pub fn eval_lane(a: &Affine, tid: [i64; 3]) -> i64 {
     a.base.const_part()
         + a.terms
             .iter()
-            .map(|(v, c)| c.as_const().unwrap_or(0) * eval(v, tid))
+            .map(|(v, c)| c.as_const().unwrap_or(0) * v.eval(&lanes(tid)))
             .sum::<i64>()
 }
 
-pub(in crate::analysis) fn eval(v: &Var, tid: [i64; 3]) -> i64 {
-    match v {
+/// Each thread index at its value in thread `tid`, every other
+/// variable at 0.
+pub(in crate::analysis) fn lanes(tid: [i64; 3]) -> impl Fn(&Var) -> i64 {
+    move |v| match v {
         Var::Tid(Axis::X) => tid[0],
         Var::Tid(Axis::Y) => tid[1],
         Var::Tid(Axis::Z) => tid[2],
-        Var::Ctaid(_) | Var::Iter(_) | Var::Uniform(_) => 0,
-        Var::Div(inner, d) => eval(inner, tid).div_euclid(*d),
-        Var::Mod(inner, m) => eval(inner, tid).rem_euclid(*m),
+        _ => 0,
     }
 }
