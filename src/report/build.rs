@@ -275,7 +275,7 @@ impl KernelReportBuilder<'_> {
         let mut forms: ByScope<AccessForm> = HashMap::new();
         let mut per_request = PerRequests::new();
         let name = |v: &Var| match v {
-            Var::Iter(l) => format!("k[{}]", display[l.0 as usize]),
+            Var::Iter(l) => format!("k[{}]", self.loop_ref(*l)),
             Var::Uniform(u) => format!(
                 "uniform({})",
                 Self::value_name(self.module, self.kernel, &self.cfg, self.lines, *u)
@@ -934,10 +934,7 @@ impl<'a> KernelReportBuilder<'a> {
             .enumerate()
             .map(|(i, t)| match t {
                 Ok(e) => e.bind(bind_map),
-                Err(_) => {
-                    let named = display.iter().position(|d| *d == display[i]);
-                    SymExpr::Sym(Leaf::Trips(LoopId(named.unwrap_or(i) as u32)))
-                }
+                Err(_) => SymExpr::Sym(Leaf::Trips(LoopId(i as u32))),
             })
             .collect();
 
@@ -1154,11 +1151,21 @@ impl<'a> KernelReportBuilder<'a> {
         }
     }
 
+    /// A loop in an expression: its name, and its header's label where
+    /// another loop has the same name.
+    fn loop_ref(&self, l: LoopId) -> String {
+        let name = &self.display[l.0 as usize];
+        match self.display.iter().filter(|d| *d == name).count() {
+            1 => name.clone(),
+            _ => format!("{name} {}", self.names[l.0 as usize].label),
+        }
+    }
+
     /// A symbol as the report prints it: a loop's unknown count by the
     /// loop's name, a uniform value by its register and line.
     fn leaf_name(&self, leaf: &Leaf) -> String {
         match leaf {
-            Leaf::Trips(l) => format!("trips({})", self.display[l.0 as usize]),
+            Leaf::Trips(l) => format!("trips({})", self.loop_ref(*l)),
             Leaf::Uniform(v) => format!(
                 "uniform({})",
                 Self::value_name(self.module, self.kernel, &self.cfg, self.lines, *v)
@@ -1181,7 +1188,7 @@ impl<'a> KernelReportBuilder<'a> {
         let warps = set.warps(self.shape);
         Some(ThreadsInfo {
             condition: set.render_named(&|v| match v {
-                Var::Iter(l) => format!("k[{}]", self.display[l.0 as usize]),
+                Var::Iter(l) => format!("k[{}]", self.loop_ref(*l)),
                 other => other.to_string(),
             })?,
             count: counted.map(|c| u64::from(c.possible)),

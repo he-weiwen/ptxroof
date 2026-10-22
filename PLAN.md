@@ -451,11 +451,6 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   (`tests/lit/micro-footprint-unknown.test`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
-- **Loops of one name share one unknown trip count.** A count over a
-  loop whose trips are unknown reads `trips(<loop name>)`, one symbol
-  for every loop of that name: `blk_mx_128x256_s4w4.mx_block_scaled`'s
-  `waitLoop$scope1` and `waitLoop$scope3`, both `kernels.py:256`, add
-  to its counts as one `trips(kernels.py:256)`.
 - Floor division prints as `/`.
 - **Pointer alignment is unknown.** Sectors per warp request and per
   loop are ranges over every alignment of the base under which the
