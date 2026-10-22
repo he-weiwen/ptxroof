@@ -589,14 +589,26 @@ impl<'a> AffineValueTracer<'a> {
             }
             _ => return Err("value is the carry flag".to_owned()),
         };
-        let name = self.module.interner.resolve(reg);
+        let value = self.written(def, reg, id, depth)?;
         if self.strict.get() > 0
             && let Stmt::Instr(instr) = &self.kernel.stmts[def]
             && instr.predicate.is_some()
         {
+            let name = self.module.interner.resolve(reg);
             return Err(format!("{name} is written under a guard"));
         }
+        Ok(value)
+    }
 
+    /// The value statement `def` writes to `reg`, were its guard true.
+    fn written(
+        &self,
+        def: usize,
+        reg: Symbol,
+        id: Option<LoopId>,
+        depth: u32,
+    ) -> Result<Affine, String> {
+        let name = self.module.interner.resolve(reg);
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return Err("value defined by a statement the parser could not read".to_owned());
         };
@@ -1039,14 +1051,10 @@ impl<'a> AffineValueTracer<'a> {
         if instr.mnemonic != Opcode::Mov || depth > DEPTH_LIMIT {
             return None;
         }
-        if self.strict.get() > 0 && instr.predicate.is_some() {
-            let name = self.module.interner.resolve(src);
-            return Some(Err(format!("{name} is written under a guard")));
-        }
         let &[dest, packed] = self.module.operand_ids(instr.operands) else {
             return None;
         };
-        match self.module.operand(packed) {
+        let value = match self.module.operand(packed) {
             Operand::VectorList { children } => {
                 let elements = self.module.operand_ids(*children);
                 let element = *elements.get(place).filter(|_| elements.len() == count)?;
@@ -1069,7 +1077,12 @@ impl<'a> AffineValueTracer<'a> {
                 self.unpacked(copied, op, place, count, id, depth + 1)
             }
             _ => None,
+        }?;
+        if self.strict.get() > 0 && instr.predicate.is_some() && value.is_ok() {
+            let name = self.module.interner.resolve(src);
+            return Some(Err(format!("{name} is written under a guard")));
         }
+        Some(value)
     }
 
     /// A `.wide` product's operands, which it reads as its type (PTX ISA
