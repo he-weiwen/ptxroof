@@ -579,19 +579,29 @@ struct Multiplier<'a> {
     /// Over the launch, a loop around the block has no trip count.
     unread: bool,
     split: Option<Vec<LoopId>>,
-    trips: SymExpr,
+    /// `None` where the caller counts none: aggregates under `unread`.
+    trips: Option<SymExpr>,
     ctas: Option<u64>,
 }
 
 /// The threads and warps that run a set (`KernelReportBuilder::running`),
 /// whether they are a bound, whether the count explains the set's
 /// threads, and the trips it runs.
+#[derive(Clone)]
 struct Participation {
     threads: u64,
     warps: Option<(u64, bool)>,
     at_most: bool,
     explained: bool,
     trips: Option<SymExpr>,
+}
+
+/// What a statement's memory operand, or the statement, contributes
+/// (`KernelReportBuilder::statement`).
+enum Resolution {
+    Skipped,
+    Unknown,
+    Counted(Participation),
 }
 
 impl Participation {
@@ -1366,7 +1376,7 @@ impl<'a> KernelReportBuilder<'a> {
             at_most,
             unread,
             split,
-            trips,
+            trips: Some(trips),
             ctas,
         })
     }
@@ -1375,13 +1385,12 @@ impl<'a> KernelReportBuilder<'a> {
     /// them: trip by trip where a loop counter selects them, weighted by
     /// the CTA index where `m`'s loop counts read it, at the launch's own
     /// count (`launch`), else per CTA times the CTAs; with the trips they
-    /// run, `trips` unless they are summed trip by trip. `None` when a
+    /// run, `m`'s unless they are summed trip by trip. `None` when a
     /// count is unknown or does not fit in u64.
     fn running(
         &self,
         bm: &BlockMeasurements,
         m: &Multiplier,
-        trips: Option<&SymExpr>,
         set: &ThreadSet,
         launch: Option<(u64, u64)>,
     ) -> Option<Participation> {
@@ -1395,7 +1404,7 @@ impl<'a> KernelReportBuilder<'a> {
         };
         if m.per.cta().is_some()
             && m.split.is_none()
-            && trips.is_some()
+            && m.trips.is_some()
             && let Some((t, w, rest)) = self.per_trip(bm.block, set, m.below)
         {
             let n = match m.per {
@@ -1411,7 +1420,7 @@ impl<'a> KernelReportBuilder<'a> {
                 None => None,
             };
             let threads = u64::try_from(t).ok()?.checked_mul(n)?;
-            let trips = trips.cloned();
+            let trips = m.trips.clone();
             Some(Participation {
                 threads,
                 warps,
@@ -1429,8 +1438,61 @@ impl<'a> KernelReportBuilder<'a> {
             None => launch,
         };
         match launch {
-            Some((t, w)) => Some(counted(t, w, trips.cloned())),
+            Some((t, w)) => Some(counted(t, w, m.trips.clone())),
             None => scaled(m.ctas?),
+        }
+    }
+
+    /// Memory operand `operand` of statement `stmt` of block `bm`, or the
+    /// statement with operand 0, under its guard: none or one every
+    /// thread reads as true runs as `block`, a bound if the statement is
+    /// predicated (a branch); one every thread reads as false skips it;
+    /// another runs its own set, a cp.async source operand the threads
+    /// that read it, a bound unless the count explains the set. `cache`
+    /// keeps each guarded set's count per block.
+    fn statement(
+        &self,
+        bm: &BlockMeasurements,
+        m: &Multiplier,
+        stmt: usize,
+        operand: usize,
+        block: Option<&Participation>,
+        cache: &mut HashMap<(usize, bool), Option<Participation>>,
+    ) -> Resolution {
+        let counted = |p: Option<Participation>| p.map_or(Resolution::Unknown, Resolution::Counted);
+        let source = operand == 1 && self.sets.sources.contains_key(&stmt);
+        match self.sets.guard(stmt, operand) {
+            Some(Pred::False) => Resolution::Skipped,
+            Some(Pred::True) => counted(block.cloned()),
+            Some(_) => counted(
+                (cache.entry((stmt, source)))
+                    .or_insert_with(|| {
+                        let (set, launch) = match source {
+                            true => (
+                                self.sets.of_access(bm.block, stmt, 1),
+                                self.source_launches.get(&stmt).copied(),
+                            ),
+                            false => (
+                                self.sets.of(bm.block, stmt),
+                                self.launches.get(&(bm.block, Some(stmt))).copied(),
+                            ),
+                        };
+                        let p = self.running(bm, m, &set, launch)?;
+                        Some(Participation {
+                            at_most: p.at_most || !p.explained,
+                            ..p
+                        })
+                    })
+                    .clone(),
+            ),
+            None => {
+                let predicated =
+                    matches!(&self.kernel.stmts[stmt], Stmt::Instr(i) if i.predicate.is_some());
+                counted(block.map(|p| Participation {
+                    at_most: p.at_most || predicated,
+                    ..p.clone()
+                }))
+            }
         }
     }
 
@@ -1487,30 +1549,25 @@ impl<'a> KernelReportBuilder<'a> {
         }
 
         for bm in &self.blocks {
-            let Some(multiplier) = self.multiplier(bm.block, below, per) else {
+            let Some(mut multiplier) = self.multiplier(bm.block, below, per) else {
                 continue;
             };
             if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
                 continue;
             }
-            let trips = (!multiplier.unread).then_some(&multiplier.trips);
-            // None when a count over the launch does not fit in i64.
-            let resolve = |set: &ThreadSet, launch: Option<(u64, u64)>| {
-                let p = self.running(bm, &multiplier, trips, set, launch)?;
-                let (threads, warps) = p.narrow()?;
-                Some((threads, warps, p))
-            };
-            // A block whose count does not fit is unknown, its warps too.
-            let block = resolve(
-                &self.sets.blocks[bm.block.0 as usize],
-                self.launches.get(&(bm.block, None)).copied(),
-            );
-            let mult = (block.as_ref()).and_then(|(_, _, p)| p.trips.clone());
+            if multiplier.unread {
+                multiplier.trips = None;
+            }
+            // A block whose count does not fit in i64 is unknown, its warps too.
+            let set = &self.sets.blocks[bm.block.0 as usize];
+            let launch = self.launches.get(&(bm.block, None)).copied();
+            let block =
+                (self.running(bm, &multiplier, set, launch)).filter(|p| p.narrow().is_some());
+            let mult = (block.as_ref()).and_then(|p| p.trips.clone());
             let mult = mult.as_ref();
-            let (threads, warps, block_at_most) = (block.as_ref())
-                .map_or((0, Some((0, false)), false), |(t, w, p)| {
-                    (*t, *w, p.at_most)
-                });
+            let ((threads, warps), block_at_most) = (block.as_ref())
+                .and_then(|p| Some((p.narrow()?, p.at_most)))
+                .unwrap_or(((0, Some((0, false))), false));
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
@@ -1533,36 +1590,22 @@ impl<'a> KernelReportBuilder<'a> {
                     .add(threads, warps, mult, block_at_most);
                 instruction_total.add(threads, warps, mult, block_at_most);
             }
+            let block = block.as_ref();
+            let mut guarded = HashMap::new();
             for m in &bm.measurements {
                 if !self.counted(bm.block, m.provenance) {
                     continue;
                 }
-                let p = m.provenance;
-                let source = m.memory_operand == Some(1) && self.sets.sources.contains_key(&p);
-                let (threads, at_most, mult) = match self
-                    .sets
-                    .guard(p, m.memory_operand.unwrap_or(0))
-                {
-                    Some(Pred::True) => (threads, block_at_most, mult.cloned()),
-                    Some(Pred::False) => continue,
-                    Some(_) => {
-                        let (set, launch) = match source {
-                            true => (
-                                self.sets.of_access(bm.block, p, 1),
-                                self.source_launches.get(&p).copied(),
-                            ),
-                            false => (
-                                self.sets.of(bm.block, p),
-                                self.launches.get(&(bm.block, Some(p))).copied(),
-                            ),
-                        };
-                        match resolve(&set, launch) {
-                            Some((threads, _, p)) => (threads, p.at_most || !p.explained, p.trips),
+                let (stmt, operand) = (m.provenance, m.memory_operand.unwrap_or(0));
+                let (threads, at_most, mult) =
+                    match self.statement(bm, &multiplier, stmt, operand, block, &mut guarded) {
+                        Resolution::Skipped => continue,
+                        Resolution::Unknown => (0, false, None),
+                        Resolution::Counted(p) => match p.narrow() {
+                            Some((threads, _)) => (threads, p.at_most, p.trips),
                             None => (0, false, None),
-                        }
-                    }
-                    None => (threads, block_at_most || m.predicated, mult.cloned()),
-                };
+                        },
+                    };
                 let n = (m.count as i64).checked_mul(threads);
                 let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
                 let mult = mult.as_ref();
@@ -2011,7 +2054,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
                 let never = !self.counted(bm.block, i.provenance);
-                let trips = mult.as_const().filter(|_| alone);
+                let trips = mult.as_ref().and_then(SymExpr::as_const).filter(|_| alone);
                 // Over the launch, a set counted at every CTA explains its
                 // block as an exact count per CTA does, and one a loop
                 // counter selects as its sum over the trips.
