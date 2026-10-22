@@ -1296,14 +1296,9 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// The product of `b`'s loops' trip counts up to `below`, and whether
     /// a loop among them may not be entered: one entered conditionally,
-    /// unless its header's threads are counted, per CTA (`cta`) or at
-    /// every CTA of the launch (`launch`).
-    fn multiplier(
-        &self,
-        b: BlockId,
-        below: Option<LoopId>,
-        (cta, launch): (bool, bool),
-    ) -> Option<(SymExpr, bool)> {
+    /// unless its header's threads are counted, per CTA or at every CTA
+    /// of the launch.
+    fn multiplier(&self, b: BlockId, below: Option<LoopId>, per: Per) -> Option<(SymExpr, bool)> {
         let chain = self.chain(b);
         let cut = match below {
             Some(l) => chain.iter().position(|&x| x == l)?,
@@ -1316,8 +1311,8 @@ impl<'a> KernelReportBuilder<'a> {
             let header = self.forest.get(l).header;
             let counted = (self.sets.blocks[header.0 as usize].count(self.shape))
                 .is_some_and(|c| c.certain == c.possible);
-            let entered =
-                (cta && counted) || (launch && self.launches.contains_key(&(header, None)));
+            let entered = (per.cta().is_some() && counted)
+                || (matches!(per, Per::Launch(..)) && self.launches.contains_key(&(header, None)));
             at_most |= self.cond_entry[l.0 as usize] && !entered;
         }
         Some((mult, at_most))
@@ -1377,9 +1372,7 @@ impl<'a> KernelReportBuilder<'a> {
         }
 
         for bm in &self.blocks {
-            let Some((mult, chain_at_most)) =
-                self.multiplier(bm.block, below, (cta.is_some(), ctas.is_some()))
-            else {
+            let Some((mult, chain_at_most)) = self.multiplier(bm.block, below, per) else {
                 continue;
             };
             if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
@@ -1933,7 +1926,9 @@ impl<'a> KernelReportBuilder<'a> {
         let reducible = self.forest.irreducible_edges.is_empty();
         let (mut blocks, mut all) = (Vec::new(), Vec::new());
         for bm in &self.blocks {
-            let Some((mult, chain_at_most)) = self.multiplier(bm.block, None, (true, true)) else {
+            let Some((mult, chain_at_most)) =
+                self.multiplier(bm.block, None, Per::Launch(cta, grid))
+            else {
                 continue;
             };
             let split = self
