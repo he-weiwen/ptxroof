@@ -1719,6 +1719,35 @@ mod tests {
         assert_eq!(set(spread).launch([1024, 1, 1], [1 << 17, 1, 1]), None);
     }
 
+    /// A substitution keeps a product past i64 that the base brings back:
+    /// `2^62·c + t < 2^62 + 1` over 3 CTAs holds 32, 1 and no thread, and
+    /// `2^62·k + t − 2^63 + 1 < 0` at k = 2 is `t + 1 < 0`.
+    #[test]
+    fn a_substitution_sums_past_i64_before_narrowing() {
+        let wide = over_ctas(1, 1 << 62, -(1 << 62) - 1, Cmp::Lt, 3);
+        assert_eq!(
+            ThreadSet { pred: wide }.launch([32, 1, 1], [3, 1, 1]),
+            Some((33, 2))
+        );
+        let l = LoopId(0);
+        let tid = || Affine::var(Var::Tid(Axis::X));
+        let trip = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Iter(l)).scale(SymExpr::Const(1 << 62))
+                + tid()
+                + Affine::invariant(SymExpr::Const(i64::MIN + 1)),
+            cmp: Cmp::Lt,
+            cta: None,
+            trip: Some((l, (1 << 62, 3 << 62))),
+        });
+        let at_two = Pred::Cmp(Constraint {
+            form: tid() + Affine::invariant(SymExpr::Const(1)),
+            cmp: Cmp::Lt,
+            cta: None,
+            trip: None,
+        });
+        assert_eq!(trip.at_trip(l, 2), Some(at_two));
+    }
+
     /// Weighted, CTA c counts `weight(c)` times: t < 2c over 4 CTAs with
     /// weight c holds 0·0 + 2·1 + 4·2 + 6·3 threads; a weight on the y
     /// axis, which no comparison reads, enumerates it too; a weight that
