@@ -175,12 +175,8 @@ type Counted = (SymExpr, BlockId, Option<(SymExpr, i64)>);
 /// The latch read strictly, else with each uniform value it cannot read
 /// a variable, keeping the first reason.
 fn counted_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {
-    let outer = tracer.cta_symbols.replace(true);
     let latch = || tracer.strictly(|| latch_trips(tracer, id));
-    let counted = (tracer.without_fallback(latch))
-        .or_else(|why| tracer.with_fallback(latch).map_err(|_| why));
-    tracer.cta_symbols.set(outer);
-    counted
+    (tracer.without_fallback(latch)).or_else(|why| tracer.with_fallback(latch).map_err(|_| why))
 }
 
 fn latch_trips(tracer: &AffineValueTracer<'_>, id: LoopId) -> Result<Counted, String> {

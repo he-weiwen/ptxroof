@@ -61,9 +61,6 @@ pub(crate) struct AffineValueTracer<'a> {
     /// Tracing an address that does not read otherwise: a uniform read
     /// the trace cannot interpret is a `Var::Uniform`.
     fallback: Cell<bool>,
-    /// Reading a latch: a `min` or `max` holds its operands' CTA-index
-    /// terms as symbols, one value per CTA.
-    pub(crate) cta_symbols: Cell<bool>,
     /// A value's name in a trip count's symbol, `%r19@69`.
     value_names: Option<&'a dyn Fn(Value) -> String>,
 }
@@ -133,7 +130,6 @@ impl<'a> AffineValueTracer<'a> {
             bindings: None,
             uniformity: OnceCell::new(),
             fallback: Cell::new(false),
-            cta_symbols: Cell::new(false),
             value_names: None,
         }
     }
@@ -959,10 +955,7 @@ impl<'a> AffineValueTracer<'a> {
             Opcode::Min | Opcode::Max
                 if ops.len() == 3 && mods.len() == 1 && int_type_range(mods[0]).is_some() =>
             {
-                let (a, b) = match self.cta_symbols.get() {
-                    true => (per_cta(arg(1)?), per_cta(arg(2)?)),
-                    false => (arg(1)?, arg(2)?),
-                };
+                let (a, b) = (per_cta(arg(1)?), per_cta(arg(2)?));
                 if !(a.is_invariant() && b.is_invariant()) {
                     return Err(refuse(&(a + b), id, mnemonic.name()));
                 }
