@@ -16,8 +16,7 @@
 //! `ceil_div`, ...), which fold constants and maintain the flattening
 //! invariants; `bind` rebuilds through them, so a fully-bound
 //! expression collapses to `Const`. Arithmetic that would overflow
-//! `i64` stays symbolic (folding is skipped) and `eval` reports `None`
-//! rather than wrapping.
+//! `i64` stays symbolic (folding is skipped) rather than wrapping.
 //!
 //! Printing is deterministic and matches the convention pinned in the
 //! committed scenario expectations: `param_2 mod 4` binds tighter than
@@ -152,18 +151,8 @@ impl SymExpr {
     }
 
     /// The least and the greatest value, every symbol within `sym`'s
-    /// bounds: `None` where one has none, the whole `i128` line where a
-    /// bound leaves it.
-    pub fn range(&self, sym: &dyn Fn(&Leaf) -> Option<(i64, i64)>) -> Option<(i128, i128)> {
-        match self.span(sym) {
-            Ok(r) => Some(r),
-            Err(true) => Some((i128::MIN, i128::MAX)),
-            Err(false) => None,
-        }
-    }
-
-    /// The same, `Err(false)` where a symbol has no bounds and
-    /// `Err(true)` where a bound leaves `i128`.
+    /// bounds: `Err(false)` where a symbol has no bounds and `Err(true)`
+    /// where a bound leaves `i128`.
     pub fn span(&self, sym: &dyn Fn(&Leaf) -> Option<(i64, i64)>) -> Result<(i128, i128), bool> {
         let pair = |x: &SymExpr, y: &SymExpr| Ok((x.span(sym)?, y.span(sym)?));
         let fits = |x: Option<i128>| x.ok_or(true);
@@ -451,11 +440,6 @@ impl SymExpr {
         }
     }
 
-    /// `Some(value)` iff fully bound (and nothing overflowed).
-    pub fn eval(&self) -> Option<i64> {
-        self.bind(&HashMap::new()).as_const()
-    }
-
     /// The symbols appearing in the expression, each once, in order.
     pub fn symbols(&self) -> Vec<Leaf> {
         fn walk(e: &SymExpr, out: &mut Vec<Leaf>) {
@@ -698,7 +682,6 @@ mod tests {
         assert_eq!(trips.bind(&bindings(&[(2, 3)])), E::Const(0));
         // Unbound symbol survives binding of others.
         assert_eq!(trips.bind(&bindings(&[(5, 7)])), trips);
-        assert_eq!(trips.eval(), None);
     }
 
     #[test]
@@ -816,20 +799,17 @@ mod tests {
             ),
             k(),
         );
-        assert_eq!(row.range(&sym), Some((-84, 64)));
-        assert_eq!(E::ceil_div(k(), 8).range(&sym), Some((0, 13)));
+        assert_eq!(row.span(&sym), Ok((-84, 64)));
+        assert_eq!(E::ceil_div(k(), 8).span(&sym), Ok((0, 13)));
         assert_eq!(
-            E::floor_div(E::sub(k(), E::Const(1)), 8).range(&sym),
-            Some((-1, 12))
+            E::floor_div(E::sub(k(), E::Const(1)), 8).span(&sym),
+            Ok((-1, 12))
         );
-        assert_eq!(E::modulo(k(), 64).range(&sym), Some((0, 63)));
-        assert_eq!(E::max(k(), E::Const(1)).range(&sym), Some((1, 100)));
-        assert_eq!(E::add(k(), E::sym("n")).range(&sym), None);
+        assert_eq!(E::modulo(k(), 64).span(&sym), Ok((0, 63)));
+        assert_eq!(E::max(k(), E::Const(1)).span(&sym), Ok((1, 100)));
+        assert_eq!(E::add(k(), E::sym("n")).span(&sym), Err(false));
         let huge = E::mul(E::Const(i64::MAX), E::mul(k(), k()));
-        assert_eq!(
-            huge.range(&|_| Some((i64::MIN, i64::MAX))).map(|r| r.1),
-            Some(i128::MAX)
-        );
+        assert_eq!(huge.span(&|_| Some((i64::MIN, i64::MAX))), Err(true));
     }
 
     #[test]

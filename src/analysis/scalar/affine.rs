@@ -154,15 +154,6 @@ impl Affine {
         out
     }
 
-    /// The form `1·v` with no base: a variable on its own.
-    pub fn single_var(&self) -> Option<Var> {
-        if self.base != SymExpr::Const(0) || self.terms.len() != 1 {
-            return None;
-        }
-        let (v, c) = self.terms.iter().next()?;
-        (*c == SymExpr::Const(1)).then(|| v.clone())
-    }
-
     /// Divide exactly by `d`, when every coefficient and the base are
     /// known multiples of it.
     pub fn div_exact(self, d: i64) -> Option<Affine> {
@@ -315,23 +306,6 @@ impl Affine {
             SymExpr::Const(c) if *c < 0 => format!("{out} - {}", c.unsigned_abs()),
             base => format!("{out} + {base}"),
         }
-    }
-
-    /// The largest value the form can take, when every term is a
-    /// modulus with a positive constant coefficient and the base is a
-    /// constant: `Σ c·(m − 1) + base`.
-    pub fn max_value(&self) -> Option<i64> {
-        let mut max = self.base.as_const()?;
-        for (v, c) in &self.terms {
-            let (Var::Mod(_, m), Some(c)) = (v, c.as_const()) else {
-                return None;
-            };
-            if c <= 0 {
-                return None;
-            }
-            max = max.checked_add(c.checked_mul(m - 1)?)?;
-        }
-        Some(max)
     }
 
     /// The least and the greatest value of the form when `bound` gives
@@ -741,15 +715,6 @@ mod tests {
             (tid().scale(SymExpr::Const(-2)) + Affine::invariant(SymExpr::Const(-4))).to_string(),
             "-2 * %tid.x - 4"
         );
-        assert_eq!(
-            tid()
-                .modulo_const(8)
-                .unwrap()
-                .scale(SymExpr::Const(8))
-                .max_value(),
-            Some(56)
-        );
-        assert_eq!(tid().max_value(), None);
         assert_eq!(tid().align_down(8).unwrap().to_string(), "8 * ⌊%tid.x/8⌋");
         assert_eq!(
             (tid().scale(SymExpr::Const(2)) + Affine::invariant(SymExpr::Const(64)))
