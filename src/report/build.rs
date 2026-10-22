@@ -35,14 +35,14 @@ use crate::analysis::memory_footprint::{
     AccessForm, CountRange, at_trip, loop_bytes, warp_footprint,
 };
 use crate::analysis::scalar::affine::{Affine, Var};
-use crate::analysis::scalar::symexpr::SymExpr;
+use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
 use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSet, ThreadSets, thread_sets};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
-use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialVector, Stmt};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialReg, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::measured::{LineIndex, NcuRecord, Prediction, Sectors};
@@ -1106,16 +1106,13 @@ impl<'a> KernelReportBuilder<'a> {
     /// it names no other address (a parameter in a coefficient, a
     /// module-scope array) and no 64-bit uniform value. An offset from a
     /// pointer is taken to stay in its allocation.
-    fn pointer(&self, key: &Affine) -> Option<String> {
-        let pointer = |name: &str| {
-            (name
-                .strip_prefix("param_")
-                .and_then(|i| i.parse::<usize>().ok()))
-            .and_then(|i| self.kernel.params.get(i))
-            .is_some_and(|p| p.ty.bytes() == Some(8))
+    fn pointer(&self, key: &Affine) -> Option<usize> {
+        let pointer = |leaf: &Leaf| match leaf {
+            Leaf::Param(i) => (self.kernel.params.get(*i)).is_some_and(|p| p.ty.bytes() == Some(8)),
+            _ => false,
         };
         let address =
-            |name: &String| pointer(name) || !(name.starts_with("param_") || name.starts_with('%'));
+            |leaf: &Leaf| pointer(leaf) || !matches!(leaf, Leaf::Param(_) | Leaf::Special(_));
         let mut coefficients = Vec::new();
         for (v, c) in &key.terms {
             let wide = v.uniform().is_some_and(|u| {
@@ -1141,13 +1138,14 @@ impl<'a> KernelReportBuilder<'a> {
             return None;
         };
         let direct = match &key.base {
-            SymExpr::Sym(n) => n.to_string() == *p,
-            SymExpr::Sum(ts) => {
-                (ts.iter()).any(|t| matches!(t, SymExpr::Sym(n) if n.to_string() == *p))
-            }
+            SymExpr::Sym(n) => n == p,
+            SymExpr::Sum(ts) => ts.iter().any(|t| matches!(t, SymExpr::Sym(n) if n == p)),
             _ => false,
         };
-        (direct && pointer(p)).then(|| p.clone())
+        match p {
+            Leaf::Param(i) if direct && pointer(p) => Some(*i),
+            _ => None,
+        }
     }
 
     /// The bytes a register's declaration gives it.
@@ -1277,8 +1275,11 @@ impl<'a> KernelReportBuilder<'a> {
     /// Loop `l`'s count reads the CTA index, or a uniform value, one per
     /// CTA.
     fn trips_per_cta(&self, l: LoopId) -> bool {
-        (self.trip_exprs[l.0 as usize].symbols().iter())
-            .any(|s| s.starts_with("%ctaid") || s.starts_with("uniform("))
+        (self.trip_exprs[l.0 as usize].symbols().iter()).any(|s| match s {
+            Leaf::Special(SpecialReg::Vector(SpecialVector::Ctaid, _)) => true,
+            Leaf::Symbol(name) => name.starts_with("uniform("),
+            _ => false,
+        })
     }
 
     /// `b`'s loops whose trip counts read the CTA index, and the product
@@ -1296,10 +1297,12 @@ impl<'a> KernelReportBuilder<'a> {
     /// value at each CTA: each count evaluated and never negative, and a
     /// `!=` latch's step dividing its distance into a positive count.
     fn cta_weight(&self, loops: Vec<LoopId>) -> ([bool; 3], impl Fn([i64; 3]) -> Option<u64> + '_) {
-        let names = SpecialVector::Ctaid.components().map(|reg| reg.name());
-        let read = names
-            .clone()
-            .map(|n| (loops.iter()).any(|l| self.trip_exprs[l.0 as usize].symbols().contains(&n)));
+        let regs = SpecialVector::Ctaid.components();
+        let read = regs.map(|reg| {
+            let leaf = Leaf::Special(reg);
+            (loops.iter()).any(|l| self.trip_exprs[l.0 as usize].symbols().contains(&leaf))
+        });
+        let names = regs.map(|reg| reg.name());
         let weight = move |c: [i64; 3]| {
             let at: HashMap<String, i64> = names.iter().cloned().zip(c).collect();
             loops.iter().try_fold(1u64, |w, l| {
@@ -1851,7 +1854,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let approx: HashMap<String, i64> = weight
                     .symbols()
                     .into_iter()
-                    .map(|s| (s, (1 << 20) + 3))
+                    .map(|s| (s.to_string(), (1 << 20) + 3))
                     .collect();
                 let key = weight.bind(&approx).as_const().unwrap_or(i64::MAX);
                 (i, self.display[i].clone(), weight, key)

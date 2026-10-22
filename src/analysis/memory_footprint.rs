@@ -285,7 +285,7 @@ pub fn loop_bytes(
     trips: i64,
     shape: [u32; 3],
     forms: &[AccessForm],
-    pointer: impl Fn(&Affine) -> Option<String>,
+    pointer: impl Fn(&Affine) -> Option<usize>,
 ) -> Option<LoopBytes> {
     let [nx, ny, nz] = shape.map(i64::from);
     let threads = nx * ny * nz;
@@ -406,7 +406,7 @@ pub fn loop_bytes(
         }
     }
     let (mut most, mut loose) = (0i64, 0i64);
-    let mut largest: HashMap<String, i64> = HashMap::new();
+    let mut largest: HashMap<usize, i64> = HashMap::new();
     for (key, intervals) in per_base {
         let len = union_len(intervals);
         most += len;
@@ -699,7 +699,7 @@ mod tests {
             conditional: false,
             uniform_varies: false,
         };
-        let on_param = |_: &Affine| Some("param_0".to_owned());
+        let on_param = |_: &Affine| Some(0);
         let one = loop_bytes(id, 4, [128, 1, 1], &[access(&form)], on_param).unwrap();
         assert_eq!(one.requested, 2048);
         assert_eq!(

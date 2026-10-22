@@ -446,12 +446,13 @@ impl SymExpr {
         self.bind(&HashMap::new()).as_const()
     }
 
-    /// Symbol names appearing in the expression, sorted, deduplicated.
-    pub fn symbols(&self) -> Vec<String> {
-        fn walk(e: &SymExpr, out: &mut Vec<String>) {
+    /// The symbols appearing in the expression, each once, in order.
+    pub fn symbols(&self) -> Vec<Leaf> {
+        fn walk(e: &SymExpr, out: &mut Vec<Leaf>) {
             match e {
                 SymExpr::Const(_) => {}
-                SymExpr::Sym(leaf) => out.push(leaf.to_string()),
+                SymExpr::Sym(leaf) if out.contains(leaf) => {}
+                SymExpr::Sym(leaf) => out.push(leaf.clone()),
                 SymExpr::Sum(v) | SymExpr::Prod(v) => {
                     for x in v {
                         walk(x, out);
@@ -468,8 +469,6 @@ impl SymExpr {
         }
         let mut out = Vec::new();
         walk(self, &mut out);
-        out.sort();
-        out.dedup();
         out
     }
 }
@@ -769,13 +768,14 @@ mod tests {
     }
 
     #[test]
-    fn symbols_are_collected_sorted_dedup() {
+    fn symbols_are_collected_once_in_order() {
         let e = E::add(
             E::mul(E::sym("b"), E::sym("a")),
             E::ceil_div(E::sym("a"), 4),
         );
-        assert_eq!(e.symbols(), ["a", "b"]);
-        assert_eq!(E::Const(3).symbols(), Vec::<String>::new());
+        let name = |s: &str| Leaf::Symbol(s.to_owned());
+        assert_eq!(e.symbols(), [name("b"), name("a")]);
+        assert_eq!(E::Const(3).symbols(), []);
     }
 
     /// A product subtracted prints without a unit coefficient.
@@ -846,7 +846,8 @@ mod tests {
             E::mul(E::Const(2), E::min(k(), E::sym("n"))).to_string(),
             "2 * min(param_2, n)"
         );
-        assert_eq!(E::min(k(), E::sym("n")).symbols(), ["n", "param_2"]);
+        let n = Leaf::Symbol("n".to_owned());
+        assert_eq!(E::min(k(), E::sym("n")).symbols(), [Leaf::Param(2), n]);
         assert!(E::max(E::mul(E::Const(4), k()), E::Const(8)).divisible_by(4));
         assert!(!E::max(k(), E::Const(8)).divisible_by(4));
     }
