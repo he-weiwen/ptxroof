@@ -14,7 +14,7 @@ use crate::analysis::instruction_counts::measurement::MeasureKind;
 use crate::analysis::register_effects::{reads_cc, split_operands};
 use crate::analysis::scalar::trace::{AffineValueTracer, SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
+use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -179,7 +179,7 @@ fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool) -> Vec<Read> {
             "comes from a statement not parsed".to_owned(),
         )];
     };
-    if !lane_wise(t.module, instr) {
+    if !lane_wise(t, instr) {
         return vec![Read::Divergent(format!(
             "comes from `{}`",
             t.module.opcode(instr)
@@ -296,8 +296,12 @@ fn exits<'a>(t: &'a AffineValueTracer, id: LoopId) -> impl Iterator<Item = Node>
         .map(|&b| Node::Branch(b))
 }
 
-/// Each lane's result is a function of its own operands.
-fn lane_wise(module: &Module, instr: &Instr) -> bool {
+/// Each lane's result is a function of its own operands: a kernel
+/// parameter is read-only and one per grid, a function's `.param`, a
+/// call's return value among them, one per thread (PTX ISA §5.1.6,
+/// Table 7).
+fn lane_wise(t: &AffineValueTracer, instr: &Instr) -> bool {
+    let module = t.module;
     let c = classify(module, instr);
     match c.category {
         InstructionCategory::NonFlopArith { .. } => true,
@@ -316,6 +320,10 @@ fn lane_wise(module: &Module, instr: &Instr) -> bool {
                     .modifiers(instr)
                     .iter()
                     .any(|&m| module.interner.resolve(m) == "param")
+                && (module.operand_ids(instr.operands).iter()).any(|&o| {
+                    matches!(module.operand(o), Operand::Memory { base, .. }
+                        if matches!(module.operand(*base), Operand::SymbolRef(s) if t.params.contains_key(s)))
+                })
         }
     }
 }

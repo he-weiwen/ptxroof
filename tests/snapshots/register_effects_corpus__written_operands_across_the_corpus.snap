@@ -12,7 +12,7 @@ add.rn.f32	1	564
 add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
 add.s32	1	3648
-add.s64	1	2567
+add.s64	1	2568
 add.u32	1	17
 add.u64	1	4
 addc.u32	1	1
@@ -32,6 +32,7 @@ bra	0	420
 bra.uni	0	296
 brx.idx	0	2
 call	1	1
+call.uni	1	1
 cp.async.bulk.commit_group	0	4
 cp.async.bulk.tensor.2d.global.shared::cta.bulk_group	0	4
 cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes	0	45
@@ -94,12 +95,12 @@ ld.global.v4.u32	1	6
 ld.local.f32	1	60
 ld.local.u32	1	1
 ld.param.b32	1	318
-ld.param.b64	1	248
+ld.param.b64	1	249
 ld.param.f32	1	20
 ld.param.s32	1	36
 ld.param.u16	1	1
 ld.param.u32	1	80
-ld.param.u64	1	219
+ld.param.u64	1	220
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -143,7 +144,7 @@ mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	107
 mov.u16	1	293
-mov.u32	1	1265
+mov.u32	1	1266
 mov.u64	1	51
 mul.f32	1	1805
 mul.hi.s32	1	1
@@ -178,7 +179,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	32
 rem.s64	1	10
 rem.u32	1	8
-ret	0	236
+ret	0	237
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	801
@@ -237,7 +238,7 @@ st.global.b32	0	197
 st.global.b64	0	9
 st.global.f32	0	15
 st.global.u16	0	198
-st.global.u32	0	192
+st.global.u32	0	193
 st.global.u64	0	1
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2
@@ -245,6 +246,7 @@ st.global.v4.b32	0	208
 st.global.v4.f32	0	1
 st.local.u32	0	2
 st.local.v4.f32	0	64
+st.param.b32	0	1
 st.shared.b16	0	4
 st.shared.b32	0	30
 st.shared.u16	0	32

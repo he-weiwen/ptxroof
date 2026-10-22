@@ -3,6 +3,9 @@
 // into %r2 (PTX ISA §9.7.13.5: "return value into register d"), so
 // every thread stores to param_0, not to its own word (ptxas 13.4:
 // `CALL.REL.NOINC`, then `IMAD.WIDE.U32 R2, RZ, R2, c[0x0][0x160]`).
+// micro_call_param_returns: `offset` returns 4·a through a `.param`,
+// per thread (PTX ISA §5.1.6, Table 7), so thread t stores at
+// param_0 + 4t.
 //
 .version 8.7
 .target sm_89
@@ -13,6 +16,19 @@
 )
 {
 	mov.u32 	rv, 0;
+	ret;
+}
+
+.func (.param .b64 rv) offset(
+	.param .b32 a
+)
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.b32 	%r1, [a];
+	mul.wide.u32 	%rd1, %r1, 4;
+	st.param.b64 	[rv], %rd1;
 	ret;
 }
 
@@ -29,6 +45,28 @@
 	mov.u32 	%r2, %r1;
 	call (%r2), zero, (%r1);
 	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_call_param_returns(
+	.param .u64 micro_call_param_returns_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_call_param_returns_param_0];
+	mov.u32 	%r1, %tid.x;
+	{
+	.param .b32 param0;
+	st.param.b32 	[param0], %r1;
+	.param .b64 retval0;
+	call.uni (retval0), offset, (param0);
+	ld.param.b64 	%rd2, [retval0];
+	}
 	add.s64 	%rd3, %rd1, %rd2;
 	st.global.u32 	[%rd3], %r1;
 	ret;
