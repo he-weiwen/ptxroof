@@ -746,8 +746,11 @@ Hand-written micro kernels say so in their header.
 
 ## Conventions
 
-- Commits under 50 non-test lines. No comments except externally
-  imposed invariants, with a link. Cite the PTX ISA from `refs/`
-  (`tools/fetch-manuals.sh`), not memory.
+- Commits are planned at about 50 changed non-test lines and may reach
+  80. A change that does not fit in 80 is split only at a natural
+  semantic boundary; otherwise its code goes to the owner for review
+  before it is committed (a subagent returns it to the main agent).
+- No comments except externally imposed invariants, with a link. Cite
+  the PTX ISA from `refs/` (`tools/fetch-manuals.sh`), not memory.
 - This file and `docs/ptx-instruction-coverage.md` change in the same
   commit as what they describe.
