@@ -1239,8 +1239,7 @@ pub(crate) fn thread_sets(
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, its
-/// operands read strictly (a write under a guard is refused, not taken
-/// as the value) under the tracer's bindings (`--bind`, the block
+/// operands read under the tracer's bindings (`--bind`, the block
 /// shape), when it compares two such forms as integers: an `lt`, `le`,
 /// `gt` or `ge`
 /// only when both lie in the range of its type, [0, 2^width) or
@@ -1280,7 +1279,7 @@ fn condition(
         return None;
     }
     let bound = |op| {
-        let x = (tracer.strictly(|| tracer.trace_operand(op, def, None, 0))).ok()?;
+        let x = tracer.trace_operand(op, def, None, 0).ok()?;
         Some(tracer.bindings.map_or(x.clone(), |m| x.bind(m)))
     };
     let (a, b) = (bound(ops[1])?, bound(ops[2])?);
@@ -1307,11 +1306,9 @@ fn condition(
             })
     };
     let constant = |op| {
-        (tracer
-            .strictly(|| tracer.trace_operand(op, def, None, 0))
-            .ok())
-        .and_then(|x| tracer.constant(&x))
-        .map(|c| Affine::invariant(SymExpr::Const(c)))
+        (tracer.trace_operand(op, def, None, 0).ok())
+            .and_then(|x| tracer.constant(&x))
+            .map(|c| Affine::invariant(SymExpr::Const(c)))
     };
     if let (Some(x), Some(y)) = (constant(ops[1]), constant(ops[2]))
         && comparable(&x, &y)

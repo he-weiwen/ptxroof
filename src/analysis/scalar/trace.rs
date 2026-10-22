@@ -49,9 +49,6 @@ pub(crate) struct AffineValueTracer<'a> {
     pub(crate) reach: Vec<Vec<bool>>,
     /// Each loop counter by its header φ, with its loop.
     pub(crate) recurrences: HashMap<Value, (LoopId, Recurrence)>,
-    /// Inside a counter's start or register step: a guarded write there
-    /// is refused, not read as its new value.
-    strict: Cell<u32>,
     /// Nested loops' constant trip counts, for counters stepped by their
     /// exits; `None` while one is being solved, or when it is not one.
     trips: RefCell<HashMap<LoopId, Option<i64>>>,
@@ -125,7 +122,6 @@ impl<'a> AffineValueTracer<'a> {
             params,
             reach,
             recurrences: recurrences_by_phi,
-            strict: Cell::new(0),
             trips: RefCell::new(HashMap::new()),
             bindings: None,
             uniformity: OnceCell::new(),
@@ -450,9 +446,8 @@ impl<'a> AffineValueTracer<'a> {
     }
 
     /// Counter `r` of loop `l` in its iteration `k`: its start plus
-    /// `(k − 1)` steps, start and register steps read with no guarded
-    /// write and the steps free of every variable; `None` when a step
-    /// varies, so `r` counts nothing.
+    /// `(k − 1)` steps, the steps free of every variable; `None` when a
+    /// step varies, so `r` counts nothing.
     fn counter(
         &self,
         l: LoopId,
@@ -460,10 +455,8 @@ impl<'a> AffineValueTracer<'a> {
         id: Option<LoopId>,
         depth: u32,
     ) -> Result<Affine, Option<String>> {
-        let (start, step) = self.strictly(|| {
-            let start = self.trace_value(r.start, id, depth + 1)?;
-            Ok::<_, Option<String>>((start, self.step(l, &r.step, depth)?))
-        })?;
+        let start = self.trace_value(r.start, id, depth + 1)?;
+        let step = self.step(l, &r.step, depth)?;
         // The values the back edges feed, start + k·step for k in [1, n]
         // when the loop runs a constant n trips, stay in their type.
         if self.constant_trips(l).is_some() {
@@ -517,8 +510,7 @@ impl<'a> AffineValueTracer<'a> {
     }
 
     /// Memory operand `op`'s address at `pos`; one that does not read is
-    /// read again strictly, each uniform read it cannot interpret a
-    /// variable.
+    /// read again, each uniform read it cannot interpret a variable.
     pub(crate) fn trace_address(
         &self,
         op: OperandId,
@@ -526,7 +518,7 @@ impl<'a> AffineValueTracer<'a> {
         id: Option<LoopId>,
     ) -> Result<Affine, String> {
         self.trace_operand(op, pos, id, 0).or_else(|why| {
-            let a = self.with_fallback(|| self.strictly(|| self.trace_operand(op, pos, id, 0)));
+            let a = self.with_fallback(|| self.trace_operand(op, pos, id, 0));
             a.map_err(|_| why)
         })
     }
@@ -544,14 +536,6 @@ impl<'a> AffineValueTracer<'a> {
         let on = self.fallback.replace(false);
         let t = f();
         self.fallback.set(on);
-        t
-    }
-
-    /// `f`, refusing every guarded write it reads.
-    pub(crate) fn strictly<T>(&self, f: impl FnOnce() -> T) -> T {
-        self.strict.set(self.strict.get() + 1);
-        let t = f();
-        self.strict.set(self.strict.get() - 1);
         t
     }
 
@@ -590,8 +574,7 @@ impl<'a> AffineValueTracer<'a> {
             _ => return Err("value is the carry flag".to_owned()),
         };
         let value = self.written(def, reg, id, depth)?;
-        if self.strict.get() > 0
-            && let Stmt::Instr(instr) = &self.kernel.stmts[def]
+        if let Stmt::Instr(instr) = &self.kernel.stmts[def]
             && instr.predicate.is_some()
         {
             let name = self.module.interner.resolve(reg);
@@ -1078,7 +1061,7 @@ impl<'a> AffineValueTracer<'a> {
             }
             _ => None,
         }?;
-        if self.strict.get() > 0 && instr.predicate.is_some() && value.is_ok() {
+        if instr.predicate.is_some() && value.is_ok() {
             let name = self.module.interner.resolve(src);
             return Some(Err(format!("{name} is written under a guard")));
         }

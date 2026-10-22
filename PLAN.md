@@ -77,10 +77,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   selector (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads
   exactly), even where every write agrees
   (`micro/guarded_selector.ptx`: in its second kernel 32 threads store,
-  the report says `store <= 256 B`), and an address through one is
-  read as the last write (`micro/unpack.ptx`'s `micro_unpack_guarded`:
-  lanes 16–63 store at `param_0 + 16·%tid.x`, the report reads
-  `[param_0]`, 1 sector). A form the
+  the report says `store <= 256 B`). A form the
   register-effects decoder does not decode, a sub-operation it does
   not list (none in the corpus,
   `tests/register_effects_corpus.rs`), is taken to write every register
