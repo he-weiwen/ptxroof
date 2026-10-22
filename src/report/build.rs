@@ -572,13 +572,37 @@ impl<'a> Per<'a> {
 }
 
 /// What a count over a block multiplies by (`KernelReportBuilder::multiplier`).
-struct Multiplier {
+struct Multiplier<'a> {
+    per: Per<'a>,
+    below: Option<LoopId>,
     at_most: bool,
     /// Over the launch, a loop around the block has no trip count.
     unread: bool,
     split: Option<Vec<LoopId>>,
     trips: SymExpr,
     ctas: Option<u64>,
+}
+
+/// The threads and warps that run a set (`KernelReportBuilder::running`),
+/// whether they are a bound, whether the count explains the set's
+/// threads, and the trips it runs.
+struct Participation {
+    threads: u64,
+    warps: Option<(u64, bool)>,
+    at_most: bool,
+    explained: bool,
+    trips: Option<SymExpr>,
+}
+
+impl Participation {
+    /// Its threads and warps as the i64 counts the totals sum, when they fit.
+    fn narrow(&self) -> Option<(i64, Option<(i64, bool)>)> {
+        let warps = match self.warps {
+            Some((w, bound)) => Some((i64::try_from(w).ok()?, bound)),
+            None => None,
+        };
+        Some((i64::try_from(self.threads).ok()?, warps))
+    }
 }
 
 /// The direction a count is known in; `None` when bounded in neither.
@@ -1309,7 +1333,12 @@ impl<'a> KernelReportBuilder<'a> {
     /// unless its header's threads are counted, per CTA or at every CTA
     /// of the launch. Over the launch, the loops whose counts read the
     /// CTA index are `split` out and summed over the grid as `ctas`.
-    fn multiplier(&self, b: BlockId, below: Option<LoopId>, per: Per) -> Option<Multiplier> {
+    fn multiplier<'c>(
+        &self,
+        b: BlockId,
+        below: Option<LoopId>,
+        per: Per<'c>,
+    ) -> Option<Multiplier<'c>> {
         let chain = self.chain(b);
         let cut = match below {
             Some(l) => chain.iter().position(|&x| x == l)?,
@@ -1332,12 +1361,77 @@ impl<'a> KernelReportBuilder<'a> {
         let ctas = split.as_ref().map_or(per.ctas(), |(p, _)| self.cta_sum(p));
         let (split, trips) = split.map_or((None, mult), |(p, rest)| (Some(p), rest));
         Some(Multiplier {
+            per,
+            below,
             at_most,
             unread,
             split,
             trips,
             ctas,
         })
+    }
+
+    /// The threads and warps that run `set` in block `bm` as `m` sums
+    /// them: trip by trip where a loop counter selects them, weighted by
+    /// the CTA index where `m`'s loop counts read it, at the launch's own
+    /// count (`launch`), else per CTA times the CTAs; with the trips they
+    /// run, `trips` unless they are summed trip by trip. `None` when a
+    /// count is unknown or does not fit in u64.
+    fn running(
+        &self,
+        bm: &BlockMeasurements,
+        m: &Multiplier,
+        trips: Option<&SymExpr>,
+        set: &ThreadSet,
+        launch: Option<(u64, u64)>,
+    ) -> Option<Participation> {
+        let bound = m.at_most || m.per.cta().is_some_and(|c| !c.exact);
+        let counted = |threads, warps, trips| Participation {
+            threads,
+            warps: Some((warps, bound)),
+            at_most: bound,
+            explained: true,
+            trips,
+        };
+        if m.per.cta().is_some()
+            && m.split.is_none()
+            && trips.is_some()
+            && let Some((t, w, rest)) = self.per_trip(bm.block, set, m.below)
+        {
+            let n = match m.per {
+                Per::Launch(_, n) => n?,
+                _ => 1,
+            };
+            return Some(counted(t.checked_mul(n)?, w.checked_mul(n)?, Some(rest)));
+        }
+        let (t, w, at_most, explained) = self.executing(bm, set, m.at_most, m.per.cta());
+        let scaled = |n: u64| {
+            let warps = match w {
+                Some((w, bound)) => Some((u64::try_from(w).ok()?.checked_mul(n)?, bound)),
+                None => None,
+            };
+            let threads = u64::try_from(t).ok()?.checked_mul(n)?;
+            let trips = trips.cloned();
+            Some(Participation {
+                threads,
+                warps,
+                at_most,
+                explained,
+                trips,
+            })
+        };
+        let Per::Launch(..) = m.per else {
+            return scaled(1);
+        };
+        let launch = match &m.split {
+            Some(p) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
+            Some(_) => None,
+            None => launch,
+        };
+        match launch {
+            Some((t, w)) => Some(counted(t, w, trips.cloned())),
+            None => scaled(m.ctas?),
+        }
     }
 
     // A block selected by thread-index branches runs on exactly
@@ -1378,7 +1472,6 @@ impl<'a> KernelReportBuilder<'a> {
     /// instruction whose threads do not is counted per CTA times those
     /// counts summed over the grid, and is unknown otherwise.
     fn aggregates(&self, below: Option<LoopId>, per: Per) -> Aggregates {
-        let (cta, ctas) = (per.cta(), per.ctas());
         let mut flops: BTreeMap<Pipe, FlopAccumulator> = Pipe::ALL
             .iter()
             .map(|&p| (p, FlopAccumulator::new()))
@@ -1394,64 +1487,30 @@ impl<'a> KernelReportBuilder<'a> {
         }
 
         for bm in &self.blocks {
-            let Some(m) = self.multiplier(bm.block, below, per) else {
+            let Some(multiplier) = self.multiplier(bm.block, below, per) else {
                 continue;
             };
             if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
                 continue;
             }
-            let (chain_at_most, unread, split, per_launch) = (m.at_most, m.unread, m.split, m.ctas);
-            let trips = (!unread).then_some(m.trips);
-            let trips = trips.as_ref();
-            // None when a count over the launch does not fit in i64; with
-            // the trips it is counted over where they are its own.
+            let trips = (!multiplier.unread).then_some(&multiplier.trips);
+            // None when a count over the launch does not fit in i64.
             let resolve = |set: &ThreadSet, launch: Option<(u64, u64)>| {
-                if cta.is_some()
-                    && split.is_none()
-                    && !unread
-                    && let Some((t, w, rest)) = self.per_trip(bm.block, set, below)
-                {
-                    let n = ctas.unwrap_or(1);
-                    let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
-                    let t = i64::try_from(t.checked_mul(n)?).ok()?;
-                    let w = i64::try_from(w.checked_mul(n)?).ok()?;
-                    return Some(((t, Some((w, bound)), bound, true), Some(rest)));
-                }
-                let per_cta = self.executing(bm, set, chain_at_most, cta);
-                if ctas.is_none() {
-                    return Some((per_cta, None));
-                }
-                let counted = match &split {
-                    Some(p) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
-                    Some(_) => None,
-                    None => launch,
-                };
-                match counted {
-                    Some((t, w)) => {
-                        let bound = chain_at_most || cta.is_some_and(|c| !c.exact);
-                        let (t, w) = (i64::try_from(t).ok()?, i64::try_from(w).ok()?);
-                        Some(((t, Some((w, bound)), bound, true), None))
-                    }
-                    None => {
-                        let n = i64::try_from(per_launch?).ok()?;
-                        let (threads, warps, at_most, explained) = per_cta;
-                        let warps = match warps {
-                            Some((w, bound)) => Some((w.checked_mul(n)?, bound)),
-                            None => None,
-                        };
-                        Some(((threads.checked_mul(n)?, warps, at_most, explained), None))
-                    }
-                }
+                let p = self.running(bm, &multiplier, trips, set, launch)?;
+                let (threads, warps) = p.narrow()?;
+                Some((threads, warps, p))
             };
             // A block whose count does not fit is unknown, its warps too.
             let block = resolve(
                 &self.sets.blocks[bm.block.0 as usize],
                 self.launches.get(&(bm.block, None)).copied(),
             );
-            let mult = (block.as_ref()).and_then(|(_, own)| own.clone().or_else(|| trips.cloned()));
+            let mult = (block.as_ref()).and_then(|(_, _, p)| p.trips.clone());
             let mult = mult.as_ref();
-            let (threads, warps, block_at_most, _) =
-                block.map_or((0, Some((0, false)), false, false), |(b, _)| b);
+            let (threads, warps, block_at_most) = (block.as_ref())
+                .map_or((0, Some((0, false)), false), |(t, w, p)| {
+                    (*t, *w, p.at_most)
+                });
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
                 if !self.counted(bm.block, instruction.provenance) {
@@ -1480,32 +1539,30 @@ impl<'a> KernelReportBuilder<'a> {
                 }
                 let p = m.provenance;
                 let source = m.memory_operand == Some(1) && self.sets.sources.contains_key(&p);
-                let (threads, at_most, mult) =
-                    match self.sets.guard(p, m.memory_operand.unwrap_or(0)) {
-                        Some(Pred::True) => (threads, block_at_most, mult.cloned()),
-                        Some(Pred::False) => continue,
-                        Some(_) => {
-                            let (set, launch) = match source {
-                                true => (
-                                    self.sets.of_access(bm.block, p, 1),
-                                    self.source_launches.get(&p).copied(),
-                                ),
-                                false => (
-                                    self.sets.of(bm.block, p),
-                                    self.launches.get(&(bm.block, Some(p))).copied(),
-                                ),
-                            };
-                            match resolve(&set, launch) {
-                                Some(((threads, _, at_most, explained), own)) => (
-                                    threads,
-                                    at_most || !explained,
-                                    own.or_else(|| trips.cloned()),
-                                ),
-                                None => (0, false, None),
-                            }
+                let (threads, at_most, mult) = match self
+                    .sets
+                    .guard(p, m.memory_operand.unwrap_or(0))
+                {
+                    Some(Pred::True) => (threads, block_at_most, mult.cloned()),
+                    Some(Pred::False) => continue,
+                    Some(_) => {
+                        let (set, launch) = match source {
+                            true => (
+                                self.sets.of_access(bm.block, p, 1),
+                                self.source_launches.get(&p).copied(),
+                            ),
+                            false => (
+                                self.sets.of(bm.block, p),
+                                self.launches.get(&(bm.block, Some(p))).copied(),
+                            ),
+                        };
+                        match resolve(&set, launch) {
+                            Some((threads, _, p)) => (threads, p.at_most || !p.explained, p.trips),
+                            None => (0, false, None),
                         }
-                        None => (threads, block_at_most || m.predicated, mult.cloned()),
-                    };
+                    }
+                    None => (threads, block_at_most || m.predicated, mult.cloned()),
+                };
                 let n = (m.count as i64).checked_mul(threads);
                 let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
                 let mult = mult.as_ref();
