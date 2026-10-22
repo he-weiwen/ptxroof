@@ -243,6 +243,15 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   loop computes as unread**: requested bytes only, unique and sector
   bytes unknown (`micro/uniform_address.ptx`, `micro_uniform_in_loop`:
   requested 2048 B, unique unknown).
+- **A global load is taken to read one value for every thread of the
+  CTA** where its address is the same for them and the kernel writes no
+  global memory; PTX ISA §8.5 makes no warp or CTA one observer ("the
+  warp is not a scope"), so this assumes nothing else writes it during
+  the launch: the host, another stream, or a grid before
+  `griddepcontrol.wait`. A store, a `call`, an unclassified instruction
+  naming `.global` and a statement not parsed count as writing; a
+  `.volatile`, `.relaxed`, `.acquire`, `.mmio` or generic load is never
+  one value (`a_global_load_nothing_writes_is_lane_wise`).
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B

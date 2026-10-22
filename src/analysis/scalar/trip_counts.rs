@@ -1503,12 +1503,13 @@ mod tests {
         );
         let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
         assert_eq!(trips, Ok("128 * %ctaid.x + 127".to_owned()));
-        // A loaded bound behind `bfe` is a loaded bound.
+        // A loaded bound behind `bfe` is a loaded bound, one that may
+        // differ between threads where the kernel writes its pointer.
         let src = kernel_with(
             ".param .u64 k_param_0",
             "ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r1, [%rd1];\n\
              bfe.s32 %r3, %r1, 0, 26;\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
-             setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+             st.global.u32 [%rd1], %r4;\nsetp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
         );
         let err = trips_of(&src)[0].1.clone().unwrap_err();
         assert_eq!(err, "latch condition depends on a value loaded from memory");

@@ -9,7 +9,9 @@
 //! loop's exits, as by an η's.
 
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
+use crate::analysis::instruction_counts::classify::{
+    Direction, InstructionCategory, Pipe, Space, classify,
+};
 use crate::analysis::instruction_counts::measurement::MeasureKind;
 use crate::analysis::register_effects::{reads_cc, split_operands};
 use crate::analysis::scalar::trace::{AffineValueTracer, SpecialRegister, special_register};
@@ -41,20 +43,21 @@ pub(crate) struct Uniformity {
 impl Uniformity {
     pub(crate) fn new(t: &AffineValueTracer) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
+        let writes_global = writes_global(t);
         let defs: BTreeSet<usize> = (t.writes.iter())
             .filter(|(r, _)| matches!(r, Register::Named(_)))
             .flat_map(|(_, ds)| ds.iter().copied())
             .collect();
         for d in defs {
             reads.extend(
-                def_reads(t, d, false)
+                def_reads(t, d, false, writes_global)
                     .into_iter()
                     .map(|r| (Node::Def(d), r)),
             );
         }
         for &d in t.writes.get(&Register::Cc).into_iter().flatten() {
             reads.extend(
-                def_reads(t, d, true)
+                def_reads(t, d, true, writes_global)
                     .into_iter()
                     .map(|r| (Node::Carry(d), r)),
             );
@@ -173,13 +176,13 @@ impl Uniformity {
 /// What the registers statement `d` writes depend on, or with
 /// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
 /// guard and the value it keeps where the guard is false.
-fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool) -> Vec<Read> {
+fn def_reads(t: &AffineValueTracer, d: usize, carry_out: bool, writes_global: bool) -> Vec<Read> {
     let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
         return vec![Read::Divergent(
             "comes from a statement not parsed".to_owned(),
         )];
     };
-    if !lane_wise(t, instr) {
+    if !lane_wise(t, instr, writes_global) {
         return vec![Read::Divergent(format!(
             "comes from `{}`",
             t.module.opcode(instr)
@@ -299,9 +302,19 @@ fn exits<'a>(t: &'a AffineValueTracer, id: LoopId) -> impl Iterator<Item = Node>
 /// Each lane's result is a function of its own operands: a kernel
 /// parameter is read-only and one per grid, a function's `.param`, a
 /// call's return value among them, one per thread (PTX ISA §5.1.6,
-/// Table 7).
-fn lane_wise(t: &AffineValueTracer, instr: &Instr) -> bool {
+/// Table 7). A weak global load reads one value at an address where
+/// nothing writes it during the launch (PTX ISA §8, §9.7.9.8).
+fn lane_wise(t: &AffineValueTracer, instr: &Instr, writes_global: bool) -> bool {
     let module = t.module;
+    let mods: Vec<&str> = (module.modifiers(instr).iter())
+        .map(|&m| module.interner.resolve(m))
+        .collect();
+    if instr.mnemonic == Opcode::Ld
+        && mods.contains(&"global")
+        && !(mods.iter()).any(|m| matches!(*m, "volatile" | "relaxed" | "acquire" | "mmio"))
+    {
+        return !writes_global;
+    }
     let c = classify(module, instr);
     match c.category {
         InstructionCategory::NonFlopArith { .. } => true,
@@ -316,6 +329,35 @@ fn lane_wise(t: &AffineValueTracer, instr: &Instr) -> bool {
         }),
         _ => kernel_param(t, instr).is_some(),
     }
+}
+
+/// The kernel may write global memory: a store, a `call`, an instruction
+/// the classifier does not handle that names `.global`, or a statement
+/// not parsed.
+fn writes_global(t: &AffineValueTracer) -> bool {
+    let module = t.module;
+    (t.cfg.blocks.iter_enumerated()).any(|(_, b)| {
+        t.kernel.stmts[b.start..b.end].iter().any(|stmt| {
+            let instr = match stmt {
+                Stmt::Instr(instr) => instr,
+                Stmt::Unparsed { .. } => return true,
+                _ => return false,
+            };
+            let c = classify(module, instr);
+            let global =
+                (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "global");
+            let stores = c.contributions.iter().any(|k| match k.kind {
+                MeasureKind::Bytes { space, direction }
+                | MeasureKind::UnquantifiedBytes { space, direction } => {
+                    matches!(space, Space::Global | Space::Generic) && direction == Direction::Store
+                }
+                _ => false,
+            });
+            stores
+                || instr.mnemonic == Opcode::Call
+                || c.category == InstructionCategory::Unknown && global
+        })
+    })
 }
 
 /// The kernel parameter an `ld.param` reads.
@@ -457,6 +499,31 @@ mod tests {
                    .visible .entry k()\n{\nadd.cc.u32 %r0, 0, 0;\nbra L;\nL:\n\
                    addc.u32 %r1, 0, 0;\nret;\ncall (%r2), f, ();\n}\n";
         assert_eq!(uniform_at(src, "%r1", Some("L"), "ret"), Ok(()));
+    }
+
+    /// A weak global load is one value for the CTA where its address is
+    /// and the kernel writes no global memory; `%rd1` is param_0 +
+    /// 4·%ctaid.x.
+    #[test]
+    fn a_global_load_nothing_writes_is_lane_wise() {
+        let load = |ld: &str, rest: &str| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0,\n.param .u64 k_param_1\n)\n{{\n\
+                 ld.param.u64 %rd0, [k_param_0];\nld.param.u64 %rd9, [k_param_1];\n\
+                 mov.u32 %r1, %ctaid.x;\nmul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd1, %rd0, %rd2;\n\
+                 {ld} %r2, [%rd1];\n{rest}\nst.shared.u32 [%r9], %r2;\nret;\n}}\n"
+            );
+            uniform_at(&src, "%r2", None, "st.shared.u32")
+        };
+        let from = |op: &str| Err(format!("comes from `{op}`"));
+        assert_eq!(load("ld.global.u32", ""), Ok(()));
+        assert_eq!(load("ld.global.nc.L1::evict_last.u32", ""), Ok(()));
+        let elsewhere = "st.global.u32 [%rd9], 0;";
+        assert_eq!(load("ld.global.u32", elsewhere), from("ld.global.u32"));
+        let volatile = "ld.volatile.global.u32";
+        assert_eq!(load(volatile, ""), from(volatile));
+        assert_eq!(load("ld.u32", ""), from("ld.u32"));
     }
 
     #[test]
