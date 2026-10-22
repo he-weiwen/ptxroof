@@ -40,10 +40,10 @@
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::loop_names::LoopName;
 use crate::analysis::scalar::affine::{Affine, Var};
-use crate::analysis::scalar::symexpr::SymExpr;
+use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ptx::ir::{Kernel, Module, Opcode, Operand, Register, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
@@ -420,7 +420,9 @@ fn exits_some(tracer: &AffineValueTracer<'_>, b: BlockId) -> bool {
 /// §10.6).
 pub(crate) fn per_cta(a: Affine) -> Affine {
     as_symbols(a, &|v| {
-        matches!(v, Var::Ctaid(_)).then(|| SymExpr::sym(v.to_string()))
+        let Var::Ctaid(axis) = v else { return None };
+        let reg = SpecialVector::Ctaid.components()[*axis as usize];
+        Some(SymExpr::Sym(Leaf::Special(reg)))
     })
 }
 

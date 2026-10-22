@@ -17,7 +17,7 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::register_effects::{self, registers, split_operands};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::recurrences::{Recurrence, Step, recurrences};
-use crate::analysis::scalar::symexpr::SymExpr;
+use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::scalar::trip_counts::{loop_trips, per_cta};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
@@ -339,7 +339,7 @@ impl<'a> AffineValueTracer<'a> {
             // One value for the CTA (the launch shape, the cluster, the
             // shared memory sizes): a symbol, bound when known.
             _ if special_register(reg) == Some(SpecialRegister::PerCta) => {
-                Ok(Affine::invariant(SymExpr::sym(reg.name())))
+                Ok(Affine::invariant(SymExpr::Sym(Leaf::Special(reg))))
             }
             _ => Err(format!(
                 "latch condition depends on special register {}",
@@ -673,7 +673,7 @@ impl<'a> AffineValueTracer<'a> {
                     && let Operand::SymbolRef(pname) = self.module.operand(*base)
                     && let Some(&idx) = self.params.get(pname)
                 {
-                    return Ok(Affine::invariant(SymExpr::sym(format!("param_{idx}"))));
+                    return Ok(Affine::invariant(SymExpr::Sym(Leaf::Param(idx))));
                 }
                 if id.is_some_and(|l| self.in_loop(l, def)) {
                     Err("latch condition depends on a value loaded inside the loop".to_owned())

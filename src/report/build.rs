@@ -1141,8 +1141,10 @@ impl<'a> KernelReportBuilder<'a> {
             return None;
         };
         let direct = match &key.base {
-            SymExpr::Sym(n) => n == p,
-            SymExpr::Sum(ts) => ts.iter().any(|t| matches!(t, SymExpr::Sym(n) if n == p)),
+            SymExpr::Sym(n) => n.to_string() == *p,
+            SymExpr::Sum(ts) => {
+                (ts.iter()).any(|t| matches!(t, SymExpr::Sym(n) if n.to_string() == *p))
+            }
             _ => false,
         };
         (direct && pointer(p)).then(|| p.clone())

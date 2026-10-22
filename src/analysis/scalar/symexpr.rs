@@ -26,13 +26,36 @@
 //! parenthesize sums and divisions, a `-c·x` summand prints as
 //! `- c * x`, and a min or max as `max(a, b)`.
 
+use crate::ptx::ir::SpecialReg;
 use std::collections::HashMap;
 use std::fmt;
+
+/// What a symbol stands for.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Leaf {
+    /// Kernel parameter `i`'s value, `param_i`.
+    Param(usize),
+    /// A special register one for the CTA: the launch shape, the CTA's
+    /// index.
+    Special(SpecialReg),
+    /// Any other value, by its name.
+    Symbol(String),
+}
+
+impl fmt::Display for Leaf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Leaf::Param(i) => write!(f, "param_{i}"),
+            Leaf::Special(reg) => f.write_str(&reg.name()),
+            Leaf::Symbol(name) => f.write_str(name),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SymExpr {
     Const(i64),
-    Sym(String),
+    Sym(Leaf),
     /// n-ary sum; invariant: ≥ 2 terms, no nested `Sum`, constants
     /// folded into one trailing term while they fit in `i64` (an
     /// overflowing constant stays as its own term — never wraps).
@@ -55,7 +78,7 @@ pub enum SymExpr {
 
 impl SymExpr {
     pub fn sym(name: impl Into<String>) -> SymExpr {
-        SymExpr::Sym(name.into())
+        SymExpr::Sym(Leaf::Symbol(name.into()))
     }
 
     /// The constant summand: the value with every symbol at 0.
@@ -136,7 +159,7 @@ impl SymExpr {
         let fits = |x: Option<i128>| x.ok_or(true);
         Ok(match self {
             SymExpr::Const(c) => (i128::from(*c), i128::from(*c)),
-            SymExpr::Sym(s) => sym(s)
+            SymExpr::Sym(s) => sym(&s.to_string())
                 .map(|(a, b)| (i128::from(a), i128::from(b)))
                 .ok_or(false)?,
             SymExpr::Sum(ts) => ts.iter().try_fold((0i128, 0i128), |(lo, hi), t| {
@@ -396,9 +419,9 @@ impl SymExpr {
     pub fn bind(&self, bindings: &HashMap<String, i64>) -> SymExpr {
         match self {
             SymExpr::Const(c) => SymExpr::Const(*c),
-            SymExpr::Sym(name) => match bindings.get(name) {
+            SymExpr::Sym(leaf) => match bindings.get(&leaf.to_string()) {
                 Some(&v) => SymExpr::Const(v),
-                None => SymExpr::Sym(name.clone()),
+                None => SymExpr::Sym(leaf.clone()),
             },
             SymExpr::Sum(terms) => terms
                 .iter()
@@ -428,7 +451,7 @@ impl SymExpr {
         fn walk(e: &SymExpr, out: &mut Vec<String>) {
             match e {
                 SymExpr::Const(_) => {}
-                SymExpr::Sym(name) => out.push(name.clone()),
+                SymExpr::Sym(leaf) => out.push(leaf.to_string()),
                 SymExpr::Sum(v) | SymExpr::Prod(v) => {
                     for x in v {
                         walk(x, out);
@@ -498,7 +521,7 @@ fn parens_needed(e: &SymExpr, ctx: PrintContext) -> bool {
 fn render(e: &SymExpr, ctx: PrintContext) -> String {
     let body = match e {
         SymExpr::Const(c) => c.to_string(),
-        SymExpr::Sym(name) => name.clone(),
+        SymExpr::Sym(leaf) => leaf.to_string(),
         SymExpr::Sum(terms) => {
             let mut out = String::new();
             for (i, term) in terms.iter().enumerate() {
