@@ -594,13 +594,13 @@ impl Pred {
     /// How many threads of a block of this shape are in the set, when a
     /// thread-index condition selects them.
     pub fn count(&self, shape: [u32; 3]) -> Option<Counted> {
-        self.tally(shape, |min, max| (min, max))
+        Some(self.tally(shape)?.0)
     }
 
     /// How many warps of a block of this shape have a lane in the set:
     /// PTX ISA §3.1 forms warps from consecutive thread ids.
     pub fn warps(&self, shape: [u32; 3]) -> Option<Counted> {
-        self.tally(shape, |min, max| (u32::from(min > 0), u32::from(max > 0)))
+        Some(self.tally(shape)?.1)
     }
 
     /// The threads and warps the set holds over a launch of `grid` CTAs
@@ -670,8 +670,7 @@ impl Pred {
                     let group = match groups.entry(key) {
                         Entry::Occupied(e) => e.into_mut(),
                         Entry::Vacant(e) => {
-                            let at = self.at_cta(c);
-                            let (t, w) = (at.count(shape)?, at.warps(shape)?);
+                            let (t, w) = self.at_cta(c).tally(shape)?;
                             if t.certain != t.possible || w.certain != w.possible {
                                 return None;
                             }
@@ -738,8 +737,7 @@ impl Pred {
         }
         let (mut sum_t, mut sum_w) = (0u64, 0u64);
         for run in cuts.windows(2) {
-            let at = self.at_trip(l, run[0])?;
-            let (t, w) = (at.count(shape)?, at.warps(shape)?);
+            let (t, w) = self.at_trip(l, run[0])?.tally(shape)?;
             if t.certain != t.possible || w.certain != w.possible {
                 return None;
             }
@@ -750,22 +748,21 @@ impl Pred {
         Some((sum_t, sum_w))
     }
 
-    /// Per warp, the fewest and the most lanes in the set, folded by
-    /// `per_warp`. An elected lane is unspecified (PTX ISA §9.7.14.15
-    /// promises only that the same leader is elected every time), so
-    /// every active lane is tried as the leader, and no leader when no
-    /// lane is certainly active, and the range covers those choices.
-    fn tally(&self, shape: [u32; 3], per_warp: impl Fn(u32, u32) -> (u32, u32)) -> Option<Counted> {
-        if !self.has_condition() {
+    /// The threads and the warps with a lane in the set, from the fewest
+    /// and the most lanes of each warp in it. An elected lane is
+    /// unspecified (PTX ISA §9.7.14.15 promises only that the same leader
+    /// is elected every time), so every active lane is tried as the
+    /// leader, and no leader when no lane is certainly active, and the
+    /// range covers those choices.
+    fn tally(&self, shape: [u32; 3]) -> Option<(Counted, Counted)> {
+        if !self.has_condition() || shape.contains(&0) {
             return None;
         }
-        let [nx, ny, nz] = shape.map(i64::from);
-        let threads = nx * ny * nz;
-        if threads == 0 {
-            return None;
-        }
-        let mut certain = 0;
-        let mut possible = 0;
+        let zero = Counted {
+            certain: 0,
+            possible: 0,
+        };
+        let (mut threads, mut warps) = (zero, zero);
         for lanes in warps_of(shape) {
             let lanes_as = |leader: Leader| {
                 let (mut yes, mut maybe) = (0, 0);
@@ -795,11 +792,12 @@ impl Pred {
                         })
                 }
             };
-            let (min, max) = per_warp(min, max);
-            certain += min;
-            possible += max;
+            threads.certain += min;
+            threads.possible += max;
+            warps.certain += u32::from(min > 0);
+            warps.possible += u32::from(max > 0);
         }
-        Some(Counted { certain, possible })
+        Some((threads, warps))
     }
 }
 
@@ -1454,11 +1452,8 @@ mod tests {
         let lane = |m: i64| Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), m));
         let brute = |set: &Pred, shape: [u32; 3], n: u64| {
             (1..=i128::from(n)).try_fold((0u64, 0u64), |(t, w), k| {
-                let at = set.at_trip(l, k)?;
-                Some((
-                    t + u64::from(at.count(shape)?.certain),
-                    w + u64::from(at.warps(shape)?.certain),
-                ))
+                let (at_t, at_w) = set.at_trip(l, k)?.tally(shape)?;
+                Some((t + u64::from(at_t.certain), w + u64::from(at_w.certain)))
             })
         };
         let shape = [128, 1, 1];
