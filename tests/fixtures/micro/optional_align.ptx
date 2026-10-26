@@ -1,0 +1,43 @@
+//
+// HAND-WRITTEN: a loop of 2 trips over 16 threads, two byte stores at
+// p + %tid.x, and a 16 B store at p on lane 0 when n != 0. PTX ISA
+// §6.4.1 makes a misaligned access undefined, so p is 16 B aligned
+// where the 16 B store runs; with n == 0 it never runs, and at p ≡ 17
+// mod 32 each byte store spans two sectors: 2 stores × 2 sectors × 2
+// trips × 32 B = 256 sector bytes.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_optional_align(
+	.param .u64 micro_optional_align_param_0,
+	.param .u32 micro_optional_align_param_1
+)
+.reqntid 16, 1, 1
+{
+	.reg .pred 	%p<6>;
+	.reg .b16 	%rs<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [micro_optional_align_param_0];
+	ld.param.u32 	%r2, [micro_optional_align_param_1];
+	cvta.to.global.u64 	%rd2, %rd1;
+	mov.u32 	%r1, %tid.x;
+	cvt.u64.u32 	%rd3, %r1;
+	add.s64 	%rd4, %rd2, %rd3;
+	mov.u16 	%rs1, 1;
+	setp.ne.u32 	%p1, %r2, 0;
+	setp.eq.u32 	%p2, %r1, 0;
+	and.pred 	%p3, %p1, %p2;
+	mov.u32 	%r3, 0;
+$L__BB0_1:
+	st.global.u8 	[%rd4], %rs1;
+	st.global.u8 	[%rd4], %rs1;
+	@%p3 st.global.v4.u32 	[%rd2], {%r1, %r1, %r1, %r1};
+	add.s32 	%r3, %r3, 1;
+	setp.lt.u32 	%p4, %r3, 2;
+	@%p4 bra 	$L__BB0_1;
+	ret;
+}

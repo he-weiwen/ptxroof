@@ -284,6 +284,18 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
   k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B, a bound until M and
   the grid are given, which its guard `x < M && y < N` reads.
+- **A loop footprint takes the alignment of an access that may never
+  run as its base's.** PTX ISA §6.4.1 makes only an access that runs
+  aligned: `micro/optional_align.ptx` reads `in sectors <= 192 B`, its
+  16 B store at p making each byte store one sector, where with n == 0
+  and p ≡ 17 mod 32 the byte stores request 256 (`micro-optional-align.test`).
+- **The sectors of an access under `elect.sync` read the lowest active
+  lane as the elected one**, where its thread count tries every active
+  lane (PTX ISA §9.7.14.15 does not say which is elected):
+  `micro/elect_lane.ptx`'s store under `%tid.x == 1 and elected` runs
+  on `<= 1` thread and counts `0 sectors`, where lane 1, if elected,
+  requests one (`micro-elect-lane.test`). The census has no election
+  under a condition that varies by lane.
 
 ### Reported as unknowns
 
@@ -420,6 +432,12 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   is not `%tid.x < 16`: the block both arms reach counts `<= 16`
   threads where 16 run it
   (`a_test_both_arms_of_an_unknown_branch_repeat_is_a_bound`).
+- **A loop footprint counts the threads a guard on its counter admits
+  at any trip on every trip**: `micro/counter_guard.ptx` with `--bind
+  1:n=300` stores 1200 B per CTA, its loop footprint `requested <= 2048
+  B` (`micro-counter-guard.test`); census kernel `02847.ptx` with
+  `--bind 1:n=700 --grid 1,1,1` loads 2,800 B and stores 4,096 B, its
+  loop `requested <= 8192 B`.
 - **A block past 32 steps of control dependence is an unknown
   selector.** A ladder whose rungs each branch both ways to the next
   doubles the steps per rung; past 32 the block's set is a bound

@@ -1,0 +1,6 @@
+# Wrong output (PLAN.md): the loop footprint takes the alignment of a
+# store that may never run as its base's: the 16 B store at p makes
+# each byte store one sector, 192 B, where with n == 0 and p ≡ 17 mod
+# 32 the byte stores request 256 sector bytes.
+RUN: %ptxroof analyze %fixtures/micro/optional_align.ptx | FileCheck "%s"
+CHECK: global bytes per CTA over the loop's own blocks: requested <= 96 B, unique <= 16 B, in sectors <= 192 B
