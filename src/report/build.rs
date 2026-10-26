@@ -1282,7 +1282,10 @@ impl<'a> KernelReportBuilder<'a> {
         {
             return None;
         }
-        let (t, w) = set.over_trips(self.shape, l, n)?;
+        let [(t, t_most), (w, w_most)] = set.over_trips(self.shape, l, n)?;
+        if t != t_most || w != w_most {
+            return None;
+        }
         let rest = (chain[..cut].iter())
             .filter(|&&x| x != l)
             .fold(SymExpr::Const(1), |p, x| {
@@ -2442,6 +2445,7 @@ mod tests {
                     min: 1280,
                     max: 1536
                 }),
+                requested_at_most: false,
                 at_most: false,
             })
         );
@@ -2460,6 +2464,7 @@ mod tests {
                     min: 1280,
                     max: 1536
                 }),
+                requested_at_most: false,
                 at_most: false,
             })
         );

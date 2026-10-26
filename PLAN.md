@@ -432,12 +432,13 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   is not `%tid.x < 16`: the block both arms reach counts `<= 16`
   threads where 16 run it
   (`a_test_both_arms_of_an_unknown_branch_repeat_is_a_bound`).
-- **A loop footprint counts the threads a guard on its counter admits
-  at any trip on every trip**: `micro/counter_guard.ptx` with `--bind
-  1:n=300` stores 1200 B per CTA, its loop footprint `requested <= 2048
-  B` (`micro-counter-guard.test`); census kernel `02847.ptx` with
-  `--bind 1:n=700 --grid 1,1,1` loads 2,800 B and stores 4,096 B, its
-  loop `requested <= 8192 B`.
+- **A loop footprint's distinct and sector bytes count the threads a
+  guard on its counter admits at any trip on every trip**; its
+  requested bytes count each trip's: `micro/counter_guard.ptx` with
+  `--bind 1:n=300` requests 1200 B, `unique <= 256 B, in sectors <=
+  2048–2560 B` (`micro-counter-guard.test`); census kernel `02847.ptx`
+  with `--bind 1:n=700 --grid 1,1,1` requests 6896 B, `unique <= 8192
+  B`.
 - **A block past 32 steps of control dependence is an unknown
   selector.** A ladder whose rungs each branch both ways to the next
   doubles the steps per rung; past 32 the block's set is a bound

@@ -423,7 +423,8 @@ fn render_loop(w: &mut String, l: &LoopNode, depth: usize) {
         };
         let _ = writeln!(
             w,
-            "{pad}  global bytes per CTA over the loop's own blocks: requested {bound}{} B, unique {unique}{sectors}",
+            "{pad}  global bytes per CTA over the loop's own blocks: requested {}{} B, unique {unique}{sectors}",
+            if b.requested_at_most { "<= " } else { "" },
             b.requested
         );
     }

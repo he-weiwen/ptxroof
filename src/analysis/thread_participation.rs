@@ -684,13 +684,14 @@ impl Pred {
             .then_some(l)
     }
 
-    /// The threads and warps the set holds summed over trips 1 to `n` of
-    /// loop `l`, whose counter its comparisons read. Each comparison
-    /// `c·k + g cmp 0` keeps its truth on a lane between the trips
-    /// around −g/c, so between those of every lane and comparison one
-    /// trip is counted for the run. None where the set is not exact at a
-    /// trip, or past `LANE_BUDGET` lane evaluations.
-    pub fn over_trips(&self, shape: [u32; 3], l: LoopId, n: u64) -> Option<(u64, u64)> {
+    /// The threads and the warps the set holds summed over trips 1 to
+    /// `n` of loop `l`, each as the fewest and the most. Each comparison
+    /// `c·k + g cmp 0` with its counter keeps its truth on a lane between
+    /// the trips around −g/c, so between those of every lane and
+    /// comparison one trip is counted for the run. None where no
+    /// thread-index condition selects the set, or past `LANE_BUDGET`
+    /// lane evaluations.
+    pub fn over_trips(&self, shape: [u32; 3], l: LoopId, n: u64) -> Option<[(u64, u64); 2]> {
         let mut over = Vec::new();
         self.trip_constraints(&mut over);
         let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
@@ -698,7 +699,7 @@ impl Pred {
             .collect();
         let end = i128::from(n) + 1;
         let mut cuts = vec![1, end];
-        for k in &over {
+        for k in over.iter().filter(|k| k.trip.is_some_and(|(m, _)| m == l)) {
             let c = i128::from(k.form.terms.get(&Var::Iter(l))?.as_const()?);
             for &t in &threads {
                 let (num, den) = if c < 0 {
@@ -715,21 +716,20 @@ impl Pred {
         if (cuts.len() as u64).saturating_mul(threads.len() as u64) > LANE_BUDGET {
             return None;
         }
-        let (mut sum_t, mut sum_w) = (0u64, 0u64);
+        let mut sums = [(0u64, 0u64); 2];
         for run in cuts.windows(2) {
             let env = Env {
                 cta: None,
                 trip: Some((l, run[0])),
             };
             let (t, w) = self.tally(shape, env)?;
-            if t.certain != t.possible || w.certain != w.possible {
-                return None;
-            }
             let len = u64::try_from(run[1] - run[0]).ok()?;
-            sum_t = sum_t.checked_add(u64::from(t.certain).checked_mul(len)?)?;
-            sum_w = sum_w.checked_add(u64::from(w.certain).checked_mul(len)?)?;
+            for (sum, c) in sums.iter_mut().zip([t, w]) {
+                sum.0 = sum.0.checked_add(u64::from(c.certain).checked_mul(len)?)?;
+                sum.1 = sum.1.checked_add(u64::from(c.possible).checked_mul(len)?)?;
+            }
         }
-        Some((sum_t, sum_w))
+        Some(sums)
     }
 
     /// The threads and the warps with a lane in the set, from the fewest
@@ -1419,7 +1419,8 @@ mod tests {
     /// Over a loop's trips, the threads of each trip summed: by runs of
     /// trips between the lanes' breakpoints, as enumerating every trip
     /// gives, for comparisons of the counter alone and with lanes, either
-    /// sign of step, every comparison, and two comparisons at once.
+    /// sign of step, every comparison, and two comparisons at once; one
+    /// with another loop's counter is read over its range.
     #[test]
     fn a_set_over_trips_sums_each_trip_s_threads() {
         let l = LoopId(0);
@@ -1435,13 +1436,17 @@ mod tests {
         let c = |x: i64| Affine::invariant(SymExpr::Const(x));
         let lane = |m: i64| Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), m));
         let brute = |set: &Pred, shape: [u32; 3], n: u64| {
-            (1..=i128::from(n)).try_fold((0u64, 0u64), |(t, w), k| {
+            (1..=i128::from(n)).try_fold([(0u64, 0u64); 2], |mut sums, k| {
                 let env = Env {
                     cta: None,
                     trip: Some((l, k)),
                 };
-                let (at_t, at_w) = set.tally(shape, env)?;
-                Some((t + u64::from(at_t.certain), w + u64::from(at_w.certain)))
+                let (t, w) = set.tally(shape, env)?;
+                for (sum, c) in sums.iter_mut().zip([t, w]) {
+                    sum.0 += u64::from(c.certain);
+                    sum.1 += u64::from(c.possible);
+                }
+                Some(sums)
             })
         };
         let shape = [128, 1, 1];
@@ -1465,7 +1470,17 @@ mod tests {
         let k_below_511 = cmp(1, c(-511), Cmp::Lt, 512);
         assert_eq!(
             k_below_511.over_trips([256, 1, 1], l, 512),
-            Some((510 * 256, 510 * 8))
+            Some([(510 * 256, 510 * 256), (510 * 8, 510 * 8)])
+        );
+        let elsewhere = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Iter(LoopId(1))) + c(-3),
+            cmp: Cmp::Lt,
+            cta: None,
+            trip: Some((LoopId(1), (1, 8))),
+        });
+        assert_eq!(
+            elsewhere.over_trips([32, 1, 1], l, 4),
+            Some([(0, 128), (0, 4)])
         );
     }
 

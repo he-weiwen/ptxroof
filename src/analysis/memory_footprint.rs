@@ -246,7 +246,11 @@ pub struct LoopBytes {
     /// aligned under one of them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sector_bytes: Option<ByteRange>,
-    /// Some contributing access is predicated: all are upper bounds.
+    /// The requested bytes are an upper bound: an access counts threads
+    /// its guard may not select.
+    pub requested_at_most: bool,
+    /// The distinct and the sector bytes are upper bounds: an access
+    /// counts threads its guard may not select at every trip.
     pub at_most: bool,
 }
 
@@ -278,7 +282,9 @@ pub struct AccessForm {
 /// Global bytes one CTA requests over one execution of loop `id`'s
 /// own blocks, and the distinct bytes they touch: every lane of every
 /// executing thread at every iteration, as intervals merged per
-/// base (the form without its lane, counter and constant parts).
+/// base (the form without its lane, counter and constant parts). The
+/// requested bytes count each trip's threads where a comparison with
+/// the loop's counter selects them.
 /// Bases on different pointers are assumed disjoint; bases on one
 /// pointer, or on none known, may overlap, so the distinct bytes are
 /// at most their sum and at least the largest on each pointer. Needs
@@ -306,6 +312,7 @@ pub fn loop_bytes(
     let mut requested = 0u64;
     let mut complete = true;
     let mut at_most = false;
+    let mut requested_at_most = false;
     let mut per_base: HashMap<Affine, Vec<(i64, i64)>> = HashMap::new();
     // Each warp's pattern, with the trips it is summed over.
     let mut patterns: HashMap<Affine, Vec<(SectorPattern, i64)>> = HashMap::new();
@@ -314,11 +321,22 @@ pub fn loop_bytes(
         let lanes = (0..threads)
             .filter(|&t| set.contains(thread(t, shape), shape))
             .count() as u64;
-        let bytes = u64::from(f.bytes)
-            .checked_mul(trips as u64)?
-            .checked_mul(lanes)?;
-        requested = requested.checked_add(bytes)?;
-        at_most |= !f.guard_exact || f.conditional;
+        let per_trip = (set.trip_loop() == Some(id) && set.elect_active().is_none())
+            .then(|| set.over_trips(shape, id, u64::try_from(trips).ok()?))
+            .flatten();
+        let guarded = !f.guard_exact || f.conditional;
+        at_most |= guarded;
+        let runs = match per_trip {
+            Some([(certain, possible), _]) => {
+                requested_at_most |= certain != possible;
+                possible
+            }
+            None => {
+                requested_at_most |= guarded;
+                lanes.checked_mul(trips as u64)?
+            }
+        };
+        requested = requested.checked_add(u64::from(f.bytes).checked_mul(runs)?)?;
         let varies = |v: &Var| {
             crate::analysis::scalar::lane_eval::depends_on_lane(v) || v.counter() == Some(id)
         };
@@ -369,6 +387,7 @@ pub fn loop_bytes(
                 .any(crate::analysis::scalar::lane_eval::depends_on_lane)
         {
             at_most = true;
+            requested_at_most = true;
         }
         let mut key = form.clone();
         key.terms.retain(|v, _| {
@@ -444,6 +463,7 @@ pub fn loop_bytes(
         requested,
         unique: complete.then_some(unique),
         sector_bytes: sector_bytes.filter(|_| complete),
+        requested_at_most,
         at_most,
     })
 }
