@@ -87,6 +87,15 @@ pub struct Counted {
     pub possible: u32,
 }
 
+/// The CTA and the trip of a loop one evaluation is at; a comparison
+/// with `%ctaid` or that loop's counter not given one reads the range it
+/// holds for it.
+#[derive(Debug, Clone, Copy, Default)]
+struct Env {
+    cta: Option<[i64; 3]>,
+    trip: Option<(LoopId, i128)>,
+}
+
 /// Which lane an `elect.sync` elected, for one evaluation: the lowest
 /// active lane as a representative, a given lane, or none.
 #[derive(Debug, Clone, Copy)]
@@ -139,99 +148,64 @@ impl Pred {
     }
 
     pub fn eval(&self, tid: [i64; 3], shape: [u32; 3]) -> Tri {
-        self.eval_as(tid, shape, Leader::Lowest)
+        self.eval_as(tid, shape, Leader::Lowest, Env::default())
     }
 
-    fn eval_as(&self, tid: [i64; 3], shape: [u32; 3], leader: Leader) -> Tri {
+    fn eval_as(&self, tid: [i64; 3], shape: [u32; 3], leader: Leader, env: Env) -> Tri {
+        let eval = |p: &Pred| p.eval_as(tid, shape, leader, env);
         match self {
             Pred::True => Tri::Yes,
             Pred::False => Tri::No,
             Pred::Unknown | Pred::Uniform => Tri::Maybe,
             Pred::Cmp(c) => {
-                let x = at(&c.form, tid);
-                let (lo, hi) = c.cta.map_or((x, x), |(a, b)| (x + a, x + b));
-                let (lo, hi) = c.trip.map_or((lo, hi), |(_, (a, b))| (lo + a, hi + b));
+                let trip = env
+                    .trip
+                    .filter(|&(l, _)| c.trip.is_some_and(|(m, _)| l == m));
+                let Ok(trip) = trip
+                    .map(|(l, k)| i64::try_from(k).map(|k| (l, k)))
+                    .transpose()
+                else {
+                    return Tri::Maybe;
+                };
+                let value = |v: &Var| match (v, env.cta, trip) {
+                    (Var::Ctaid(a), Some(c), _) => c[*a as usize],
+                    (Var::Iter(l), _, Some((m, k))) if *l == m => k,
+                    _ => lanes(tid)(v),
+                };
+                let Some(x) = at(&c.form, &value) else {
+                    return Tri::Maybe;
+                };
+                let (lo, hi) = match c.cta.filter(|_| env.cta.is_none()) {
+                    Some((a, b)) => (x + a, x + b),
+                    None => (x, x),
+                };
+                let (lo, hi) = match c.trip.filter(|_| trip.is_none()) {
+                    Some((_, (a, b))) => (lo + a, hi + b),
+                    None => (lo, hi),
+                };
                 decide(c.cmp, lo, hi)
             }
             Pred::Elect(active) => match leader {
-                Leader::Lowest => elected(active, tid, shape),
+                Leader::Lowest => elected(active, tid, shape, env),
                 Leader::Lane(k) if linear(tid, shape) == k => Tri::Yes,
                 _ => Tri::No,
             },
-            Pred::Not(p) => match p.eval_as(tid, shape, leader) {
+            Pred::Not(p) => match eval(p) {
                 Tri::Yes => Tri::No,
                 Tri::No => Tri::Yes,
                 Tri::Maybe => Tri::Maybe,
             },
-            Pred::And(a, b) => match (a.eval_as(tid, shape, leader), b.eval_as(tid, shape, leader))
-            {
+            Pred::And(a, b) => match (eval(a), eval(b)) {
                 (Tri::No, _) | (_, Tri::No) => Tri::No,
                 (Tri::Yes, Tri::Yes) => Tri::Yes,
                 _ => Tri::Maybe,
             },
-            Pred::Or(a, b) => {
-                match (a.eval_as(tid, shape, leader), b.eval_as(tid, shape, leader)) {
-                    (Tri::Yes, _) | (_, Tri::Yes) => Tri::Yes,
-                    (Tri::No, Tri::No) => Tri::No,
-                    _ => Tri::Maybe,
-                }
-            }
+            Pred::Or(a, b) => match (eval(a), eval(b)) {
+                (Tri::Yes, _) | (_, Tri::Yes) => Tri::Yes,
+                (Tri::No, Tri::No) => Tri::No,
+                _ => Tri::Maybe,
+            },
         }
-    }
-
-    /// The predicate at the CTA `c`: each comparison's `%ctaid` terms
-    /// at their value there.
-    fn at_cta(&self, c: [i64; 3]) -> Pred {
-        let at = |p: &Pred| Box::new(p.at_cta(c));
-        match self {
-            Pred::Cmp(k) if k.cta.is_some() => {
-                let base = i128::from(k.form.base.const_part()) + k.cta_part(c);
-                let Ok(base) = i64::try_from(base) else {
-                    return Pred::Unknown;
-                };
-                Pred::Cmp(Constraint {
-                    form: Affine {
-                        terms: (k.form.terms.iter())
-                            .filter(|(v, _)| !on_cta(v))
-                            .map(|(v, c)| (v.clone(), c.clone()))
-                            .collect(),
-                        base: SymExpr::Const(base),
-                    },
-                    cmp: k.cmp,
-                    cta: None,
-                    trip: None,
-                })
-            }
-            Pred::Elect(p) => Pred::Elect(at(p)),
-            Pred::Not(p) => Pred::Not(at(p)),
-            Pred::And(a, b) => Pred::And(at(a), at(b)),
-            Pred::Or(a, b) => Pred::Or(at(a), at(b)),
-            p => p.clone(),
-        }
-    }
-
-    /// The predicate at trip `k` of loop `l`: each comparison with its
-    /// counter at the counter's value there.
-    fn at_trip(&self, l: LoopId, k: i128) -> Option<Pred> {
-        let at = |p: &Pred| p.at_trip(l, k).map(Box::new);
-        Some(match self {
-            Pred::Cmp(c) if c.trip.is_some_and(|(t, _)| t == l) => {
-                let mut form = c.form.clone();
-                let step = i128::from(form.terms.remove(&Var::Iter(l))?.as_const()?);
-                let base = i128::from(form.base.as_const()?).checked_add(step.checked_mul(k)?)?;
-                form.base = SymExpr::Const(i64::try_from(base).ok()?);
-                Pred::Cmp(Constraint {
-                    form,
-                    trip: None,
-                    ..c.clone()
-                })
-            }
-            Pred::Elect(p) => Pred::Elect(at(p)?),
-            Pred::Not(p) => Pred::Not(at(p)?),
-            Pred::And(a, b) => Pred::And(at(a)?, at(b)?),
-            Pred::Or(a, b) => Pred::Or(at(a)?, at(b)?),
-            p => p.clone(),
-        })
     }
 
     /// The comparisons with loop counters.
@@ -360,7 +334,7 @@ impl Pred {
 /// Whether `tid` is the lowest lane of its warp that `active` admits, a
 /// representative of the elected lane: yes when no lower lane may be
 /// active, maybe when the leader is one of several lanes that may be.
-fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3]) -> Tri {
+fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
     let [nx, ny, nz] = shape.map(i64::from);
     let threads = nx * ny * nz;
     if threads == 0 {
@@ -370,7 +344,7 @@ fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3]) -> Tri {
     let base = linear - linear % 32;
     let mut candidates = Vec::new();
     for l in base..(base + 32).min(threads) {
-        match active.eval(thread(l, shape), shape) {
+        match active.eval_as(thread(l, shape), shape, Leader::Lowest, env) {
             Tri::Yes if candidates.is_empty() => {
                 return if l == linear { Tri::Yes } else { Tri::No };
             }
@@ -389,12 +363,12 @@ fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3]) -> Tri {
     }
 }
 
-/// `form` at thread `tid` in i128: an i64 base plus i64 coefficients
-/// times thread indices below 1024 keeps every partial sum far inside
-/// it, so a comparison of 64-bit operands reads exactly.
-fn at(form: &Affine, tid: [i64; 3]) -> i128 {
-    (form.terms.iter()).fold(i128::from(form.base.const_part()), |x, (v, c)| {
-        x + i128::from(c.as_const().unwrap_or(0)) * i128::from(v.eval(&lanes(tid)))
+/// `form` with each variable at `value`, in i128 so that a comparison
+/// of 64-bit operands reads exactly; `None` past i128.
+fn at(form: &Affine, value: &dyn Fn(&Var) -> i64) -> Option<i128> {
+    (form.terms.iter()).try_fold(i128::from(form.base.const_part()), |x, (v, c)| {
+        let term = i128::from(c.as_const().unwrap_or(0)).checked_mul(i128::from(v.eval(value)))?;
+        x.checked_add(term)
     })
 }
 
@@ -594,13 +568,13 @@ impl Pred {
     /// How many threads of a block of this shape are in the set, when a
     /// thread-index condition selects them.
     pub fn count(&self, shape: [u32; 3]) -> Option<Counted> {
-        Some(self.tally(shape)?.0)
+        Some(self.tally(shape, Env::default())?.0)
     }
 
     /// How many warps of a block of this shape have a lane in the set:
     /// PTX ISA §3.1 forms warps from consecutive thread ids.
     pub fn warps(&self, shape: [u32; 3]) -> Option<Counted> {
-        Some(self.tally(shape)?.1)
+        Some(self.tally(shape, Env::default())?.1)
     }
 
     /// The threads and warps the set holds over a launch of `grid` CTAs
@@ -648,10 +622,12 @@ impl Pred {
         }
         let lanes: Vec<(i128, i128)> = (over.iter())
             .map(|k| {
-                (threads.iter().map(|&t| at(&k.form, t)))
-                    .fold((i128::MAX, i128::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)))
+                (threads.iter().map(|&t| at(&k.form, &lanes(t))))
+                    .try_fold((i128::MAX, i128::MIN), |(lo, hi), x| {
+                        Some((lo.min(x?), hi.max(x?)))
+                    })
             })
-            .collect();
+            .collect::<Option<_>>()?;
         let n = |i: usize| if used[i] { i64::from(grid[i]) } else { 1 };
         let mut groups = HashMap::new();
         for z in 0..n(2) {
@@ -670,7 +646,11 @@ impl Pred {
                     let group = match groups.entry(key) {
                         Entry::Occupied(e) => e.into_mut(),
                         Entry::Vacant(e) => {
-                            let (t, w) = self.at_cta(c).tally(shape)?;
+                            let env = Env {
+                                cta: Some(c),
+                                trip: None,
+                            };
+                            let (t, w) = self.tally(shape, env)?;
                             if t.certain != t.possible || w.certain != w.possible {
                                 return None;
                             }
@@ -722,9 +702,9 @@ impl Pred {
             let c = i128::from(k.form.terms.get(&Var::Iter(l))?.as_const()?);
             for &t in &threads {
                 let (num, den) = if c < 0 {
-                    (at(&k.form, t), -c)
+                    (at(&k.form, &lanes(t))?, -c)
                 } else {
-                    (-at(&k.form, t), c)
+                    (-at(&k.form, &lanes(t))?, c)
                 };
                 let (lo, hi) = (num.div_euclid(den), -(-num).div_euclid(den));
                 cuts.extend([lo, lo + 1, hi, hi + 1].map(|x| x.clamp(1, end)));
@@ -737,7 +717,11 @@ impl Pred {
         }
         let (mut sum_t, mut sum_w) = (0u64, 0u64);
         for run in cuts.windows(2) {
-            let (t, w) = self.at_trip(l, run[0])?.tally(shape)?;
+            let env = Env {
+                cta: None,
+                trip: Some((l, run[0])),
+            };
+            let (t, w) = self.tally(shape, env)?;
             if t.certain != t.possible || w.certain != w.possible {
                 return None;
             }
@@ -754,7 +738,7 @@ impl Pred {
     /// is elected every time), so every active lane is tried as the
     /// leader, and no leader when no lane is certainly active, and the
     /// range covers those choices.
-    fn tally(&self, shape: [u32; 3]) -> Option<(Counted, Counted)> {
+    fn tally(&self, shape: [u32; 3], env: Env) -> Option<(Counted, Counted)> {
         if !self.has_condition() || shape.contains(&0) {
             return None;
         }
@@ -767,7 +751,7 @@ impl Pred {
             let lanes_as = |leader: Leader| {
                 let (mut yes, mut maybe) = (0, 0);
                 for l in lanes.clone() {
-                    match self.eval_as(thread(l, shape), shape, leader) {
+                    match self.eval_as(thread(l, shape), shape, leader, env) {
                         Tri::Yes => yes += 1,
                         Tri::Maybe => maybe += 1,
                         Tri::No => {}
@@ -781,7 +765,7 @@ impl Pred {
                     (yes, yes + maybe)
                 }
                 Some(active) => {
-                    let state = |l| active.eval(thread(l, shape), shape);
+                    let state = |l| active.eval_as(thread(l, shape), shape, Leader::Lowest, env);
                     let certain = lanes.clone().any(|l| state(l) == Tri::Yes);
                     (lanes.clone().filter(|&l| state(l) != Tri::No))
                         .map(Leader::Lane)
@@ -1452,7 +1436,11 @@ mod tests {
         let lane = |m: i64| Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), m));
         let brute = |set: &Pred, shape: [u32; 3], n: u64| {
             (1..=i128::from(n)).try_fold((0u64, 0u64), |(t, w), k| {
-                let (at_t, at_w) = set.at_trip(l, k)?.tally(shape)?;
+                let env = Env {
+                    cta: None,
+                    trip: Some((l, k)),
+                };
+                let (at_t, at_w) = set.tally(shape, env)?;
                 Some((t + u64::from(at_t.certain), w + u64::from(at_w.certain)))
             })
         };
@@ -1702,11 +1690,12 @@ mod tests {
         assert_eq!(spread.launch([1024, 1, 1], [1 << 17, 1, 1]), None);
     }
 
-    /// A substitution keeps a product past i64 that the base brings back:
+    /// A CTA or a trip keeps a product past i64 that the base brings back:
     /// `2^62·c + t < 2^62 + 1` over 3 CTAs holds 32, 1 and no thread, and
-    /// `2^62·k + t − 2^63 + 1 < 0` at k = 2 is `t + 1 < 0`.
+    /// `2^62·k + t − 2^63 + 1 < 0` holds every lane at k = 1 and, as
+    /// `t + 1 < 0`, none at k = 2.
     #[test]
-    fn a_substitution_sums_past_i64_before_narrowing() {
+    fn a_cta_or_a_trip_sums_past_i64() {
         let wide = over_ctas(1, 1 << 62, -(1 << 62) - 1, Cmp::Lt, 3);
         assert_eq!(wide.launch([32, 1, 1], [3, 1, 1]), Some((33, 2)));
         let l = LoopId(0);
@@ -1719,13 +1708,12 @@ mod tests {
             cta: None,
             trip: Some((l, (1 << 62, 3 << 62))),
         });
-        let at_two = Pred::Cmp(Constraint {
-            form: tid() + Affine::invariant(SymExpr::Const(1)),
-            cmp: Cmp::Lt,
+        let at = |k| Env {
             cta: None,
-            trip: None,
-        });
-        assert_eq!(trip.at_trip(l, 2), Some(at_two));
+            trip: Some((l, k)),
+        };
+        assert_eq!(trip.tally([32, 1, 1], at(1)), Some((exact(32), exact(1))));
+        assert_eq!(trip.tally([32, 1, 1], at(2)), Some((exact(0), exact(0))));
     }
 
     /// Weighted, CTA c counts `weight(c)` times: t < 2c over 4 CTAs with
