@@ -327,26 +327,28 @@ impl Pred {
     }
 
     /// The thread-index conditions as text; an unknown selector under
-    /// a conjunction is left to the `<=` marker, elsewhere it prints
-    /// as `?`. A disjunction is parenthesized when nested.
-    fn text(&self, nested: bool, name: &dyn Fn(&Var) -> String) -> Option<String> {
+    /// conjunctions alone, `hedged`, is left to the `<=` marker,
+    /// elsewhere it prints as `?`. A disjunction is parenthesized when
+    /// nested.
+    fn text(&self, nested: bool, hedged: bool, name: &dyn Fn(&Var) -> String) -> Option<String> {
         match self {
             Pred::True => None,
             Pred::False => Some("no thread".to_owned()),
             Pred::Unknown | Pred::Uniform => Some("?".to_owned()),
             Pred::Cmp(c) => Some(c.render_named(name)),
             Pred::Elect(_) => Some("elected".to_owned()),
-            Pred::Not(p) => Some(format!("not ({})", p.text(false, name)?)),
+            Pred::Not(p) => Some(format!("not ({})", p.text(false, false, name)?)),
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
-                    .filter(|p| !matches!(p.as_ref(), Pred::Unknown | Pred::Uniform))
-                    .filter_map(|p| p.text(true, name))
+                    .filter(|p| !hedged || !matches!(p.as_ref(), Pred::Unknown | Pred::Uniform))
+                    .filter_map(|p| p.text(true, hedged, name))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
             Pred::Or(a, b) => {
-                let text = format!("{} or {}", a.text(true, name)?, b.text(true, name)?);
+                let (a, b) = (a.text(true, false, name)?, b.text(true, false, name)?);
+                let text = format!("{a} or {b}");
                 Some(if nested { format!("({text})") } else { text })
             }
         }
@@ -593,7 +595,7 @@ impl Pred {
     /// The same, naming each variable by `name`.
     pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> Option<String> {
         self.has_condition()
-            .then(|| self.text(false, name))
+            .then(|| self.text(false, true, name))
             .flatten()
     }
 
@@ -1512,6 +1514,15 @@ mod tests {
             })
         );
         assert_eq!(hedged.render().as_deref(), Some("%tid.x == 0 or ?"));
+        let partly = |p: Pred| p.and(Pred::Unknown);
+        assert_eq!(
+            (!partly(lane0.clone())).render().as_deref(),
+            Some("not (%tid.x == 0 and ?)")
+        );
+        assert_eq!(
+            partly(lane0.clone()).or(!lane0.clone()).render().as_deref(),
+            Some("%tid.x == 0 and ? or %tid.x != 0")
+        );
         assert_eq!(!Pred::Unknown, Pred::Unknown);
         assert_eq!(!Pred::True, Pred::False);
         assert_eq!((!Pred::True).eval([0, 0, 0], [64, 1, 1]), Tri::No);

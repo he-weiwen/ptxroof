@@ -558,7 +558,7 @@ tests/fixtures/micro/cp_async_ignore_src.ptx	micro_cp_async_ignore_src	<block 0>
 tests/fixtures/micro/cp_async_ignore_src.ptx	micro_cp_async_ignore_src	<block 0>	cp.async.ca.shared.global	16 in 1 warp (%tid.x < 16)
 tests/fixtures/micro/cta_guards.ptx	micro_cta_branch	<block 1>	st.global.u32	<= 16 in <= 1 warps (%tid.x < 16)
 tests/fixtures/micro/cta_guards.ptx	micro_cta_branch	<block 1>	st.global.u32	<= 32 in <= 1 warps ((%tid.x < 16 or ?))
-tests/fixtures/micro/cta_guards.ptx	micro_cta_branch	<block 1>	st.global.u32	<= 32 in <= 1 warps (not (%tid.x < 16))
+tests/fixtures/micro/cta_guards.ptx	micro_cta_branch	<block 1>	st.global.u32	<= 32 in <= 1 warps (not (%tid.x < 16 and ?))
 tests/fixtures/micro/elect.ptx	micro_elect	<block 0>	st.global.f32	1 in 1 warp (⌊%tid.x/32⌋ == 0 and elected)
 tests/fixtures/micro/elect.ptx	micro_elect	<block 0>	st.global.v2.f32	4 in 4 warps (elected)
 tests/fixtures/micro/elect.ptx	micro_elect	<block 0>	st.global.u16	124 in 4 warps (not (elected))
