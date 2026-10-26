@@ -21,7 +21,7 @@ use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, domin
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::instruction_counts::classify::cp_async_size_operand;
 use crate::analysis::scalar::affine::{Affine, Axis, Cmp, Var};
-use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes};
+use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes, linear, thread, warps_of};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::{AffineValueTracer, IntKind, IntType};
 use crate::analysis::uniformity::Uniformity;
@@ -357,16 +357,6 @@ impl Pred {
     }
 }
 
-fn linear(tid: [i64; 3], shape: [u32; 3]) -> i64 {
-    let [nx, ny, _] = shape.map(i64::from);
-    tid[0] + nx * (tid[1] + ny * tid[2])
-}
-
-fn lane_of(linear: i64, shape: [u32; 3]) -> [i64; 3] {
-    let [nx, ny, _] = shape.map(i64::from);
-    [linear % nx, (linear / nx) % ny, linear / (nx * ny)]
-}
-
 /// Whether `tid` is the lowest lane of its warp that `active` admits, a
 /// representative of the elected lane: yes when no lower lane may be
 /// active, maybe when the leader is one of several lanes that may be.
@@ -380,7 +370,7 @@ fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3]) -> Tri {
     let base = linear - linear % 32;
     let mut candidates = Vec::new();
     for l in base..(base + 32).min(threads) {
-        match active.eval(lane_of(l, shape), shape) {
+        match active.eval(thread(l, shape), shape) {
             Tri::Yes if candidates.is_empty() => {
                 return if l == linear { Tri::Yes } else { Tri::No };
             }
@@ -651,7 +641,7 @@ impl Pred {
             return None;
         }
         let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
-            .map(|l| lane_of(l, shape))
+            .map(|l| thread(l, shape))
             .collect();
         if threads.is_empty() {
             return None;
@@ -725,7 +715,7 @@ impl Pred {
         let mut over = Vec::new();
         self.trip_constraints(&mut over);
         let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
-            .map(|t| lane_of(t, shape))
+            .map(|t| thread(t, shape))
             .collect();
         let end = i128::from(n) + 1;
         let mut cuts = vec![1, end];
@@ -776,12 +766,11 @@ impl Pred {
         }
         let mut certain = 0;
         let mut possible = 0;
-        for base in (0..threads).step_by(32) {
-            let lanes = base..(base + 32).min(threads);
+        for lanes in warps_of(shape) {
             let lanes_as = |leader: Leader| {
                 let (mut yes, mut maybe) = (0, 0);
                 for l in lanes.clone() {
-                    match self.eval_as(lane_of(l, shape), shape, leader) {
+                    match self.eval_as(thread(l, shape), shape, leader) {
                         Tri::Yes => yes += 1,
                         Tri::Maybe => maybe += 1,
                         Tri::No => {}
@@ -795,7 +784,7 @@ impl Pred {
                     (yes, yes + maybe)
                 }
                 Some(active) => {
-                    let state = |l| active.eval(lane_of(l, shape), shape);
+                    let state = |l| active.eval(thread(l, shape), shape);
                     let certain = lanes.clone().any(|l| state(l) == Tri::Yes);
                     (lanes.clone().filter(|&l| state(l) != Tri::No))
                         .map(Leader::Lane)

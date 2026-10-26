@@ -9,7 +9,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::Space;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
-use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes};
+use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes, thread, warps_of};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::thread_participation::Pred;
 use serde::Serialize;
@@ -106,10 +106,9 @@ pub fn warp_footprint(
     }
     let bytes = i64::from(bytes);
     let align = i64::from(align.max(1));
-    let warps: Vec<Vec<i64>> = (0..(threads + 31) / 32)
+    let warps: Vec<Vec<i64>> = warps_of(shape)
         .map(|warp| {
-            (warp * 32..((warp + 1) * 32).min(threads))
-                .map(|t| [t % nx, (t / nx) % ny, t / (nx * ny)])
+            warp.map(|t| thread(t, shape))
                 .filter(|&tid| executes(tid))
                 .map(|tid| {
                     lane_terms
@@ -313,7 +312,7 @@ pub fn loop_bytes(
     for f in global {
         let set = &f.set;
         let lanes = (0..threads)
-            .filter(|&t| set.contains([t % nx, (t / nx) % ny, t / (nx * ny)], shape))
+            .filter(|&t| set.contains(thread(t, shape), shape))
             .count() as u64;
         let bytes = u64::from(f.bytes)
             .checked_mul(trips as u64)?
@@ -377,9 +376,9 @@ pub fn loop_bytes(
         });
         key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
         let intervals = per_base.entry(key.clone()).or_default();
-        for warp in 0..(threads + 31) / 32 {
-            let offsets: Vec<i64> = (warp * 32..((warp + 1) * 32).min(threads))
-                .map(|t| [t % nx, (t / nx) % ny, t / (nx * ny)])
+        for warp in warps_of(shape) {
+            let offsets: Vec<i64> = warp
+                .map(|t| thread(t, shape))
                 .filter(|&tid| set.contains(tid, shape))
                 .map(|tid| crate::analysis::scalar::lane_eval::eval_lane(form, tid))
                 .collect();
@@ -396,7 +395,7 @@ pub fn loop_bytes(
             }
         }
         for t in 0..threads {
-            let tid = [t % nx, (t / nx) % ny, t / (nx * ny)];
+            let tid = thread(t, shape);
             if !set.contains(tid, shape) {
                 continue;
             }
