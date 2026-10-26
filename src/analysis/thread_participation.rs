@@ -1,21 +1,23 @@
-//! Which threads of a CTA execute a block. A conditional branch on the
-//! block's dominator chain fixes its predicate on entry when the block
-//! is reachable from only one of the two successors without passing
-//! the branch again (its last evaluation decided); when each such
-//! predicate is a comparison of affine forms over the thread index
-//! alone, the block runs exactly on the threads satisfying all of them,
-//! counted by enumeration over the block shape. With the grid bound, a
+//! Which threads of a CTA execute a block. In one trip of the loop
+//! holding it (the parent loop for a header, the kernel outside every
+//! loop), where a loop nested in it stands as its header, a block runs
+//! on the threads at its immediate dominator that take toward it a
+//! branch below that dominator it is control dependent on (Ferrante,
+//! Ottenstein and Warren, "The Program Dependence Graph and Its Use in
+//! Optimization", TOPLAS 1987), or leave toward it a nested loop
+//! holding one; when each such predicate is a comparison of affine
+//! forms over the thread index alone, the block runs exactly on the
+//! threads satisfying them, counted by enumeration over the block
+//! shape. With the grid bound, a
 //! comparison may hold the CTA index too: each thread is then in at
 //! every CTA, at none, or at some, and the counts are bounds where CTAs
 //! differ. A comparison with the counter of a loop holding the block,
 //! its current trip's, decides a thread only where every trip agrees.
 //! A predicate that involves anything else (a parameter, a loaded
 //! value) is an unknown selector, and the block's counts stay bounds;
-//! one the same for every thread empties or keeps whole warps. So is a branch off the chain that decides whether
-//! the block runs: a path from a chain branch that reaches the block and
-//! also leaves its scope around it.
+//! one the same for every thread empties or keeps whole warps.
 
-use crate::analysis::control_flow::dominators;
+use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::instruction_counts::classify::cp_async_size_operand;
 use crate::analysis::scalar::affine::{Affine, Axis, Cmp, Var};
@@ -822,103 +824,153 @@ struct PredicateReader<'a> {
     forest: &'a LoopForest,
     tracer: &'a AffineValueTracer<'a>,
     uniformity: &'a Uniformity,
+    /// Per scope, the top level and then each loop: post-dominance over
+    /// one trip, its edges [`kept`], and the branches each block is
+    /// control dependent on there.
+    trips: Vec<(DominanceInfo, Vec<Vec<BlockId>>)>,
     memo: HashMap<usize, Pred>,
     blocks: Vec<Option<Pred>>,
-    bypass: Vec<Option<bool>>,
 }
+
+/// Whether edge `x → t` lies within one trip of scope `s`: not one into
+/// an irreducible region, and at the top level any other, else one
+/// between blocks of loop `s` other than a back edge.
+fn kept(forest: &LoopForest, s: Option<LoopId>, x: BlockId, t: BlockId) -> bool {
+    !forest.irreducible_edges.contains(&(x, t))
+        && s.is_none_or(|l| {
+            let l = forest.get(l);
+            t != l.header
+                && l.blocks.binary_search(&x).is_ok()
+                && l.blocks.binary_search(&t).is_ok()
+        })
+}
+
+/// The block standing for `x` in one trip of scope `s`: `x`, or the
+/// header of the loop directly inside `s` that holds it.
+fn level(forest: &LoopForest, s: Option<LoopId>, x: BlockId) -> BlockId {
+    let (mut at, mut l) = (x, forest.block_loop[x.0 as usize]);
+    while let Some(id) = l.filter(|&id| Some(id) != s) {
+        (at, l) = (forest.get(id).header, forest.get(id).parent);
+    }
+    at
+}
+
+/// The scope one trip of which decides whether `b` runs: its innermost
+/// loop, or that loop's parent for its header.
+fn scope(forest: &LoopForest, b: BlockId) -> Option<LoopId> {
+    match forest.block_loop[b.0 as usize] {
+        Some(l) if forest.get(l).header == b => forest.get(l).parent,
+        other => other,
+    }
+}
+
+/// The most steps `reach` takes for one block, one per branch it reads:
+/// a ladder of rungs that each lead both ways to the next doubles them
+/// per rung.
+const REACH_BUDGET: u32 = 32;
 
 impl PredicateReader<'_> {
     fn block(&mut self, b: BlockId) -> Pred {
         if let Some(p) = &self.blocks[b.0 as usize] {
             return p.clone();
         }
-        let mut pred = Pred::True;
-        let mut cur = self.forest.doms.idom[b.0 as usize];
-        while let Some(d) = cur {
-            let blk = self.cfg.block(d);
-            // The dominator's conditional branch, if it selects for b.
-            let last = self.kernel.stmts[blk.start..blk.end]
-                .iter()
-                .enumerate()
-                .rev()
-                .find_map(|(i, s)| match s {
-                    Stmt::Instr(instr) => Some((blk.start + i, instr)),
-                    _ => None,
-                });
-            if let Some((pos, instr)) = last
-                && instr.mnemonic == Opcode::Bra
-                && let Some(guard) = instr.predicate
-                && let [taken, fallthrough] = blk.succs[..]
-            {
-                let via = |s: BlockId| s == b || self.tracer.path_avoiding(s, b, d);
-                let selected = match (via(taken), via(fallthrough)) {
-                    (true, false) => Some(true),
-                    (false, true) => Some(false),
-                    _ => None,
-                };
-                if let Some(taken_edge) = selected {
-                    let forest = self.forest;
-                    let inside = |l: LoopId| {
-                        let blocks = &forest.get(l).blocks;
-                        blocks.binary_search(&b).is_ok() && blocks.binary_search(&d).is_ok()
-                    };
-                    let p = self.of(guard.reg, pos, 0).in_loops(&inside);
-                    pred = pred.and(if taken_edge != guard.negated { p } else { !p });
-                }
+        let forest = self.forest;
+        let pred = match forest.doms.idom[b.0 as usize] {
+            Some(d) => {
+                let s = scope(forest, b);
+                let d = level(forest, s, d);
+                let around = |l: LoopId| forest.get(l).blocks.binary_search(&b).is_ok();
+                let at = self.block(d).in_loops(&around);
+                let mut left = REACH_BUDGET;
+                at.and(self.reach(s, d, b, b, &mut left))
             }
-            if d == ControlFlowGraph::ENTRY {
-                break;
-            }
-            cur = self.forest.doms.idom[d.0 as usize];
-        }
-        if self.bypassed(b) {
-            pred = pred.and(Pred::Unknown);
-        }
+            None if b == ControlFlowGraph::ENTRY => Pred::True,
+            None => Pred::False,
+        };
         self.blocks[b.0 as usize] = Some(pred.clone());
         pred
     }
 
-    /// Whether a condition off b's dominator chain decides whether b
-    /// runs: so for b's immediate dominator, or one of its successors
-    /// reaches b without passing it and leaves b's scope around b.
-    fn bypassed(&mut self, b: BlockId) -> bool {
-        if let Some(x) = self.bypass[b.0 as usize] {
-            return x;
-        }
-        let x = match self.forest.doms.idom[b.0 as usize] {
-            Some(d) => self.skips(d, b) || self.bypassed(d),
-            None => false,
-        };
-        self.bypass[b.0 as usize] = Some(x);
-        x
+    fn trip(&self, s: Option<LoopId>) -> &(DominanceInfo, Vec<Vec<BlockId>>) {
+        &self.trips[s.map_or(0, |l| l.0 as usize + 1)]
     }
 
-    /// A successor of `d` reaches `c` without passing `d`, and also an exit
-    /// of c's scope without passing `c`: a latch or exit target of c's
-    /// innermost loop (its parent's for a loop header), or a kernel exit.
-    fn skips(&self, d: BlockId, c: BlockId) -> bool {
-        let innermost = self.forest.block_loop[c.0 as usize].map(|l| self.forest.get(l));
-        let scope = match innermost {
-            Some(l) if l.header == c => l.parent.map(|p| self.forest.get(p)),
-            other => other,
+    /// Which threads at `d` reach `c` in one trip of scope `s`, read for
+    /// block `b`: every one where `c` post-dominates `d`, else those
+    /// taking toward `c` a branch it is control dependent on that `d`
+    /// dominates, or leaving toward it a loop holding such a branch;
+    /// unknown where `c` reaches no exit, or past `left` steps.
+    fn reach(
+        &mut self,
+        s: Option<LoopId>,
+        d: BlockId,
+        c: BlockId,
+        b: BlockId,
+        left: &mut u32,
+    ) -> Pred {
+        let Some(rest) = left.checked_sub(1) else {
+            return Pred::Unknown;
         };
-        let inside = |x: BlockId| scope.is_none_or(|s| s.blocks.binary_search(&x).is_ok());
-        let exits: Vec<BlockId> = match scope {
-            Some(s) => (s.blocks.iter())
-                .flat_map(|&x| self.cfg.block(x).succs.iter().copied())
-                .filter(|&t| !inside(t))
-                .chain(s.latches.iter().copied())
-                .collect(),
-            None => (0..self.cfg.blocks.len() as u32)
-                .map(BlockId)
-                .filter(|&x| self.cfg.block(x).succs.is_empty())
-                .collect(),
+        *left = rest;
+        let (pdoms, deciders) = self.trip(s);
+        if pdoms.dominates(c, d) {
+            return Pred::True;
+        }
+        if !pdoms.is_reachable(c) {
+            return Pred::Unknown;
+        }
+        let mut levels: Vec<BlockId> = (deciders[c.0 as usize].iter())
+            .map(|&x| level(self.forest, s, x))
+            .filter(|&x| x != c)
+            .collect();
+        levels.sort_unstable();
+        levels.dedup();
+        let mut pred = Pred::False;
+        for x in levels {
+            if self.forest.doms.dominates(d, x) {
+                let way = match self.forest.block_loop[x.0 as usize] == s {
+                    true => self.toward(s, x, c, b),
+                    false => self.leaving(x),
+                };
+                pred = pred.or(self.reach(s, d, x, b, left).and(way));
+            }
+        }
+        pred
+    }
+
+    /// Which threads at loop header `h` leave its loop by a given exit:
+    /// every thread alike where its exits are uniform.
+    fn leaving(&self, h: BlockId) -> Pred {
+        match self.forest.block_loop[h.0 as usize] {
+            Some(l) if self.uniformity.exits_uniform(self.tracer, l).is_ok() => Pred::Uniform,
+            _ => Pred::Unknown,
+        }
+    }
+
+    /// Which threads at `x` take its branch toward `c` in one trip of
+    /// scope `s`, read for block `b`.
+    fn toward(&mut self, s: Option<LoopId>, x: BlockId, c: BlockId, b: BlockId) -> Pred {
+        let tracer = self.tracer;
+        let (Some((pos, instr)), &[taken, _]) =
+            (tracer.last_instr(x), &self.cfg.block(x).succs[..])
+        else {
+            return Pred::Unknown;
         };
-        let around =
-            |s: BlockId, t: BlockId| t != c && (s == t || self.tracer.path_avoiding(s, t, c));
-        (self.cfg.block(d).succs.iter()).any(|&s| {
-            s != c && self.tracer.path_avoiding(s, c, d) && exits.iter().any(|&t| around(s, t))
-        })
+        let Some(guard) = instr.predicate.filter(|_| instr.mnemonic == Opcode::Bra) else {
+            return Pred::Unknown;
+        };
+        let forest = self.forest;
+        let inside = |l: LoopId| {
+            let blocks = &forest.get(l).blocks;
+            blocks.binary_search(&b).is_ok() && blocks.binary_search(&x).is_ok()
+        };
+        let p = self.of(guard.reg, pos, 0).in_loops(&inside);
+        let p = if guard.negated { !p } else { p };
+        if kept(forest, s, x, taken) && self.trip(s).0.dominates(c, taken) {
+            p
+        } else {
+            !p
+        }
     }
 
     fn of(&mut self, reg: Symbol, pos: usize, depth: u32) -> Pred {
@@ -1117,6 +1169,16 @@ pub(crate) fn thread_sets(
     tracer: &AffineValueTracer,
     uniformity: &Uniformity,
 ) -> ThreadSets {
+    let exit = BlockId(cfg.blocks.len() as u32);
+    let trips = std::iter::once(None)
+        .chain((0..forest.loops.len() as u32).map(|l| Some(LoopId(l))))
+        .map(|s| {
+            let reversed = cfg.reversed(&|x, t| kept(forest, s, x, t));
+            let pdoms = dominators_from(&reversed, exit);
+            let deciders = pdoms.frontiers(&reversed);
+            (pdoms, deciders)
+        })
+        .collect();
     let mut reader = PredicateReader {
         module,
         kernel,
@@ -1124,9 +1186,9 @@ pub(crate) fn thread_sets(
         forest,
         tracer,
         uniformity,
+        trips,
         memo: HashMap::new(),
         blocks: vec![None; cfg.blocks.len()],
-        bypass: vec![None; cfg.blocks.len()],
     };
     let blocks: Vec<Pred> = (0..cfg.blocks.len() as u32)
         .map(|b| reader.block(BlockId(b)))
@@ -1836,10 +1898,9 @@ mod tests {
         assert!(Pred::Elect(Box::new(Pred::Uniform.and(lanes()))).lane_exact());
     }
 
-    /// Per `cp.async` of `body`, in order: the threads that read its
-    /// source as stored, and its guards on memory operands 0 and 1.
-    /// `%r1` holds the thread index.
-    fn copies(body: &str) -> Vec<(Option<Pred>, Option<Pred>, Option<Pred>)> {
+    /// Kernel `body`'s module and thread sets, on 64 threads; `%rd1`
+    /// holds parameter 0 and `%r1` the thread index.
+    fn sets_of(body: &str) -> (Module, ThreadSets) {
         use crate::analysis::control_flow::loop_forest;
         use crate::ptx::cfg::build_cfg;
         use crate::ptx::parse::parser::parse;
@@ -1855,6 +1916,93 @@ mod tests {
         let forest = loop_forest(&cfg);
         let t = AffineValueTracer::new(&m, k, &cfg, &forest);
         let sets = thread_sets(&m, k, &cfg, &forest, &t, t.uniformity());
+        (m, sets)
+    }
+
+    /// A block runs on the threads its control dependences send to it:
+    /// below two branches of the thread index, those either one sends,
+    /// `%tid.x < 48 and (%tid.x < 8 or %tid.x >= 40)`; after a loop of
+    /// one exit, every thread that entered it, though the latch compares
+    /// a parameter.
+    #[test]
+    fn a_block_runs_on_the_threads_its_control_dependences_send_to_it() {
+        let (_, either) = sets_of(
+            "setp.ge.u32 %p1, %r1, 48;\n@%p1 bra $L__E;\n\
+             setp.lt.u32 %p2, %r1, 8;\n@%p2 bra $L__X;\n\
+             setp.lt.u32 %p3, %r1, 40;\n@%p3 bra $L__E;\n\
+             $L__X:\nadd.s32 %r4, %r1, 1;\n$L__E:",
+        );
+        assert_eq!(either.blocks[3].count([64, 1, 1]), Some(exact(16)));
+        let (_, after) = sets_of(
+            "cvt.u32.u64 %r2, %rd1;\nsetp.ge.u32 %p1, %r1, 32;\n@%p1 bra $L__E;\n\
+             mov.u32 %r3, 0;\n$L__H:\nadd.s32 %r3, %r3, 1;\nbra.uni $L__L;\n\
+             $L__L:\nsetp.lt.u32 %p2, %r3, %r2;\n@%p2 bra $L__H;\n\
+             add.s32 %r4, %r3, 1;\n$L__E:",
+        );
+        assert!(after.blocks[4].exact());
+        assert_eq!(after.blocks[4].count([64, 1, 1]), Some(exact(32)));
+    }
+
+    /// Three-valued logic does not see that an unknown and its negation
+    /// cover every thread: the block both arms of an unknown branch reach
+    /// by the same test of the thread index counts `<= 16` threads where
+    /// 16 run it.
+    #[test]
+    fn a_test_both_arms_of_an_unknown_branch_repeat_is_a_bound() {
+        let (_, sets) = sets_of(
+            "ld.global.u32 %r4, [%rd1];\nsetp.ne.u32 %p1, %r4, 0;\n@%p1 bra $L__Y;\n\
+             setp.lt.u32 %p2, %r1, 16;\n@%p2 bra $L__C;\nbra.uni $L__E;\n\
+             $L__Y:\nsetp.lt.u32 %p3, %r1, 16;\n@%p3 bra $L__C;\nbra.uni $L__E;\n\
+             $L__C:\nst.global.u32 [%rd1+4], %r1;\n$L__E:",
+        );
+        let both = Counted {
+            certain: 0,
+            possible: 16,
+        };
+        assert_eq!(sets.blocks[5].count([64, 1, 1]), Some(both));
+    }
+
+    /// On a ladder whose rungs each branch both ways to the next on a bit
+    /// of the thread index, the steps `reach` takes double per rung: an
+    /// early rung is exact, one past `REACH_BUDGET` steps a bound.
+    #[test]
+    fn a_ladder_past_the_reach_budget_is_an_unknown_selector() {
+        let rungs = 12;
+        let mut body = String::from("setp.lt.u32 %p2, %r1, 32;\n@%p2 bra $L__Y0;\n");
+        for i in 0..rungs {
+            let next = |side: &str| match i + 1 == rungs {
+                true => "$L__E".to_owned(),
+                false => format!("$L__{side}{}", i + 1),
+            };
+            for side in ["X", "Y"] {
+                body += &format!(
+                    "$L__{side}{i}:\nand.b32 %r4, %r1, {};\nsetp.ne.u32 %p1, %r4, 0;\n\
+                     @%p1 bra {};\nbra.uni {};\n",
+                    1 << (i % 6),
+                    next("X"),
+                    next("Y"),
+                );
+            }
+        }
+        body += "$L__E:";
+        let (m, sets) = sets_of(&body);
+        let cfg = crate::ptx::cfg::build_cfg(&m, &m.kernels[0]);
+        let rung = |name: &str| {
+            let (b, _) = (cfg.blocks.iter_enumerated())
+                .find(|(_, b)| b.label.is_some_and(|l| m.interner.resolve(l) == name))
+                .expect("a rung");
+            &sets.blocks[b.0 as usize]
+        };
+        assert!(rung("$L__X1").exact());
+        assert!(!rung("$L__X11").exact());
+    }
+
+    /// Per `cp.async` of `body`, in order: the threads that read its
+    /// source as stored, and its guards on memory operands 0 and 1.
+    /// `%r1` holds the thread index.
+    fn copies(body: &str) -> Vec<(Option<Pred>, Option<Pred>, Option<Pred>)> {
+        let (m, sets) = sets_of(body);
+        let k = &m.kernels[0];
         let copy =
             |s: usize| matches!(&k.stmts[s], Stmt::Instr(i) if m.opcode(i).starts_with("cp.async"));
         (0..k.stmts.len())

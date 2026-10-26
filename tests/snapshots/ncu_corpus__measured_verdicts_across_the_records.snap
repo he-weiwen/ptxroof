@@ -2,7 +2,7 @@
 source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
-blocks {"confirmed": 137, "consistent": 274, "unchecked": 499}
+blocks {"confirmed": 143, "consistent": 276, "unchecked": 491}
 sector lines {"exact": 89, "not compared, its SASS ran otherwise": 2, "within a bound": 173, "within a range": 1152}
 launch sectors {"loads agrees, stores agrees": 38, "not compared": 25}
 
@@ -709,7 +709,7 @@ tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_
   waitLoop$scope12	unchecked	2 of 2 with SASS, 0 agreeing
   skipWait$scope12	confirmed	124 of 124 with SASS, 122 agreeing
   waitLoop$scope13	unchecked	2 of 2 with SASS, 0 agreeing
-  skipWait$scope13	confirmed	87 of 87 with SASS, 70 agreeing
+  skipWait$scope13	confirmed	87 of 87 with SASS, 69 agreeing
   <block 42>	consistent	15 of 20 with SASS, 9 agreeing
   $L__BB0_17	confirmed	4 of 5 with SASS, 3 agreeing
   waitLoop$scope14	unchecked	2 of 2 with SASS, 0 agreeing
@@ -717,21 +717,21 @@ tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_
   <block 46>	consistent	26 of 32 with SASS, 16 agreeing
   $L__BB0_19	confirmed	11 of 19 with SASS, 6 agreeing
   <block 48>	consistent	3 of 14 with SASS, 2 agreeing
-  $L__BB0_25	unchecked	22 of 42 with SASS, 0 agreeing
-  $L__BB0_21	unchecked	18 of 35 with SASS, 0 agreeing
+  $L__BB0_25	confirmed	22 of 42 with SASS, 10 agreeing
+  $L__BB0_21	confirmed	18 of 35 with SASS, 17 agreeing
   waitLoop$scope15	unchecked	2 of 2 with SASS, 0 agreeing
-  <block 52>	unchecked	123 of 123 with SASS, 0 agreeing
+  <block 52>	confirmed	123 of 123 with SASS, 121 agreeing
   waitLoop$scope16	unchecked	2 of 2 with SASS, 0 agreeing
-  <block 54>	unchecked	2 of 3 with SASS, 0 agreeing
+  <block 54>	consistent	2 of 3 with SASS, 1 agreeing
   waitLoop$scope17	unchecked	2 of 2 with SASS, 0 agreeing
-  <block 56>	unchecked	88 of 90 with SASS, 0 agreeing
-  <block 57>	unchecked	16 of 20 with SASS, 0 agreeing
-  $L__BB0_23	unchecked	11 of 14 with SASS, 0 agreeing
+  <block 56>	confirmed	88 of 90 with SASS, 86 agreeing
+  <block 57>	consistent	16 of 20 with SASS, 10 agreeing
+  $L__BB0_23	confirmed	11 of 14 with SASS, 9 agreeing
   waitLoop$scope18	unchecked	2 of 2 with SASS, 0 agreeing
-  skipWait$scope18	unchecked	3 of 6 with SASS, 0 agreeing
+  skipWait$scope18	consistent	3 of 6 with SASS, 1 agreeing
   <block 61>	unchecked	27 of 34 with SASS, 0 agreeing
   $L__BB0_26	unchecked	1 of 2 with SASS, 0 agreeing
-  $L__tmp59	consistent	20 of 37 with SASS, 19 agreeing
+  $L__tmp59	confirmed	20 of 37 with SASS, 19 agreeing
   waitLoop$scope19	unchecked	2 of 2 with SASS, 0 agreeing
   $L__BB0_28	confirmed	59 of 103 with SASS, 44 agreeing
   waitLoop$scope20	unchecked	2 of 2 with SASS, 0 agreeing

@@ -18,8 +18,10 @@ sectors one warp's request touches and the fewest its distinct bytes
 need, over the lanes that execute it, once the block shape and the parameters in the lane
 coefficients are bound; per
 block and per guarded instruction, which threads of the CTA run it
-when the selecting branches and the guard are thread-index
-comparisons, with the grid given comparisons with the CTA index as
+when the branches it is control dependent on in one trip of its loop
+and the guard are thread-index comparisons
+(`micro/or_entry.ptx`: under `%tid.x < 64`, `%tid.x < 16 || %tid.x >= 48`
+stores on 32 threads), with the grid given comparisons with the CTA index as
 well (a bound per CTA where CTAs differ), `%laneid` in a
 one-dimensional block, or constants
 (rmsnorm's loads under `mov.pred %p2, 0` run on no thread and count in
@@ -413,6 +415,16 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `micro/cp_async_ignore_src.ptx` line 55 reads its source on 80
   threads over the launch, exactly, with sectors `<= 51`, where 40 are
   measured.
+- **A test both arms of an unknown branch repeat leaves a bound.** Read
+  in three-valued logic, `(? and %tid.x < 16) or (? and %tid.x < 16)`
+  is not `%tid.x < 16`: the block both arms reach counts `<= 16`
+  threads where 16 run it
+  (`a_test_both_arms_of_an_unknown_branch_repeat_is_a_bound`).
+- **A block past 32 steps of control dependence is an unknown
+  selector.** A ladder whose rungs each branch both ways to the next
+  doubles the steps per rung; past 32 the block's set is a bound
+  (`a_ladder_past_the_reach_budget_is_an_unknown_selector`). The census
+  and fixtures take at most 17.
 - **A `cp.async` whose ignore-src is not read counts cp-size on every
   thread that runs it, as a bound.**
   - Census (13,489 in 300 kernels, sm_100a, no bindings): 479 read
