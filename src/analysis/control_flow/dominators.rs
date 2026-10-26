@@ -8,8 +8,8 @@ use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 
 #[derive(Debug)]
 pub struct DominanceInfo {
-    /// Immediate dominator per block; `None` for the entry block and
-    /// for unreachable blocks.
+    /// Immediate dominator per block; `None` for the root (the entry
+    /// block) and for unreachable blocks.
     pub idom: Vec<Option<BlockId>>,
     /// Reverse postorder over reachable blocks.
     pub rpo: Vec<BlockId>,
@@ -89,14 +89,20 @@ pub fn iterated_frontier(df: &[Vec<BlockId>], blocks: &[BlockId]) -> Vec<BlockId
 }
 
 pub fn dominators(cfg: &ControlFlowGraph) -> DominanceInfo {
+    dominators_from(cfg, ControlFlowGraph::ENTRY)
+}
+
+/// Dominance from `root`: on [`ControlFlowGraph::reversed`] from its
+/// added exit, post-dominance.
+pub fn dominators_from(cfg: &ControlFlowGraph, root: BlockId) -> DominanceInfo {
     let n = cfg.blocks.len();
 
-    // Iterative DFS postorder from the entry, then reverse.
+    // Iterative DFS postorder from the root, then reverse.
     let mut postorder = Vec::with_capacity(n);
     let mut visited = vec![false; n];
     // Stack holds (block, next-successor-index).
-    let mut stack: Vec<(BlockId, usize)> = vec![(ControlFlowGraph::ENTRY, 0)];
-    visited[ControlFlowGraph::ENTRY.0 as usize] = true;
+    let mut stack: Vec<(BlockId, usize)> = vec![(root, 0)];
+    visited[root.0 as usize] = true;
     while let Some(&mut (b, ref mut next)) = stack.last_mut() {
         let succs = &cfg.block(b).succs;
         if *next < succs.len() {
@@ -119,7 +125,7 @@ pub fn dominators(cfg: &ControlFlowGraph) -> DominanceInfo {
 
     // CHK iteration to fixpoint.
     let mut idom: Vec<Option<BlockId>> = vec![None; n];
-    idom[ControlFlowGraph::ENTRY.0 as usize] = Some(ControlFlowGraph::ENTRY); // self, during iteration
+    idom[root.0 as usize] = Some(root); // self, during iteration
     let intersect = |idom: &[Option<BlockId>], rpo_index: &[usize], a: BlockId, b: BlockId| {
         let (mut x, mut y) = (a, b);
         while x != y {
@@ -154,7 +160,7 @@ pub fn dominators(cfg: &ControlFlowGraph) -> DominanceInfo {
         }
     }
 
-    idom[ControlFlowGraph::ENTRY.0 as usize] = None; // entry has no idom in the result
+    idom[root.0 as usize] = None; // the root has no idom in the result
     DominanceInfo {
         idom,
         rpo,
@@ -331,6 +337,67 @@ mod tests {
         let looped =
             "$L__E:\nadd.s32 %r1, %r1, 1;\nsetp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__E;\nret;";
         assert_eq!(iterated_of(looped, &[0]), [0]);
+    }
+
+    /// From the exit of the graph reversed on the edges `kept`:
+    /// post-dominance, and as frontiers the branches each block is
+    /// control dependent on.
+    fn post_dominance_of(
+        body: &str,
+        kept: &dyn Fn(BlockId, BlockId) -> bool,
+    ) -> (DominanceInfo, Vec<Vec<u32>>) {
+        let (cfg, _) = doms_of(body);
+        let reversed = cfg.reversed(kept);
+        let pd = dominators_from(&reversed, BlockId(cfg.blocks.len() as u32));
+        let cd = (pd.frontiers(&reversed).into_iter())
+            .map(|f| f.into_iter().map(|b| b.0).collect())
+            .collect();
+        (pd, cd)
+    }
+
+    #[test]
+    fn a_diamond_join_post_dominates_the_split_and_its_arms_depend_on_it() {
+        // blocks: 0 split, 1 fall arm, 2 taken arm, 3 join, 4 the added exit
+        let (pd, cd) = post_dominance_of(
+            "setp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__T;\n\
+             add.f32 %f1, %f1, %f1;\nbra $L__J;\n\
+             $L__T:\nmul.f32 %f1, %f1, %f1;\n\
+             $L__J:\nret;",
+            &|_, _| true,
+        );
+        assert_eq!(pd.idom[0], Some(BlockId(3)));
+        assert_eq!(pd.idom[3], Some(BlockId(4)));
+        assert!(pd.dominates(BlockId(3), BlockId(1)));
+        assert!(!pd.dominates(BlockId(1), BlockId(0)));
+        assert_eq!(cd, [vec![], vec![0], vec![0], vec![], vec![]]);
+    }
+
+    #[test]
+    fn an_early_return_leaves_the_split_post_dominated_by_the_exit_alone() {
+        // blocks: 0 split, 1 fall arm returning, 2 taken arm returning, 3 the added exit
+        let (pd, cd) = post_dominance_of(
+            "setp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__T;\nret;\n$L__T:\nret;",
+            &|_, _| true,
+        );
+        assert_eq!(pd.idom[0], Some(BlockId(3)));
+        assert_eq!(cd, [vec![], vec![0], vec![0], vec![]]);
+    }
+
+    #[test]
+    fn one_trip_of_a_loop_ends_at_its_back_edge_and_its_exit() {
+        // blocks: 0 preheader, 1 header testing the exit, 2 a branch
+        // around block 3, 4 the latch, 5 exit, 6 the added exit
+        let body = "mov.u32 %r1, 0;\n\
+                    $L__H:\nsetp.ge.s32 %p1, %r1, %r2;\n@%p1 bra $L__X;\n\
+                    setp.lt.s32 %p2, %r1, 4;\n@%p2 bra $L__C;\n\
+                    add.s32 %r3, %r3, 1;\n\
+                    $L__C:\nadd.s32 %r1, %r1, 1;\nbra $L__H;\n\
+                    $L__X:\nret;";
+        let in_loop = |b: BlockId| (1..=4).contains(&b.0);
+        let (_, trip) = post_dominance_of(body, &|x, t| in_loop(x) && in_loop(t) && t.0 != 1);
+        assert_eq!(trip[2..5], [vec![1], vec![2], vec![1]]);
+        let (whole, _) = post_dominance_of(body, &|_, _| true);
+        assert_eq!(whole.idom[1], Some(BlockId(5)));
     }
 
     #[test]

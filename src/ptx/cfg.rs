@@ -82,6 +82,43 @@ impl ControlFlowGraph {
         }
     }
 
+    /// The edges of this graph that `kept` accepts, turned around, and
+    /// after its blocks an exit of no statements with an edge to each
+    /// block with no successors or an edge not kept.
+    pub fn reversed(&self, kept: &dyn Fn(BlockId, BlockId) -> bool) -> ControlFlowGraph {
+        let exit = BlockId(self.blocks.len() as u32);
+        let mut blocks = IndexVec::new();
+        let mut ends = Vec::new();
+        for (id, b) in self.blocks.iter_enumerated() {
+            let mut preds: Vec<BlockId> =
+                (b.succs.iter().copied()).filter(|&s| kept(id, s)).collect();
+            if preds.len() < b.succs.len() || b.succs.is_empty() {
+                preds.push(exit);
+                ends.push(id);
+            }
+            blocks.push(Block {
+                label: b.label,
+                start: b.start,
+                end: b.end,
+                succs: (b.preds.iter().copied()).filter(|&p| kept(p, id)).collect(),
+                preds,
+            });
+        }
+        let end = self.blocks.iter().last().map_or(0, |b| b.end);
+        blocks.push(Block {
+            label: None,
+            start: end,
+            end,
+            succs: ends,
+            preds: Vec::new(),
+        });
+        ControlFlowGraph {
+            blocks,
+            call_sites: self.call_sites.clone(),
+            unresolved_branches: self.unresolved_branches.clone(),
+        }
+    }
+
     /// Instructions of a block, in order.
     /// The block's label, or `<block N>` when it has none (the entry
     /// block and fallthrough blocks after a branch).
@@ -330,6 +367,22 @@ mod tests {
             .map(|b| b.preds.iter().map(|p| p.0).collect())
             .collect();
         assert_eq!(preds, [vec![], vec![], vec![0, 1]]);
+    }
+
+    #[test]
+    fn reversed_turns_the_kept_edges_around_and_leads_the_rest_to_an_exit() {
+        let (_, cfg) = cfg_of("@%p1 bra $L__A;\nret;\n$L__A:\nret;");
+        let preds = |g: &ControlFlowGraph| -> Vec<Vec<u32>> {
+            (g.blocks.iter())
+                .map(|b| b.preds.iter().map(|p| p.0).collect())
+                .collect()
+        };
+        let all = cfg.reversed(&|_, _| true);
+        assert_eq!(shape(&all), [vec![], vec![0], vec![0], vec![1, 2]]);
+        assert_eq!(preds(&all), [vec![2, 1], vec![3], vec![3], vec![]]);
+        let cut = cfg.reversed(&|x, t| (x, t) != (BlockId(0), BlockId(2)));
+        assert_eq!(shape(&cut), [vec![], vec![0], vec![], vec![0, 1, 2]]);
+        assert_eq!(preds(&cut), [vec![1, 3], vec![3], vec![3], vec![]]);
     }
 
     #[test]
