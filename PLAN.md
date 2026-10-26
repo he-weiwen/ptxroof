@@ -392,7 +392,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   and otherwise per CTA a bound, the lanes in at some CTA
   (`micro/cta_mask.ptx`: under 16 CTAs `<= 64 threads`, where the last
   stores on 40; `micro/cta_guards.ptx`). The ncu comparison sums such a
-  set's count over the CTAs (`ThreadSet::launch`; scan_tma's line 184,
+  set's count over the CTAs (`Pred::launch`; scan_tma's line 184,
   `b200-launch-counts.test`), but not past 2^24 CTAs on the axes its
   comparisons read or 2^26 lane evaluations
   (`a_launch_sums_each_cta_s_threads_and_warps`). Without a grid the masks
@@ -512,7 +512,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   A copy reading `!P0` counts as requested
   (`micro/cp_async_ignore_src.ptx`).
 - **A launch count past the lane budget is rejected late.**
-  `ThreadSet::weighted_launch` counts a group of CTAs' threads when it
+  `Pred::weighted_launch` counts a group of CTAs' threads when it
   first meets the group, so a set whose CTAs form more groups than 2^26
   lane evaluations allow tallies every group's lanes before it returns
   none: the `spread` case of `a_launch_sums_each_cta_s_threads_and_warps`,

@@ -36,7 +36,7 @@ use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
-use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSet, ThreadSets, thread_sets};
+use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets, thread_sets};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
@@ -364,9 +364,7 @@ impl KernelReportBuilder<'_> {
                     let set = self.sets.of_access(bid, pos, i);
                     let guard = self.sets.guard(pos, i);
                     let guard_exact = guard.as_ref().is_none_or(|g| {
-                        let alone = ThreadSet { pred: g.clone() };
-                        alone
-                            .count(shape)
+                        g.count(shape)
                             .map_or(g.exact(), |c| c.certain == c.possible)
                     });
                     let conditional = (self.blocks[bid.0 as usize].qualifier
@@ -901,7 +899,7 @@ struct KernelReportBuilder<'a> {
     shape: [u32; 3],
     /// With the grid bound, the threads and warps over the launch of each
     /// block's set (`None`) and of each guarded statement's, where
-    /// `ThreadSet::launch` counts them.
+    /// `Pred::launch` counts them.
     launches: HashMap<(BlockId, Option<usize>), (u64, u64)>,
     /// The same for each `cp.async`'s source read, by statement.
     source_launches: HashMap<usize, (u64, u64)>,
@@ -1183,7 +1181,7 @@ impl<'a> KernelReportBuilder<'a> {
     }
 
     /// The threads a set selects, when a thread-index condition does.
-    fn threads_info(&self, set: &ThreadSet) -> Option<ThreadsInfo> {
+    fn threads_info(&self, set: &Pred) -> Option<ThreadsInfo> {
         let counted = set.count(self.shape);
         let warps = set.warps(self.shape);
         Some(ThreadsInfo {
@@ -1266,7 +1264,7 @@ impl<'a> KernelReportBuilder<'a> {
     fn per_trip(
         &self,
         b: BlockId,
-        set: &ThreadSet,
+        set: &Pred,
         below: Option<LoopId>,
     ) -> Option<(u64, u64, SymExpr)> {
         let l = set.trip_loop()?;
@@ -1366,7 +1364,7 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// The set's threads and warps over the launch, CTA `c` counted the
     /// weight's value there times.
-    fn weighted_launch(&self, set: &ThreadSet, loops: &[LoopId]) -> Option<(u64, u64)> {
+    fn weighted_launch(&self, set: &Pred, loops: &[LoopId]) -> Option<(u64, u64)> {
         let (read, weight) = self.cta_weight(loops.to_vec());
         set.weighted_launch(self.shape, self.grid()?, read, &weight)
     }
@@ -1424,7 +1422,7 @@ impl<'a> KernelReportBuilder<'a> {
         &self,
         bm: &BlockMeasurements,
         m: &Multiplier,
-        set: &ThreadSet,
+        set: &Pred,
         launch: Option<(u64, u64)>,
     ) -> Option<Participation> {
         let bound = m.at_most || m.per.cta().is_some_and(|c| !c.exact);
@@ -1534,7 +1532,7 @@ impl<'a> KernelReportBuilder<'a> {
     fn executing(
         &self,
         bm: &BlockMeasurements,
-        set: &ThreadSet,
+        set: &Pred,
         chain_at_most: bool,
         cta: Option<&LaunchInfo>,
     ) -> (i64, Option<(i64, bool)>, bool, bool) {
@@ -1585,7 +1583,7 @@ impl<'a> KernelReportBuilder<'a> {
             let Some(mut multiplier) = self.multiplier(bm.block, below, per) else {
                 continue;
             };
-            if self.sets.blocks[bm.block.0 as usize].pred == Pred::False {
+            if self.sets.blocks[bm.block.0 as usize] == Pred::False {
                 continue;
             }
             if multiplier.unread {
@@ -1930,7 +1928,7 @@ impl<'a> KernelReportBuilder<'a> {
         let unparsed: u64 = self
             .blocks
             .iter()
-            .filter(|b| self.sets.blocks[b.block.0 as usize].pred != Pred::False)
+            .filter(|b| self.sets.blocks[b.block.0 as usize] != Pred::False)
             .map(|b| b.class_counts.unparsed as u64)
             .sum();
         if unparsed > 0 {
@@ -1957,7 +1955,7 @@ impl<'a> KernelReportBuilder<'a> {
         for (i, t) in self.trip_info.trips.iter().enumerate() {
             let header = self.forest.loops[i].header;
             if let Err(reason) = t
-                && self.sets.blocks[header.0 as usize].pred != Pred::False
+                && self.sets.blocks[header.0 as usize] != Pred::False
             {
                 out.push(UnknownEntry {
                     what: format!("loop {}", self.display[i]),

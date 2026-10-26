@@ -233,26 +233,26 @@ impl Pred {
     }
 
     /// The comparisons with loop counters.
-    fn over_trips<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
+    fn trip_constraints<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
         match self {
             Pred::Cmp(k) if k.trip.is_some() => out.push(k),
-            Pred::Elect(p) | Pred::Not(p) => p.over_trips(out),
+            Pred::Elect(p) | Pred::Not(p) => p.trip_constraints(out),
             Pred::And(a, b) | Pred::Or(a, b) => {
-                a.over_trips(out);
-                b.over_trips(out);
+                a.trip_constraints(out);
+                b.trip_constraints(out);
             }
             _ => {}
         }
     }
 
     /// The comparisons whose `%ctaid` terms vary over the grid.
-    fn over_ctas<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
+    fn cta_constraints<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
         match self {
             Pred::Cmp(k) if k.cta.is_some() => out.push(k),
-            Pred::Elect(p) | Pred::Not(p) => p.over_ctas(out),
+            Pred::Elect(p) | Pred::Not(p) => p.cta_constraints(out),
             Pred::And(a, b) | Pred::Or(a, b) => {
-                a.over_ctas(out);
-                b.over_ctas(out);
+                a.cta_constraints(out);
+                b.cta_constraints(out);
             }
             _ => {}
         }
@@ -268,6 +268,7 @@ impl Pred {
         }
     }
 
+    /// Every selector is a thread-index condition.
     pub fn exact(&self) -> bool {
         match self {
             Pred::True | Pred::False => true,
@@ -328,24 +329,24 @@ impl Pred {
     /// The thread-index conditions as text; an unknown selector under
     /// a conjunction is left to the `<=` marker, elsewhere it prints
     /// as `?`. A disjunction is parenthesized when nested.
-    fn render(&self, nested: bool, name: &dyn Fn(&Var) -> String) -> Option<String> {
+    fn text(&self, nested: bool, name: &dyn Fn(&Var) -> String) -> Option<String> {
         match self {
             Pred::True => None,
             Pred::False => Some("no thread".to_owned()),
             Pred::Unknown | Pred::Uniform => Some("?".to_owned()),
             Pred::Cmp(c) => Some(c.render_named(name)),
             Pred::Elect(_) => Some("elected".to_owned()),
-            Pred::Not(p) => Some(format!("not ({})", p.render(false, name)?)),
+            Pred::Not(p) => Some(format!("not ({})", p.text(false, name)?)),
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
                     .filter(|p| !matches!(p.as_ref(), Pred::Unknown | Pred::Uniform))
-                    .filter_map(|p| p.render(true, name))
+                    .filter_map(|p| p.text(true, name))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
             Pred::Or(a, b) => {
-                let text = format!("{} or {}", a.render(true, name)?, b.render(true, name)?);
+                let text = format!("{} or {}", a.text(true, name)?, b.text(true, name)?);
                 Some(if nested { format!("({text})") } else { text })
             }
         }
@@ -392,12 +393,6 @@ fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3]) -> Tri {
     } else {
         Tri::No
     }
-}
-
-/// The threads of a CTA that execute a block.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThreadSet {
-    pub pred: Pred,
 }
 
 /// `form` at thread `tid` in i128: an i64 base plus i64 coefficients
@@ -521,7 +516,7 @@ fn on_lane_only(a: &Affine) -> bool {
         })
 }
 
-/// The most CTAs `ThreadSet::launch` enumerates, and the most lanes it
+/// The most CTAs `Pred::launch` enumerates, and the most lanes it
 /// evaluates over its groups of CTAs.
 pub(crate) const CTA_BUDGET: u64 = 1 << 24;
 const LANE_BUDGET: u64 = 1 << 26;
@@ -575,26 +570,17 @@ impl Constraint {
     }
 }
 
-impl ThreadSet {
+impl Pred {
     /// Whether the thread at `tid` may be in the set; an unknown
     /// selector includes every thread, as a bound.
     pub fn contains(&self, tid: [i64; 3], shape: [u32; 3]) -> bool {
-        self.pred.eval(tid, shape) != Tri::No
-    }
-
-    /// Every selector is a thread-index condition.
-    pub fn exact(&self) -> bool {
-        self.pred.exact()
-    }
-
-    pub fn lane_exact(&self) -> bool {
-        self.pred.lane_exact()
+        self.eval(tid, shape) != Tri::No
     }
 
     /// A comparison selecting the set reads the CTA index.
     pub fn varies_by_cta(&self) -> bool {
         let mut over = Vec::new();
-        self.pred.over_ctas(&mut over);
+        self.cta_constraints(&mut over);
         !over.is_empty()
     }
 
@@ -606,9 +592,8 @@ impl ThreadSet {
 
     /// The same, naming each variable by `name`.
     pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> Option<String> {
-        self.pred
-            .has_condition()
-            .then(|| self.pred.render(false, name))
+        self.has_condition()
+            .then(|| self.text(false, name))
             .flatten()
     }
 
@@ -647,7 +632,7 @@ impl ThreadSet {
         weight: &dyn Fn([i64; 3]) -> Option<u64>,
     ) -> Option<(u64, u64)> {
         let mut over = Vec::new();
-        self.pred.over_ctas(&mut over);
+        self.cta_constraints(&mut over);
         let mut used = read;
         for v in over.iter().flat_map(|k| k.form.terms.keys()) {
             cta_axes(v, &mut used);
@@ -691,9 +676,7 @@ impl ThreadSet {
                     let group = match groups.entry(key) {
                         Entry::Occupied(e) => e.into_mut(),
                         Entry::Vacant(e) => {
-                            let at = ThreadSet {
-                                pred: self.pred.at_cta(c),
-                            };
+                            let at = self.at_cta(c);
                             let (t, w) = (at.count(shape)?, at.warps(shape)?);
                             if t.certain != t.possible || w.certain != w.possible {
                                 return None;
@@ -721,7 +704,7 @@ impl ThreadSet {
     /// The loop whose counter the set's comparisons read, when one does.
     pub fn trip_loop(&self) -> Option<LoopId> {
         let mut over = Vec::new();
-        self.pred.over_trips(&mut over);
+        self.trip_constraints(&mut over);
         let l = over.first()?.trip?.0;
         over.iter()
             .all(|k| k.trip.is_some_and(|(t, _)| t == l))
@@ -736,7 +719,7 @@ impl ThreadSet {
     /// trip, or past `LANE_BUDGET` lane evaluations.
     pub fn over_trips(&self, shape: [u32; 3], l: LoopId, n: u64) -> Option<(u64, u64)> {
         let mut over = Vec::new();
-        self.pred.over_trips(&mut over);
+        self.trip_constraints(&mut over);
         let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
             .map(|t| lane_of(t, shape))
             .collect();
@@ -761,9 +744,7 @@ impl ThreadSet {
         }
         let (mut sum_t, mut sum_w) = (0u64, 0u64);
         for run in cuts.windows(2) {
-            let at = ThreadSet {
-                pred: self.pred.at_trip(l, run[0])?,
-            };
+            let at = self.at_trip(l, run[0])?;
             let (t, w) = (at.count(shape)?, at.warps(shape)?);
             if t.certain != t.possible || w.certain != w.possible {
                 return None;
@@ -781,7 +762,7 @@ impl ThreadSet {
     /// every active lane is tried as the leader, and no leader when no
     /// lane is certainly active, and the range covers those choices.
     fn tally(&self, shape: [u32; 3], per_warp: impl Fn(u32, u32) -> (u32, u32)) -> Option<Counted> {
-        if !self.pred.has_condition() {
+        if !self.has_condition() {
             return None;
         }
         let [nx, ny, nz] = shape.map(i64::from);
@@ -796,7 +777,7 @@ impl ThreadSet {
             let lanes_as = |leader: Leader| {
                 let (mut yes, mut maybe) = (0, 0);
                 for l in lanes.clone() {
-                    match self.pred.eval_as(lane_of(l, shape), shape, leader) {
+                    match self.eval_as(lane_of(l, shape), shape, leader) {
                         Tri::Yes => yes += 1,
                         Tri::Maybe => maybe += 1,
                         Tri::No => {}
@@ -804,7 +785,7 @@ impl ThreadSet {
                 }
                 (yes, maybe)
             };
-            let (min, max) = match self.pred.elect_active() {
+            let (min, max) = match self.elect_active() {
                 None => {
                     let (yes, maybe) = lanes_as(Leader::Lowest);
                     (yes, yes + maybe)
@@ -1078,7 +1059,7 @@ impl PredicateReader<'_> {
 /// guarded instruction other than a branch, by statement index.
 #[derive(Debug, Default)]
 pub struct ThreadSets {
-    pub blocks: Vec<ThreadSet>,
+    pub blocks: Vec<Pred>,
     pub guards: HashMap<usize, Pred>,
     /// Per `cp.async` whose src-size or ignore-src is a register, the
     /// threads that read its source, memory operand 1: those whose
@@ -1092,12 +1073,10 @@ pub struct ThreadSets {
 impl ThreadSets {
     /// The threads that execute statement `stmt` of block `b`: the
     /// block's set under the statement's guard.
-    pub fn of(&self, b: BlockId, stmt: usize) -> ThreadSet {
+    pub fn of(&self, b: BlockId, stmt: usize) -> Pred {
         let block = &self.blocks[b.0 as usize];
         match self.guards.get(&stmt) {
-            Some(guard) => ThreadSet {
-                pred: block.pred.clone().and(guard.clone()),
-            },
+            Some(guard) => block.clone().and(guard.clone()),
             None => block.clone(),
         }
     }
@@ -1114,20 +1093,17 @@ impl ThreadSets {
 
     /// The threads that access memory operand `operand` of statement
     /// `stmt` of block `b`.
-    pub fn of_access(&self, b: BlockId, stmt: usize, operand: usize) -> ThreadSet {
+    pub fn of_access(&self, b: BlockId, stmt: usize, operand: usize) -> Pred {
         let block = &self.blocks[b.0 as usize];
         match self.guard(stmt, operand) {
-            Some(guard) => ThreadSet {
-                pred: block.pred.clone().and(guard),
-            },
+            Some(guard) => block.clone().and(guard),
             None => block.clone(),
         }
     }
 
     /// Whether no thread executes statement `stmt` of block `b`.
     pub fn never(&self, b: BlockId, stmt: usize) -> bool {
-        self.blocks[b.0 as usize].pred == Pred::False
-            || self.guards.get(&stmt) == Some(&Pred::False)
+        self.blocks[b.0 as usize] == Pred::False || self.guards.get(&stmt) == Some(&Pred::False)
     }
 }
 
@@ -1150,10 +1126,8 @@ pub(crate) fn thread_sets(
         blocks: vec![None; cfg.blocks.len()],
         bypass: vec![None; cfg.blocks.len()],
     };
-    let blocks: Vec<ThreadSet> = (0..cfg.blocks.len() as u32)
-        .map(|b| ThreadSet {
-            pred: reader.block(BlockId(b)),
-        })
+    let blocks: Vec<Pred> = (0..cfg.blocks.len() as u32)
+        .map(|b| reader.block(BlockId(b)))
         .collect();
     let mut guards = HashMap::new();
     for (pos, stmt) in kernel.stmts.iter().enumerate() {
@@ -1205,9 +1179,9 @@ pub(crate) fn thread_sets(
     }
     let doms = dominators(&cfg.without(&dead_edges));
     let mut blocks = blocks;
-    for (b, set) in blocks.iter_mut().enumerate() {
+    for (b, pred) in blocks.iter_mut().enumerate() {
         if !doms.is_reachable(BlockId(b as u32)) {
-            set.pred = Pred::False;
+            *pred = Pred::False;
         }
     }
     ThreadSets {
@@ -1394,22 +1368,14 @@ mod tests {
         };
         let c = |n: i64| Affine::invariant(SymExpr::Const(n));
         let below = counter(c(-511));
-        let set = ThreadSet {
-            pred: below.clone(),
-        };
-        assert!(!set.exact() && set.lane_exact());
+        assert!(!below.exact() && below.lane_exact());
         let some = Counted {
             certain: 0,
             possible: 32,
         };
-        assert_eq!(set.count([32, 1, 1]), Some(some));
-        let always = ThreadSet {
-            pred: counter(c(-513)),
-        };
-        assert_eq!(always.count([32, 1, 1]), Some(exact(32)));
-        let lanes = ThreadSet {
-            pred: counter(Affine::var(Var::Tid(Axis::X)) + c(-511)),
-        };
+        assert_eq!(below.count([32, 1, 1]), Some(some));
+        assert_eq!(counter(c(-513)).count([32, 1, 1]), Some(exact(32)));
+        let lanes = counter(Affine::var(Var::Tid(Axis::X)) + c(-511));
         assert!(!lanes.lane_exact());
         assert_eq!(below.clone().in_loops(&|_| false), Pred::Uniform);
         assert_eq!(below.clone().in_loops(&|_| true), below);
@@ -1433,11 +1399,9 @@ mod tests {
         };
         let c = |x: i64| Affine::invariant(SymExpr::Const(x));
         let lane = |m: i64| Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), m));
-        let brute = |set: &ThreadSet, shape: [u32; 3], n: u64| {
+        let brute = |set: &Pred, shape: [u32; 3], n: u64| {
             (1..=i128::from(n)).try_fold((0u64, 0u64), |(t, w), k| {
-                let at = ThreadSet {
-                    pred: set.pred.at_trip(l, k)?,
-                };
+                let at = set.at_trip(l, k)?;
                 Some((
                     t + u64::from(at.count(shape)?.certain),
                     w + u64::from(at.warps(shape)?.certain),
@@ -1450,9 +1414,7 @@ mod tests {
             for op in [Cmp::Lt, Cmp::Le, Cmp::Gt, Cmp::Ge, Cmp::Eq, Cmp::Ne] {
                 for (step, lanes) in [(1, c(-5)), (64, lane(64) + c(-300)), (-3, lane(32) + c(40))]
                 {
-                    let set = ThreadSet {
-                        pred: cmp(step, lanes, op, n128),
-                    };
+                    let set = cmp(step, lanes, op, n128);
                     assert_eq!(
                         set.over_trips(shape, l, n),
                         brute(&set, shape, n),
@@ -1460,14 +1422,11 @@ mod tests {
                     );
                 }
             }
-            let both = ThreadSet {
-                pred: cmp(1, c(-3), Cmp::Ge, n128).and(cmp(64, lane(64) + c(-1000), Cmp::Lt, n128)),
-            };
+            let both =
+                cmp(1, c(-3), Cmp::Ge, n128).and(cmp(64, lane(64) + c(-1000), Cmp::Lt, n128));
             assert_eq!(both.over_trips(shape, l, n), brute(&both, shape, n));
         }
-        let k_below_511 = ThreadSet {
-            pred: cmp(1, c(-511), Cmp::Lt, 512),
-        };
+        let k_below_511 = cmp(1, c(-511), Cmp::Lt, 512);
         assert_eq!(
             k_below_511.over_trips([256, 1, 1], l, 512),
             Some((510 * 256, 510 * 8))
@@ -1483,27 +1442,23 @@ mod tests {
             ..warps_below_4()
         };
         assert_eq!(min.render(), "%tid.x < 9223372036854775808");
-        let set = ThreadSet { pred: Pred::Cmp(c) };
+        let set = Pred::Cmp(c);
         assert!(set.exact());
         assert_eq!(set.count([256, 1, 1]), Some(exact(128)));
         assert_eq!(set.count([64, 1, 1]), Some(exact(64)));
-        assert_eq!(ThreadSet { pred: Pred::True }.count([256, 1, 1]), None);
-        let lane0 = ThreadSet {
-            pred: Pred::Cmp(Constraint {
-                form: Affine::var(Var::Tid(Axis::X)),
-                cmp: Cmp::Eq,
-                cta: None,
-                trip: None,
-            }),
-        };
+        assert_eq!(Pred::True.count([256, 1, 1]), None);
+        let lane0 = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Tid(Axis::X)),
+            cmp: Cmp::Eq,
+            cta: None,
+            trip: None,
+        });
         assert_eq!(lane0.count([128, 2, 1]), Some(exact(2)));
     }
 
     #[test]
     fn an_unknown_selector_keeps_the_index_conditions_as_a_bound() {
-        let set = ThreadSet {
-            pred: Pred::Cmp(warps_below_4()).and(Pred::Unknown),
-        };
+        let set = Pred::Cmp(warps_below_4()).and(Pred::Unknown);
         assert!(!set.exact());
         assert_eq!(set.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));
         assert_eq!(
@@ -1515,10 +1470,8 @@ mod tests {
         );
         assert!(set.contains([0, 0, 0], [256, 1, 1]));
         assert!(!set.contains([200, 0, 0], [256, 1, 1]));
-        let unknown = ThreadSet {
-            pred: Pred::True.and(Pred::Unknown),
-        };
-        assert_eq!(unknown.pred, Pred::Unknown);
+        let unknown = Pred::True.and(Pred::Unknown);
+        assert_eq!(unknown, Pred::Unknown);
         assert!(unknown.contains([5, 0, 0], [256, 1, 1]));
         assert_eq!(unknown.render(), None);
         assert_eq!(unknown.count([256, 1, 1]), None);
@@ -1532,17 +1485,13 @@ mod tests {
             cta: None,
             trip: None,
         });
-        let either = ThreadSet {
-            pred: lane0.clone().or(Pred::Cmp(warps_below_4())),
-        };
+        let either = lane0.clone().or(Pred::Cmp(warps_below_4()));
         assert_eq!(either.count([256, 1, 1]), Some(exact(128)));
         assert_eq!(
             either.render().as_deref(),
             Some("%tid.x == 0 or ⌊%tid.x/32⌋ < 4")
         );
-        let neither = ThreadSet {
-            pred: !either.pred.clone(),
-        };
+        let neither = !either.clone();
         assert!(neither.exact());
         assert_eq!(neither.count([256, 1, 1]), Some(exact(128)));
         assert_eq!(
@@ -1551,12 +1500,10 @@ mod tests {
         );
         assert_eq!((!lane0.clone()).eval([0, 0, 0], [64, 1, 1]), Tri::No);
         assert_eq!(!!lane0.clone(), lane0);
-        let hedged = ThreadSet {
-            pred: lane0.clone().or(Pred::Unknown),
-        };
+        let hedged = lane0.clone().or(Pred::Unknown);
         assert!(!hedged.exact());
-        assert_eq!(hedged.pred.eval([0, 0, 0], [64, 1, 1]), Tri::Yes);
-        assert_eq!(hedged.pred.eval([1, 0, 0], [64, 1, 1]), Tri::Maybe);
+        assert_eq!(hedged.eval([0, 0, 0], [64, 1, 1]), Tri::Yes);
+        assert_eq!(hedged.eval([1, 0, 0], [64, 1, 1]), Tri::Maybe);
         assert_eq!(
             hedged.count([64, 1, 1]),
             Some(Counted {
@@ -1570,30 +1517,25 @@ mod tests {
         assert_eq!((!Pred::True).eval([0, 0, 0], [64, 1, 1]), Tri::No);
         assert_eq!(Pred::False.or(lane0.clone()), lane0);
         assert_eq!(Pred::Unknown.and(Pred::False), Pred::False);
-        let none = ThreadSet { pred: Pred::False };
-        assert_eq!(none.count([64, 1, 1]), Some(exact(0)));
-        assert_eq!(none.render().as_deref(), Some("no thread"));
+        assert_eq!(Pred::False.count([64, 1, 1]), Some(exact(0)));
+        assert_eq!(Pred::False.render().as_deref(), Some("no thread"));
     }
 
     #[test]
     fn elect_is_one_lane_per_warp_of_the_active_threads() {
-        let all = ThreadSet {
-            pred: Pred::Elect(Box::new(Pred::True)),
-        };
+        let all = Pred::Elect(Box::new(Pred::True));
         assert_eq!(all.count([128, 1, 1]), Some(exact(4)));
-        assert_eq!(all.pred.eval([32, 0, 0], [128, 1, 1]), Tri::Yes);
-        assert_eq!(all.pred.eval([33, 0, 0], [128, 1, 1]), Tri::No);
+        assert_eq!(all.eval([32, 0, 0], [128, 1, 1]), Tri::Yes);
+        assert_eq!(all.eval([33, 0, 0], [128, 1, 1]), Tri::No);
         assert_eq!(all.render().as_deref(), Some("elected"));
-        assert_eq!(all.pred.eval([0, 0, 0], [0, 0, 0]), Tri::Maybe);
+        assert_eq!(all.eval([0, 0, 0], [0, 0, 0]), Tri::Maybe);
         let upper = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-40)),
             cmp: Cmp::Ge,
             cta: None,
             trip: None,
         });
-        let of_upper = ThreadSet {
-            pred: Pred::Elect(Box::new(upper.clone())),
-        };
+        let of_upper = Pred::Elect(Box::new(upper.clone()));
         assert_eq!(of_upper.count([128, 1, 1]), Some(exact(3)));
         let warp0 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
@@ -1602,9 +1544,7 @@ mod tests {
             trip: None,
         });
         // A warp-uniform condition on the elected lane is exact.
-        let leader_of_warp0 = ThreadSet {
-            pred: warp0.and(Pred::Elect(Box::new(Pred::True))),
-        };
+        let leader_of_warp0 = warp0.and(Pred::Elect(Box::new(Pred::True)));
         assert_eq!(leader_of_warp0.count([128, 1, 1]), Some(exact(1)));
         assert_eq!(
             leader_of_warp0.render().as_deref(),
@@ -1617,9 +1557,7 @@ mod tests {
             cta: None,
             trip: None,
         });
-        let leader_is_lane0 = ThreadSet {
-            pred: lane0.and(Pred::Elect(Box::new(Pred::True))),
-        };
+        let leader_is_lane0 = lane0.and(Pred::Elect(Box::new(Pred::True)));
         assert_eq!(
             leader_is_lane0.count([128, 1, 1]),
             Some(Counted {
@@ -1627,13 +1565,9 @@ mod tests {
                 possible: 1
             })
         );
-        let others = ThreadSet {
-            pred: !Pred::Elect(Box::new(Pred::True)),
-        };
+        let others = !Pred::Elect(Box::new(Pred::True));
         assert_eq!(others.count([128, 1, 1]), Some(exact(124)));
-        let hedged = ThreadSet {
-            pred: Pred::Elect(Box::new(upper.or(Pred::Unknown))),
-        };
+        let hedged = Pred::Elect(Box::new(upper.or(Pred::Unknown)));
         assert!(!hedged.exact());
         // Warp 0 may have no active lane, so no leader.
         assert_eq!(
@@ -1645,12 +1579,8 @@ mod tests {
         );
         let maybe = Pred::Elect(Box::new(Pred::Uniform));
         let range = |certain, possible| Some(Counted { certain, possible });
-        assert_eq!(set_of(maybe.clone()).count([64, 1, 1]), range(0, 2));
-        assert_eq!(set_of(!maybe).count([64, 1, 1]), range(62, 64));
-    }
-
-    fn set_of(pred: Pred) -> ThreadSet {
-        ThreadSet { pred }
+        assert_eq!(maybe.count([64, 1, 1]), range(0, 2));
+        assert_eq!((!maybe).count([64, 1, 1]), range(62, 64));
     }
 
     /// `a·%tid.x + b·%ctaid.x + base cmp 0`, `%ctaid.x` below `ctas`.
@@ -1668,20 +1598,16 @@ mod tests {
 
     #[test]
     fn a_launch_sums_each_cta_s_threads_and_warps() {
-        let set = |pred| ThreadSet { pred };
         // t < 2c over CTAs 0..4: 0, 2, 4 and 6 threads in 0, 1, 1, 1 warps.
         let below = over_ctas(1, -2, 0, Cmp::Lt, 4);
+        assert_eq!(below.launch([32, 1, 1], [4, 1, 1]), Some((12, 3)));
         assert_eq!(
-            set(below.clone()).launch([32, 1, 1], [4, 1, 1]),
-            Some((12, 3))
-        );
-        assert_eq!(
-            set(over_ctas(1, -2, 0, Cmp::Eq, 4)).launch([32, 1, 1], [4, 1, 1]),
+            over_ctas(1, -2, 0, Cmp::Eq, 4).launch([32, 1, 1], [4, 1, 1]),
             Some((4, 4))
         );
         // An axis no comparison reads multiplies.
         assert_eq!(
-            set(below.clone()).launch([32, 1, 1], [4, 1 << 25, 1]),
+            below.launch([32, 1, 1], [4, 1 << 25, 1]),
             Some((12 << 25, 3 << 25))
         );
         // A set free of %ctaid: its count at every CTA.
@@ -1691,15 +1617,15 @@ mod tests {
             cta: None,
             trip: None,
         });
-        assert_eq!(
-            set(lanes.clone()).launch([32, 1, 1], [3, 2, 1]),
-            Some((96, 6))
-        );
+        assert_eq!(lanes.launch([32, 1, 1], [3, 2, 1]), Some((96, 6)));
         // No condition, one not decided at a CTA, or no block shape: no count.
-        assert_eq!(set(Pred::True).launch([32, 1, 1], [4, 1, 1]), None);
-        assert_eq!(set(below.clone()).launch([0, 0, 0], [4, 1, 1]), None);
+        assert_eq!(Pred::True.launch([32, 1, 1], [4, 1, 1]), None);
+        assert_eq!(below.launch([0, 0, 0], [4, 1, 1]), None);
         assert_eq!(
-            set(below.clone().and(Pred::Uniform)).launch([32, 1, 1], [4, 1, 1]),
+            below
+                .clone()
+                .and(Pred::Uniform)
+                .launch([32, 1, 1], [4, 1, 1]),
             None
         );
         // An election of one lane per warp counts; one among lanes that a
@@ -1707,16 +1633,16 @@ mod tests {
         let first_two = over_ctas(0, 1, -2, Cmp::Lt, 4);
         let elected = Pred::Elect(Box::new(Pred::True));
         assert_eq!(
-            set(first_two.and(elected.clone())).launch([64, 1, 1], [4, 1, 1]),
+            first_two.and(elected.clone()).launch([64, 1, 1], [4, 1, 1]),
             Some((4, 4))
         );
-        assert_eq!(set(below.and(elected)).launch([32, 1, 1], [4, 1, 1]), None);
+        assert_eq!(below.and(elected).launch([32, 1, 1], [4, 1, 1]), None);
         // Past the budgets: 2^24 CTAs on the axis read, or 130,944 groups of
         // a lane-dependent comparison times 1024 lanes.
         let one = over_ctas(1, -1, 0, Cmp::Lt, (1 << 24) + 1);
-        assert_eq!(set(one).launch([32, 1, 1], [(1 << 24) + 1, 1, 1]), None);
+        assert_eq!(one.launch([32, 1, 1], [(1 << 24) + 1, 1, 1]), None);
         let spread = over_ctas(128, -1, 0, Cmp::Lt, 1 << 17);
-        assert_eq!(set(spread).launch([1024, 1, 1], [1 << 17, 1, 1]), None);
+        assert_eq!(spread.launch([1024, 1, 1], [1 << 17, 1, 1]), None);
     }
 
     /// A substitution keeps a product past i64 that the base brings back:
@@ -1725,10 +1651,7 @@ mod tests {
     #[test]
     fn a_substitution_sums_past_i64_before_narrowing() {
         let wide = over_ctas(1, 1 << 62, -(1 << 62) - 1, Cmp::Lt, 3);
-        assert_eq!(
-            ThreadSet { pred: wide }.launch([32, 1, 1], [3, 1, 1]),
-            Some((33, 2))
-        );
+        assert_eq!(wide.launch([32, 1, 1], [3, 1, 1]), Some((33, 2)));
         let l = LoopId(0);
         let tid = || Affine::var(Var::Tid(Axis::X));
         let trip = Pred::Cmp(Constraint {
@@ -1755,9 +1678,7 @@ mod tests {
     /// set holds no thread, and stops at the first CTA that holds one.
     #[test]
     fn a_weighted_launch_counts_each_cta_its_weight_times() {
-        let below = ThreadSet {
-            pred: over_ctas(1, -2, 0, Cmp::Lt, 4),
-        };
+        let below = over_ctas(1, -2, 0, Cmp::Lt, 4);
         let by_x = |c: [i64; 3]| u64::try_from(c[0]).ok();
         let launch = |grid, read, weight: &dyn Fn([i64; 3]) -> Option<u64>| {
             below.weighted_launch([32, 1, 1], grid, read, weight)
@@ -1789,14 +1710,14 @@ mod tests {
     #[test]
     fn a_comparison_over_ctas_holds_on_a_lane_at_every_cta_none_or_some() {
         // %tid.x − 2·%ctaid.x with %ctaid.x in 0..=3: 2·%ctaid.x spans 0..=6.
-        let at = |cmp: Cmp| ThreadSet {
-            pred: Pred::Cmp(Constraint {
+        let at = |cmp: Cmp| {
+            Pred::Cmp(Constraint {
                 form: Affine::var(Var::Tid(Axis::X))
                     + Affine::var(Var::Ctaid(Axis::X)).scale(SymExpr::Const(-2)),
                 cmp,
                 cta: Some((-6, 0)),
                 trip: None,
-            }),
+            })
         };
         let range = |certain, possible| Some(Counted { certain, possible });
         assert_eq!(at(Cmp::Lt).count([32, 1, 1]), range(0, 6));
@@ -1805,18 +1726,16 @@ mod tests {
         assert_eq!(at(Cmp::Ge).count([32, 1, 1]), range(26, 32));
         assert_eq!(at(Cmp::Eq).count([32, 1, 1]), range(0, 7));
         assert_eq!(at(Cmp::Ne).count([32, 1, 1]), range(25, 32));
-        assert_eq!((!at(Cmp::Lt).pred).eval([3, 0, 0], [32, 1, 1]), Tri::Maybe);
-        assert_eq!((!at(Cmp::Lt).pred).eval([7, 0, 0], [32, 1, 1]), Tri::Yes);
+        assert_eq!((!at(Cmp::Lt)).eval([3, 0, 0], [32, 1, 1]), Tri::Maybe);
+        assert_eq!((!at(Cmp::Lt)).eval([7, 0, 0], [32, 1, 1]), Tri::Yes);
         assert!(!at(Cmp::Lt).exact() && !at(Cmp::Lt).lane_exact());
         // Of the CTA index alone: whole warps, so the lanes stay known.
-        let cta = ThreadSet {
-            pred: Pred::Cmp(Constraint {
-                form: Affine::var(Var::Ctaid(Axis::X)) + Affine::invariant(SymExpr::Const(-2)),
-                cmp: Cmp::Lt,
-                cta: Some((0, 3)),
-                trip: None,
-            }),
-        };
+        let cta = Pred::Cmp(Constraint {
+            form: Affine::var(Var::Ctaid(Axis::X)) + Affine::invariant(SymExpr::Const(-2)),
+            cmp: Cmp::Lt,
+            cta: Some((0, 3)),
+            trip: None,
+        });
         assert_eq!(cta.count([64, 1, 1]), range(0, 64));
         assert!(!cta.exact() && cta.lane_exact());
     }
@@ -1835,14 +1754,13 @@ mod tests {
             cta: None,
             trip: None,
         });
-        let set = |pred| ThreadSet { pred };
         assert_eq!(
-            set(Pred::Cmp(warps_below_4())).warps([256, 1, 1]),
+            Pred::Cmp(warps_below_4()).warps([256, 1, 1]),
             Some(exact(4))
         );
-        assert_eq!(set(lane0.clone()).warps([128, 1, 1]), Some(exact(1)));
-        assert_eq!(set(!lane0.clone()).warps([64, 1, 1]), Some(exact(2)));
-        assert_eq!(set(!lane0.clone()).count([64, 1, 1]), Some(exact(63)));
+        assert_eq!(lane0.warps([128, 1, 1]), Some(exact(1)));
+        assert_eq!((!lane0.clone()).warps([64, 1, 1]), Some(exact(2)));
+        assert_eq!((!lane0.clone()).count([64, 1, 1]), Some(exact(63)));
         // 100 threads span four warps, the last one partial.
         let below_100 = Pred::Cmp(Constraint {
             form: Affine::var(Var::Tid(Axis::X)) + Affine::invariant(SymExpr::Const(-100)),
@@ -1850,26 +1768,31 @@ mod tests {
             cta: None,
             trip: None,
         });
-        assert_eq!(set(below_100).warps([128, 1, 1]), Some(exact(4)));
+        assert_eq!(below_100.warps([128, 1, 1]), Some(exact(4)));
         // Every warp with an active lane has a leader, whichever lane.
         assert_eq!(
-            set(Pred::Elect(Box::new(Pred::True))).warps([128, 1, 1]),
+            Pred::Elect(Box::new(Pred::True)).warps([128, 1, 1]),
             Some(exact(4))
         );
         assert_eq!(
-            set(warp0.and(Pred::Elect(Box::new(Pred::True)))).warps([128, 1, 1]),
+            warp0
+                .and(Pred::Elect(Box::new(Pred::True)))
+                .warps([128, 1, 1]),
             Some(exact(1))
         );
         // Whether warp 0's leader is lane 0 is not known.
         assert_eq!(
-            set(lane0.clone().and(Pred::Elect(Box::new(Pred::True)))).warps([128, 1, 1]),
+            lane0
+                .clone()
+                .and(Pred::Elect(Box::new(Pred::True)))
+                .warps([128, 1, 1]),
             Some(Counted {
                 certain: 0,
                 possible: 1
             })
         );
         // Lane 0 is certainly in; the other lanes of every warp may be.
-        let hedged = set(lane0.or(Pred::Unknown));
+        let hedged = lane0.or(Pred::Unknown);
         assert_eq!(
             hedged.warps([64, 1, 1]),
             Some(Counted {
@@ -1877,13 +1800,12 @@ mod tests {
                 possible: 2
             })
         );
-        assert_eq!(set(Pred::True).warps([64, 1, 1]), None);
+        assert_eq!(Pred::True.warps([64, 1, 1]), None);
     }
 
     #[test]
     fn a_uniform_unknown_is_lane_exact_but_not_exact() {
-        let set = |pred: Pred| ThreadSet { pred };
-        let uniform = set(Pred::Cmp(warps_below_4()).and(Pred::Uniform));
+        let uniform = Pred::Cmp(warps_below_4()).and(Pred::Uniform);
         assert!(!uniform.exact() && uniform.lane_exact());
         assert_eq!(uniform.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));
         assert_eq!(
@@ -1893,14 +1815,14 @@ mod tests {
                 possible: 128
             })
         );
-        let unknown = set(Pred::Cmp(warps_below_4()).and(Pred::Unknown));
+        let unknown = Pred::Cmp(warps_below_4()).and(Pred::Unknown);
         assert!(!unknown.exact() && !unknown.lane_exact());
         // Under a disjunction or a negation the uniform unknown decides
         // between two lane sets.
         let lanes = || Pred::Cmp(warps_below_4());
-        assert!(!set(Pred::Uniform.or(lanes())).lane_exact());
-        assert!(!set(!(Pred::Uniform.and(lanes()))).lane_exact());
-        assert!(set(Pred::Elect(Box::new(Pred::Uniform.and(lanes())))).lane_exact());
+        assert!(!Pred::Uniform.or(lanes()).lane_exact());
+        assert!(!(!(Pred::Uniform.and(lanes()))).lane_exact());
+        assert!(Pred::Elect(Box::new(Pred::Uniform.and(lanes()))).lane_exact());
     }
 
     /// Per `cp.async` of `body`, in order: the threads that read its
@@ -1943,7 +1865,7 @@ mod tests {
     /// a true one no thread. A guarded copy's source is under both.
     #[test]
     fn a_cp_async_reads_its_source_where_ignore_src_is_false() {
-        let text = |p: &Option<Pred>| p.clone().and_then(|pred| ThreadSet { pred }.render());
+        let text = |p: &Option<Pred>| p.as_ref().and_then(Pred::render);
         let copy = |def: &str, form: &str, tail: &str| {
             format!("{def}\ncp.async.cg.shared.global{form} [%r2], [%rd1], 16{tail};")
         };

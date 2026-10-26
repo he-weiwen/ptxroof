@@ -11,7 +11,7 @@ use crate::analysis::instruction_counts::classify::Space;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes};
 use crate::analysis::scalar::symexpr::SymExpr;
-use crate::analysis::thread_participation::ThreadSet;
+use crate::analysis::thread_participation::Pred;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 
@@ -266,7 +266,7 @@ pub struct AccessForm {
     pub align: u32,
     pub space: Space,
     /// The threads that execute the instruction.
-    pub set: ThreadSet,
+    pub set: Pred,
     /// The instruction's guard, if any, is a thread-index condition.
     pub guard_exact: bool,
     /// The block may not run on every iteration of its loop, and no
@@ -363,7 +363,7 @@ pub fn loop_bytes(
         let bytes = i64::from(f.bytes);
         // Which lane an election picks is unspecified: a lane-dependent
         // address touched by the elected lane is a bound.
-        if f.set.pred.elect_active().is_some()
+        if f.set.elect_active().is_some()
             && form
                 .terms
                 .keys()
@@ -471,7 +471,6 @@ fn union_len(mut intervals: Vec<(i64, i64)>) -> i64 {
 mod tests {
     use super::*;
     use crate::analysis::scalar::symexpr::Leaf;
-    use crate::analysis::thread_participation::Pred;
 
     fn tid() -> Affine {
         Affine::var(Var::Tid(Axis::X))
@@ -689,7 +688,7 @@ mod tests {
             bytes: 4,
             align: 4,
             space: Space::Global,
-            set: ThreadSet { pred: Pred::True },
+            set: Pred::True,
             guard_exact: true,
             conditional: false,
             uniform_varies: false,
