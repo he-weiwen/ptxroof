@@ -24,7 +24,6 @@ use crate::analysis::scalar::affine::{Affine, Axis, Cmp, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes, linear, thread, warps_of};
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::scalar::trace::{AffineValueTracer, IntKind, IntType};
-use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
@@ -777,7 +776,6 @@ struct PredicateReader<'a> {
     cfg: &'a ControlFlowGraph,
     forest: &'a LoopForest,
     tracer: &'a AffineValueTracer<'a>,
-    uniformity: &'a Uniformity,
     /// Per scope, the top level and then each loop: post-dominance over
     /// one trip, its edges [`kept`], and the branches each block is
     /// control dependent on there.
@@ -895,8 +893,9 @@ impl PredicateReader<'_> {
     /// Which threads at loop header `h` leave its loop by a given exit:
     /// every thread alike where its exits are uniform.
     fn leaving(&self, h: BlockId) -> Pred {
+        let tracer = self.tracer;
         match self.forest.block_loop[h.0 as usize] {
-            Some(l) if self.uniformity.exits_uniform(self.tracer, l).is_ok() => Pred::Uniform,
+            Some(l) if tracer.uniformity().exits_uniform(tracer, l).is_ok() => Pred::Uniform,
             _ => Pred::Unknown,
         }
     }
@@ -935,8 +934,9 @@ impl PredicateReader<'_> {
     /// but the uniformity analysis finds it so, and whether the depth
     /// budget cut the reading short (then it is not memoized).
     fn read(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
+        let tracer = self.tracer;
         match self.read_definition(reg, pos, depth) {
-            (Pred::Unknown, cut) if self.uniformity.is_uniform(self.tracer, reg, pos).is_ok() => {
+            (Pred::Unknown, cut) if tracer.uniformity().is_uniform(tracer, reg, pos).is_ok() => {
                 (Pred::Uniform, cut)
             }
             read => read,
@@ -954,7 +954,8 @@ impl PredicateReader<'_> {
         };
         if instr.predicate.is_some()
             || self
-                .uniformity
+                .tracer
+                .uniformity()
                 .gates_uniform(self.tracer, reg, pos)
                 .is_err()
         {
@@ -1013,8 +1014,7 @@ impl PredicateReader<'_> {
         };
         match (instr.mnemonic, mods.as_slice(), ops) {
             (Opcode::Setp, _, _) => (
-                condition(self.module, self.kernel, self.tracer, self.uniformity, def)
-                    .unwrap_or(Pred::Unknown),
+                condition(self.module, self.kernel, self.tracer, def).unwrap_or(Pred::Unknown),
                 false,
             ),
             (Opcode::And | Opcode::Or, ["pred"], [_, a, b]) => {
@@ -1121,7 +1121,6 @@ pub(crate) fn thread_sets(
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
     tracer: &AffineValueTracer,
-    uniformity: &Uniformity,
 ) -> ThreadSets {
     let exit = BlockId(cfg.blocks.len() as u32);
     let trips = std::iter::once(None)
@@ -1139,7 +1138,6 @@ pub(crate) fn thread_sets(
         cfg,
         forest,
         tracer,
-        uniformity,
         trips,
         memo: HashMap::new(),
         blocks: vec![None; cfg.blocks.len()],
@@ -1225,7 +1223,6 @@ fn condition(
     module: &Module,
     kernel: &Kernel,
     tracer: &AffineValueTracer,
-    uniformity: &Uniformity,
     def: usize,
 ) -> Option<Pred> {
     let Stmt::Instr(setp) = &kernel.stmts[def] else {
@@ -1293,7 +1290,7 @@ fn condition(
     }
     let lanes = form.terms.keys().any(depends_on_lane);
     let trip = per_trip(tracer, &form, def).filter(|_| comparable(&a, &b));
-    if !lanes && trip.is_none() && !uniformity.is_uniform_def(def) {
+    if !lanes && trip.is_none() && !tracer.uniformity().is_uniform_def(def) {
         None
     } else if on_lane_only(&form) && comparable(&a, &b) {
         Some(Pred::Cmp(Constraint {
@@ -1885,7 +1882,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
         let t = AffineValueTracer::new(&m, k, &cfg, &forest);
-        let sets = thread_sets(&m, k, &cfg, &forest, &t, t.uniformity());
+        let sets = thread_sets(&m, k, &cfg, &forest, &t);
         (m, sets)
     }
 

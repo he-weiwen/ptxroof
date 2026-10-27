@@ -37,7 +37,6 @@ use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::scalar::trace::AffineValueTracer;
 use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
 use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets, thread_sets};
-use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialReg, SpecialVector, Stmt};
@@ -229,13 +228,12 @@ fn resolve_bindings(
 fn per_lane(
     a: Affine,
     tracer: &AffineValueTracer,
-    uniformity: &Uniformity,
     pos: usize,
     name: &dyn Fn(&Var) -> String,
 ) -> Result<Affine, String> {
     for v in a.terms.keys() {
         if let Some(l) = v.counter().filter(|&l| !tracer.in_loop(l, pos)) {
-            let why = uniformity.exits_uniform(tracer, l).err();
+            let why = tracer.uniformity().exits_uniform(tracer, l).err();
             if let Some(why) = why {
                 let k = name(&Var::Iter(l));
                 return Err(format!(
@@ -244,7 +242,7 @@ fn per_lane(
             }
         }
         if let Some(u) = v.uniform()
-            && let Err(why) = uniformity.value_uniform_at(tracer, u, pos)
+            && let Err(why) = tracer.uniformity().value_uniform_at(tracer, u, pos)
         {
             let u = name(&Var::Uniform(u));
             return Err(format!("{u} differs between lanes: {why}"));
@@ -262,7 +260,6 @@ impl KernelReportBuilder<'_> {
     fn accesses_by_scope(
         &self,
         tracer: &AffineValueTracer,
-        uniformity: &Uniformity,
     ) -> (ByScope<Access>, ByScope<AccessForm>, PerRequests) {
         let (module, kernel, cfg, forest, bind_map) = (
             self.module,
@@ -384,7 +381,7 @@ impl KernelReportBuilder<'_> {
                             .map(|a| {
                                 (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map)
                             })
-                            .and_then(|a| per_lane(a, tracer, uniformity, pos, &name))
+                            .and_then(|a| per_lane(a, tracer, pos, &name))
                         {
                             Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
                             Err(reason) => (
@@ -977,8 +974,7 @@ impl<'a> KernelReportBuilder<'a> {
         };
         let tracer =
             AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
-        let uniformity = tracer.uniformity();
-        b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer, uniformity);
+        b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer);
         if let Some(grid) = b.grid() {
             for (block, blk) in b.cfg.blocks.iter_enumerated() {
                 let guarded = (blk.start..blk.end).filter(|s| b.sets.guards.contains_key(s));
@@ -1033,7 +1029,7 @@ impl<'a> KernelReportBuilder<'a> {
             false => {
                 let t = AffineValueTracer::new(module, kernel, &b.cfg, &b.forest)
                     .with_bindings(&compile_time);
-                static_sets = thread_sets(module, kernel, &b.cfg, &b.forest, &t, t.uniformity());
+                static_sets = thread_sets(module, kernel, &b.cfg, &b.forest, &t);
                 &static_sets
             }
         };
@@ -1043,7 +1039,7 @@ impl<'a> KernelReportBuilder<'a> {
                 false => (sets.guards.get(&s) == Some(&Pred::True)).then_some(true),
             }
         });
-        let (accesses, access_forms, per_request) = b.accesses_by_scope(&tracer, uniformity);
+        let (accesses, access_forms, per_request) = b.accesses_by_scope(&tracer);
         b.accesses = accesses;
         b.access_forms = access_forms;
         b.per_request = per_request;
