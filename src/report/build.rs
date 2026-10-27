@@ -303,12 +303,7 @@ impl KernelReportBuilder<'_> {
             }
             text
         };
-        let shape = SpecialVector::Ntid.components().map(|reg| {
-            bind_map
-                .get(&Leaf::Special(reg))
-                .map(|&v| v as u32)
-                .unwrap_or(0)
-        });
+        let shape = self.shape;
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
         for (bid, block) in cfg.blocks.iter_enumerated() {
             let scope = forest.block_loop[bid.0 as usize];
