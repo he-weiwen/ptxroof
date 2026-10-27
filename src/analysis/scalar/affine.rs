@@ -289,6 +289,27 @@ impl Affine {
         Some(out)
     }
 
+    /// The form with each term in a variable `leaf` names, or a floor or
+    /// mod of one, as that symbol in its base.
+    pub fn as_symbols(mut self, leaf: &dyn Fn(&Var) -> Option<SymExpr>) -> Affine {
+        fn symbol(v: &Var, leaf: &dyn Fn(&Var) -> Option<SymExpr>) -> Option<SymExpr> {
+            match v {
+                Var::Div(v, d) => symbol(v, leaf).map(|e| SymExpr::floor_div(e, *d)),
+                Var::Mod(v, m) => symbol(v, leaf).map(|e| SymExpr::modulo(e, *m)),
+                v => leaf(v),
+            }
+        }
+        for (v, c) in std::mem::take(&mut self.terms) {
+            match symbol(&v, leaf) {
+                Some(e) => self.base = SymExpr::add(self.base, SymExpr::mul(c, e)),
+                None => {
+                    self.terms.insert(v, c);
+                }
+            }
+        }
+        self
+    }
+
     pub fn is_invariant(&self) -> bool {
         self.terms.is_empty()
     }

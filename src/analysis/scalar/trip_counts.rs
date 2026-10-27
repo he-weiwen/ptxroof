@@ -416,7 +416,7 @@ fn exits_some(tracer: &AffineValueTracer<'_>, b: BlockId) -> bool {
 /// is the CTA's identifier, one value per CTA, never negative (PTX ISA
 /// §10.6).
 pub(crate) fn per_cta(a: Affine) -> Affine {
-    as_symbols(a, &|v| {
+    a.as_symbols(&|v| {
         let Var::Ctaid(axis) = v else { return None };
         let reg = SpecialVector::Ctaid.components()[*axis as usize];
         Some(SymExpr::Sym(Leaf::Special(reg)))
@@ -439,31 +439,10 @@ fn uniform_symbols(
     if !a.terms.keys().filter_map(Var::uniform).all(alike) {
         return None;
     }
-    Some(as_symbols(a, &|v| match v {
+    Some(a.as_symbols(&|v| match v {
         Var::Uniform(u) => Some(SymExpr::Sym(Leaf::Uniform(*u))),
         _ => None,
     }))
-}
-
-/// `a` with each term in a variable `leaf` names, or a floor or mod of
-/// one, as that symbol in its base.
-fn as_symbols(mut a: Affine, leaf: &dyn Fn(&Var) -> Option<SymExpr>) -> Affine {
-    fn symbol(v: &Var, leaf: &dyn Fn(&Var) -> Option<SymExpr>) -> Option<SymExpr> {
-        match v {
-            Var::Div(v, d) => symbol(v, leaf).map(|e| SymExpr::floor_div(e, *d)),
-            Var::Mod(v, m) => symbol(v, leaf).map(|e| SymExpr::modulo(e, *m)),
-            v => leaf(v),
-        }
-    }
-    for (v, c) in std::mem::take(&mut a.terms) {
-        match symbol(&v, leaf) {
-            Some(e) => a.base = SymExpr::add(a.base, SymExpr::mul(c, e)),
-            None => {
-                a.terms.insert(v, c);
-            }
-        }
-    }
-    a
 }
 
 /// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.

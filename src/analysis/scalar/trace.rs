@@ -362,18 +362,11 @@ impl<'a> AffineValueTracer<'a> {
     /// `a` read at `pos`: the counter of a loop `pos` is outside, whose
     /// one latch exit comes after a constant number of trips, is that
     /// number.
-    fn after_exits(&self, mut a: Affine, pos: usize) -> Affine {
-        let escaped: Vec<(Var, LoopId)> = (a.terms.keys())
-            .filter_map(|v| Some((v.clone(), v.counter().filter(|&l| !self.in_loop(l, pos))?)))
-            .collect();
-        for (v, l) in escaped {
-            let Some(x) = self.constant_trips(l).map(|n| v.eval(&|_| n)) else {
-                continue;
-            };
-            let c = a.terms.remove(&v).expect("an escaped term");
-            a.base = SymExpr::add(a.base, SymExpr::mul(c, SymExpr::Const(x)));
-        }
-        a
+    fn after_exits(&self, a: Affine, pos: usize) -> Affine {
+        a.as_symbols(&|v| match v {
+            Var::Iter(l) if !self.in_loop(*l, pos) => self.constant_trips(*l).map(SymExpr::Const),
+            _ => None,
+        })
     }
 
     /// A φ: a counter's `start + (k − 1)·step`, else one immediate every
