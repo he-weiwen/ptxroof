@@ -208,30 +208,18 @@ impl Pred {
         }
     }
 
-    /// The comparisons with loop counters.
-    fn trip_constraints<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
-        match self {
-            Pred::Cmp(k) if k.trip.is_some() => out.push(k),
-            Pred::Elect(p) | Pred::Not(p) => p.trip_constraints(out),
-            Pred::And(a, b) | Pred::Or(a, b) => {
-                a.trip_constraints(out);
-                b.trip_constraints(out);
+    /// The comparisons `keep` picks, left to right.
+    fn constraints(&self, keep: fn(&Constraint) -> bool) -> Vec<&Constraint> {
+        let (mut out, mut stack) = (Vec::new(), vec![self]);
+        while let Some(node) = stack.pop() {
+            match node {
+                Pred::Cmp(k) if keep(k) => out.push(k),
+                Pred::Elect(p) | Pred::Not(p) => stack.push(p),
+                Pred::And(a, b) | Pred::Or(a, b) => stack.extend([&**b, &**a]),
+                _ => {}
             }
-            _ => {}
         }
-    }
-
-    /// The comparisons whose `%ctaid` terms vary over the grid.
-    fn cta_constraints<'a>(&'a self, out: &mut Vec<&'a Constraint>) {
-        match self {
-            Pred::Cmp(k) if k.cta.is_some() => out.push(k),
-            Pred::Elect(p) | Pred::Not(p) => p.cta_constraints(out),
-            Pred::And(a, b) | Pred::Or(a, b) => {
-                a.cta_constraints(out);
-                b.cta_constraints(out);
-            }
-            _ => {}
-        }
+        out
     }
 
     /// The threads an `elect.sync` in this predicate chose among.
@@ -547,9 +535,7 @@ impl Pred {
 
     /// A comparison selecting the set reads the CTA index.
     pub fn varies_by_cta(&self) -> bool {
-        let mut over = Vec::new();
-        self.cta_constraints(&mut over);
-        !over.is_empty()
+        !self.constraints(|k| k.cta.is_some()).is_empty()
     }
 
     /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
@@ -599,8 +585,7 @@ impl Pred {
         read: [bool; 3],
         weight: &dyn Fn([i64; 3]) -> Option<u64>,
     ) -> Option<(u64, u64)> {
-        let mut over = Vec::new();
-        self.cta_constraints(&mut over);
+        let over = self.constraints(|k| k.cta.is_some());
         let mut used = read;
         for v in over.iter().flat_map(|k| k.form.terms.keys()) {
             cta_axes(v, &mut used);
@@ -676,8 +661,7 @@ impl Pred {
 
     /// The loop whose counter the set's comparisons read, when one does.
     pub fn trip_loop(&self) -> Option<LoopId> {
-        let mut over = Vec::new();
-        self.trip_constraints(&mut over);
+        let over = self.constraints(|k| k.trip.is_some());
         let l = over.first()?.trip?.0;
         over.iter()
             .all(|k| k.trip.is_some_and(|(t, _)| t == l))
@@ -692,8 +676,7 @@ impl Pred {
     /// thread-index condition selects the set, or past `LANE_BUDGET`
     /// lane evaluations.
     pub fn over_trips(&self, shape: [u32; 3], l: LoopId, n: u64) -> Option<[(u64, u64); 2]> {
-        let mut over = Vec::new();
-        self.trip_constraints(&mut over);
+        let over = self.constraints(|k| k.trip.is_some());
         let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
             .map(|t| thread(t, shape))
             .collect();
