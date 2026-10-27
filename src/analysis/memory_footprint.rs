@@ -149,15 +149,7 @@ pub fn warp_footprint(
         ideal_max = ideal_max.max(packed);
         let mut shift = (align - residue) % align;
         while shift < SECTOR {
-            let touched: BTreeSet<i64> = offsets
-                .iter()
-                .flat_map(|&o| {
-                    let lo = (o + shift).div_euclid(SECTOR);
-                    let hi = (o + shift + bytes - 1).div_euclid(SECTOR);
-                    lo..=hi
-                })
-                .collect();
-            let n = touched.len() as u32;
+            let n = sector_count(offsets, bytes, shift);
             min = min.min(n);
             max = max.max(n);
             shift += align;
@@ -179,6 +171,16 @@ pub fn warp_footprint(
     })
 }
 
+/// The sectors an access of `bytes` at each of `offsets` moved by
+/// `shift` touches.
+fn sector_count(offsets: &[i64], bytes: i64, shift: i64) -> u32 {
+    let touched: BTreeSet<i64> = (offsets.iter())
+        .filter(|_| bytes > 0)
+        .flat_map(|&o| (o + shift).div_euclid(SECTOR)..=(o + shift + bytes - 1).div_euclid(SECTOR))
+        .collect();
+    touched.len() as u32
+}
+
 /// One warp's lane pattern of an access inside a loop: the sectors it
 /// touches at every alignment of its base, and how the counter moves it.
 pub struct SectorPattern {
@@ -192,20 +194,8 @@ pub struct SectorPattern {
 
 impl SectorPattern {
     pub fn new(offsets: &[i64], bytes: i64, align: i64, stride: i64) -> SectorPattern {
-        let mut by_residue = [0; SECTOR as usize];
-        for (shift, slot) in by_residue.iter_mut().enumerate() {
-            let touched: BTreeSet<i64> = offsets
-                .iter()
-                .filter(|_| bytes > 0)
-                .flat_map(|&o| {
-                    (o + shift as i64).div_euclid(SECTOR)
-                        ..=(o + shift as i64 + bytes - 1).div_euclid(SECTOR)
-                })
-                .collect();
-            *slot = touched.len() as u32;
-        }
         SectorPattern {
-            by_residue,
+            by_residue: std::array::from_fn(|shift| sector_count(offsets, bytes, shift as i64)),
             residue: offsets
                 .first()
                 .map(|o| o.rem_euclid(align))
