@@ -21,6 +21,7 @@ only declare modules and selected public entry points.
 | `ptx/cfg` | PTX basic blocks, edges and CFG construction |
 | `analysis/control_flow/dominators` | Dominance, post-dominance and frontiers |
 | `analysis/control_flow/loops` | Natural loop forest and irreducible edges |
+| `analysis/control_flow/sync_dependence` | Where the paths from each branch's successors meet again (LLVM's sync dependence) |
 | `ssa` | Register SSA values and def/use queries over the PTX CFG |
 | `analysis/register_effects` | Instruction register reads and writes, CC included |
 | `analysis/kernel_data` | One kernel's register writes, SSA, parameter indices and reachability, with control-flow queries |
