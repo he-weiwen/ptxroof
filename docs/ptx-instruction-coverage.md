@@ -20,7 +20,7 @@ coverage is maintained with changes to the classifier, as required by
 For register uses/definitions, execution effects, and SSA readiness, see the
 [register-effects audit](ptx-register-effects-audit.md). Counting classification
 is not a complete instruction-effects contract. That audit independently checks
-186 non-excluded manual sections and documents current parser/tracer gaps,
+186 non-excluded manual sections and documents current parser/scalar-evolution gaps,
 including corrections to stale parsing claims in the tables below.
 
 ## The tool's model (what "fits" means)
@@ -28,6 +28,9 @@ including corrections to stale parsing claims in the tables below.
 `instruction_counts/measurement.rs` owns the accounting axes (`Precision`,
 `Pipe`, `Space`, `Direction`, `ArithKind`) and contribution records;
 `instruction_counts/classify.rs` maps instructions to those records.
+Scalar instruction interpretation lives in `scalar/evolution.rs`, with
+integer widths in `scalar/integer.rs` and special-register sharing in
+`analysis/special_registers.rs`.
 
 The parser accepts instruction-shaped statements as
 `mnemonic + modifiers + operands` (`src/ptx/parse/parser.rs`). The

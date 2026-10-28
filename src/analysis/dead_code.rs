@@ -123,7 +123,7 @@ fn reads(module: &Module, stmt: &Stmt, guard: Option<bool>) -> Vec<Register> {
 mod tests {
     use super::*;
     use crate::analysis::control_flow::loop_forest;
-    use crate::analysis::scalar::trace::AffineValueTracer;
+    use crate::analysis::kernel_data::KernelData;
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
@@ -139,13 +139,13 @@ mod tests {
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
-        let t = AffineValueTracer::new(&m, k, &cfg, &forest);
+        let data = KernelData::new(&m, k, &cfg, &forest);
         let text = |s: usize| match &k.stmts[s] {
             Stmt::Instr(i) => m.opcode(i),
             _ => String::new(),
         };
         let guard = |s: usize| decided.iter().find(|d| text(s) == d.0).map(|d| d.1);
-        let flags = unused(&m, k, &t.ssa, guard);
+        let flags = unused(&m, k, &data.ssa, guard);
         (0..flags.len()).filter(|&s| flags[s]).map(text).collect()
     }
 

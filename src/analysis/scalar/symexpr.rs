@@ -39,7 +39,7 @@ pub enum Leaf {
     /// A special register one for the CTA: the launch shape, the CTA's
     /// index.
     Special(SpecialReg),
-    /// A register value the tracer cannot interpret, one for every lane
+    /// A register value scalar evolution cannot interpret, one for every lane
     /// of the CTA reading it.
     Uniform(Value),
     /// The trip count of a loop whose count is not known.

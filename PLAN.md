@@ -77,7 +77,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 
 ### Wrong output
 
-- **Register effects are incomplete.** The affine tracer records the
+- **Register effects are incomplete.** Scalar evolution records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
   destinations (`micro/vector_def.ptx`: a guard on a register a vector
@@ -129,8 +129,8 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   the loop runs 8 trips, `max(uniform(%r3@54), 1)`, unbound
   `max(min(param_1 - 4, 8), 1)`); one
   through a parameter, `%ctaid` with no grid given or a symbolic trip
-  count keeps the tracer's documented assumption
-  (`src/analysis/scalar/trace.rs`, module doc). A conversion to or from
+  count keeps scalar evolution's documented assumption
+  (`src/analysis/scalar/evolution.rs`, module doc). A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
 - **An and-mask that clears the sign bit keeps a value of unknown range
   as itself.** Up to the bit below the sign bit (nvcc's
@@ -138,8 +138,8 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   lies in [0, 2^(width−1)), and refused where the range reaches outside
   it (`micro/and_sign_bit.ptx`: `(%tid.x − 256) & 0x7fffff00`, "clears
   bit 31 of a value that may set it"). A value through a parameter or
-  `%ctaid` with no grid given has no range and keeps the tracer's
-  documented assumption: `micro_and_sign_param`'s `(n − 256) &
+  `%ctaid` with no grid given has no range and keeps scalar
+  evolution's documented assumption: `micro_and_sign_param`'s `(n − 256) &
   0x7fffff00` reads `[param_0 + 4 * param_1 - 4 * ((param_1 - 256) mod
   256) - 1024]`, where for n below 256 the and is 0x7fffff00 and the
   store 2^33 bytes higher; with `--bind 1:n=100` it is refused, and the
@@ -182,7 +182,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `0xffffffffffffffff` (`mov.u64`, 3 kernels; `00101.ptx`).
 - **A `!=` latch with a symbolic distance is taken to meet its
   bound**: the trip solver divides the distance by the step, rounding
-  down, as `src/analysis/scalar/trip_counts.rs`'s doc assumes the
+  down, as `src/analysis/scalar/loop_bounds.rs`'s `solve` assumes the
   division exact (k1's and k2's `K − K mod 4`, the fp8 GEMMs,
   `micro/two_register_counter.ptx`). A constant distance that is no
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
@@ -198,7 +198,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `micro/single_loop.ptx` reads its `ld.param.u32` n as `param_1`,
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
-- **Addresses the tracer cannot read are unknown rows**, with the
+- **Addresses scalar evolution cannot read are unknown rows**, with the
   reason, unless every thread of the CTA computes the part it cannot
   read alike: that part is then a variable, `uniform(%r54@90)`
   (the grouped tile schedule's
@@ -342,15 +342,15 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   floating-point values"), a bound through a `selp` or shift of the
   CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
-  tile loop, which has a latch and an exit per partition. A bound the
-  tracer does not read, the same for every thread, is the value of the
+  tile loop, which has a latch and an exit per partition. A bound
+  scalar evolution does not read, the same for every thread, is the value of the
   register whose trace fails, `uniform(%r3@30)` for a division by a
   parameter not bound (`micro/trip_div_param.ptx`, `param_1 / 4` with
   `--bind 2:d=4`), taken as one value per CTA, so the totals per launch
   under it are unknown (`micro-trip-div-param.test`), and unknown where
   a loop holding the latch defines it or threads leave the loop defining
-  it at different trips (`micro/trip_uniform.ptx`). Bounds the tracer
-  does not read, by the loop's source line: a float immediate and an
+  it at different trips (`micro/trip_uniform.ptx`). Bounds scalar
+  evolution does not read, by the loop's source line: a float immediate and an
   `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`). In `gluon/attn_fwd_ws_kernel.sm_89.ptx` the
@@ -664,14 +664,14 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 
 ## Missing features
 
-- A value the tracer cannot read but every thread of the CTA shares as
+- A value scalar evolution cannot read but every thread of the CTA shares as
   an affine variable, `uniform(v)`, keyed by its register SSA value:
   addresses and loop footprints read it (`micro/uniform_address.ptx`,
   `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`); trip counts
   and thread selectors do not. Register SSA
   itself
-  (`src/ssa.rs`) is what the tracer, the uniformity analysis, trip
-  counting and the predicate reader read.
+  (`src/ssa.rs`) is what scalar evolution, the uniformity analysis
+  and the predicate reader read.
 
 One line each, with the trigger that would start it.
 

@@ -30,12 +30,13 @@ use crate::analysis::instruction_counts::count_constraint::count_constraint;
 use crate::analysis::instruction_counts::measurement::{
     ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision, Space,
 };
+use crate::analysis::kernel_data::KernelData;
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{AccessForm, CountRange, loop_bytes, warp_footprint};
 use crate::analysis::scalar::affine::{Affine, Var};
+use crate::analysis::scalar::evolution::ScalarEvolution;
 use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
-use crate::analysis::scalar::trace::AffineValueTracer;
-use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts};
+use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts_from};
 use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets, thread_sets};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
@@ -106,8 +107,10 @@ pub fn analyze(
             }
         }
         let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
-        let k =
-            KernelReportBuilder::new(&module, kernel, &bind_map, &lines).build(opts.launch, ncu);
+        let cfg = build_cfg(&module, kernel);
+        let forest = loop_forest(&cfg);
+        let data = KernelData::new(&module, kernel, &cfg, &forest);
+        let k = KernelReportBuilder::new(&data, &bind_map, &lines).build(opts.launch, ncu);
         classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
         classified.den += k.instruction_classes.total;
         let mut count_loops = |nodes: &[LoopNode]| {
@@ -194,13 +197,13 @@ fn resolve_bindings(
 /// lane reads its own.
 fn per_lane(
     a: Affine,
-    tracer: &AffineValueTracer,
+    se: &ScalarEvolution,
     pos: usize,
     name: &dyn Fn(&Var) -> String,
 ) -> Result<Affine, String> {
     for v in a.terms.keys() {
-        if let Some(l) = v.counter().filter(|&l| !tracer.in_loop(l, pos)) {
-            let why = tracer.uniformity().exits_uniform(tracer, l).err();
+        if let Some(l) = v.counter().filter(|&l| !se.data.in_loop(l, pos)) {
+            let why = se.uniformity().exits_uniform(l).err();
             if let Some(why) = why {
                 let k = name(&Var::Iter(l));
                 return Err(format!(
@@ -209,7 +212,7 @@ fn per_lane(
             }
         }
         if let Some(u) = v.uniform()
-            && let Err(why) = tracer.uniformity().value_uniform_at(tracer, u, pos)
+            && let Err(why) = se.uniformity().value_uniform_at(u, pos)
         {
             let u = name(&Var::Uniform(u));
             return Err(format!("{u} differs between lanes: {why}"));
@@ -226,13 +229,13 @@ impl KernelReportBuilder<'_> {
     /// one `load+store` row. Parameter loads are not accesses.
     fn accesses_by_scope(
         &self,
-        tracer: &AffineValueTracer,
+        se: &ScalarEvolution,
     ) -> (ByScope<Access>, ByScope<AccessForm>, PerRequests) {
         let (module, kernel, cfg, forest, bind_map) = (
             self.module,
             self.kernel,
-            &self.cfg,
-            &self.forest,
+            self.cfg,
+            self.forest,
             self.bind_map,
         );
         let display = &self.display;
@@ -242,7 +245,7 @@ impl KernelReportBuilder<'_> {
             Var::Iter(l) => format!("k[{}]", self.loop_ref(*l)),
             Var::Uniform(u) => format!(
                 "uniform({})",
-                Self::value_name(self.module, self.kernel, &self.cfg, self.lines, *u)
+                Self::value_name(self.module, self.kernel, self.cfg, self.lines, *u)
             ),
             other => other.to_string(),
         };
@@ -344,11 +347,11 @@ impl KernelReportBuilder<'_> {
                             };
                             (Some(addr), None, None)
                         }
-                        Operand::Register(_) => match (tracer.trace_address(*base, pos, scope))
+                        Operand::Register(_) => match (se.trace_address(*base, pos, scope))
                             .map(|a| {
                                 (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map)
                             })
-                            .and_then(|a| per_lane(a, tracer, pos, &name))
+                            .and_then(|a| per_lane(a, se, pos, &name))
                         {
                             Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
                             Err(reason) => (
@@ -417,7 +420,7 @@ impl KernelReportBuilder<'_> {
                     if let Some(b) = bytes.filter(|_| !self.unused[pos]) {
                         let uniform_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
                             v.uniform()
-                                .is_some_and(|u| scope.is_some_and(|l| tracer.defined_in(u, l)))
+                                .is_some_and(|u| scope.is_some_and(|l| se.data.defined_in(u, l)))
                         });
                         forms.entry(scope).or_default().push(AccessForm {
                             form: form.clone(),
@@ -436,7 +439,7 @@ impl KernelReportBuilder<'_> {
                         while let Some(l) = cur {
                             let stepped = (a.terms.keys()).any(|v| {
                                 (*v != Var::Iter(l) && v.counter() == Some(l))
-                                    || v.uniform().is_some_and(|u| tracer.defined_in(u, l))
+                                    || v.uniform().is_some_and(|u| se.data.defined_in(u, l))
                             });
                             reuse.push(Reuse {
                                 r#loop: display[l.0 as usize].clone(),
@@ -831,8 +834,8 @@ impl FlopAccumulator {
 struct KernelReportBuilder<'a> {
     module: &'a Module,
     kernel: &'a Kernel,
-    cfg: ControlFlowGraph,
-    forest: LoopForest,
+    cfg: &'a ControlFlowGraph,
+    forest: &'a LoopForest,
     names: Vec<LoopName>,
     trip_info: TripCountResults,
     blocks: Vec<BlockMeasurements>,
@@ -868,16 +871,21 @@ struct KernelReportBuilder<'a> {
 
 impl<'a> KernelReportBuilder<'a> {
     fn new(
-        module: &'a Module,
-        kernel: &'a Kernel,
+        data: &'a KernelData<'a>,
         bind_map: &'a HashMap<Leaf, i64>,
         lines: &'a LineIndex,
     ) -> Self {
-        let cfg = build_cfg(module, kernel);
-        let forest = loop_forest(&cfg);
-        let names = loop_names(module, kernel, &cfg, &forest);
-        let trip_info = trip_counts(module, kernel, &cfg, &forest, &names, bind_map);
-        let blocks = collect(module, kernel, &cfg, &forest);
+        let KernelData {
+            module,
+            kernel,
+            cfg,
+            forest,
+            ..
+        } = *data;
+        let se = ScalarEvolution::new(data).with_bindings(bind_map);
+        let names = loop_names(module, kernel, cfg, forest);
+        let trip_info = trip_counts_from(&se, &names);
+        let blocks = collect(module, kernel, cfg, forest);
 
         let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
         for pair in &trip_info.unroll_pairs {
@@ -939,9 +947,7 @@ impl<'a> KernelReportBuilder<'a> {
             source_launches: HashMap::new(),
             lines,
         };
-        let tracer =
-            AffineValueTracer::new(module, kernel, &b.cfg, &b.forest).with_bindings(bind_map);
-        b.sets = thread_sets(module, kernel, &b.cfg, &b.forest, &tracer);
+        b.sets = thread_sets(&se);
         if let Some(grid) = b.grid() {
             for (block, blk) in b.cfg.blocks.iter_enumerated() {
                 let guarded = (blk.start..blk.end).filter(|s| b.sets.guards.contains_key(s));
@@ -956,7 +962,7 @@ impl<'a> KernelReportBuilder<'a> {
                 }
             }
             for &s in b.sets.sources.keys() {
-                let set = b.sets.of_access(tracer.block_of(s), s, 1);
+                let set = b.sets.of_access(data.block_of(s), s, 1);
                 if let Some(n) = set.launch(shape, grid) {
                     b.source_launches.insert(s, n);
                 }
@@ -994,19 +1000,17 @@ impl<'a> KernelReportBuilder<'a> {
         let sets = match compile_time == *bind_map {
             true => &b.sets,
             false => {
-                let t = AffineValueTracer::new(module, kernel, &b.cfg, &b.forest)
-                    .with_bindings(&compile_time);
-                static_sets = thread_sets(module, kernel, &b.cfg, &b.forest, &t);
+                static_sets = thread_sets(&ScalarEvolution::new(data).with_bindings(&compile_time));
                 &static_sets
             }
         };
-        b.unused = unused(module, kernel, &tracer.ssa, |s| {
-            match sets.never(tracer.block_of(s), s) {
+        b.unused = unused(module, kernel, &data.ssa, |s| {
+            match sets.never(data.block_of(s), s) {
                 true => Some(false),
                 false => (sets.guards.get(&s) == Some(&Pred::True)).then_some(true),
             }
         });
-        let (accesses, access_forms, per_request) = b.accesses_by_scope(&tracer);
+        let (accesses, access_forms, per_request) = b.accesses_by_scope(&se);
         b.accesses = accesses;
         b.access_forms = access_forms;
         b.per_request = per_request;
@@ -1124,7 +1128,7 @@ impl<'a> KernelReportBuilder<'a> {
             Leaf::Trips(l) => format!("trips({})", self.loop_ref(*l)),
             Leaf::Uniform(v) => format!(
                 "uniform({})",
-                Self::value_name(self.module, self.kernel, &self.cfg, self.lines, *v)
+                Self::value_name(self.module, self.kernel, self.cfg, self.lines, *v)
             ),
             other => other.to_string(),
         }
@@ -2872,7 +2876,7 @@ mod tests {
     }
 
     /// The base at depth 0, `%r30` at 2 and `%r0` at 32, the deepest
-    /// definition the tracer follows: `%tid.x` below it is a leaf.
+    /// definition scalar evolution follows: `%tid.x` below it is a leaf.
     #[test]
     fn a_special_register_at_the_depth_limit_is_read() {
         let opts = AnalyzeOptions::default();

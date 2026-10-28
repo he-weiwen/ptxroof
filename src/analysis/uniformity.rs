@@ -11,8 +11,9 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
 use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Space};
+use crate::analysis::kernel_data::KernelData;
 use crate::analysis::register_effects::{reads_cc, split_operands};
-use crate::analysis::scalar::trace::{AffineValueTracer, SpecialRegister, special_register};
+use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
 use crate::ssa::Value;
@@ -34,12 +35,13 @@ enum Read {
     On(Vec<Node>),
 }
 
-pub(crate) struct Uniformity {
+pub(crate) struct Uniformity<'a> {
+    data: &'a KernelData<'a>,
     divergent: HashMap<Node, String>,
 }
 
-impl Uniformity {
-    pub(crate) fn new(t: &AffineValueTracer) -> Self {
+impl<'a> Uniformity<'a> {
+    pub(crate) fn new(t: &'a KernelData<'a>) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
         let written = written(t);
         let defs: BTreeSet<usize> = (t.writes.iter())
@@ -100,7 +102,7 @@ impl Uniformity {
                 }
             }
         }
-        Uniformity { divergent }
+        Uniformity { data: t, divergent }
     }
 
     /// Whether every lane executing definition `d` writes the same value.
@@ -112,13 +114,8 @@ impl Uniformity {
     /// exits of loops holding the definition but not `pos`, and those
     /// selecting among definitions) send every lane the same way; the
     /// reason when not.
-    pub(crate) fn gates_uniform(
-        &self,
-        t: &AffineValueTracer,
-        reg: Symbol,
-        pos: usize,
-    ) -> Result<(), String> {
-        match read(t, Register::Named(reg), pos) {
+    pub(crate) fn gates_uniform(&self, reg: Symbol, pos: usize) -> Result<(), String> {
+        match read(self.data, Register::Named(reg), pos) {
             Read::Uniform => Ok(()),
             Read::Divergent(why) => Err(why),
             Read::On(sources) => (sources.iter())
@@ -130,33 +127,23 @@ impl Uniformity {
 
     /// Whether the lanes in loop `id` leave it at the same iteration: its
     /// exits are uniform; the reason when not.
-    pub(crate) fn exits_uniform(&self, t: &AffineValueTracer, id: LoopId) -> Result<(), String> {
-        exits(t, id)
+    pub(crate) fn exits_uniform(&self, id: LoopId) -> Result<(), String> {
+        exits(self.data, id)
             .find_map(|n| self.divergent.get(&n))
             .map_or(Ok(()), |why| Err(why.clone()))
     }
 
     /// Whether every lane executing `pos` reads the same value of `reg`;
     /// the reason when not.
-    pub(crate) fn is_uniform(
-        &self,
-        t: &AffineValueTracer,
-        reg: Symbol,
-        pos: usize,
-    ) -> Result<(), String> {
-        self.answer(read(t, Register::Named(reg), pos))
+    pub(crate) fn is_uniform(&self, reg: Symbol, pos: usize) -> Result<(), String> {
+        self.answer(read(self.data, Register::Named(reg), pos))
     }
 
     /// Whether every lane executing `pos` sees value `v` alike, wherever
     /// it was read: its definitions, and the loop exits and branches
     /// between them and `pos`.
-    pub(crate) fn value_uniform_at(
-        &self,
-        t: &AffineValueTracer,
-        v: Value,
-        pos: usize,
-    ) -> Result<(), String> {
-        self.answer(read_value(t, v, pos))
+    pub(crate) fn value_uniform_at(&self, v: Value, pos: usize) -> Result<(), String> {
+        self.answer(read_value(self.data, v, pos))
     }
 
     fn answer(&self, r: Read) -> Result<(), String> {
@@ -175,7 +162,7 @@ impl Uniformity {
 /// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
 /// guard and the value it keeps where the guard is false.
 fn def_reads(
-    t: &AffineValueTracer,
+    t: &KernelData,
     d: usize,
     carry_out: bool,
     written: Option<&BTreeSet<usize>>,
@@ -206,14 +193,14 @@ fn def_reads(
     rs
 }
 
-fn read(t: &AffineValueTracer, reg: Register, pos: usize) -> Read {
+fn read(t: &KernelData, reg: Register, pos: usize) -> Read {
     match t.ssa.value_before(pos, reg) {
         Some(v) => read_value(t, v, pos),
         None => Read::Divergent(format!("reads {} in a block no path reaches", name(t, reg))),
     }
 }
 
-fn name<'a>(t: &'a AffineValueTracer, reg: Register) -> &'a str {
+fn name<'a>(t: &'a KernelData, reg: Register) -> &'a str {
     match reg {
         Register::Named(r) => t.module.interner.resolve(r),
         Register::Cc => "CC.CF",
@@ -221,7 +208,7 @@ fn name<'a>(t: &'a AffineValueTracer, reg: Register) -> &'a str {
 }
 
 /// A read at `pos` of value `v`.
-fn read_value(t: &AffineValueTracer, v: Value, pos: usize) -> Read {
+fn read_value(t: &KernelData, v: Value, pos: usize) -> Read {
     let reg = match v {
         Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg) => reg,
     };
@@ -249,7 +236,7 @@ fn read_value(t: &AffineValueTracer, v: Value, pos: usize) -> Read {
 /// A read at `pos` of `name`, whose value the statements `defs` may
 /// have written, each the source `node` names.
 fn read_sites(
-    t: &AffineValueTracer,
+    t: &KernelData,
     name: &str,
     defs: &[usize],
     pos: usize,
@@ -295,7 +282,7 @@ fn read_sites(
 }
 
 /// The branches of loop `id`'s blocks that can leave it.
-fn exits<'a>(t: &'a AffineValueTracer, id: LoopId) -> impl Iterator<Item = Node> + 'a {
+fn exits<'a>(t: &'a KernelData, id: LoopId) -> impl Iterator<Item = Node> + 'a {
     let blocks = &t.forest.get(id).blocks;
     (blocks.iter())
         .filter(|&&b| (t.cfg.block(b).succs.iter()).any(|s| blocks.binary_search(s).is_err()))
@@ -308,7 +295,7 @@ fn exits<'a>(t: &'a AffineValueTracer, id: LoopId) -> impl Iterator<Item = Node>
 /// Table 7). A weak global load reads one value at an address where
 /// nothing writes it during the launch (PTX ISA §8, §9.7.9.8): its
 /// address points into kernel parameters `written` does not hold.
-fn lane_wise(t: &AffineValueTracer, instr: &Instr, written: Option<&BTreeSet<usize>>) -> bool {
+fn lane_wise(t: &KernelData, instr: &Instr, written: Option<&BTreeSet<usize>>) -> bool {
     let module = t.module;
     let mods: Vec<&str> = (module.modifiers(instr).iter())
         .map(|&m| module.interner.resolve(m))
@@ -336,7 +323,7 @@ fn lane_wise(t: &AffineValueTracer, instr: &Instr, written: Option<&BTreeSet<usi
 }
 
 /// The kernel parameter an `ld.param` reads.
-fn kernel_param(t: &AffineValueTracer, instr: &Instr) -> Option<usize> {
+fn kernel_param(t: &KernelData, instr: &Instr) -> Option<usize> {
     let module = t.module;
     let param = (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "param");
     if instr.mnemonic != Opcode::Ld || !param {
@@ -356,7 +343,7 @@ fn kernel_param(t: &AffineValueTracer, instr: &Instr) -> Option<usize> {
 /// The kernel parameters the addresses of `instr` may point into, as
 /// LLVM's `getUnderlyingObjects` (llvm/lib/Analysis/ValueTracking.cpp)
 /// collects them; `None` where one is not traced to them.
-fn pointees(t: &AffineValueTracer, instr: &Instr) -> Option<BTreeSet<usize>> {
+fn pointees(t: &KernelData, instr: &Instr) -> Option<BTreeSet<usize>> {
     let (mut seen, mut out) = (HashSet::new(), BTreeSet::new());
     for &o in t.module.operand_ids(instr.operands) {
         if let Operand::Memory { base, rest, .. } = t.module.operand(o) {
@@ -375,7 +362,7 @@ fn pointees(t: &AffineValueTracer, instr: &Instr) -> Option<BTreeSet<usize>> {
 /// `bfe` and a narrower `cvt` make offsets. `None` at anything else, a
 /// symbol, a vector or a statement not parsed.
 fn reach(
-    t: &AffineValueTracer,
+    t: &KernelData,
     op: OperandId,
     seen: &mut HashSet<Symbol>,
     out: &mut BTreeSet<usize>,
@@ -420,7 +407,7 @@ fn reach(
 /// where one may write anywhere: a store `pointees` does not trace, a
 /// `call`, an instruction the classifier does not handle that names
 /// `.global`, or a statement not parsed.
-fn written(t: &AffineValueTracer) -> Option<BTreeSet<usize>> {
+fn written(t: &KernelData) -> Option<BTreeSet<usize>> {
     let module = t.module;
     let mut out = BTreeSet::new();
     for (_, b) in t.cfg.blocks.iter_enumerated() {
@@ -465,7 +452,7 @@ fn read_special(reg: SpecialReg) -> Read {
     }
 }
 
-fn operand_reads(t: &AffineValueTracer, ops: &[OperandId], pos: usize) -> Vec<Read> {
+fn operand_reads(t: &KernelData, ops: &[OperandId], pos: usize) -> Vec<Read> {
     ops.iter()
         .flat_map(|&op| match t.module.operand(op) {
             Operand::Register(r) => vec![read(t, Register::Named(*r), pos)],
@@ -518,7 +505,7 @@ mod tests {
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
-        let t = AffineValueTracer::new(&m, k, &cfg, &forest);
+        let t = KernelData::new(&m, k, &cfg, &forest);
         let start = label.map_or(0, |l| {
             k.stmts
                 .iter()
@@ -528,7 +515,7 @@ mod tests {
         let pos = (start..k.stmts.len())
             .find(|&i| matches!(&k.stmts[i], Stmt::Instr(i) if m.opcode(i) == opcode))
             .expect("the read");
-        Uniformity::new(&t).is_uniform(&t, m.interner.get(reg).expect("register"), pos)
+        Uniformity::new(&t).is_uniform(m.interner.get(reg).expect("register"), pos)
     }
 
     fn tid() -> Result<(), String> {

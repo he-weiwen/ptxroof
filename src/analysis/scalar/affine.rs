@@ -30,7 +30,7 @@ pub enum Var {
     Div(Box<Var>, i64),
     /// `v mod m`, m > 0: its thread column, `tid.x % 8`.
     Mod(Box<Var>, i64),
-    /// A register value the tracer cannot interpret that every lane
+    /// A register value scalar evolution cannot interpret that every lane
     /// executing its read sees alike.
     Uniform(Value),
 }
