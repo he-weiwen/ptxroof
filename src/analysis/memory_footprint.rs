@@ -7,7 +7,7 @@
 //! aligned is tried and the count is reported as a range.
 
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::instruction_counts::classify::Space;
+use crate::analysis::instruction_counts::measurement::Space;
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
 use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes, thread, warps_of};
 use crate::analysis::scalar::symexpr::SymExpr;

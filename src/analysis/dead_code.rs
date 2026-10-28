@@ -12,8 +12,8 @@
 //! ISA §9.7.16.5.2), and a statement the parser does not read, the carry
 //! flag.
 
-use crate::analysis::instruction_counts::classify::{InstructionCategory, Pipe, classify};
-use crate::analysis::instruction_counts::measurement::MeasureKind;
+use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
+use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::register_effects::{reads_cc, registers, split_operands, writes};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, Stmt};
 use crate::ssa::{RegisterSsa, Value};

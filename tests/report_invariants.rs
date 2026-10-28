@@ -21,9 +21,9 @@
 //!    tree.
 
 use ptxroof::analysis::control_flow::loop_forest;
-use ptxroof::analysis::instruction_counts::classify::Precision;
 use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
+use ptxroof::analysis::instruction_counts::measurement::Precision;
 use ptxroof::analysis::loop_names::loop_names;
 use ptxroof::analysis::scalar::symexpr::Leaf;
 use ptxroof::analysis::scalar::trip_counts::trip_counts;

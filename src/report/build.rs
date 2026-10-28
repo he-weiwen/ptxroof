@@ -24,12 +24,12 @@
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::control_flow::{dominators, loop_forest};
 use crate::analysis::dead_code::unused;
-use crate::analysis::instruction_counts::classify::{
-    ArithKind, ClassifiedInstruction, Direction, InstructionCategory, Pipe, Precision, Space,
-};
+use crate::analysis::instruction_counts::classify::{ClassifiedInstruction, InstructionCategory};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::analysis::instruction_counts::count_constraint::count_constraint;
-use crate::analysis::instruction_counts::measurement::{Contribution, MeasureKind};
+use crate::analysis::instruction_counts::measurement::{
+    ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision, Space,
+};
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{AccessForm, CountRange, loop_bytes, warp_footprint};
 use crate::analysis::scalar::affine::{Affine, Var};
@@ -42,6 +42,7 @@ use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialReg, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
+use crate::report::bindings::BindingSpec;
 use crate::report::measured::{LineIndex, NcuRecord, Prediction, Sectors};
 use crate::report::names::demangle;
 use crate::report::schema::*;
@@ -56,40 +57,6 @@ pub enum AnalyzeError {
     Binding(String),
     #[error("--ncu record does not match: {0}")]
     Ncu(String),
-}
-
-/// One `--bind` argument: `name=value` or `idx:name=value`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BindingSpec {
-    pub index: Option<usize>,
-    pub name: String,
-    pub value: i64,
-}
-
-pub fn parse_bind(text: &str) -> Result<BindingSpec, String> {
-    let (lhs, value) = text
-        .split_once('=')
-        .ok_or_else(|| format!("`{text}`: expected name=value or idx:name=value"))?;
-    let value: i64 = value
-        .parse()
-        .map_err(|_| format!("`{text}`: value `{value}` is not an integer"))?;
-    let (index, name) = match lhs.split_once(':') {
-        Some((idx, name)) => {
-            let idx = idx
-                .parse()
-                .map_err(|_| format!("`{text}`: index `{idx}` is not a number"))?;
-            (Some(idx), name)
-        }
-        None => (None, lhs),
-    };
-    if name.is_empty() {
-        return Err(format!("`{text}`: empty parameter name"));
-    }
-    Ok(BindingSpec {
-        index,
-        name: name.to_owned(),
-        value,
-    })
 }
 
 /// Caller-supplied analysis inputs (bet 4: launch config and
@@ -2237,30 +2204,7 @@ impl<'a> KernelReportBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bind_parsing_grammar() {
-        assert_eq!(
-            parse_bind("K=4096"),
-            Ok(BindingSpec {
-                index: None,
-                name: "K".into(),
-                value: 4096
-            })
-        );
-        assert_eq!(
-            parse_bind("2:K=4096"),
-            Ok(BindingSpec {
-                index: Some(2),
-                name: "K".into(),
-                value: 4096
-            })
-        );
-        assert!(parse_bind("K").is_err());
-        assert!(parse_bind("K=x").is_err());
-        assert!(parse_bind("=4").is_err());
-        assert!(parse_bind("a:K=4").is_err());
-    }
+    use crate::report::bindings::parse_bind;
 
     /// Blocks selected by thread-index branches: the two halves of a
     /// warp-specialized CTA and an elected thread. Per CTA their counts

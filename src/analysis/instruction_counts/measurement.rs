@@ -16,8 +16,118 @@
 //! its mnemonic — the v1 `AsyncCopy{bytes unset} → 0` silent-zero bug
 //! class is unrepresentable.
 
-use crate::analysis::instruction_counts::classify::{ArithKind, Direction, Pipe, Precision, Space};
 use crate::ptx::ir::Opcode;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Precision {
+    F16,
+    BF16,
+    /// Tensor-core only (PTX ISA §9.7.15.2): 32-bit storage, 10-bit
+    /// mantissa.
+    TF32,
+    F32,
+    F64,
+    /// Tensor-core only: the 8-bit `.e4m3` and `.e5m2` multiplicands
+    /// (PTX ISA §9.7.15.5.1, `mma` with `.kind::f8f6f4` shapes).
+    FP8,
+}
+
+impl Precision {
+    pub const ALL: [Precision; 6] = [
+        Precision::FP8,
+        Precision::F16,
+        Precision::BF16,
+        Precision::TF32,
+        Precision::F32,
+        Precision::F64,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Precision::F16 => "f16",
+            Precision::BF16 => "bf16",
+            Precision::TF32 => "tf32",
+            Precision::F32 => "f32",
+            Precision::F64 => "f64",
+            Precision::FP8 => "fp8",
+        }
+    }
+}
+
+/// FLOP accounting bucket; each gets its own table in the report.
+/// Atomic work does not imply a fixed physical execution unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Pipe {
+    CudaCore,
+    Tensor,
+    /// Special function unit: transcendentals, reciprocals, roots.
+    Sfu,
+    /// Atomic/reduction arithmetic; an accounting bucket, not a fixed hardware unit.
+    Atomic,
+}
+
+impl Pipe {
+    pub const ALL: [Pipe; 4] = [Pipe::CudaCore, Pipe::Tensor, Pipe::Sfu, Pipe::Atomic];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Pipe::CudaCore => "cuda-core",
+            Pipe::Tensor => "tensor",
+            Pipe::Sfu => "sfu",
+            Pipe::Atomic => "atomic",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Space {
+    Global,
+    Shared,
+    /// `.shared::cluster` — distinct from CTA-local shared (`::cta` is
+    /// the ISA default and folds into `Shared`).
+    SharedCluster,
+    Local,
+    Const,
+    Param,
+    /// `ld`/`st` with no state space: PTX generic addressing. Its own
+    /// honest bucket — unclassifiable to a concrete space without
+    /// provenance (anti-scope until a fixture emits one).
+    Generic,
+}
+
+impl Space {
+    pub fn key(self) -> &'static str {
+        match self {
+            Space::Global => "global",
+            Space::Shared => "shared",
+            Space::SharedCluster => "shared::cluster",
+            Space::Local => "local",
+            Space::Const => "const",
+            Space::Param => "param",
+            Space::Generic => "generic",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Direction {
+    Load,
+    Store,
+}
+
+/// Non-flop arithmetic, split because conversions are first-class in a
+/// precision audit (S8: 8 `cvt` per k2 main-loop iteration).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ArithKind {
+    /// `cvt` — precision/width conversion.
+    Conversion,
+    /// Integer/bit arithmetic: address math, masks, shifts.
+    Integer,
+    /// Predicate computation and selection: `setp`, `selp`, `set`...
+    Predicate,
+    /// Register/address bookkeeping: `mov`, `cvta`.
+    Move,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MeasureKind {

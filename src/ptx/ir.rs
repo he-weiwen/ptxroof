@@ -362,6 +362,13 @@ pub struct Kernel {
     pub stmts: Vec<Stmt>,
 }
 
+/// `name`'s index in `.reg prefix<count>`, which declares `prefix0` to
+/// `prefix{count-1}` spelled in decimal.
+pub(crate) fn register_member(name: &str, prefix: &str, count: u32) -> Option<u32> {
+    let i: u32 = name.strip_prefix(prefix)?.parse().ok()?;
+    (i < count && name.len() == prefix.len() + i.to_string().len()).then_some(i)
+}
+
 impl Kernel {
     /// The type a `.reg` declaration gives register `reg`.
     pub fn register_type(&self, module: &Module, reg: Symbol) -> Option<FundamentalType> {
@@ -370,7 +377,7 @@ impl Kernel {
             .find(|d| {
                 let prefix = module.interner.resolve(d.prefix);
                 match d.count {
-                    Some(n) => crate::ptx::parse::parser::member(name, prefix, n).is_some(),
+                    Some(n) => register_member(name, prefix, n).is_some(),
                     None => name == prefix,
                 }
             })

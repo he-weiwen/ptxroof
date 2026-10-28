@@ -94,7 +94,7 @@ memory_footprint -----> lane_eval
 memory_footprint -----------------> affine
 memory_footprint -> thread_participation, classify, control_flow
 
-instruction_counts::collect -> classify <-> measurement
+instruction_counts::collect -> classify -> measurement
                       +-> control_flow
 ```
 

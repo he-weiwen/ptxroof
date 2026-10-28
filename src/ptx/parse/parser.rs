@@ -18,6 +18,7 @@
 //! number. Some declarations and directives are skipped. This is not full
 //! PTX validation, and lexer panics on arbitrary UTF-8 are not caught.
 
+use crate::ptx::ir::register_member;
 use crate::ptx::ir::{
     FileDirective, FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, Param,
     Predicate, RegDecl, SharedDecl, SourceLoc, SpecialReg, Stmt,
@@ -530,7 +531,7 @@ impl<'a> Parser<'a> {
             }
             s.families.iter().find_map(|&(prefix, n)| {
                 let prefix = self.interner.resolve(prefix);
-                let i = member(name, prefix, n)?;
+                let i = register_member(name, prefix, n)?;
                 Some(format!("{prefix}{}{}${i}", self.scope_tag, s.id))
             })
         });
@@ -1064,16 +1065,9 @@ fn declares(interner: &Interner, decls: &[RegDecl], name: &str) -> bool {
         let prefix = interner.resolve(d.prefix);
         match d.count {
             None => prefix == name,
-            Some(n) => member(name, prefix, n).is_some(),
+            Some(n) => register_member(name, prefix, n).is_some(),
         }
     })
-}
-
-/// `name`'s index in `.reg prefix<count>`, which declares `prefix0` to
-/// `prefix{count-1}` spelled in decimal.
-pub(crate) fn member(name: &str, prefix: &str, count: u32) -> Option<u32> {
-    let i: u32 = name.strip_prefix(prefix)?.parse().ok()?;
-    (i < count && name.len() == prefix.len() + i.to_string().len()).then_some(i)
 }
 
 fn parse_version(text: &str) -> Option<(u32, u32)> {

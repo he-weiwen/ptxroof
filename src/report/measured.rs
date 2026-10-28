@@ -1,6 +1,6 @@
 use crate::analysis::instruction_counts::count_constraint::CountConstraint;
 use crate::ptx::ir::Module;
-use crate::report::build::BindingSpec;
+use crate::report::bindings::BindingSpec;
 use crate::report::schema::{
     MeasuredBlock, MeasuredLine, MeasuredSectors, MeasuredTotal, MeasuredTotals, SectorCount,
     SectorOutcome, Verdict,

@@ -9,10 +9,8 @@
 //! loop's exits, as by an η's.
 
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::instruction_counts::classify::{
-    Direction, InstructionCategory, Pipe, Space, classify,
-};
-use crate::analysis::instruction_counts::measurement::MeasureKind;
+use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
+use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Space};
 use crate::analysis::register_effects::{reads_cc, split_operands};
 use crate::analysis::scalar::trace::{AffineValueTracer, SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;

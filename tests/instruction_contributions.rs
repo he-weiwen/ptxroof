@@ -1,10 +1,10 @@
 //! One instruction retains one category while contributing to several totals.
 use ptxroof::analysis::control_flow::loop_forest;
-use ptxroof::analysis::instruction_counts::classify::{
-    Direction, InstructionCategory, Pipe, Precision, Space,
-};
+use ptxroof::analysis::instruction_counts::classify::InstructionCategory;
 use ptxroof::analysis::instruction_counts::collect::collect;
-use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
+use ptxroof::analysis::instruction_counts::measurement::{
+    Direction, MeasureKind, Pipe, Precision, Space,
+};
 use ptxroof::analysis::memory_footprint::CountRange;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;

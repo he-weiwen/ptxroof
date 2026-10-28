@@ -25,6 +25,10 @@ including corrections to stale parsing claims in the tables below.
 
 ## The tool's model (what "fits" means)
 
+`instruction_counts/measurement.rs` owns the accounting axes (`Precision`,
+`Pipe`, `Space`, `Direction`, `ArithKind`) and contribution records;
+`instruction_counts/classify.rs` maps instructions to those records.
+
 The parser accepts instruction-shaped statements as
 `mnemonic + modifiers + operands` (`src/ptx/parse/parser.rs`). The
 mnemonic must be an instruction keyword, `Opcode` in `src/ptx/ir.rs`:
