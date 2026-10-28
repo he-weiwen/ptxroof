@@ -287,19 +287,24 @@ impl Affine {
             SymExpr::Sum(ts) => ts.clone(),
             base => vec![base.clone()],
         };
-        let (mut k, mut multiple) = (0i64, SymExpr::Const(0));
+        let (mut k, mut whole, mut multiple) = (0i128, SymExpr::Const(0), SymExpr::Const(0));
         for t in summands {
             match t.as_const() {
-                Some(c) => k = k.checked_add(c)?,
+                Some(c) => {
+                    whole = SymExpr::add(whole, SymExpr::Const(c.div_euclid(d)));
+                    k += i128::from(c.rem_euclid(d));
+                }
                 None => multiple = SymExpr::add(multiple, t),
             }
         }
-        if !multiple.divisible_by(d) || rest.is_some_and(|(_, c)| k.rem_euclid(d) >= c) {
+        let carry = SymExpr::Const(i64::try_from(k / i128::from(d)).ok()?);
+        let k = i64::try_from(k % i128::from(d)).ok()?;
+        if !multiple.divisible_by(d) || rest.is_some_and(|(_, c)| k >= c) {
             return None;
         }
-        let whole = SymExpr::floor_div(multiple, d);
-        q.base = SymExpr::add(whole, SymExpr::Const(k.div_euclid(d)));
-        let rem = Affine::invariant(SymExpr::Const(k.rem_euclid(d)));
+        let whole = SymExpr::add(whole, carry);
+        q.base = SymExpr::add(SymExpr::floor_div(multiple, d), whole);
+        let rem = Affine::invariant(SymExpr::Const(k));
         let Some((v, c)) = rest else {
             return Some((q, Affine::invariant(SymExpr::Const(0)), rem));
         };
@@ -816,6 +821,16 @@ mod tests {
         );
         let param = Affine::invariant(SymExpr::Sym(Leaf::Param(1)));
         assert_eq!((tid() + param).div_const(16), None);
+        let wide = tid() + Affine::invariant(SymExpr::add(c(i64::MAX - 7), c(8)));
+        assert!(matches!(&wide.base, SymExpr::Sum(ts) if ts.len() == 2));
+        assert_eq!(
+            text(wide.clone().modulo_const(8)).as_deref(),
+            Some("(%tid.x mod 8)")
+        );
+        assert_eq!(
+            text(wide.div_const(8)).as_deref(),
+            Some("⌊%tid.x/8⌋ + 1152921504606846976")
+        );
     }
 
     #[test]
