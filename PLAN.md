@@ -209,8 +209,9 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   and attention kernels, "behind `xor.b32`"); divisions of the thread
   index by a runtime value (`micro/uniform_address.ptx`'s
   `micro_uniform_div_lanes`); an and-mask's run of bits whose remainder
-  the affine form does not hold, of a form whose offset is no multiple
-  of its modulus (`micro/and_runs.ptx`'s `micro_and_offset`,
+  the affine form does not hold, of a form whose offset, past its
+  multiple of the modulus, is not below the coefficient of the term the
+  modulus does not divide (`micro/and_runs.ptx`'s `micro_and_offset`,
   `(%tid.x − 4) & 0x46`: "in a mod") or a negative coefficient, but for
   a value of 0 or −1 under a mask below the sign bit
   (`micro/and_bit_select.ptx`; refused with the sign bit,
@@ -237,9 +238,11 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   of two, which LLVM writes as `mul.hi` by a magic number and a shift
   (`micro/magic_div.ptx`: "`mul.hi.u32` keeps a product's upper half";
   sglang `bmm_kernel_persistent`'s `/ 148` leaves its trip count
-  unknown); a floor or mod of a value whose base is no multiple of the
-  divisor, such as a 0-based counter's `i % 2` read before its
-  increment, `(k − 1) mod 2`, which is the same for every thread and so
+  unknown); a floor or mod of a value that, past its multiple of the
+  divisor, holds two terms, or one whose coefficient the divisor is no
+  multiple of, or a base not below that coefficient, such as a 0-based
+  counter's `i % 2` read before its increment, `(k − 1) mod 2`, which
+  is the same for every thread and so
   a uniform variable the loop defines (`micro/counter_mod_offset.ptx`:
   `requested 16 B, unique unknown` where ptxas stores 8 distinct bytes;
   k12's double buffer `tile % 2`, `uniform(%r10@365)`); an element a
@@ -317,6 +320,14 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   measured on an RTX 4090), and stays unknown where those threads are
   not counted at every CTA, past 2^24 CTAs on the axes the count
   reads, or where the count at a CTA is negative or not a constant.
+- **A product reads its factors as traced, before the bindings**: `mul`
+  and `mad` need one factor free of variables, so a product of two
+  forms with variables is unknown even where a binding makes one of
+  them 0, and a floor or mod reads the form as traced before the form
+  under the bindings: `micro/floor_mod_remainder.ptx`'s
+  `micro_floor_bound_zero`, ⌊(16·p·%tid.x + 1)/16⌋·%tid.y, reads
+  p·%tid.x for the floor and is unknown with `--bind 1:p=0` ("in a
+  product"), where every thread stores at param_0 (RTX 4090).
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unroll main+remainder pair, LLVM's two-register counter and its

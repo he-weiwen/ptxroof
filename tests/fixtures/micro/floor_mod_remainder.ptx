@@ -1,0 +1,132 @@
+//
+// HAND-WRITTEN: in blocks of 128 and a grid of 1 x 2, each kernel stores
+// %tid.x at param_0 plus 4 times a floor or mod of a form that is a
+// multiple of the divisor plus one term and a constant; w is
+// ⌊%tid.x/32⌋. The words written, measured on an RTX 4090 (ptxas 13.4,
+// sm_89):
+// - micro_floor_rows, ((%tid.x & 127) | 128) >> 4, the row index of
+//   census kernel 01588.ptx: ⌊(%tid.x mod 128)/16⌋ + 8, words 8 to 15.
+// - micro_floor_cta_rows, ((%ctaid.y << 6) | (%tid.x & 63)) >> 1, that
+//   of census kernel 00203.ptx: 32·%ctaid.y + ⌊(%tid.x mod 64)/2⌋, words
+//   0 to 63 (ptxas adds the or's sides, `LEA R0, R3, R0, 0x6`).
+// - micro_mod_warp, (((%tid.x >> 5) << 2) | 1) & 15: 4·(w mod 4) + 1,
+//   words 1, 5, 9 and 13.
+// - micro_align_cta, ((%ctaid.y << 6) | (%tid.x & 63)) & −16:
+//   64·%ctaid.y + 16·⌊(%tid.x mod 64)/16⌋, words 0, 16, ..., 112.
+// - micro_floor_bound_zero, ⌊(16·p·%tid.x + 1)/16⌋·%tid.y at p = 0: word
+//   0. The floor reads p·%tid.x, and the product of two forms with
+//   variables is refused before the bindings, so with --bind 1:p=0 the
+//   store is unknown.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_floor_rows(
+	.param .u64 micro_floor_rows_param_0,
+	.param .u32 micro_floor_rows_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<10>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_floor_rows_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 127;
+	or.b32 	%r3, %r2, 128;
+	shr.u32 	%r9, %r3, 4;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_floor_cta_rows(
+	.param .u64 micro_floor_cta_rows_param_0,
+	.param .u32 micro_floor_cta_rows_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<10>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_floor_cta_rows_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %ctaid.y;
+	shl.b32 	%r3, %r2, 6;
+	and.b32 	%r4, %r1, 63;
+	or.b32 	%r5, %r3, %r4;
+	shr.u32 	%r9, %r5, 1;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_mod_warp(
+	.param .u64 micro_mod_warp_param_0,
+	.param .u32 micro_mod_warp_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<10>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_mod_warp_param_0];
+	mov.u32 	%r1, %tid.x;
+	shr.u32 	%r2, %r1, 5;
+	shl.b32 	%r3, %r2, 2;
+	or.b32 	%r4, %r3, 1;
+	and.b32 	%r9, %r4, 15;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_align_cta(
+	.param .u64 micro_align_cta_param_0,
+	.param .u32 micro_align_cta_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<10>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_align_cta_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %ctaid.y;
+	shl.b32 	%r3, %r2, 6;
+	and.b32 	%r4, %r1, 63;
+	or.b32 	%r5, %r3, %r4;
+	and.b32 	%r9, %r5, -16;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_floor_bound_zero(
+	.param .u64 micro_floor_bound_zero_param_0,
+	.param .u32 micro_floor_bound_zero_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<10>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_floor_bound_zero_param_0];
+	mov.u32 	%r1, %tid.x;
+	ld.param.u32 	%r2, [micro_floor_bound_zero_param_1];
+	shl.b32 	%r3, %r2, 4;
+	mul.lo.s32 	%r4, %r3, %r1;
+	add.s32 	%r5, %r4, 1;
+	shr.u32 	%r6, %r5, 4;
+	mov.u32 	%r7, %tid.y;
+	mul.lo.s32 	%r9, %r6, %r7;
+	mul.wide.u32 	%rd2, %r9, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

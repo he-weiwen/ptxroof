@@ -1,0 +1,22 @@
+# A floor or mod of a multiple of the divisor plus one term c·v, c a
+# divisor of it, and a constant below c reads the multiple divided and
+# the floor or mod of the rest: the row indices of census kernels
+# 01588.ptx and 00203.ptx, a mod of four times a warp index plus 1, and
+# an alignment. With p bound to 0, ⌊(16·p·%tid.x + 1)/16⌋ reads
+# p·%tid.x, so its product with %tid.y, 0, is refused.
+RUN: %ptxroof analyze %fixtures/micro/floor_mod_remainder.ptx --bind 1:p=0 | FileCheck "%s"
+CHECK: kernel micro_floor_rows
+CHECK: st.global.u32  global store 4 B  warp: 1–2 sectors (ideal 1)
+CHECK-SAME: [4 * ⌊(%tid.x mod 128)/16⌋ + param_0 + 32]
+CHECK: kernel micro_floor_cta_rows
+CHECK: st.global.u32  global store 4 B  warp: 2–3 sectors (ideal 2)
+CHECK-SAME: [128 * %ctaid.y + 4 * ⌊(%tid.x mod 64)/2⌋ + param_0]
+CHECK: kernel micro_mod_warp
+CHECK: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
+CHECK-SAME: [16 * (⌊%tid.x/32⌋ mod 4) + param_0 + 4]
+CHECK: kernel micro_align_cta
+CHECK: st.global.u32  global store 4 B  warp: 2 sectors (ideal 1)
+CHECK-SAME: [256 * %ctaid.y + 64 * ⌊(%tid.x mod 64)/16⌋ + param_0]
+CHECK: kernel micro_floor_bound_zero
+CHECK: st.global.u32  global store 4 B
+CHECK-SAME: unknown: depends on special register %tid.x, in a product
