@@ -1,0 +1,174 @@
+//
+// HAND-WRITTEN: in blocks of 128, each kernel stores %tid.x at param_0
+// plus 4 times a value `shfl.sync.idx` reads from lane 5; w is
+// ⌊%tid.x/32⌋. The words written, measured on an RTX 4090 (ptxas 13.4,
+// sm_89, `SHFL.IDX PT, R0, R0, 0x5, 0x1f` unless noted):
+// - micro_shfl_one_floor, %tid.x >> 2: 8w + 1.
+// - micro_shfl_bfe, bfe.u32 of %tid.x at 3 of 4 bits, ⌊%tid.x/8⌋ mod 16:
+//   4w.
+// - micro_shfl_floor_floor, two shifts by 1: 8w + 1.
+// - micro_shfl_floor_of_mod, (%tid.x & 15) >> 2: 1.
+// - micro_shfl_laneid, %laneid >> 2: 1.
+// - micro_shfl_warp_floor, shifts by 3 and 2, ⌊%tid.x/32⌋: w; ptxas drops
+//   the shuffle and stores at `SHF.R.U32.HI R2, RZ, 0x5, R5`.
+// - micro_shfl_segments, fourth operand 0x181f: a mask "for logically
+//   splitting warps into sub-segments" of 8 lanes (PTX ISA §9.7.9.6), so
+//   each lane reads lane 5 of its 8, 8·⌊%tid.x/8⌋ + 5
+//   (`SHFL.IDX PT, R2, R5, 0x5, 0x181f`).
+// - micro_shfl_clamp_0, fourth operand 0: lane 5 is past the clamp, so
+//   each lane reads its own %tid.x (`SHFL.IDX PT, R2, R5, 0x5, RZ`).
+// The tracer reads lane 5's floor or mod of %tid.x itself; a thread index
+// under more floors or mods, and a fourth operand other than 31, are
+// unknown.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_shfl_one_floor(
+	.param .u64 micro_shfl_one_floor_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_one_floor_param_0];
+	mov.u32 	%r1, %tid.x;
+	shr.u32 	%r5, %r1, 2;
+	shfl.sync.idx.b32 	%r6, %r5, 5, 31, -1;
+	mul.wide.u32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shfl_bfe(
+	.param .u64 micro_shfl_bfe_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_bfe_param_0];
+	mov.u32 	%r1, %tid.x;
+	bfe.u32 	%r5, %r1, 3, 4;
+	shfl.sync.idx.b32 	%r6, %r5, 5, 31, -1;
+	mul.wide.u32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shfl_floor_floor(
+	.param .u64 micro_shfl_floor_floor_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_floor_floor_param_0];
+	mov.u32 	%r1, %tid.x;
+	shr.u32 	%r2, %r1, 1;
+	shr.u32 	%r5, %r2, 1;
+	shfl.sync.idx.b32 	%r6, %r5, 5, 31, -1;
+	mul.wide.u32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shfl_floor_of_mod(
+	.param .u64 micro_shfl_floor_of_mod_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_floor_of_mod_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 15;
+	shr.u32 	%r5, %r2, 2;
+	shfl.sync.idx.b32 	%r6, %r5, 5, 31, -1;
+	mul.wide.u32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shfl_laneid(
+	.param .u64 micro_shfl_laneid_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_laneid_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %laneid;
+	shr.u32 	%r5, %r2, 2;
+	shfl.sync.idx.b32 	%r6, %r5, 5, 31, -1;
+	mul.wide.u32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shfl_warp_floor(
+	.param .u64 micro_shfl_warp_floor_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_warp_floor_param_0];
+	mov.u32 	%r1, %tid.x;
+	shr.u32 	%r2, %r1, 3;
+	shr.u32 	%r5, %r2, 2;
+	shfl.sync.idx.b32 	%r6, %r5, 5, 31, -1;
+	mul.wide.u32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shfl_segments(
+	.param .u64 micro_shfl_segments_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_segments_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r5, %r1;
+	shfl.sync.idx.b32 	%r6, %r5, 5, 6175, -1;
+	mul.wide.u32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_shfl_clamp_0(
+	.param .u64 micro_shfl_clamp_0_param_0
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shfl_clamp_0_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r5, %r1;
+	shfl.sync.idx.b32 	%r6, %r5, 5, 0, -1;
+	mul.wide.u32 	%rd2, %r6, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}

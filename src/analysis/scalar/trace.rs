@@ -16,6 +16,7 @@
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::register_effects::{self, registers, split_operands};
 use crate::analysis::scalar::affine::{Affine, Axis, Var};
+use crate::analysis::scalar::lane_eval::depends_on_lane;
 use crate::analysis::scalar::recurrences::{Recurrence, Step, recurrences};
 use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::scalar::trip_counts::{loop_trips, per_cta};
@@ -834,13 +835,19 @@ impl<'a> AffineValueTracer<'a> {
             }
             Opcode::Shfl if mods.contains(&"idx") && ops.len() == 5 => {
                 // shfl.sync.idx d, a, c, 31, mask: a's value in lane c of the
-                // warp. With warps of 32 consecutive %tid.x, that is a with
-                // %tid.x replaced by 32·⌊%tid.x/32⌋ + c; a warp-uniform a
-                // (a function of ⌊%tid.x/32⌋) is unchanged.
+                // warp; a fourth operand other than 31 packs a mask "for
+                // logically splitting warps into sub-segments and an upper
+                // bound for clamping the source lane index" (PTX ISA
+                // §9.7.9.6). With warps of 32 consecutive %tid.x, that is a
+                // with %tid.x replaced by 32·⌊%tid.x/32⌋ + c; a warp-uniform
+                // a (a function of ⌊%tid.x/32⌋) is unchanged.
                 let a = arg(1)?;
                 let Some(c) = self.constant(&arg(2)?).filter(|c| (0..32).contains(c)) else {
                     return Err("shfl.idx from a non-constant lane".to_owned());
                 };
+                if self.constant(&arg(3)?) != Some(31) {
+                    return Err("shfl.idx in segments of the warp or a clamped lane".to_owned());
+                }
                 let warp = |v: Var| Affine::var(Var::Div(Box::new(v), 32));
                 let lane = |v: &Var| -> Option<Affine> {
                     match v {
@@ -877,6 +884,7 @@ impl<'a> AffineValueTracer<'a> {
                             }
                         }
                         Var::Tid(_) => None,
+                        other if depends_on_lane(other) => None,
                         other => Some(Affine::var(other.clone())),
                     }
                 };
@@ -898,8 +906,9 @@ impl<'a> AffineValueTracer<'a> {
                         ));
                     }
                 }
-                a.map_vars(lane)
-                    .ok_or_else(|| "shfl.idx of a value not a function of %tid.x".to_owned())
+                a.map_vars(lane).ok_or_else(|| {
+                    "shfl.idx of a value the tracer does not read in another lane".to_owned()
+                })
             }
             // PTX ISA §9.7.1.13, §9.7.1.14: one integer type, compared as
             // that type reads both operands; `.relu` and the packed types

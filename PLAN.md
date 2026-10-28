@@ -158,6 +158,13 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   param_0 + 64; ptxas 13.4); the store reads
   `[128 * ⌊%tid.x/32⌋ + param_0]`, `warp: 1–2 sectors`. `%laneid` is
   read only in a block of one row.
+- **`shfl.sync.idx` reads one floor or mod of `%tid.x`**: a thread
+  index under more, `⌊%tid.x/8⌋ mod 16` from a `bfe.u32` or
+  `⌊(%tid.x mod 32)/4⌋` from `%laneid`, is unknown, even where it is
+  the same across a warp (`⌊⌊%tid.x/8⌋/4⌋`, whose shuffle ptxas drops);
+  so is a fourth operand other than 31, which splits the warp into
+  sub-segments or clamps the lane (PTX ISA §9.7.9.6):
+  `micro/shfl_idx.ptx`.
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
