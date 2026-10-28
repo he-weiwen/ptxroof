@@ -1,170 +1,136 @@
-# Source layout
+# Source layout and execution
 
-Module ownership, dependency boundaries and canonical paths, and the register
-SSA the analyses read.
+The production Rust files form a dependency DAG, which `tests/architecture.rs`
+enforces. Unit-test modules are excluded: they may parse fixtures and call
+higher-level entry points.
 
-## Current ownership
+## Ownership
 
-| Module | Responsibility | Previous location |
-| --- | --- | --- |
-| `support/index` | Typed indices, index vectors, and pooled ranges | `core/arena` |
-| `support/intern` | String interning | `core/intern` |
-| `ptx/ir` | Parsed, flattened PTX representation | `core/ir` |
-| `ptx/literal` | Shared integer literal interpretation | helper in `parse/parser` |
-| `ptx/parse` | Lexing and parsing | `parse/lexer`, `parse/parser` |
-| `ptx/print` | Canonical PTX dump | `parse/ast` |
-| `ptx/cfg` | PTX CFG representation and construction | `cfg/graph`, later `analysis/control_flow/graph` |
-| `analysis/control_flow` | Dominators and loop discovery | `cfg/dominators`, `cfg/loops` |
-| `analysis/loop_names` | Source-derived loop identities and display names | loop portion of `cfg/naming` |
-| `analysis/scalar/symexpr` | Symbolic count expressions | `core/symexpr` |
-| `analysis/scalar/affine` | Affine values over thread, CTA, loop and uniform variables | `affine` |
-| `analysis/scalar/lane_eval` | Lane-dependent evaluation of affine values | helpers in `footprint` |
-| `analysis/scalar/trace` | Affine interpretation of register SSA values | `tracer` |
-| `analysis/scalar/recurrences` | Loop counters as recurrences on register SSA values | new |
-| `analysis/scalar/trip_counts` | Loop trip matching and unroll pairing | `trips` |
-| `analysis/thread_participation` | Threads that execute a block | `threads` |
-| `analysis/register_effects` | Registers, CC included, a statement writes | new |
-| `analysis/uniformity` | Register reads the executing lanes see alike | new |
-| `analysis/dead_code` | Instructions whose results nothing with an effect reads | new |
-| `analysis/memory_footprint` | Sectors touched by a warp request; a loop's requested, distinct and sector bytes per CTA | remaining `footprint` |
-| `analysis/instruction_counts` | Classification, measurements, and collection | `classify`, `core/measurement`, `report/collect` |
-| `report/build` | Analysis orchestration and report-specific aggregation | unchanged |
-| `report/schema` | Owned, serializable output structures | `report/tree` |
-| `report/names` | Kernel demangling for display | demangling portion of `cfg/naming` |
-| `report/text` | Text rendering of the report schema | unchanged |
-| `ssa` | Register SSA values over the PTX CFG | new |
+Paths below are relative to `src/`, with `.rs` omitted. Directory `mod.rs` files
+only declare modules and selected public entry points.
 
-One crate remains sufficient. The CLI stays in `main.rs` and the library entry
-points remain available through `lib.rs`.
+| File | Intent and scope |
+| --- | --- |
+| `support/index` | Typed indices, index vectors, pooled ranges |
+| `support/intern` | String interning |
+| `ptx/ir` | Parsed PTX representation, including register-family membership |
+| `ptx/literal` | Integer literal interpretation |
+| `ptx/parse/lexer` | Tokenize PTX text |
+| `ptx/parse/parser` | Construct IR from tokens |
+| `ptx/print` | Canonical PTX dump |
+| `ptx/cfg` | PTX basic blocks, edges and CFG construction |
+| `analysis/control_flow/dominators` | Dominance, post-dominance and frontiers |
+| `analysis/control_flow/loops` | Natural loop forest and irreducible edges |
+| `ssa` | Register SSA values and def/use queries over the PTX CFG |
+| `analysis/register_effects` | Instruction register reads and writes, CC included |
+| `analysis/kernel_data` | One kernel's register writes, SSA, parameter indices and reachability, with control-flow queries |
+| `analysis/special_registers` | Sharing and stability of PTX special-register values |
+| `analysis/uniformity` | Propagate divergence through definitions and controlling branches |
+| `analysis/scalar/symexpr` | Symbolic expressions and simplification |
+| `analysis/scalar/affine` | Affine values over thread, CTA, loop and uniform variables |
+| `analysis/scalar/integer` | Integer types and representable ranges |
+| `analysis/scalar/lane_eval` | Evaluate affine forms for lanes and warp layouts |
+| `analysis/scalar/recurrences` | Recognize loop counter recurrences on SSA values |
+| `analysis/scalar/loop_bounds` | Loop-exit inequalities solved for a trip count |
+| `analysis/scalar/evolution` | Register values as affine forms and one loop's trip count; their mutual recursion and trip cache |
+| `analysis/scalar/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
+| `analysis/loop_names` | Source-derived loop identities used by unroll pairing and display |
+| `analysis/thread_participation` | Predicates and sets of threads executing blocks and accesses |
+| `analysis/dead_code` | Instructions with no live effect through register SSA |
+| `analysis/memory_footprint` | Warp sectors and loop requested, distinct and sector bytes |
+| `analysis/instruction_counts/measurement` | Accounting dimensions and contribution/measurement records |
+| `analysis/instruction_counts/classify` | Decode instructions into categories and contributions |
+| `analysis/instruction_counts/count_constraint` | Constraints on comparing PTX and measured instruction counts |
+| `analysis/instruction_counts/collect` | Attach block/loop execution context to instruction contributions |
+| `report/bindings` | Caller parameter bindings and their text syntax |
+| `report/measured` | Import and validate NCU records; compare measured and predicted quantities |
+| `report/schema` | Owned serializable report structures |
+| `report/build` | Orchestrate kernel analyses and aggregate their results into reports |
+| `report/names` | Kernel demangling for display |
+| `report/text` | Render report structures as text |
+| `main` | CLI arguments, file I/O, output selection and error handling |
+| `lib` | Library modules and version entry point |
 
-## Type naming
-
-Program representations and recognizable structures use domain names:
-`Module`, `Kernel`, `ControlFlowGraph`, and `LoopForest`. `DominanceInfo`
-contains dominance and reachability information; `TripCountResults` bundles
-trip counts and unroll pairs. `AffineValueTracer` performs affine tracing
-of `RegisterSsa`'s `Value`s, and a `Recurrence` is a loop counter on them.
-
-Construction and aggregation helpers are named for their purpose:
-`KernelReportBuilder`, `CountAccumulator`, and `FlopAccumulator`.
-`CountRange` describes memory-footprint count bounds, and `PrintContext`
-is the private symbolic-expression formatting context. These names do not
-change storage, analysis semantics, or the report schema.
+One crate. `report::analyze`, `report::AnalyzeOptions`, `report::AnalyzeError`,
+`report::BindingSpec`, `report::parse_bind` and `report::Report` are the public
+report entry points; internal callers use canonical modules directly.
 
 ## Dependency boundaries
 
-Production code and integration tests import canonical modules directly. The old
-`core`, `cfg`, `parse`, root analysis aliases, and `report::{collect, stats, tree}`
-compatibility exports have been removed. Analysis types and functions live under
-`analysis`; report types live under `report::schema`. The public report entry
-points (`report::analyze`, its options/errors, and `report::Report`) remain.
+`tests/architecture.rs` rejects a dependency cycle between production files and
+checks these boundaries:
 
-- Support utilities do not depend on PTX, analyses, or reports.
-- PTX representation and parsing do not depend on analyses or reports.
-- Analyses consume PTX IR and shared literal interpretation, not the parser.
-  Unit tests may parse PTX to construct fixtures.
-- Analyses do not depend on report construction or rendering.
-- Report construction can depend on all analyses and the parser.
-- The report schema embeds the memory-footprint `CountRange`, `LoopBytes` and
-  `ByteRange` types.
+- Support utilities depend only on support utilities.
+- PTX representation, parsing and CFG construction depend only on PTX and support.
+- Analyses and SSA do not depend on the parser or on reporting.
+- Report construction may call analyses and the parser. The schema embeds the
+  memory-footprint `CountRange`, `LoopBytes` and `ByteRange` types.
 
-The CFG lives in `ptx/cfg.rs`: its blocks reference ranges in `Kernel::stmts`,
-and its accessors expose PTX instructions. `build_cfg` constructs that
-representation; dominance and loop discovery derive information about it.
+`register_member` belongs to the IR because register declarations define family
+membership; both `Kernel::register_type` and the parser use it. `measurement`
+owns `Precision`, `Pipe`, `Space`, `Direction` and `ArithKind` alongside
+`Contribution` and `MeasureKind`; `classify` produces those records. `measured`
+reads bindings from `report/bindings`, not from the report builder.
 
-```text
-analysis/control_flow/loops -> analysis/control_flow/dominators -> ptx/cfg -> ptx/ir
-```
+`KernelData` holds one kernel's structure and no scalar interpretation.
+`Uniformity` borrows it and reads instruction semantics; it does not use
+`ScalarEvolution`. A `ScalarEvolution` borrows a `KernelData`, reads
+uniformity, and holds the recursion between value and trip-count queries with
+its trip cache. `trip_counts` reads its per-loop results; nothing in
+`evolution` calls back into it.
 
-Within analysis, the main dependencies are:
+## Per-kernel flow
 
-```text
-trip_counts <-> trace -> affine -> symexpr
-     |           |        |
-     |           |        +-> control_flow::LoopId
-     |           +----------> control_flow
-     +-> loop_names --------> control_flow
+`main::run` calls `report::analyze`, which parses the module, checks an NCU
+record against it, and for each kernel resolves the bindings and launch shape
+and builds the CFG, the loop forest and one `KernelData`. `KernelReportBuilder`
+then:
 
-thread_participation -> trace
-dead_code -> ssa, classify, register_effects
-uniformity <-> trace
-affine -> ssa (`Var::Uniform` names a register SSA value)
-thread_participation -> lane_eval -> affine
-memory_footprint -----> lane_eval
-memory_footprint -----------------> affine
-memory_footprint -> thread_participation, classify, control_flow
+1. creates one `ScalarEvolution` under those bindings;
+2. names loops, collects every loop's trip count from that instance, and pairs
+   unrolled loops;
+3. collects instruction contributions per block;
+4. computes thread participation from the same instance, and refines dominance
+   and count qualifiers with its dead edges;
+5. takes compile-time thread sets: the same sets when the bindings are exactly
+   the `.reqntid` block shape, otherwise from a second `ScalarEvolution` over the
+   same `KernelData` under that shape, so runtime parameter bindings never make
+   a conditionally executed instruction look removable;
+6. marks dead code, then traces addresses and computes memory footprints.
 
-instruction_counts::collect -> classify -> measurement
-                      +-> control_flow
-```
+`report/build` aggregates the results into the schema and, given an NCU record,
+compares them; `main` renders text or JSON. `--dump-ast` reads, parses, prints
+and returns.
 
-`loop_names` is more than presentation: trip analysis uses source file/line
-identity to pair unrolled main and remainder loops. It stays below reporting.
-`report/build` retains its current mixed orchestration and aggregation role;
-renaming it a driver would not separate those responsibilities.
+## Register SSA semantics
 
-`classify` returns one `InstructionCategory` and a list of `Contribution`
-records. `collect` retains individual instructions and attaches execution
-context to their contributions. Report grouping counts the retained
-instructions, so it can show one opcode with multiple contributions without
-counting it twice.
-The classification axes and contribution types are shared between `classify`
-and `measurement`.
+SSA is a register representation alongside PTX. `src/ssa.rs` places merges over
+the PTX CFG and identifies the value a read sees, using writes supplied by its
+caller. It has no instructions of its own. Dominance and loop information retain
+PTX block identities.
 
-Trip analysis uses private free functions that take `&AffineValueTracer`; it does not add
-methods to the tracer from another module. Trip matching constructs an unbound
-tracer, while report address/thread analysis uses one with parameter bindings.
-These distinct evaluation modes remain explicit.
+- Predicated writes: a guarded `Result` keeps the old value where its predicate
+  is false.
+- Loop merges: an `Argument` at the header has incoming values from the latches.
+- Undefined inputs: `Undef` remains in merges and is refused when interpreted.
+- Unsupported operations: conservative register writes and opaque `Result`s.
+- Registers and CC only: memory dependence is not implied by register def/use.
 
-## Register SSA
-
-SSA is a second representation alongside `ptx`. `src/ssa.rs` holds register
-values only: φ placement over the PTX CFG and the value a read sees, built
-from the writes the caller supplies. It has no instructions of its own. Do
-not create empty modules or placeholder interfaces.
-
-The flow is:
-
-```text
-PTX text -> parsed PTX IR -> CFG -> SSA construction -> SSA-based analyses
-                             +----------------------> existing analyses
-```
-
-Keep SSA representation definitions independent of the analyses that consume
-them. SSA construction uses the existing dominance information and keeps the
-PTX CFG and its block identities. If both representations need dominance and
-loop discovery, separate reusable graph algorithms from PTX-specific CFG
-construction at that time.
-
-The tracer, the uniformity analysis, trip counting and thread participation
-read register SSA; `analysis/scalar/recurrences` recognizes loop counters on its
-values. `Affine` and `SymExpr` remain the analysis value domains; SSA does not
-by itself derive trip counts.
-
-Preserve origin mappings from SSA operations to PTX instructions and source
-locations. Instruction/FLOP/byte accounting remains tied to original PTX
-operations; synthetic merge operations must not contribute to those counts.
-Reports should continue attributing derived facts to those original operations.
-
-Its semantics:
-
-1. Predicated writes: a guarded `Result` is a ψ; its old value, which a false
-   predicate preserves, is the value the statement reads from the register.
-2. Loop merges: an `Argument` at the header, whose back-edge values are the
-   values at the end of the latches.
-3. Undefined inputs: `Undef`, kept in φs and refused where a value is
-   interpreted. Unsupported operations: the register-effects decoder's
-   fallback writes, opaque `Result`s.
-4. The CFG is unchanged; values name PTX statements and blocks.
-5. Registers and CC only: no memory, no special registers. Memory
-   dependencies require additional reasoning and are not implied by SSA
-   register def-use links.
-
-No generic dataflow framework, new IR, or pass manager is added.
+Origin mappings stay tied to PTX statements and source locations. Synthetic
+merges never contribute instruction, FLOP or byte counts.
 
 ## Validation
 
-Run `cargo fmt --all -- --check`, `cargo test --offline`, and build the CLI before
-running `tests/lit.sh tests/lit`.
-Keep existing snapshots and lit test expectations unchanged. CUDA round trips
-run only when the required toolkit executables are available.
+`cargo test --offline --test architecture` parses Rust syntax with `syn`. It
+follows `use` items, including a module a `use` binds to a name, reexports and
+qualified paths; rejects a dependency cycle with its path; and checks the
+boundaries above. `mod` declarations and visibility paths are not use edges.
+`#[cfg(test)] mod` contents are excluded; other conditional source is checked
+conservatively. It does not expand macros or resolve inferred types: a method
+call on a value whose type a file never names is not an edge.
+
+Run `cargo fmt --all -- --check`,
+`CARGO_INCREMENTAL=0 cargo clippy --offline --locked --all-targets -- -D warnings`,
+`cargo test --offline --locked`, and build the CLI before running
+`tests/lit.sh -sv tests/lit`. Preserve existing snapshots and lit expectations.
+CUDA round trips run when the toolkit executables are available.
