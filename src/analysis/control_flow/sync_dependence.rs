@@ -7,9 +7,10 @@
 //! on from the header to the loop's exits only (`ModifiedPostOrder`,
 //! :63, :701): a path around the loop again meets the others where it
 //! leaves, and the paths into the loop from before the branch do not
-//! count.
+//! count. Within one trip of a loop, the same labels show which
+//! branches decide at which trip a thread leaves it.
 
-use super::loops::LoopForest;
+use super::loops::{Loop, LoopForest};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 
 /// For each block, the joins of the paths from its successors. A path
@@ -31,6 +32,37 @@ pub fn join_blocks(cfg: &ControlFlowGraph, forest: &LoopForest) -> Vec<Vec<Block
     (blocks.map(|b| labels(&next, b, &cfg.block(b).succs).1)).collect()
 }
 
+/// For each loop, the branches in it that decide at which trip, or by
+/// which exit, a thread leaves it: those whose successors' labels reach
+/// its exits and its header, within one trip, not all alike. A path back
+/// at the branch goes on, as the thread takes it again later in the same
+/// trip. In a kernel with a cycle of more than one entry, every branch
+/// in it.
+pub fn exit_branches(cfg: &ControlFlowGraph, forest: &LoopForest) -> Vec<Vec<BlockId>> {
+    let next = label_edges(cfg, forest);
+    let branches = |l: &Loop| {
+        let inside = |x: usize| {
+            x != l.header.0 as usize && l.blocks.binary_search(&BlockId(x as u32)).is_ok()
+        };
+        let within: Vec<Vec<BlockId>> = (next.iter().enumerate())
+            .map(|(x, n)| if inside(x) { n.clone() } else { Vec::new() })
+            .collect();
+        let decides = |b: BlockId| {
+            let succs = &cfg.block(b).succs;
+            if !forest.irreducible_edges.is_empty() {
+                return succs.iter().any(|s| *s != succs[0]);
+            }
+            let label = labels(&within, l.header, succs).0;
+            let mut left = (0..label.len())
+                .filter(|&x| !inside(x))
+                .filter_map(|x| label[x]);
+            left.next().is_some_and(|first| left.any(|l| l != first))
+        };
+        (l.blocks.iter().copied()).filter(|&b| decides(b)).collect()
+    };
+    forest.loops.iter().map(branches).collect()
+}
+
 /// Each block's successors along which labels go: a loop header's are
 /// the loop's exits.
 fn label_edges(cfg: &ControlFlowGraph, forest: &LoopForest) -> Vec<Vec<BlockId>> {
@@ -48,11 +80,11 @@ fn label_edges(cfg: &ControlFlowGraph, forest: &LoopForest) -> Vec<Vec<BlockId>>
     next
 }
 
-/// The label of each block the paths from `b`'s successors `succs` reach
-/// along `next`, and their joins.
+/// The label of each block the paths from the successors `succs` reach
+/// along `next` without passing `stop`, and their joins.
 fn labels(
     next: &[Vec<BlockId>],
-    b: BlockId,
+    stop: BlockId,
     succs: &[BlockId],
 ) -> (Vec<Option<BlockId>>, Vec<BlockId>) {
     let mut label: Vec<Option<BlockId>> = vec![None; next.len()];
@@ -60,7 +92,7 @@ fn labels(
         label[s.0 as usize] = Some(s);
     }
     let mut joins = Vec::new();
-    for x in order(next, succs, Some(b)) {
+    for x in order(next, succs, Some(stop)) {
         let pushed = label[x.0 as usize];
         for &s in &next[x.0 as usize] {
             let old = &mut label[s.0 as usize];
@@ -127,6 +159,26 @@ mod tests {
             .collect()
     }
 
+    /// The exit branches of the loop headed by the block labelled
+    /// `header`, by label.
+    fn exit_branches_of(body: &str, header: &str) -> Vec<String> {
+        let src = format!(
+            ".version 8.7\n.target sm_80\n.address_size 64\n\
+             .visible .entry k()\n{{\nmov.u32 %r1, %tid.x;\nbra.uni $B0;\n$B0:\n{body}\nret;\n}}\n"
+        );
+        let module = parse(&src).expect("test body parses");
+        let cfg = build_cfg(&module, &module.kernels[0]);
+        let forest = loop_forest(&cfg);
+        let l = (forest
+            .loops
+            .iter()
+            .position(|l| cfg.block_name(&module, l.header) == header))
+        .expect("the loop");
+        (exit_branches(&cfg, &forest)[l].iter())
+            .map(|&b| cfg.block_name(&module, b))
+            .collect()
+    }
+
     #[test]
     fn the_sides_of_an_if_meet_after_it() {
         let body = "setp.lt.u32 %p1, %r1, 16;\n@%p1 bra $A;\n$B:\nmov.u32 %r2, 64;\n\
@@ -142,6 +194,41 @@ mod tests {
                     $W:\nld.volatile.shared.u32 %r4, [%rd2];\nsetp.eq.u32 %p2, %r4, 0;\n\
                     @%p2 bra $W;\n$C:\nadd.s32 %r2, %r2, 1;\nbra.uni $H;\n$X:";
         assert_eq!(joins_of(body, "$W"), Vec::<String>::new());
+    }
+
+    /// Every thread leaves the spin-wait for the same block, so it
+    /// decides no trip of the loop around it.
+    #[test]
+    fn a_spin_wait_is_no_exit_branch_of_the_loop_around_it() {
+        let body = "$H:\nsetp.ge.u32 %p1, %r2, 4;\n@%p1 bra $X;\n\
+                    $W:\nld.volatile.shared.u32 %r4, [%rd2];\nsetp.eq.u32 %p2, %r4, 0;\n\
+                    @%p2 bra $W;\n$C:\nadd.s32 %r2, %r2, 1;\nbra.uni $H;\n$X:";
+        assert_eq!(exit_branches_of(body, "$H"), ["$H"]);
+        assert_eq!(exit_branches_of(body, "$W"), ["$W"]);
+    }
+
+    /// A header's branch that skips the only exit test: the threads it
+    /// sends around leave at a later trip.
+    #[test]
+    fn a_header_branch_that_skips_the_exit_test_is_an_exit_branch() {
+        let body = "$H:\nsetp.le.s32 %p1, %r2, %r1;\n@%p1 bra $L;\n\
+                    $T:\nsetp.ge.s32 %p2, %r2, 3;\n@%p2 bra $X;\n\
+                    $L:\nadd.s32 %r2, %r2, 1;\nbra.uni $H;\n$X:";
+        assert_eq!(exit_branches_of(body, "$H"), ["$H", "$T"]);
+    }
+
+    /// An inner header's branch that sends some threads around the inner
+    /// loop again, past the test that keeps them in the outer one: they
+    /// leave the outer loop by the other exit.
+    #[test]
+    fn an_inner_header_branch_decides_the_outer_exit() {
+        let body = "$H2:\nsetp.ge.u32 %p1, %r2, 3;\n@%p1 bra $M;\n$P:\nmov.u32 %r3, 0;\n\
+                    $H1:\nsetp.le.s32 %p2, %r3, %r1;\n@%p2 bra $L1;\n\
+                    $T:\nsetp.eq.s32 %p3, %r3, 4;\n@%p3 bra $E1;\n\
+                    $T2:\nsetp.ge.s32 %p4, %r3, 8;\n@%p4 bra $M;\n\
+                    $L1:\nadd.s32 %r3, %r3, 1;\nbra.uni $H1;\n\
+                    $E1:\nadd.s32 %r2, %r2, 1;\nbra.uni $H2;\n$M:";
+        assert_eq!(exit_branches_of(body, "$H2"), ["$H2", "$H1", "$T", "$T2"]);
     }
 
     /// Two latches: the threads on either side meet at the header.
