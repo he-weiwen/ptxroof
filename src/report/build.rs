@@ -349,7 +349,7 @@ impl KernelReportBuilder<'_> {
                         }
                         Operand::Register(_) => match (se.trace_address(*base, pos, scope))
                             .map(|a| {
-                                (a + Affine::invariant(SymExpr::Const(*offset))).bind(bind_map)
+                                (a + Affine::from_base(SymExpr::Const(*offset))).bind(bind_map)
                             })
                             .and_then(|a| per_lane(a, se, pos, &name))
                         {

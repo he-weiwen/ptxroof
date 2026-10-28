@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(fp(&tid().scale(c(128)), 4, [32, 1, 1]), (32, 32));
         // The same address for every lane.
         assert_eq!(
-            fp(&Affine::invariant(SymExpr::sym("p")), 4, [32, 1, 1]),
+            fp(&Affine::from_base(SymExpr::sym("p")), 4, [32, 1, 1]),
             (1, 1)
         );
         // k5's A tile: 4 rows of 8 halves per warp, rows 512 B apart.
@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(ideal(&tid().scale(c(128)), 2, [32, 1, 1], |_| true), (2, 2));
         // One address for the whole warp: one sector is all it needs.
         assert_eq!(
-            ideal(&Affine::invariant(SymExpr::sym("p")), 2, [32, 1, 1], |_| {
+            ideal(&Affine::from_base(SymExpr::sym("p")), 2, [32, 1, 1], |_| {
                 true
             }),
             (1, 1)
@@ -689,7 +689,7 @@ mod tests {
     fn a_loop_requests_and_touches_its_lanes_bytes_at_every_trip() {
         let c = |n: i64| SymExpr::Const(n);
         let id = LoopId(0);
-        let form = Affine::invariant(SymExpr::Sym(Leaf::Param(0)))
+        let form = Affine::from_base(SymExpr::Sym(Leaf::Param(0)))
             + tid().scale(c(4))
             + Affine::var(Var::Iter(id)).scale(c(512));
         let access = |form: &Affine| AccessForm {
@@ -729,7 +729,7 @@ mod tests {
                 max: 2048
             })
         );
-        let shifted = form.clone() + Affine::invariant(SymExpr::Sym(Leaf::Param(2)));
+        let shifted = form.clone() + Affine::from_base(SymExpr::Sym(Leaf::Param(2)));
         let forms = [access(&form), access(&shifted)];
         let two = loop_bytes(id, 4, [128, 1, 1], &forms, on_param).unwrap();
         assert_eq!(

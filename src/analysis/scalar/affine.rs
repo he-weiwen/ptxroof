@@ -161,7 +161,7 @@ pub struct Affine {
 }
 
 impl Affine {
-    pub fn invariant(base: SymExpr) -> Affine {
+    pub fn from_base(base: SymExpr) -> Affine {
         Affine {
             terms: BTreeMap::new(),
             base,
@@ -173,17 +173,17 @@ impl Affine {
     }
 
     pub fn term(v: Var, coeff: SymExpr) -> Affine {
-        let mut a = Affine::invariant(SymExpr::Const(0));
+        let mut a = Affine::from_base(SymExpr::Const(0));
         if coeff != SymExpr::Const(0) {
             a.terms.insert(v, coeff);
         }
         a
     }
 
-    /// Multiply by a loop-invariant value.
+    /// Multiply by a symbolic or constant value.
     pub fn scale(self, c: SymExpr) -> Affine {
         if c == SymExpr::Const(0) {
-            return Affine::invariant(SymExpr::Const(0));
+            return Affine::from_base(SymExpr::Const(0));
         }
         Affine {
             terms: self
@@ -197,7 +197,7 @@ impl Affine {
 
     /// Substitute bound symbols in every coefficient and the base.
     pub fn bind(&self, bindings: &std::collections::HashMap<Leaf, i64>) -> Affine {
-        let mut out = Affine::invariant(self.base.bind(bindings));
+        let mut out = Affine::from_base(self.base.bind(bindings));
         for (v, c) in &self.terms {
             out = out + Affine::term(v.clone(), c.bind(bindings));
         }
@@ -227,10 +227,11 @@ impl Affine {
 
     /// `⌊self / d⌋`, d > 0: exact when every part is a multiple of d; the
     /// multiple of d divided and the floor of what remains, as `split`
-    /// takes it; a floor division when invariant. None otherwise.
+    /// takes it; a floor division when symbolic or constant. None
+    /// otherwise.
     pub fn div_const(self, d: i64) -> Option<Affine> {
-        if self.is_invariant() {
-            return Some(Affine::invariant(SymExpr::floor_div(self.base, d)));
+        if self.is_symbolic_or_constant() {
+            return Some(Affine::from_base(SymExpr::floor_div(self.base, d)));
         }
         if let Some(exact) = self.clone().div_exact(d) {
             return Some(exact);
@@ -241,13 +242,13 @@ impl Affine {
 
     /// `self mod m`, m > 0: zero when every part is a multiple of m; the
     /// remainder of what remains past the multiple of m, as `split` takes
-    /// it; a symbolic modulus when invariant. None otherwise.
+    /// it; a symbolic modulus when symbolic or constant. None otherwise.
     pub fn modulo_const(self, m: i64) -> Option<Affine> {
-        if self.is_invariant() {
-            return Some(Affine::invariant(SymExpr::modulo(self.base, m)));
+        if self.is_symbolic_or_constant() {
+            return Some(Affine::from_base(SymExpr::modulo(self.base, m)));
         }
         if self.clone().div_exact(m).is_some() {
-            return Some(Affine::invariant(SymExpr::Const(0)));
+            return Some(Affine::from_base(SymExpr::Const(0)));
         }
         let (_, _, rem) = self.split(m)?;
         Some(rem)
@@ -256,9 +257,9 @@ impl Affine {
     /// `self − self mod m`, the multiple of m at or below it: m times the
     /// quotient `div_const` gives.
     pub fn align_down(self, m: i64) -> Option<Affine> {
-        if self.is_invariant() {
+        if self.is_symbolic_or_constant() {
             let rem = SymExpr::modulo(self.base.clone(), m);
-            return Some(Affine::invariant(SymExpr::sub(self.base, rem)));
+            return Some(Affine::from_base(SymExpr::sub(self.base, rem)));
         }
         if self.clone().div_exact(m).is_some() {
             return Some(self);
@@ -272,7 +273,7 @@ impl Affine {
     /// in the base, r at most one other term `c·v`, c a positive divisor
     /// of d, and a constant in [0, c), or one in [0, d) alone.
     fn split(&self, d: i64) -> Option<(Affine, Affine, Affine)> {
-        let mut q = Affine::invariant(SymExpr::Const(0));
+        let mut q = Affine::from_base(SymExpr::Const(0));
         let mut rest = None;
         for (v, c) in &self.terms {
             if c.divisible_by(d) {
@@ -304,9 +305,9 @@ impl Affine {
         }
         let whole = SymExpr::add(whole, carry);
         q.base = SymExpr::add(SymExpr::floor_div(multiple, d), whole);
-        let rem = Affine::invariant(SymExpr::Const(k));
+        let rem = Affine::from_base(SymExpr::Const(k));
         let Some((v, c)) = rest else {
-            return Some((q, Affine::invariant(SymExpr::Const(0)), rem));
+            return Some((q, Affine::from_base(SymExpr::Const(0)), rem));
         };
         let floor = Affine::var(Var::Div(Box::new(v.clone()), d / c));
         let modulo = Affine::term(Var::Mod(Box::new(v.clone()), d / c), SymExpr::Const(c));
@@ -315,7 +316,7 @@ impl Affine {
 
     /// Substitute every variable by a form; None if any substitution is.
     pub fn map_vars(&self, f: impl Fn(&Var) -> Option<Affine>) -> Option<Affine> {
-        let mut out = Affine::invariant(self.base.clone());
+        let mut out = Affine::from_base(self.base.clone());
         for (v, c) in &self.terms {
             out = out + f(v)?.scale(c.clone());
         }
@@ -343,12 +344,16 @@ impl Affine {
         self
     }
 
-    pub fn is_invariant(&self) -> bool {
+    /// No term: the base alone, of symbols and constants (MLIR's
+    /// `AffineExpr::isSymbolicOrConstant`).
+    pub fn is_symbolic_or_constant(&self) -> bool {
         self.terms.is_empty()
     }
 
     pub fn as_const(&self) -> Option<i64> {
-        self.is_invariant().then(|| self.base.as_const()).flatten()
+        self.is_symbolic_or_constant()
+            .then(|| self.base.as_const())
+            .flatten()
     }
 }
 
@@ -624,7 +629,7 @@ mod tests {
         };
         let a = tid.scale(SymExpr::Const(4))
             + k.scale(SymExpr::Const(-16))
-            + Affine::invariant(SymExpr::Const(100));
+            + Affine::from_base(SymExpr::Const(100));
         assert_eq!(a.range(&bound), Some((100 - 128, 100 + 508 - 16)));
         let floor = Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 32));
         assert_eq!(floor.range(&bound), Some((0, 3)));
@@ -632,7 +637,7 @@ mod tests {
         assert_eq!(modulo.range(&bound), Some((0, 3)));
         let ctaid = Affine::var(Var::Ctaid(Axis::X));
         assert_eq!(ctaid.range(&bound), None);
-        let param = Affine::invariant(SymExpr::Sym(Leaf::Param(0)));
+        let param = Affine::from_base(SymExpr::Sym(Leaf::Param(0)));
         assert_eq!(param.range(&bound), None);
     }
 
@@ -673,7 +678,7 @@ mod tests {
         // A multiple of 64 of any sign, and a base below 0.
         let signed = Affine::var(Var::Iter(LoopId(0))).scale(c(-64))
             + modulo(16)
-            + Affine::invariant(c(-64));
+            + Affine::from_base(c(-64));
         assert_eq!(signed.may_set(&block), !0x30);
         // Disjoint terms add as an or; others carry.
         assert_eq!((modulo(4) + modulo(4).scale(c(4))).may_set(&block), 0xf);
@@ -683,11 +688,11 @@ mod tests {
         assert_eq!(Affine::var(tid()).scale(c(16)).may_set(&block), 0x7f0);
         // A parameter's bits are unknown, a negative constant's all high.
         assert_eq!(
-            Affine::invariant(SymExpr::Sym(Leaf::Param(0))).may_set(&block),
+            Affine::from_base(SymExpr::Sym(Leaf::Param(0))).may_set(&block),
             u64::MAX
         );
-        assert_eq!(Affine::invariant(c(-4)).may_set(&block), !0x3);
-        assert_eq!(Affine::invariant(c(0)).may_set(&block), 0);
+        assert_eq!(Affine::from_base(c(-4)).may_set(&block), !0x3);
+        assert_eq!(Affine::from_base(c(0)).may_set(&block), 0);
         // A symbolic coefficient known a multiple of 64.
         let p = SymExpr::mul(c(64), SymExpr::Sym(Leaf::Param(1)));
         assert_eq!(
@@ -721,7 +726,7 @@ mod tests {
         let a = [m, m, m, -m, -m]
             .into_iter()
             .zip(0..)
-            .fold(Affine::invariant(SymExpr::Const(0)), |a, (c, l)| {
+            .fold(Affine::from_base(SymExpr::Const(0)), |a, (c, l)| {
                 a + Affine::var(Var::Iter(LoopId(l))).scale(SymExpr::Const(c))
             });
         let bound = |_: &Var| Some((m, m));
@@ -735,7 +740,7 @@ mod tests {
     #[test]
     fn a_coefficient_or_base_of_minus_2_63_renders_whole() {
         let min = || SymExpr::Const(i64::MIN);
-        let a = tid().scale(min()) + Affine::invariant(min());
+        let a = tid().scale(min()) + Affine::from_base(min());
         assert_eq!(
             a.to_string(),
             "(-9223372036854775808) * %tid.x - 9223372036854775808"
@@ -768,7 +773,7 @@ mod tests {
         let x = || Var::Tid(Axis::X);
         let text = |a: Option<Affine>| a.map(|a| a.to_string());
         // 01588.ptx's ((%tid.x & 127) | 128) >> 4 and its alignment.
-        let rows = Affine::var(Var::Mod(Box::new(x()), 128)) + Affine::invariant(c(128));
+        let rows = Affine::var(Var::Mod(Box::new(x()), 128)) + Affine::from_base(c(128));
         assert_eq!(
             text(rows.clone().div_const(16)).as_deref(),
             Some("⌊(%tid.x mod 128)/16⌋ + 8")
@@ -787,13 +792,13 @@ mod tests {
         // Lane 13 of a warp, 32·w + 13, and 4·w + 1: a constant below the
         // coefficient of the term the divisor does not divide.
         let w = || Affine::var(Var::Div(Box::new(x()), 32));
-        let lane = w().scale(c(32)) + Affine::invariant(c(13));
+        let lane = w().scale(c(32)) + Affine::from_base(c(13));
         assert_eq!(
             text(lane.clone().div_const(8)).as_deref(),
             Some("4 * ⌊%tid.x/32⌋ + 1")
         );
         assert_eq!(text(lane.modulo_const(8)).as_deref(), Some("5"));
-        let quad = w().scale(c(4)) + Affine::invariant(c(1));
+        let quad = w().scale(c(4)) + Affine::from_base(c(1));
         assert_eq!(
             text(quad.clone().modulo_const(16)).as_deref(),
             Some("4 * (⌊%tid.x/32⌋ mod 4) + 1")
@@ -801,7 +806,7 @@ mod tests {
         assert_eq!(text(quad.div_const(16)).as_deref(), Some("⌊⌊%tid.x/32⌋/4⌋"));
         // A symbolic coefficient known a multiple of the divisor.
         let p = SymExpr::mul(c(16), SymExpr::Sym(Leaf::Param(0)));
-        let scaled = Affine::term(x(), p) + Affine::invariant(c(1));
+        let scaled = Affine::term(x(), p) + Affine::from_base(c(1));
         assert_eq!(
             text(scaled.div_const(16)).as_deref(),
             Some("param_0 * %tid.x")
@@ -811,17 +816,17 @@ mod tests {
         // the divisor does not divide; a base not known a multiple.
         let tid = || Affine::var(x());
         let k = Affine::var(Var::Iter(LoopId(0)));
-        assert_eq!((tid() + Affine::invariant(c(-4))).modulo_const(8), None);
-        assert_eq!((k + Affine::invariant(c(-1))).modulo_const(2), None);
+        assert_eq!((tid() + Affine::from_base(c(-4))).modulo_const(8), None);
+        assert_eq!((k + Affine::from_base(c(-1))).modulo_const(2), None);
         assert_eq!(tid().scale(c(-2)).div_const(4), None);
         assert_eq!(tid().scale(c(3)).div_const(8), None);
         assert_eq!(
             (tid() + Affine::var(Var::Ctaid(Axis::X))).div_const(2),
             None
         );
-        let param = Affine::invariant(SymExpr::Sym(Leaf::Param(1)));
+        let param = Affine::from_base(SymExpr::Sym(Leaf::Param(1)));
         assert_eq!((tid() + param).div_const(16), None);
-        let wide = tid() + Affine::invariant(SymExpr::add(c(i64::MAX - 7), c(8)));
+        let wide = tid() + Affine::from_base(SymExpr::add(c(i64::MAX - 7), c(8)));
         assert!(matches!(&wide.base, SymExpr::Sum(ts) if ts.len() == 2));
         assert_eq!(
             text(wide.clone().modulo_const(8)).as_deref(),
@@ -836,7 +841,7 @@ mod tests {
     #[test]
     fn terms_combine_cancel_and_scale_symbolically() {
         let k = SymExpr::Sym(Leaf::Param(2));
-        let a = tid().scale(SymExpr::Const(2)) + Affine::invariant(SymExpr::Const(8));
+        let a = tid().scale(SymExpr::Const(2)) + Affine::from_base(SymExpr::Const(8));
         assert_eq!(a.to_string(), "2 * %tid.x + 8");
         assert_eq!(
             (a.clone() - tid().scale(SymExpr::Const(2))).as_const(),
@@ -870,7 +875,7 @@ mod tests {
             Some("8 * (%tid.x mod 8)")
         );
         assert_eq!(
-            m(tid() + Affine::invariant(SymExpr::Const(64)), 8).as_deref(),
+            m(tid() + Affine::from_base(SymExpr::Const(64)), 8).as_deref(),
             Some("(%tid.x mod 8)")
         );
         assert_eq!(
@@ -887,12 +892,12 @@ mod tests {
             - tid().modulo_const(8).unwrap().scale(SymExpr::Const(16));
         assert_eq!(neg.to_string(), "16 * %tid.x - 16 * (%tid.x mod 8)");
         assert_eq!(
-            (tid().scale(SymExpr::Const(-2)) + Affine::invariant(SymExpr::Const(-4))).to_string(),
+            (tid().scale(SymExpr::Const(-2)) + Affine::from_base(SymExpr::Const(-4))).to_string(),
             "-2 * %tid.x - 4"
         );
         assert_eq!(tid().align_down(8).unwrap().to_string(), "8 * ⌊%tid.x/8⌋");
         assert_eq!(
-            (tid().scale(SymExpr::Const(2)) + Affine::invariant(SymExpr::Const(64)))
+            (tid().scale(SymExpr::Const(2)) + Affine::from_base(SymExpr::Const(64)))
                 .align_down(16)
                 .unwrap()
                 .to_string(),

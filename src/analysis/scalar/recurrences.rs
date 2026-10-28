@@ -2,7 +2,8 @@
 //! header that every back edge feeds back plus the same step, as LLVM's
 //! ScalarEvolution recognizes an add-recurrence on a header PHI
 //! (`createAddRecFromPHI`). Recognition is structural; whether a
-//! register step is invariant, and what the start is, are the reader's.
+//! register step is free of every variable, and what the start is, are
+//! the reader's.
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::register_effects::writes;

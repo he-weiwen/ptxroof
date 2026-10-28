@@ -207,16 +207,16 @@ impl<'a> ScalarEvolution<'a> {
             Operand::Immediate(text) => {
                 let text = module.interner.resolve(*text);
                 parse_int(text)
-                    .map(|c| Affine::invariant(SymExpr::Const(c)))
+                    .map(|c| Affine::from_base(SymExpr::Const(c)))
                     .ok_or_else(|| format!("non-integer immediate {text}"))
             }
             // A named location (a shared array, the dynamic shared base):
-            // its address is an invariant symbol.
+            // its address is a symbol.
             Operand::SymbolRef(s) => {
-                Ok(Affine::invariant(SymExpr::sym(module.interner.resolve(*s))))
+                Ok(Affine::from_base(SymExpr::sym(module.interner.resolve(*s))))
             }
             Operand::Offset { base, offset } => Ok(self.trace_operand(*base, pos, id, depth)?
-                + Affine::invariant(SymExpr::Const(*offset))),
+                + Affine::from_base(SymExpr::Const(*offset))),
             other => Err(format!(
                 "unsupported operand form in latch trace: {other:?}"
             )),
@@ -229,7 +229,7 @@ impl<'a> ScalarEvolution<'a> {
         }
         match reg {
             _ if special_register(reg) == Some(SpecialRegister::Zero) => {
-                Ok(Affine::invariant(SymExpr::Const(0)))
+                Ok(Affine::from_base(SymExpr::Const(0)))
             }
             // PTX ISA §10.3: %laneid is "the thread's lane within the
             // warp", and §3.1: a warp "contains threads of consecutive,
@@ -241,7 +241,7 @@ impl<'a> ScalarEvolution<'a> {
             // One value for the CTA (the launch shape, the cluster, the
             // shared memory sizes): a symbol, bound when known.
             _ if special_register(reg) == Some(SpecialRegister::PerCta) => {
-                Ok(Affine::invariant(SymExpr::Sym(Leaf::Special(reg))))
+                Ok(Affine::from_base(SymExpr::Sym(Leaf::Special(reg))))
             }
             _ => Err(format!(
                 "latch condition depends on special register {}",
@@ -327,7 +327,7 @@ impl<'a> ScalarEvolution<'a> {
             return Err(self.obstacle_of_any_def(reg, id).unwrap_or(why));
         }
         match self.same_immediate(&defs) {
-            Some(c) => Ok(Affine::invariant(SymExpr::Const(c))),
+            Some(c) => Ok(Affine::from_base(SymExpr::Const(c))),
             None => Err(refused()),
         }
     }
@@ -367,7 +367,7 @@ impl<'a> ScalarEvolution<'a> {
             return Ok(start);
         }
         let back = SymExpr::mul(SymExpr::Const(-1), step.clone());
-        Ok(Affine::term(Var::Iter(l), step) + start + Affine::invariant(back))
+        Ok(Affine::term(Var::Iter(l), step) + start + Affine::from_base(back))
     }
 
     /// A counter's step in loop `l`: its constant, its registers, each
@@ -378,7 +378,7 @@ impl<'a> ScalarEvolution<'a> {
         for &(reg, at, sign) in &step.registers {
             let s = self.first_reason(|| self.trace_reg(reg, at, Some(l), depth + 1));
             let s = s.map_err(|_| None)?;
-            if !s.is_invariant() {
+            if !s.is_symbolic_or_constant() {
                 return Err(None);
             }
             sum = SymExpr::add(sum, SymExpr::mul(SymExpr::Const(sign), s.base));
@@ -433,7 +433,7 @@ impl<'a> ScalarEvolution<'a> {
         }
         self.trips.borrow_mut().insert(l, None);
         let n = (self.loop_trip_count(l).ok().map(|t| t.count))
-            .and_then(|t| self.constant(&Affine::invariant(t)))
+            .and_then(|t| self.constant(&Affine::from_base(t)))
             .filter(|&n| n >= 1);
         self.trips.borrow_mut().insert(l, n);
         n
@@ -559,7 +559,7 @@ impl<'a> ScalarEvolution<'a> {
                     && let Operand::SymbolRef(pname) = module.operand(*base)
                     && let Some(&idx) = self.data.params.get(pname)
                 {
-                    return Ok(Affine::invariant(SymExpr::Sym(Leaf::Param(idx))));
+                    return Ok(Affine::from_base(SymExpr::Sym(Leaf::Param(idx))));
                 }
                 if id.is_some_and(|l| self.data.in_loop(l, def)) {
                     Err("latch condition depends on a value loaded inside the loop".to_owned())
@@ -574,7 +574,7 @@ impl<'a> ScalarEvolution<'a> {
             Opcode::Neg
                 if ops.len() == 2 && matches!(mods.last(), Some(&("s16" | "s32" | "s64"))) =>
             {
-                Ok(Affine::invariant(SymExpr::Const(0)) - arg(1)?)
+                Ok(Affine::from_base(SymExpr::Const(0)) - arg(1)?)
             }
             Opcode::And if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
@@ -602,7 +602,7 @@ impl<'a> ScalarEvolution<'a> {
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
                 let range = bound.range(&|v| self.bound(v));
                 let all = konst as u64 & u64::MAX >> (64 - width);
-                let (mut bits, mut sum) = (all, Affine::invariant(SymExpr::Const(0)));
+                let (mut bits, mut sum) = (all, Affine::from_base(SymExpr::Const(0)));
                 let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
                 // A value of 0 or −1, all ones, keeps none or all of the
                 // mask: −mask·v, alike signed and unsigned below the sign bit.
@@ -686,7 +686,7 @@ impl<'a> ScalarEvolution<'a> {
                     .find_map(|m| m.get(1..)?.parse::<i64>().ok());
                 match self.constant(&arg(2)?) {
                     Some(c) if width.is_some_and(|w| c >= w) => {
-                        Ok(Affine::invariant(SymExpr::Const(0)))
+                        Ok(Affine::from_base(SymExpr::Const(0)))
                     }
                     Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".to_owned()),
@@ -710,7 +710,7 @@ impl<'a> ScalarEvolution<'a> {
                 let Some(c) = self.constant(&arg(2)?) else {
                     return Err("shift by a non-constant amount".to_owned());
                 };
-                if !v.is_invariant() {
+                if !v.is_symbolic_or_constant() {
                     if !(0..63).contains(&c) {
                         return Err(format!("shift by {c} is out of range"));
                     }
@@ -728,10 +728,10 @@ impl<'a> ScalarEvolution<'a> {
                 // unless the value is known negative, so shifting it down is
                 // nvcc's `x / 2^n` sign fix-up.
                 if signed_width == Some(c + 1) && self.within(&v, (0, i128::MAX)) {
-                    return Ok(Affine::invariant(SymExpr::Const(0)));
+                    return Ok(Affine::from_base(SymExpr::Const(0)));
                 }
                 if (0..63).contains(&c) {
-                    Ok(Affine::invariant(SymExpr::floor_div(v.base, 1i64 << c)))
+                    Ok(Affine::from_base(SymExpr::floor_div(v.base, 1i64 << c)))
                 } else {
                     Err(format!("shift by {c} is out of range"))
                 }
@@ -776,7 +776,7 @@ impl<'a> ScalarEvolution<'a> {
                     match v {
                         Var::Tid(Axis::X) => Some(
                             warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32))
-                                + Affine::invariant(SymExpr::Const(c)),
+                                + Affine::from_base(SymExpr::Const(c)),
                         ),
                         Var::Div(inner, d) if **inner == Var::Tid(Axis::X) => {
                             if d % 32 == 0 {
@@ -784,7 +784,7 @@ impl<'a> ScalarEvolution<'a> {
                             } else if 32 % d == 0 {
                                 Some(
                                     warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32 / d))
-                                        + Affine::invariant(SymExpr::Const(c / d)),
+                                        + Affine::from_base(SymExpr::Const(c / d)),
                                 )
                             } else {
                                 None
@@ -792,7 +792,7 @@ impl<'a> ScalarEvolution<'a> {
                         }
                         Var::Mod(inner, m) if **inner == Var::Tid(Axis::X) => {
                             if 32 % m == 0 {
-                                Some(Affine::invariant(SymExpr::Const(c % m)))
+                                Some(Affine::from_base(SymExpr::Const(c % m)))
                             } else if m % 32 == 0 {
                                 let w = Var::Mod(
                                     Box::new(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
@@ -800,7 +800,7 @@ impl<'a> ScalarEvolution<'a> {
                                 );
                                 Some(
                                     Affine::var(w).scale(SymExpr::Const(32))
-                                        + Affine::invariant(SymExpr::Const(c)),
+                                        + Affine::from_base(SymExpr::Const(c)),
                                 )
                             } else {
                                 None
@@ -840,7 +840,7 @@ impl<'a> ScalarEvolution<'a> {
                 if ops.len() == 3 && mods.len() == 1 && IntType::of(&mods).is_some() =>
             {
                 let (a, b) = (per_cta(arg(1)?), per_cta(arg(2)?));
-                if !(a.is_invariant() && b.is_invariant()) {
+                if !(a.is_symbolic_or_constant() && b.is_symbolic_or_constant()) {
                     return Err(refuse(&(a + b), id, mnemonic.name()));
                 }
                 if let Some(ty) = IntType::of(&mods)
@@ -849,7 +849,7 @@ impl<'a> ScalarEvolution<'a> {
                     let opcode = module.opcode(instr);
                     return Err(format!("`{opcode}` of a value its type does not hold"));
                 }
-                Ok(Affine::invariant(match mnemonic {
+                Ok(Affine::from_base(match mnemonic {
                     Opcode::Min => SymExpr::min(a.base, b.base),
                     _ => SymExpr::max(a.base, b.base),
                 }))
@@ -863,9 +863,9 @@ impl<'a> ScalarEvolution<'a> {
             Opcode::Mul if ops.len() == 3 => {
                 let (a, b) = (arg(1)?, arg(2)?);
                 self.wide_operands(&[&a, &b], instr, &mods)?;
-                if a.is_invariant() {
+                if a.is_symbolic_or_constant() {
                     Ok(b.scale(a.base))
-                } else if b.is_invariant() {
+                } else if b.is_symbolic_or_constant() {
                     Ok(a.scale(b.base))
                 } else {
                     Err(refuse(&(a + b), id, "product"))
@@ -874,9 +874,9 @@ impl<'a> ScalarEvolution<'a> {
             Opcode::Mad if ops.len() == 4 => {
                 let (a, b, c) = (arg(1)?, arg(2)?, arg(3)?);
                 self.wide_operands(&[&a, &b], instr, &mods)?;
-                let prod = if a.is_invariant() {
+                let prod = if a.is_symbolic_or_constant() {
                     b.scale(a.base)
-                } else if b.is_invariant() {
+                } else if b.is_symbolic_or_constant() {
                     a.scale(b.base)
                 } else {
                     return Err(refuse(&(a + b), id, "product"));
@@ -1224,7 +1224,7 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
     let Some(coeff) = d.terms.get(&k) else {
         return Err("latch condition does not involve an induction variable".to_owned());
     };
-    let a1 = (se.constant(&Affine::invariant(coeff.clone())))
+    let a1 = (se.constant(&Affine::from_base(coeff.clone())))
         .ok_or_else(|| "induction step is not a constant".to_owned())?;
     if a1 == i64::MIN {
         return Err("induction step is −2^63, which has no negation".to_owned());
@@ -1328,7 +1328,7 @@ fn guard_test(se: &ScalarEvolution<'_>, id: LoopId) -> Option<(BlockId, SymExpr)
     } else {
         cmp.inverse()
     };
-    let e = form.is_invariant().then_some(form.base)?;
+    let e = form.is_symbolic_or_constant().then_some(form.base)?;
     let nonneg = |e: &SymExpr| e.least().is_some_and(|l| l >= 0);
     let (cmp, e) = match cmp {
         Cmp::Ne | Cmp::Eq => {
@@ -1737,9 +1737,9 @@ mod tests {
         );
     }
 
-    /// PTX ISA §9.7.1.13, §9.7.1.14: a min or max of invariants is one
-    /// too; a `.relu` one, or one of a value its type does not read, is
-    /// not read and stays a uniform value.
+    /// PTX ISA §9.7.1.13, §9.7.1.14: a min or max of symbolic or constant
+    /// values is one too; a `.relu` one, or one of a value its type does
+    /// not read, is not read and stays a uniform value.
     #[test]
     fn a_min_or_max_bound_is_symbolic() {
         let bound = |minmax: &str| {
