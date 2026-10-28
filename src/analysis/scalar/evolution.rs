@@ -402,14 +402,40 @@ impl<'a> ScalarEvolution<'a> {
         counted_trips(self, id)
     }
 
-    /// Memory operand `op`'s address at `pos`.
+    /// The address `offset` bytes past `base` at `pos` under the bindings,
+    /// one form for every lane unless it counts the iterations of a loop
+    /// that does not hold `pos` and that lanes leave at different
+    /// iterations, or holds a uniform value the lanes executing `pos` do
+    /// not see alike: then each lane reads its own, and the reason prints
+    /// that variable by `name`.
     pub(crate) fn trace_address(
         &self,
-        op: OperandId,
+        base: OperandId,
+        offset: i64,
         pos: usize,
         id: Option<LoopId>,
+        name: &dyn Fn(&Var) -> String,
     ) -> Result<Affine, String> {
-        self.first_reason(|| self.trace_operand(op, pos, id, 0))
+        let a = self.first_reason(|| self.trace_operand(base, pos, id, 0))?
+            + Affine::from_base(SymExpr::Const(offset));
+        let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
+        for v in a.terms.keys() {
+            if let Some(l) = v.counter().filter(|&l| !self.data.in_loop(l, pos))
+                && let Err(why) = self.uniformity().exits_uniform(l)
+            {
+                let k = name(&Var::Iter(l));
+                return Err(format!(
+                    "{k} differs between lanes after its loop, whose exit {why}"
+                ));
+            }
+            if let Some(u) = v.uniform()
+                && let Err(why) = self.uniformity().value_uniform_at(u, pos)
+            {
+                let u = name(&Var::Uniform(u));
+                return Err(format!("{u} differs between lanes: {why}"));
+            }
+        }
+        Ok(a)
     }
 
     /// `f`, failing for the first reason it read a uniform value as a

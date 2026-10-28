@@ -191,36 +191,6 @@ fn resolve_bindings(
     Ok(map)
 }
 
-/// `a`, unless it counts the iterations of a loop that does not hold
-/// `pos` and that lanes leave at different iterations, or holds a
-/// uniform value the lanes executing `pos` do not see alike: then each
-/// lane reads its own.
-fn per_lane(
-    a: Affine,
-    se: &ScalarEvolution,
-    pos: usize,
-    name: &dyn Fn(&Var) -> String,
-) -> Result<Affine, String> {
-    for v in a.terms.keys() {
-        if let Some(l) = v.counter().filter(|&l| !se.data.in_loop(l, pos)) {
-            let why = se.uniformity().exits_uniform(l).err();
-            if let Some(why) = why {
-                let k = name(&Var::Iter(l));
-                return Err(format!(
-                    "{k} differs between lanes after its loop, whose exit {why}"
-                ));
-            }
-        }
-        if let Some(u) = v.uniform()
-            && let Err(why) = se.uniformity().value_uniform_at(u, pos)
-        {
-            let u = name(&Var::Uniform(u));
-            return Err(format!("{u} differs between lanes: {why}"));
-        }
-    }
-    Ok(a)
-}
-
 impl KernelReportBuilder<'_> {
     /// Every memory operand of every memory instruction, traced to an
     /// affine address at its own position, grouped by the innermost loop
@@ -231,13 +201,7 @@ impl KernelReportBuilder<'_> {
         &self,
         se: &ScalarEvolution,
     ) -> (ByScope<Access>, ByScope<AccessForm>, PerRequests) {
-        let (module, kernel, cfg, forest, bind_map) = (
-            self.module,
-            self.kernel,
-            self.cfg,
-            self.forest,
-            self.bind_map,
-        );
+        let (module, kernel, cfg, forest) = (self.module, self.kernel, self.cfg, self.forest);
         let display = &self.display;
         let mut forms: ByScope<AccessForm> = HashMap::new();
         let mut per_request = PerRequests::new();
@@ -347,24 +311,21 @@ impl KernelReportBuilder<'_> {
                             };
                             (Some(addr), None, None)
                         }
-                        Operand::Register(_) => match (se.trace_address(*base, pos, scope))
-                            .map(|a| {
-                                (a + Affine::from_base(SymExpr::Const(*offset))).bind(bind_map)
-                            })
-                            .and_then(|a| per_lane(a, se, pos, &name))
-                        {
-                            Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
-                            Err(reason) => (
-                                None,
-                                Some(
-                                    reason
-                                        .strip_prefix("latch condition ")
-                                        .unwrap_or(&reason)
-                                        .to_owned(),
+                        Operand::Register(_) => {
+                            match se.trace_address(*base, *offset, pos, scope, &name) {
+                                Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
+                                Err(reason) => (
+                                    None,
+                                    Some(
+                                        reason
+                                            .strip_prefix("latch condition ")
+                                            .unwrap_or(&reason)
+                                            .to_owned(),
+                                    ),
+                                    None,
                                 ),
-                                None,
-                            ),
-                        },
+                            }
+                        }
                         _ => (
                             None,
                             Some("address operand form not traced".to_owned()),
