@@ -24,7 +24,7 @@ only declare modules and selected public entry points.
 | `analysis/control_flow/sync_dependence` | Where the paths from each branch's successors meet again (LLVM's sync dependence), and which branches decide when a thread leaves a loop |
 | `ssa` | Register SSA values and def/use queries over the PTX CFG |
 | `analysis/register_effects` | Instruction register reads and writes, CC included |
-| `analysis/kernel_data` | One kernel's register writes, SSA, parameter indices and reachability, with control-flow queries |
+| `analysis/kernel_data` | One kernel's register writes, SSA, parameter indices, reachability, branch joins and loop exit branches, with control-flow queries |
 | `analysis/special_registers` | Sharing and stability of PTX special-register values |
 | `analysis/uniformity` | Propagate divergence through definitions and controlling branches |
 | `analysis/scalar/symexpr` | Symbolic expressions and simplification |

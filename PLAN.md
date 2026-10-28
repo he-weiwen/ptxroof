@@ -420,7 +420,15 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 - **In a kernel with a cycle of more than one entry**, the uniformity
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare
-  (`a_value_from_a_cycle_with_two_entries_is_divergent_after_it`).
+  (`a_value_from_a_cycle_with_two_entries_is_divergent_after_it`), and
+  a branch as selecting the value at every φ its successors reach, not
+  only where their paths meet
+  (`with_a_cycle_of_two_entries_every_block_reached_is_a_join`).
+- **A φ at a loop header that every latch feeds the same value** is
+  still taken as selected by the branch between the latches, as LLVM
+  marks every φ of a join block (`taintAndPushPhiNodes`,
+  llvm/include/llvm/ADT/GenericUniformityImpl.h:949): the step counter
+  of `two_latches_select_at_the_header` is divergent.
 - **`setp`s not read as thread selectors.** A floating-point `setp`
   compares floats, not the traced integer forms, and `.f16x2` and
   `.bf16x2` each half on its own (PTX ISA §9.7.6.2, §9.7.7.2); an
@@ -511,8 +519,8 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   the B200 fused_rmsnorm's `4 * ⌊(⌊%tid.x/8⌋ mod 128)/4⌋` is
   `4 * ⌊%tid.x/32⌋` below 1024 threads.
 - **A refused φ names the obstacle on one of its source chains**: in
-  each Gluon `attn_fwd_ws` kernel 76 access rows say only "depends on
-  special register %ctaid.x" (34 in `tma_best`, 24 in
+  each Gluon `attn_fwd_ws` kernel 68 access rows say only "depends on
+  special register %ctaid.x" (34 in `tma_best`, 8 in
   `bmm_kernel_persistent`), not that a join of two values stopped the
   trace.
 - **A thread-index condition that holds on every thread still

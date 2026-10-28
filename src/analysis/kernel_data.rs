@@ -1,8 +1,10 @@
 //! Register definitions and control-flow queries for one kernel.
-//! Builds SSA, parameter indices and reachability; contains no scalar
-//! interpretation, uniformity solver or report state.
+//! Builds SSA, parameter indices, reachability, the joins of each
+//! branch and the exit branches of each loop; contains no scalar interpretation, uniformity solver or
+//! report state.
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
+use crate::analysis::control_flow::sync_dependence::{exit_branches, join_blocks};
 use crate::analysis::register_effects;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
@@ -23,6 +25,12 @@ pub(crate) struct KernelData<'a> {
     pub(crate) params: HashMap<Symbol, usize>,
     /// `reach[a][b]`: a path of at least one edge from block a to b.
     pub(crate) reach: Vec<Vec<bool>>,
+    /// `joins[b]`: the blocks where the paths from block b's successors
+    /// meet again.
+    pub(crate) joins: Vec<Vec<BlockId>>,
+    /// `exit_branches[l]`: the branches that decide at which trip, or by
+    /// which exit, a thread leaves loop l.
+    pub(crate) exit_branches: Vec<Vec<BlockId>>,
 }
 
 impl<'a> KernelData<'a> {
@@ -69,6 +77,8 @@ impl<'a> KernelData<'a> {
             ssa,
             params,
             reach,
+            joins: join_blocks(cfg, forest),
+            exit_branches: exit_branches(cfg, forest),
         }
     }
 

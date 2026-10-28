@@ -3,7 +3,7 @@ source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
 blocks {"confirmed": 143, "consistent": 276, "unchecked": 491}
-sector lines {"exact": 89, "not compared, its SASS ran otherwise": 2, "within a bound": 173, "within a range": 1152}
+sector lines {"exact": 89, "not compared, its SASS ran otherwise": 2, "within a bound": 181, "within a range": 1153}
 launch sectors {"loads agrees, stores agrees": 38, "not compared": 25}
 
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
@@ -192,6 +192,7 @@ tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_ker
   <block 27>	consistent	117 of 205 with SASS, 96 agreeing
   $L__BB0_23	confirmed	5 of 9 with SASS, 4 agreeing
   $L__BB0_24	confirmed	3 of 3 with SASS, 2 agreeing
+  sectors	{"within a bound": 8}
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 672
   $L__func_begin0	confirmed	31 of 39 with SASS, 19 agreeing
@@ -953,7 +954,7 @@ tests/fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ncu.json
   $L__BB0_2	consistent	10 of 24 with SASS, 6 agreeing
   $L__BB0_3	confirmed	217 of 265 with SASS, 173 agreeing
   $L__tmp29	confirmed	34 of 35 with SASS, 32 agreeing
-  sectors	{"exact": 4, "within a range": 2}
+  sectors	{"exact": 4, "within a range": 3}
 tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ncu.json
   launch sectors	loads agrees, stores agrees
   $L__func_begin0	confirmed	94 of 149 with SASS, 67 agreeing
