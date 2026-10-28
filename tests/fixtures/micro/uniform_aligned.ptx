@@ -1,0 +1,201 @@
+//
+// HAND-WRITTEN: in blocks of 128, each kernel stores %tid.x at param_0
+// plus 4 times (b | %tid.x), where every thread reads b alike from the
+// words {1, 2, 5, 3} at param_1. The words written, measured on an RTX
+// 4090 (ptxas 13.4, sm_89):
+// - micro_uniform_aligned, b 128 times the first word before the loop
+//   and 128 times the second after each trip, so the or adds: words 128
+//   to 383.
+// - micro_uniform_aligned_guarded, b 128 times the first word under a
+//   guard, the third where it is false: words 128 to 255.
+// - micro_uniform_aligned_count, b the first word shifted by the third,
+//   5, which shares %tid.x's bit 5: words 32 to 63 and 96 to 127.
+// - micro_uniform_aligned_mask, b 32 times the sum of the second and
+//   fourth words with its low 7 bits cleared, 128: words 128 to 255.
+// - micro_uniform_aligned_wide_count, micro_uniform_aligned with the
+//   counts written 0x100000007, which shl takes as their unsigned 32-bit
+//   value 7: words 128 to 383.
+// - micro_shift_wide_count stores at 4 times %tid.x shifted by
+//   0x100000002, that is by 2: words 0, 4, ..., 508.
+// - micro_uniform_aligned_div stores at 4 times ⌊(3·%tid.x + b)/3⌋, b as
+//   in micro_uniform_aligned: words 42 to 212.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_uniform_aligned(
+	.param .u64 micro_uniform_aligned_param_0,
+	.param .u64 micro_uniform_aligned_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_uniform_aligned_param_0];
+	ld.param.u64 	%rd4, [micro_uniform_aligned_param_1];
+	mov.u32 	%r1, %tid.x;
+	ld.global.nc.u32 	%r2, [%rd4];
+	shl.b32 	%r3, %r2, 7;
+	mov.u32 	%r6, 0;
+$L__BB0_1:
+	or.b32 	%r4, %r3, %r1;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ld.global.nc.u32 	%r5, [%rd4+4];
+	shl.b32 	%r3, %r5, 7;
+	add.s32 	%r6, %r6, 1;
+	setp.lt.u32 	%p1, %r6, 4;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}
+
+.visible .entry micro_uniform_aligned_guarded(
+	.param .u64 micro_uniform_aligned_guarded_param_0,
+	.param .u64 micro_uniform_aligned_guarded_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_uniform_aligned_guarded_param_0];
+	ld.param.u64 	%rd4, [micro_uniform_aligned_guarded_param_1];
+	mov.u32 	%r1, %tid.x;
+	ld.global.nc.u32 	%r2, [%rd4];
+	ld.global.nc.u32 	%r3, [%rd4+8];
+	setp.ne.s64 	%p1, %rd4, 0;
+	@%p1 shl.b32 	%r3, %r2, 7;
+	or.b32 	%r4, %r3, %r1;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_uniform_aligned_count(
+	.param .u64 micro_uniform_aligned_count_param_0,
+	.param .u64 micro_uniform_aligned_count_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_uniform_aligned_count_param_0];
+	ld.param.u64 	%rd4, [micro_uniform_aligned_count_param_1];
+	mov.u32 	%r1, %tid.x;
+	ld.global.nc.u32 	%r2, [%rd4];
+	ld.global.nc.u32 	%r5, [%rd4+8];
+	shl.b32 	%r3, %r2, %r5;
+	or.b32 	%r4, %r3, %r1;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_uniform_aligned_mask(
+	.param .u64 micro_uniform_aligned_mask_param_0,
+	.param .u64 micro_uniform_aligned_mask_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<8>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_uniform_aligned_mask_param_0];
+	ld.param.u64 	%rd4, [micro_uniform_aligned_mask_param_1];
+	mov.u32 	%r1, %tid.x;
+	ld.global.nc.u32 	%r2, [%rd4+4];
+	ld.global.nc.u32 	%r3, [%rd4+12];
+	add.s32 	%r4, %r2, %r3;
+	shl.b32 	%r5, %r4, 5;
+	and.b32 	%r6, %r5, -128;
+	or.b32 	%r7, %r6, %r1;
+	mul.wide.u32 	%rd2, %r7, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_uniform_aligned_wide_count(
+	.param .u64 micro_uniform_aligned_wide_count_param_0,
+	.param .u64 micro_uniform_aligned_wide_count_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_uniform_aligned_wide_count_param_0];
+	ld.param.u64 	%rd4, [micro_uniform_aligned_wide_count_param_1];
+	mov.u32 	%r1, %tid.x;
+	ld.global.nc.u32 	%r2, [%rd4];
+	shl.b32 	%r3, %r2, 0x100000007;
+	mov.u32 	%r6, 0;
+$L__BB4_1:
+	or.b32 	%r4, %r3, %r1;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ld.global.nc.u32 	%r5, [%rd4+4];
+	shl.b32 	%r3, %r5, 0x100000007;
+	add.s32 	%r6, %r6, 1;
+	setp.lt.u32 	%p1, %r6, 4;
+	@%p1 bra 	$L__BB4_1;
+	ret;
+}
+
+.visible .entry micro_shift_wide_count(
+	.param .u64 micro_shift_wide_count_param_0,
+	.param .u64 micro_shift_wide_count_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_shift_wide_count_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 0x100000002;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_uniform_aligned_div(
+	.param .u64 micro_uniform_aligned_div_param_0,
+	.param .u64 micro_uniform_aligned_div_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_uniform_aligned_div_param_0];
+	ld.param.u64 	%rd4, [micro_uniform_aligned_div_param_1];
+	mov.u32 	%r1, %tid.x;
+	ld.global.nc.u32 	%r2, [%rd4];
+	shl.b32 	%r3, %r2, 7;
+	mov.u32 	%r6, 0;
+$L__BB6_1:
+	mad.lo.u32 	%r4, %r1, 3, %r3;
+	div.u32 	%r4, %r4, 3;
+	mul.wide.u32 	%rd2, %r4, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ld.global.nc.u32 	%r5, [%rd4+4];
+	shl.b32 	%r3, %r5, 7;
+	add.s32 	%r6, %r6, 1;
+	setp.lt.u32 	%p1, %r6, 4;
+	@%p1 bra 	$L__BB6_1;
+	ret;
+}

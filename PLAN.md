@@ -200,7 +200,13 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `setp.lt.s32` compares it, runs no trips.
 - **Addresses scalar evolution cannot read are unknown rows**, with the
   reason, unless every thread of the CTA computes the part it cannot
-  read alike: that part is then a variable, `uniform(%r54@90)`
+  read alike: that part is then a variable, `uniform(%r54@90)`, or,
+  where each of its definitions is an unguarded `shl` or `and` by a
+  constant that leaves its k low bits 0, 2^k times its floor over 2^k,
+  so an `or` with bits below 2^k adds (`micro/uniform_aligned.ptx`),
+  but a floor by a divisor 2^k neither divides nor is divided by is
+  then refused (`micro_uniform_aligned_div`: ⌊(3·%tid.x + b)/3⌋, which
+  `uniform(…)` alone read)
   (the grouped tile schedule's
   `pid / num_pid_n` in the Gluon fp8 GEMM's global copies, k1's
   remainder loop reading the main loop's final k;
@@ -242,8 +248,11 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   a bitwise or that is no add (`micro/or_disjoint.ptx`'s
   `128·⌊%tid.x/32⌋ | 16·%tid.x`: "or whose sides may both set bit 7"),
   or one side's bits unknown, a parameter not bound
-  (`micro_or_param`) or a value that may be negative
-  (`micro/or_negative.ptx`), or bounded by more bits than it sets: a
+  (`micro_or_param`), a value that may be negative
+  (`micro/or_negative.ptx`) or a value every thread reads alike with a
+  definition other than an unguarded `shl` or `and` by a constant
+  (`micro/uniform_aligned.ptx`'s `micro_uniform_aligned_guarded` and
+  `micro_uniform_aligned_count`), or bounded by more bits than it sets: a
   term c·v with v of 0 or 1 sets c's bits, `may_set` all from c's lowest
   to its highest (`micro/and_bit_select.ptx`'s `micro_and_select_or`,
   `2080·(%tid.x mod 2) | 128·⌊(%tid.x mod 16)/8⌋`: "or whose sides may
@@ -519,10 +528,9 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   the B200 fused_rmsnorm's `4 * ⌊(⌊%tid.x/8⌋ mod 128)/4⌋` is
   `4 * ⌊%tid.x/32⌋` below 1024 threads.
 - **A refused φ names the obstacle on one of its source chains**: in
-  each Gluon `attn_fwd_ws` kernel 68 access rows say only "depends on
-  special register %ctaid.x" (34 in `tma_best`, 8 in
-  `bmm_kernel_persistent`), not that a join of two values stopped the
-  trace.
+  b200 `tma_best` 34 access rows say only "depends on special register
+  %ctaid.x" (8 in `bmm_kernel_persistent`), not that a join of two
+  values stopped the trace.
 - **A thread-index condition that holds on every thread still
   prints.** Under its record b200 scaled_mm's copies outside the K loop
   read their sources `on 128 threads in 4 warps (16 * (%tid.x mod 8) <

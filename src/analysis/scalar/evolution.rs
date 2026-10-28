@@ -292,10 +292,49 @@ impl<'a> ScalarEvolution<'a> {
                     && self.uniformity().is_uniform(reg, pos).is_ok() =>
             {
                 self.unread.borrow_mut().get_or_insert(why);
-                Ok(Affine::var(Var::Uniform(v)))
+                let u = Var::Uniform(v);
+                Ok(match self.low_zeros(v) {
+                    0 => Affine::var(u),
+                    k => Affine::term(Var::Div(Box::new(u), 1 << k), SymExpr::Const(1 << k)),
+                })
             }
             Err(why) => Err(why),
         }
+    }
+
+    /// How many low bits every definition of `v` leaves 0: an unguarded
+    /// `shl` by a constant fills as many with zeros as its count, the
+    /// constant's unsigned 32-bit value (PTX ISA §9.7.8.8), all of them
+    /// where it reaches the width, and an unguarded `and` with a constant
+    /// clears those its mask does.
+    fn low_zeros(&self, v: Value) -> u32 {
+        let module = self.data.module;
+        let zeros = |s: &Value| {
+            let Value::Result { op, .. } = *s else {
+                return 0;
+            };
+            let Stmt::Instr(i) = &self.data.kernel.stmts[op] else {
+                return 0;
+            };
+            let ops = module.operand_ids(i.operands);
+            let imm = |k: usize| match ops.get(k).map(|&o| module.operand(o)) {
+                Some(Operand::Immediate(t)) => parse_int(module.interner.resolve(*t)),
+                _ => None,
+            };
+            let k = match i.mnemonic {
+                _ if i.predicate.is_some() => None,
+                Opcode::Shl => imm(2).map(|c| i64::from(c as u32)),
+                Opcode::And => imm(2)
+                    .or_else(|| imm(1))
+                    .map(|m| i64::from(m.trailing_zeros())),
+                _ => None,
+            };
+            k.map_or(0, |k| k.min(62) as u32)
+        };
+        (self.data.ssa.sources(v).iter())
+            .map(zeros)
+            .min()
+            .unwrap_or(0)
     }
 
     /// `a` read at `pos`: the counter of a loop `pos` is outside, whose
@@ -732,13 +771,14 @@ impl<'a> ScalarEvolution<'a> {
             }
             Opcode::Shl if ops.len() == 3 => {
                 let v = arg(1)?;
-                // PTX ISA §9.7.8.8: a count past the width is clamped to
-                // it, which shifts every bit out.
+                // PTX ISA §9.7.8.8: the count is b's unsigned 32-bit value,
+                // and one past the width is clamped to it, which shifts
+                // every bit out.
                 let width = mods
                     .iter()
                     .rev()
                     .find_map(|m| m.get(1..)?.parse::<i64>().ok());
-                match self.constant(&arg(2)?) {
+                match self.constant(&arg(2)?).map(|c| i64::from(c as u32)) {
                     Some(c) if width.is_some_and(|w| c >= w) => {
                         Ok(Affine::from_base(SymExpr::Const(0)))
                     }
@@ -1811,7 +1851,8 @@ mod tests {
         };
         let ok = |s: &str| Ok(s.to_owned());
         assert_eq!(bound("mul.lo.s32 %r3, %r1, 4;"), ok("max(4 * param_0, 1)"));
-        assert_eq!(bound("shl.b32 %r3, %r1, 3;"), ok("max(uniform(%r3), 1)"));
+        let aligned = ok("max(4 * (uniform(%r3) / 4), 1)");
+        assert_eq!(bound("shl.b32 %r3, %r1, 3;"), aligned);
         let src = kernel_with(
             N_PARAM,
             "ld.param.u32 %r1, [k_param_0];\nsetp.lt.u32 %p2, %r1, 4;\nmov.u32 %r5, 0;\n\
@@ -2105,13 +2146,11 @@ mod tests {
         assert_eq!(trips(rows, None), Ok(read.to_owned()));
         let shifted = "max.u32 %r3, %r2, 1;\nshl.b32 %r9, %r3, 31;";
         assert!(trips(shifted, None).is_ok());
-        assert_eq!(
-            trips(shifted, Some(3)),
-            Ok("max(uniform(%r9), 1)".to_owned())
-        );
+        let whole = "max(2147483648 * (uniform(%r9) / 2147483648), 1)";
+        assert_eq!(trips(shifted, Some(3)), Ok(whole.to_owned()));
         let times = "max.u32 %r3, %r2, 1;\nmul.lo.u32 %r4, %r3, %r2;\nshl.b32 %r9, %r4, 31;";
         assert!(trips(times, None).is_ok());
-        assert_eq!(trips(times, Some(3)), Ok("max(uniform(%r9), 1)".to_owned()));
+        assert_eq!(trips(times, Some(3)), Ok(whole.to_owned()));
     }
 
     /// A guard that sums its bound in the other order than the latch

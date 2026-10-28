@@ -1,0 +1,27 @@
+# A value every thread reads alike, each of whose definitions is an
+# unguarded shl by a constant k or and with a constant whose low k bits
+# are 0, reads as 2^k times its floor over 2^k, so its or with bits
+# below 2^k is an add. A guarded shl keeps another value where its guard
+# is false, and a count in a register may be smaller: the or is unknown.
+# A count is its unsigned 32-bit value: 0x100000007 shifts by 7. A floor
+# by a divisor the 2^k neither divides nor is divided by is refused,
+# where uniform(…) alone read ⌊(3·%tid.x + b)/3⌋.
+RUN: %ptxroof analyze %fixtures/micro/uniform_aligned.ptx | FileCheck "%s"
+CHECK-LABEL: kernel micro_uniform_aligned
+CHECK: warp: 4–5 sectors (ideal 4)
+CHECK-SAME: [4 * %tid.x + 512 * ⌊uniform(%r3@$L__BB0_1)/128⌋ + param_0]
+CHECK-LABEL: kernel micro_uniform_aligned_guarded
+CHECK: unknown: depends on a value loaded from memory
+CHECK-LABEL: kernel micro_uniform_aligned_count
+CHECK: unknown: depends on a value loaded from memory
+CHECK-LABEL: kernel micro_uniform_aligned_mask
+CHECK: warp: 4–5 sectors (ideal 4)
+CHECK-SAME: [4 * %tid.x + 512 * ⌊uniform(%r6@118)/128⌋ + param_0]
+CHECK-LABEL: kernel micro_uniform_aligned_wide_count
+CHECK: warp: 4–5 sectors (ideal 4)
+CHECK-SAME: [4 * %tid.x + 512 * ⌊uniform(%r3@$L__BB4_1)/128⌋ + param_0]
+CHECK-LABEL: kernel micro_shift_wide_count
+CHECK: warp: 16–17 sectors (ideal 4)
+CHECK-SAME: [16 * %tid.x + param_0]
+CHECK-LABEL: kernel micro_uniform_aligned_div
+CHECK: unknown: depends on a value loaded from memory
