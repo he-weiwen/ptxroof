@@ -16,7 +16,13 @@ memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
 sectors one warp's request touches and the fewest its distinct bytes
 need, over the lanes that execute it, once the block shape and the parameters in the lane
-coefficients are bound; per
+coefficients are bound, and for a shared operand the wavefronts one
+warp's request takes and the number with no bank conflict, by how a
+request's lanes were measured to be served on an RTX 4090
+(`micro/shared_wavefronts.ptx`: the warp for 4-byte accesses,
+half-warps for 8-byte, quarter-warps for a 16-byte store, the 8 lanes
+of each matrix of an `ldmatrix`; on the census, 25,367 shared rows,
+4,000 of them in 79 kernels above their ideal); per
 block and per guarded instruction, which threads of the CTA run it
 when the branches it is control dependent on in one trip of its loop
 and the guard are thread-index comparisons
@@ -336,6 +342,16 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 
 ### Reported as unknowns
 
+- **Shared wavefronts are not counted for a `cp.async` destination, a
+  shared atomic, or a 16-byte load two of whose lanes share a word**
+  (3,721 and 5,442 census rows). A copy's wavefronts follow its global
+  source as well as its destination: to `16·%tid.x` 4 from
+  `16·%tid.x`, 8 from eight 64-byte rows, 16 from sixteen 32-byte rows,
+  and to `32·%tid.x` 32 by `.cg`, 8 by `.ca`
+  (`micro/shared_wavefronts.ptx`'s `micro_cp_async_wavefronts`, RTX
+  4090). The 16-byte loads' measured counts follow no grouping found:
+  `16·(%tid.x mod 8)` takes 4, `256·⌊%tid.x/16⌋` 2
+  (`micro_shared_wavefronts`).
 - **A block under a loop whose trip count is not read is unknown in
   the totals per launch**, as its trips may differ by CTA
   (`micro_loop_guard_sibling_exit`'s first loop, with two exit edges:

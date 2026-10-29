@@ -305,14 +305,23 @@ pub struct Access {
     /// threads are a bound, so is this: the most any warp touches.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
-    /// `sectors_per_request` and `ideal_sectors_per_request` are each the
-    /// most any warp touches.
+    /// `sectors_per_request` and `ideal_sectors_per_request`, or the
+    /// wavefronts, are each the most any warp takes.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub sectors_at_most: bool,
     /// The fewest sectors the distinct bytes the executing lanes touch
     /// could occupy if packed: the request's coalesced ideal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ideal_sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
+    /// The shared memory wavefronts one warp's request takes, as a range
+    /// over the warps and the alignment of the address's uniform part;
+    /// shared space with a known address only, a bound like the sectors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wavefronts_per_request: Option<crate::analysis::memory_footprint::CountRange>,
+    /// The wavefronts if each group of lanes had its words in the fewest;
+    /// fewer than `wavefronts_per_request` is a bank conflict.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ideal_wavefronts_per_request: Option<crate::analysis::memory_footprint::CountRange>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footprint_unknown: Option<String>,
     /// How the address moves per iteration of each enclosing loop,

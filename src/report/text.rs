@@ -499,7 +499,15 @@ fn render_accesses(w: &mut String, pad: &str, title: &str, rows: &[Access]) {
                 .ideal_sectors_per_request
                 .map(|i| format!(" (ideal {bound}{})", range(&i)))
                 .unwrap_or_default();
+            let waves = a
+                .ideal_wavefronts_per_request
+                .map(|i| format!(" (ideal {bound}{})", range(&i)))
+                .unwrap_or_default();
             let warp = match (&a.sectors_per_request, &a.footprint_unknown) {
+                _ if let Some(n) = &a.wavefronts_per_request => {
+                    let n = plural(n, "wavefront", "wavefronts");
+                    format!("warp: {bound}{n}{waves}")
+                }
                 (Some(s), _) if a.sectors_at_most => {
                     format!("warp: <= {}{ideal}", plural(s, "sector", "sectors"))
                 }

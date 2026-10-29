@@ -1,0 +1,15 @@
+# Shared memory wavefronts per warp request, by how an RTX 4090 serves
+# a request's lanes (micro/shared_wavefronts.ptx): the warp for a 4-byte
+# access, half-warps for 8-byte, sharing banks the other half leaves
+# free on a load, quarter-warps for a 16-byte store, the 8 lanes of each
+# matrix; the ideal has no two words of a group in one bank. A 16-byte
+# load whose lanes share words, and a cp.async destination, are not
+# counted.
+RUN: %ptxroof analyze %fixtures/micro/shared_wavefronts.ptx | FileCheck "%s"
+CHECK: ld.shared.u32                             shared load 4 B    warp: 32 wavefronts (ideal 1)                                         [128 * %tid.x + buf]
+CHECK: ld.shared.v2.u32                          shared load 8 B    warp: 1 wavefront (ideal 1)                                           [64 * (%tid.x mod 2) + 8 * (⌊%tid.x/4⌋ mod 8) + buf]
+CHECK: ld.shared.v4.u32                          shared load 16 B   warp: ? (two lanes of a 16-byte load share a word: no measured rule)  [16 * (%tid.x mod 16) + buf]
+CHECK: ldmatrix.sync.aligned.m8n8.x1.shared.b16  shared load 4 B    warp: 8 wavefronts (ideal 1)                                          [128 * %tid.x + buf]
+CHECK: st.shared.v4.u32                          shared store 16 B  warp: 4 wavefronts (ideal 4)                                          [16 * ⌊%tid.x/16⌋ + buf]
+CHECK: kernel micro_cp_async_wavefronts
+CHECK: cp.async.cg.shared.global  shared store 16 B  warp: ? (wavefronts not modelled)  [16 * %tid.x + buf]

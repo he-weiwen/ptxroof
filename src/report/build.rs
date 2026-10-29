@@ -32,7 +32,9 @@ use crate::analysis::instruction_counts::measurement::{
 };
 use crate::analysis::kernel_data::KernelData;
 use crate::analysis::loop_names::{LoopName, loop_names};
-use crate::analysis::memory_footprint::{AccessForm, CountRange, loop_bytes, warp_footprint};
+use crate::analysis::memory_footprint::{
+    AccessForm, CountRange, SharedRequest, loop_bytes, warp_footprint, warp_wavefronts,
+};
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::evolution::ScalarEvolution;
 use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
@@ -352,6 +354,16 @@ impl KernelReportBuilder<'_> {
                         }
                         _ => None,
                     };
+                    let wavefronts = match (&form, bytes) {
+                        (Some(a), Some(b)) if space == Space::Shared => Some(
+                            shared_request(module, instr, b)
+                                .ok_or_else(|| "wavefronts not modelled".to_owned())
+                                .and_then(|r| {
+                                    warp_wavefronts(a, r, shape, |tid| set.contains(tid, shape))
+                                }),
+                        ),
+                        _ => None,
+                    };
                     let sectors_at_most = !set.lane_exact();
                     let top = |r: CountRange| CountRange {
                         min: r.max,
@@ -365,6 +377,15 @@ impl KernelReportBuilder<'_> {
                         Some(Err(why)) => (None, None, Some(why)),
                         None => (None, None, None),
                     };
+                    let (wavefronts_per_request, ideal_wavefronts, wavefronts_unknown) =
+                        match wavefronts {
+                            Some(Ok(w)) if sectors_at_most => {
+                                (Some(top(w.count)), Some(top(w.ideal)), None)
+                            }
+                            Some(Ok(w)) => (Some(w.count), Some(w.ideal), None),
+                            Some(Err(why)) => (None, None, Some(why)),
+                            None => (None, None, None),
+                        };
                     if space == Space::Global
                         && let (Some(b), Some(sectors), Some(ideal)) =
                             (bytes, sectors_per_request, ideal)
@@ -435,13 +456,33 @@ impl KernelReportBuilder<'_> {
                         sectors_per_request,
                         sectors_at_most,
                         ideal_sectors_per_request: ideal,
-                        footprint_unknown,
+                        wavefronts_per_request,
+                        ideal_wavefronts_per_request: ideal_wavefronts,
+                        footprint_unknown: footprint_unknown.or(wavefronts_unknown),
                         reuse,
                     });
                 }
             }
         }
         (out, forms, per_request)
+    }
+}
+
+/// The shared request of a load, a store, or an `.m8n8` `.b16` matrix
+/// move, of `bytes` per lane.
+fn shared_request(module: &Module, instr: &Instr, bytes: u32) -> Option<SharedRequest> {
+    let mods: Vec<&str> = (module.modifiers(instr).iter())
+        .map(|&m| module.interner.resolve(m))
+        .collect();
+    match instr.mnemonic {
+        Opcode::Ld => Some(SharedRequest::Load(bytes)),
+        Opcode::St => Some(SharedRequest::Store(bytes)),
+        Opcode::Ldmatrix | Opcode::Stmatrix if mods.contains(&"m8n8") && mods.contains(&"b16") => {
+            (mods.iter())
+                .find_map(|m| m.strip_prefix('x')?.parse().ok())
+                .map(SharedRequest::Matrix)
+        }
+        _ => None,
     }
 }
 
