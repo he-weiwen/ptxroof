@@ -703,6 +703,15 @@ impl<'a> ScalarEvolution<'a> {
                     )),
                 }
             }
+            // PTX ISA §9.7.8.3: a bitwise exclusive-or, of two xors of
+            // thread index fields their xor.
+            Opcode::Xor if ops.len() == 3 => {
+                let bits = |x: Affine| self.bindings.map_or(x.clone(), |m| x.bind(m)).lane_bits();
+                match (arg(1).map(bits), arg(2).map(bits)) {
+                    (Ok(Some(x)), Ok(Some(y))) => Ok(x.xor(&y).affine()),
+                    _ => Err(self.unread(instr, def, id)),
+                }
+            }
             Opcode::Bfe if ops.len() == 4 => {
                 // bfe d, a, pos, len: bits [pos, pos + len) of a. Signed from
                 // bit 0 is a width change, value-preserving in the nonneg
@@ -937,22 +946,25 @@ impl<'a> ScalarEvolution<'a> {
                 };
                 Ok(self.fits(prod, instr, &mods)? + c)
             }
-            other => {
-                let mut seen = HashSet::new();
-                let fundamental = (split_operands(module, instr).1.iter())
-                    .find_map(|&op| self.operand_obstacle(op, def, id, &mut seen));
-                Err(match fundamental {
-                    Some(reason) => {
-                        format!("{reason}, behind `{}`", module.opcode(instr))
-                    }
-                    None => format!(
-                        "value defined by unsupported instruction `{}`",
-                        other.name()
-                    ),
-                })
-            }
+            _ => Err(self.unread(instr, def, id)),
         }?;
         self.fits(value, instr, &mods)
+    }
+
+    /// Why statement `def`'s instruction gives no value: the obstacle on
+    /// an operand chain behind it, else the instruction.
+    fn unread(&self, instr: &Instr, def: usize, id: Option<LoopId>) -> String {
+        let module = self.data.module;
+        let mut seen = HashSet::new();
+        let fundamental = (split_operands(module, instr).1.iter())
+            .find_map(|&op| self.operand_obstacle(op, def, id, &mut seen));
+        match fundamental {
+            Some(reason) => format!("{reason}, behind `{}`", module.opcode(instr)),
+            None => format!(
+                "value defined by unsupported instruction `{}`",
+                instr.mnemonic.name()
+            ),
+        }
     }
 
     /// Element `place` of the `count` a `mov` unpacks from `src` at `pos`,

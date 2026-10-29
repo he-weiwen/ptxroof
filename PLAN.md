@@ -21,8 +21,8 @@ warp's request takes and the number with no bank conflict, by how a
 request's lanes were measured to be served on an RTX 4090
 (`micro/shared_wavefronts.ptx`: the warp for 4-byte accesses,
 half-warps for 8-byte, quarter-warps for a 16-byte store, the 8 lanes
-of each matrix of an `ldmatrix`; on the census, 25,367 shared rows,
-4,000 of them in 79 kernels above their ideal); per
+of each matrix of an `ldmatrix`; on the census, 40,022 shared rows,
+6,096 of them in 91 kernels above their ideal); per
 block and per guarded instruction, which threads of the CTA run it
 when the branches it is control dependent on in one trip of its loop
 and the guard are thread-index comparisons
@@ -221,12 +221,19 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   (the grouped tile schedule's
   `pid / num_pid_n` in the Gluon fp8 GEMM's global copies, k1's
   remainder loop reading the main loop's final k;
-  `micro/uniform_address.ptx`). Not read: xor swizzles of shared
-  addresses (every ldmatrix and cp.async destination in the Gluon GEMM
-  and attention kernels, "behind `xor.b32`"; 35,573 of the census's
-  63,070 unknown address rows, 35,567 shared and 6 global, 4 of these
-  census kernel `02994.ptx`'s Hadamard loads of the index xor 1, 2, 4
-  and 8, its lines 71–82); divisions of the thread
+  `micro/uniform_address.ptx`). An xor reads when each side is an xor
+  of thread index fields, `%tid.x` or a floor or remainder of it by a
+  power of two, times a power of two, no two of a side's fields setting
+  one bit, and constants: one variable, the xor of its runs of thread
+  bits (`micro/xor_swizzle.ptx`, Triton's swizzle as
+  `(16 * (⌊%tid.x/8⌋ mod 4) ⊕ 16 * (%tid.x mod 128))`, its offsets read
+  back on the RTX 4090; 20,679 census rows). Not read: an xor with a
+  side that is no such xor, "behind `xor.b32`" (13,746 of the census's
+  42,391 unknown address rows, all but one shared): a sum whose fields
+  share a bit (`micro_xor_overlap`), one thread bit times a constant
+  with more bits than one, as the Gluon GEMM's epilogue stores' 2064
+  times bit 2, which comes there from a signed `bfe` past bit 0, itself
+  unread (`bfe at 2 of 1 bits`); divisions of the thread
   index by a runtime value (`micro/uniform_address.ptx`'s
   `micro_uniform_div_lanes`; 4,194 census rows "div by a non-constant
   divisor" and 578 "rem by a non-constant divisor": of 40 sampled,
@@ -344,7 +351,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 
 - **Shared wavefronts are not counted for a `cp.async` destination, a
   shared atomic, or a 16-byte load two of whose lanes share a word**
-  (3,721 and 5,442 census rows). A copy's wavefronts follow its global
+  (9,476 and 5,707 census rows). A copy's wavefronts follow its global
   source as well as its destination: to `16·%tid.x` 4 from
   `16·%tid.x`, 8 from eight 64-byte rows, 16 from sixteen 32-byte rows,
   and to `32·%tid.x` 32 by `.cg`, 8 by `.ca`
@@ -639,7 +646,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   MLA, a block-scaled GEMM), and hand-written micro kernels. clang is
   untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 152 of the 162 fixtures
+  identical to the original's for 153 of the 163 fixtures
   (`tests/lit.sh -v tests/lit/roundtrip`, ptxas 13.4). k14's and
   `micro/address_operands.ptx`'s are rejected because the in-kernel
   `.local` declaration is discarded (`Unknown symbol
@@ -817,9 +824,9 @@ One line each, with the trigger that would start it.
   the predicted wavefronts and ideal per warp request with the
   record's over those SASS's warp-level executions
   (`kernels[].measured[].wavefronts`, `measured shared wavefronts` in
-  the text report, `tests/lit/micro-shared-wavefronts.test`): all 265
-  such lines of the records agree, 103 of them in 18 B200 Triton
-  kernels and 104 in seven Gluon kernels and k5 on the RTX 4090
+  the text report, `tests/lit/micro-shared-wavefronts.test`): all 890
+  such lines of the records agree, 544 of them in 25 B200 Triton
+  kernels and 286 in nine Gluon kernels and k5 on the RTX 4090
   (`tests/ncu_corpus.rs`). ptxas may run
   a load less often than its statement: `tma_best_Q64N64w8s3._stage1_tma`'s
   line 544 executes 655,360 times where its loop iteration runs

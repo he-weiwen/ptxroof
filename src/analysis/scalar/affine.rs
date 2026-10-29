@@ -53,6 +53,21 @@ impl LaneBits {
         }
     }
 
+    /// The value as a form: the constant's bits no column sets in the
+    /// base, the rest a `Bits`.
+    pub fn affine(self) -> Affine {
+        let image = self.columns.iter().fold(0, |a, &c| a | c);
+        let base = Affine::from_base(SymExpr::Const((self.constant & !image) as i64));
+        match image {
+            0 => base,
+            _ => {
+                let constant = self.constant & image;
+                let columns = self.columns;
+                base + Affine::var(Var::Bits(LaneBits { columns, constant }))
+            }
+        }
+    }
+
     pub fn eval(&self, tid: i64) -> i64 {
         let set = (0..10).filter(|&i| tid >> i & 1 == 1);
         set.fold(self.constant, |x, i| x ^ self.columns[i]) as i64
@@ -556,7 +571,69 @@ impl Affine {
     }
 }
 
+impl Var {
+    /// The variable as an xor of `%tid.x`'s bits: the thread index, a
+    /// floor or remainder of one by a power of two, or a `Bits`.
+    fn lane_bits(&self) -> Option<LaneBits> {
+        let power = |n: i64| u64::try_from(n).ok().filter(|n| n.is_power_of_two());
+        match self {
+            Var::Tid(Axis::X) => Some(LaneBits {
+                columns: std::array::from_fn(|i| 1 << i),
+                constant: 0,
+            }),
+            Var::Div(v, d) => {
+                let k = power(*d)?.trailing_zeros();
+                let b = v.lane_bits()?;
+                Some(LaneBits {
+                    columns: b.columns.map(|c| c >> k),
+                    constant: b.constant >> k,
+                })
+            }
+            Var::Mod(v, m) => {
+                let mask = power(*m)? - 1;
+                let b = v.lane_bits()?;
+                Some(LaneBits {
+                    columns: b.columns.map(|c| c & mask),
+                    constant: b.constant & mask,
+                })
+            }
+            Var::Bits(b) => Some(b.clone()),
+            _ => None,
+        }
+    }
+}
+
 impl Affine {
+    /// The form as an xor of `%tid.x`'s bits: a constant base and terms
+    /// `Var::lane_bits` reads with power-of-two coefficients, no two of
+    /// which, nor the base, may set one bit, so that their sum is their
+    /// xor; below 2^62.
+    pub fn lane_bits(&self) -> Option<LaneBits> {
+        let constant = u64::try_from(self.base.as_const()?).ok()?;
+        let mut out = LaneBits {
+            columns: [0; 10],
+            constant,
+        };
+        let mut used = constant;
+        for (v, c) in &self.terms {
+            let c = u64::try_from(c.as_const()?)
+                .ok()
+                .filter(|c| c.is_power_of_two())?;
+            let b = v.lane_bits()?;
+            let image = b.columns.iter().fold(b.constant, |a, &c| a | c);
+            let shifted = image.checked_mul(c).filter(|&s| s >> 62 == 0)?;
+            if used & shifted != 0 {
+                return None;
+            }
+            used |= shifted;
+            for (to, from) in out.columns.iter_mut().zip(b.columns) {
+                *to |= from * c;
+            }
+            out.constant |= b.constant * c;
+        }
+        (used >> 62 == 0).then_some(out)
+    }
+
     /// The bits a value of the form may set, in two's complement. For
     /// every k: the bits from k up, and those of the remainder, the terms
     /// whose coefficients are not known multiples of 2^k and the base
@@ -762,6 +839,32 @@ mod tests {
             range.max().unwrap().into(),
         );
         assert_eq!(Affine::var(bits).range(&block), Some(expected));
+    }
+
+    #[test]
+    fn an_xor_of_thread_index_fields_reads_as_lane_bits() {
+        let c = |n: i64| SymExpr::Const(n);
+        let x = || Box::new(Var::Tid(Axis::X));
+        let rem = |m, k| Affine::var(Var::Mod(x(), m)).scale(c(k));
+        let field = |d, m, k| Affine::var(Var::Mod(Box::new(Var::Div(x(), d)), m)).scale(c(k));
+        // The Gluon swizzle's operands as traced: (t << 4) & 2032 and
+        // (t << 1) & 48 (fp8_gemm_kernel.c_fc.sm_89.ptx:213).
+        let swizzle =
+            (rem(128, 16).lane_bits().unwrap()).xor(&field(8, 4, 16).lane_bits().unwrap());
+        let want = |t: i64| ((t << 4) & 2032) ^ ((t << 1) & 48);
+        assert!((0..1024).all(|t| swizzle.eval(t) == want(t)));
+        // A floor of the xor is one too, and a sum with a disjoint field.
+        let bits = Var::Bits(swizzle);
+        let floor = Affine::var(Var::Div(Box::new(bits.clone()), 16)) + rem(2, 4096);
+        let read = floor.lane_bits().unwrap();
+        assert!((0..1024).all(|t| read.eval(t) == (want(t) >> 4) + 4096 * (t % 2)));
+        // A sum whose fields may set one bit is no xor, nor an odd multiple.
+        assert_eq!((rem(4, 1) + rem(2, 2)).lane_bits(), None);
+        assert_eq!(Affine::var(Var::Tid(Axis::X)).scale(c(3)).lane_bits(), None);
+        assert_eq!(
+            (Affine::var(bits) + Affine::from_base(c(16))).lane_bits(),
+            None
+        );
     }
 
     #[test]

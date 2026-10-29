@@ -15,4 +15,4 @@ CHECK: ldmatrix.sync.aligned.m8n8.x1.shared.b16  shared load 4 B    warp: 8 wave
 CHECK: st.shared.v4.u32                          shared store 16 B  warp: 4 wavefronts (ideal 4)                                          [16 * ⌊%tid.x/16⌋ + buf]
 CHECK: kernel micro_cp_async_wavefronts
 CHECK: cp.async.cg.shared.global  shared store 16 B  warp: ? (wavefronts not modelled)  [16 * %tid.x + buf]
-NCU: measured shared wavefronts: 57 lines agree, 0 differ
+NCU: measured shared wavefronts: 59 lines agree, 0 differ

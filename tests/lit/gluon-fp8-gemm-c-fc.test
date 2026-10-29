@@ -4,7 +4,8 @@
 # trip count is not folded to a ceiling, and the byte total next to the
 # unknown copies is printed as an upper bound. The global copies'
 # addresses hold the grouped tile schedule's quotients by runtime
-# values as uniform variables.
+# values as uniform variables; the ldmatrix rows' swizzle reads as an
+# xor of thread index fields, conflict free.
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx | FileCheck "%s"
 CHECK: kernel fp8_gemm_kernel
 CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
@@ -22,7 +23,8 @@ CHECK: shared bytes: load 256 B, store <= 128 B
 CHECK: AI(global) >= 128 flop/B
 CHECK: accesses:
 CHECK: gluon_fp8.py:188  ldmatrix.sync.aligned.m8n8.x4.shared.b16  shared load 16 B
-CHECK-SAME: unknown: depends on special register %tid.x, behind `xor.b32`
+CHECK-SAME: warp: 4 wavefronts (ideal 4)
+CHECK-SAME: (16 * (⌊%tid.x/16⌋ mod 2) ⊕ 16 * (⌊%tid.x/2⌋ mod 4) ⊕ 64 * (%tid.x mod 16)) + global_smem - 8192]
 CHECK: gluon_fp8.py:199  cp.async.cg.shared.global                 global load 16 B   warp: ? (the coefficient of (⌊%tid.x/4⌋ mod 32) is param_11; bind it)
 CHECK-SAME: * uniform(%r54@90) - (128 * param_11) * uniform(%r64@106) + param_0 + 64]
 CHECK: totals [static]:
