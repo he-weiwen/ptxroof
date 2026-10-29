@@ -77,6 +77,17 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 
 ### Wrong output
 
+- **A `cp.async`'s global sectors are counted as a load's.** Nsight
+  Compute counts them otherwise where two lanes' shared destinations
+  fall in one bank group or are one, or two lanes read one source
+  (`micro/shared_wavefronts.ptx`'s `micro_cp_async_wavefronts`, RTX
+  4090, `shared_wavefronts.cp_async.ncu.json`): a 16-byte `.cg` copy
+  from `16·%tid.x` takes 32 L2 sectors to `32·%tid.x` (line 633,
+  predicted 16–17) and 8 to `16·(%tid.x mod 16)`, where lanes t and
+  t + 16 write one destination (line 685); one from
+  `16·(%tid.x mod 16)` to `16·%tid.x` takes 16 (line 694, predicted
+  8–9). Every other `cp.async` line of the records agrees
+  (`tests/ncu_corpus.rs`).
 - **Register effects are incomplete.** Scalar evolution records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
@@ -612,7 +623,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   MLA, a block-scaled GEMM), and hand-written micro kernels. clang is
   untested.
 - `--dump-ast` output reassembles (ptxas, cuobjdump -sass) to SASS
-  identical to the original's for 87 of the 96 fixtures
+  identical to the original's for 152 of the 162 fixtures
   (`tests/lit.sh -v tests/lit/roundtrip`, ptxas 13.4). k14's and
   `micro/address_operands.ptx`'s are rejected because the in-kernel
   `.local` declaration is discarded (`Unknown symbol
@@ -782,7 +793,8 @@ One line each, with the trigger that would start it.
   lane that runs it, a range over the address's alignment
   (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`; the
   text report counts the lines that agree and prints those that differ,
-  none in the records, `tests/lit/gluon-ncu.test`), once
+  in the records only the three copies above in
+  `micro/shared_wavefronts.cp_async.ncu.json`, `tests/lit/gluon-ncu.test`), once
   the line's global SASS executed the predicted count, or within its
   bound. ptxas may run
   a load less often than its statement: `tma_best_Q64N64w8s3._stage1_tma`'s

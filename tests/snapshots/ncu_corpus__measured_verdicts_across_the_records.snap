@@ -2,9 +2,9 @@
 source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
-blocks {"confirmed": 143, "consistent": 276, "unchecked": 491}
-sector lines {"exact": 89, "not compared, its SASS ran otherwise": 2, "within a bound": 173, "within a range": 1152}
-launch sectors {"loads agrees, stores agrees": 38, "not compared": 25}
+blocks {"confirmed": 145, "consistent": 276, "unchecked": 491}
+sector lines {"differ": 3, "exact": 90, "not compared, its SASS ran otherwise": 2, "within a bound": 173, "within a range": 1170}
+launch sectors {"loads agrees, stores agrees": 40, "not compared": 25}
 
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
   launch sectors	not compared, line 420
@@ -1080,6 +1080,15 @@ tests/fixtures/micro/predicated_exit.ncu.json
   launch sectors	loads agrees, stores agrees
   <block 0>	consistent	3 of 4 with SASS, 2 agreeing
   <block 1>	unchecked	2 of 2 with SASS, 0 agreeing
+tests/fixtures/micro/shared_wavefronts.cp_async.ncu.json
+  launch sectors	loads agrees, stores agrees
+  <block 0>	confirmed	97 of 202 with SASS, 59 agreeing
+  sectors	{"differ": 3, "exact": 1, "within a range": 17}
+  sectors differ	lines 633, 685, 694
+tests/fixtures/micro/shared_wavefronts.ncu.json
+  launch sectors	loads agrees, stores agrees
+  <block 0>	confirmed	269 of 542 with SASS, 249 agreeing
+  sectors	{"within a range": 1}
 tests/fixtures/micro/trip_div_param.ncu.json
   launch sectors	loads agrees, stores agrees
   <block 0>	consistent	4 of 6 with SASS, 3 agreeing
