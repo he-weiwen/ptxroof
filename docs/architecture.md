@@ -127,7 +127,9 @@ qualified paths; rejects a dependency cycle with its path; and checks the
 boundaries above. `mod` declarations and visibility paths are not use edges.
 `#[cfg(test)] mod` contents are excluded; other conditional source is checked
 conservatively. It does not expand macros or resolve inferred types: a method
-call on a value whose type a file never names is not an edge.
+call on a value whose type a file never names is not an edge. The same test
+writes the graph it checked, each use's line and each file's items to
+`target/tmp/module-graph.json`.
 
 Run `cargo fmt --all -- --check`,
 `CARGO_INCREMENTAL=0 cargo clippy --offline --locked --all-targets -- -D warnings`,

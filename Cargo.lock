@@ -315,6 +315,7 @@ dependencies = [
  "clap",
  "cpp_demangle",
  "insta",
+ "proc-macro2",
  "serde",
  "serde_json",
  "syn",

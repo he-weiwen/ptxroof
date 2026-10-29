@@ -24,3 +24,4 @@ thiserror = "2"       # library error types
 [dev-dependencies]
 insta = "1"           # integration-test snapshot (the corpus thread sets)
 syn = { version = "2", features = ["full", "visit"] } # production module DAG check
+proc-macro2 = { version = "1", features = ["span-locations"] } # its use sites' lines

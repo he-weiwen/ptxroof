@@ -20,3 +20,15 @@ commit, fold into it whatever the commit changes in either:
   inventory from the manual before editing rows.
 
 The same-commit rule is what keeps both files trustworthy.
+
+## Keep the module graph page current
+
+`tests/architecture.rs` fails `cargo test` on a dependency cycle between
+production files, and writes the graph it checked to
+`target/tmp/module-graph.json`. The page
+https://claude.ai/artifact/UdgsHDL74hz5rWrqa7o2Lr draws that file and is
+not in the repository. After a commit that adds, removes or moves a
+module, or changes what a module imports, read the artifact, replace its
+`graph-data` block with the fresh `target/tmp/module-graph.json`, fix
+what its banner lists as stale in its `annotations` block, and republish
+it to the same URL.
