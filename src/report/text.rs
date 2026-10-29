@@ -9,6 +9,7 @@
 //! printed, even (especially) when present.
 
 use super::schema::*;
+use crate::analysis::memory_footprint::CountRange;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -120,6 +121,7 @@ pub fn render(report: &Report) -> String {
         }
         if let Some(blocks) = &k.measured {
             render_measured(w, blocks);
+            render_wavefronts(w, blocks);
         }
         if let Some(totals) = &k.measured_totals {
             render_totals(w, totals);
@@ -210,6 +212,36 @@ fn render_measured(w: &mut String, blocks: &[MeasuredBlock]) {
             w,
             "    line {}: not compared, its global SASS executed {} thread instructions",
             s.line, s.executions
+        );
+    }
+}
+
+fn render_wavefronts(w: &mut String, blocks: &[MeasuredBlock]) {
+    let checked: Vec<&MeasuredWavefronts> = blocks.iter().flat_map(|b| &b.wavefronts).collect();
+    if checked.is_empty() {
+        return;
+    }
+    let agree = checked.iter().filter(|c| c.agrees).count();
+    let _ = writeln!(
+        w,
+        "  measured shared wavefronts: {agree} lines agree, {} differ",
+        checked.len() - agree
+    );
+    let per = |c: CountRange| match c.min == c.max {
+        true => c.min.to_string(),
+        false => format!("{}–{}", c.min, c.max),
+    };
+    for c in checked.iter().filter(|c| !c.agrees) {
+        let bound = if c.at_most { "<= " } else { "" };
+        let _ = writeln!(
+            w,
+            "    line {}: predicted {bound}{} (ideal {bound}{}) per request, measured {} (ideal {}) over {} requests",
+            c.line,
+            per(c.predicted),
+            per(c.ideal),
+            c.measured,
+            c.measured_ideal,
+            c.instructions
         );
     }
 }

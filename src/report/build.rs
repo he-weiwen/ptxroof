@@ -33,7 +33,7 @@ use crate::analysis::instruction_counts::measurement::{
 use crate::analysis::kernel_data::KernelData;
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{
-    AccessForm, CountRange, SharedRequest, loop_bytes, warp_footprint, warp_wavefronts,
+    AccessForm, CountRange, SharedRequest, Wavefronts, loop_bytes, warp_footprint, warp_wavefronts,
 };
 use crate::analysis::scalar::affine::{Affine, Var};
 use crate::analysis::scalar::evolution::ScalarEvolution;
@@ -46,7 +46,7 @@ use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialReg, Specia
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::bindings::BindingSpec;
-use crate::report::measured::{LineIndex, NcuRecord, Prediction, Sectors};
+use crate::report::measured::{LineIndex, NcuRecord, Prediction, Sectors, SharedWaves};
 use crate::report::names::demangle;
 use crate::report::schema::*;
 use crate::ssa::Value;
@@ -202,11 +202,17 @@ impl KernelReportBuilder<'_> {
     fn accesses_by_scope(
         &self,
         se: &ScalarEvolution,
-    ) -> (ByScope<Access>, ByScope<AccessForm>, PerRequests) {
+    ) -> (
+        ByScope<Access>,
+        ByScope<AccessForm>,
+        PerRequests,
+        PerWavefronts,
+    ) {
         let (module, kernel, cfg, forest) = (self.module, self.kernel, self.cfg, self.forest);
         let display = &self.display;
         let mut forms: ByScope<AccessForm> = HashMap::new();
         let mut per_request = PerRequests::new();
+        let mut per_wavefronts = PerWavefronts::new();
         let name = |v: &Var| match v {
             Var::Iter(l) => format!("k[{}]", self.loop_ref(*l)),
             Var::Uniform(u) => format!(
@@ -354,9 +360,10 @@ impl KernelReportBuilder<'_> {
                         }
                         _ => None,
                     };
+                    let request = bytes.and_then(|b| shared_request(module, instr, b));
                     let wavefronts = match (&form, bytes) {
-                        (Some(a), Some(b)) if space == Space::Shared => Some(
-                            shared_request(module, instr, b)
+                        (Some(a), Some(_)) if space == Space::Shared => Some(
+                            request
                                 .ok_or_else(|| "wavefronts not modelled".to_owned())
                                 .and_then(|r| {
                                     warp_wavefronts(a, r, shape, |tid| set.contains(tid, shape))
@@ -386,6 +393,20 @@ impl KernelReportBuilder<'_> {
                             Some(Err(why)) => (None, None, Some(why)),
                             None => (None, None, None),
                         };
+                    if let (Some(count), Some(ideal), Some(r)) =
+                        (wavefronts_per_request, ideal_wavefronts, request)
+                    {
+                        let per_request = Wavefronts { count, ideal };
+                        let (at_most, bits) = (sectors_at_most, r.access_bits());
+                        (per_wavefronts).insert(
+                            pos,
+                            SharedWaves {
+                                per_request,
+                                at_most,
+                                bits,
+                            },
+                        );
+                    }
                     if space == Space::Global
                         && let (Some(b), Some(sectors), Some(ideal)) =
                             (bytes, sectors_per_request, ideal)
@@ -464,7 +485,7 @@ impl KernelReportBuilder<'_> {
                 }
             }
         }
-        (out, forms, per_request)
+        (out, forms, per_request, per_wavefronts)
     }
 }
 
@@ -499,6 +520,9 @@ struct PerRequest {
 
 /// Per statement, its global access's sectors.
 type PerRequests = HashMap<usize, PerRequest>;
+
+/// Per statement, its shared access's wavefronts.
+type PerWavefronts = HashMap<usize, SharedWaves>;
 
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
@@ -855,6 +879,7 @@ struct KernelReportBuilder<'a> {
     /// The same rows' bound affine forms, where known.
     access_forms: ByScope<AccessForm>,
     per_request: PerRequests,
+    per_wavefronts: PerWavefronts,
     /// Which threads run each block and each guarded instruction.
     sets: ThreadSets,
     /// Per statement: it runs, but nothing with an effect reads its results.
@@ -942,6 +967,7 @@ impl<'a> KernelReportBuilder<'a> {
             accesses: HashMap::new(),
             access_forms: HashMap::new(),
             per_request: HashMap::new(),
+            per_wavefronts: HashMap::new(),
             sets: ThreadSets::default(),
             unused: Vec::new(),
             shape,
@@ -1012,10 +1038,11 @@ impl<'a> KernelReportBuilder<'a> {
                 false => (sets.guards.get(&s) == Some(&Pred::True)).then_some(true),
             }
         });
-        let (accesses, access_forms, per_request) = b.accesses_by_scope(&se);
+        let (accesses, access_forms, per_request, per_wavefronts) = b.accesses_by_scope(&se);
         b.accesses = accesses;
         b.access_forms = access_forms;
         b.per_request = per_request;
+        b.per_wavefronts = per_wavefronts;
         b
     }
 
@@ -2100,6 +2127,7 @@ impl<'a> KernelReportBuilder<'a> {
                     },
                     at_most,
                     sectors,
+                    wavefronts: self.per_wavefronts.get(&i.provenance).copied(),
                     atomic: matches!(instr.mnemonic, Opcode::Atom | Opcode::Red),
                 });
             }
@@ -2789,6 +2817,7 @@ mod tests {
             l2_theoretical_sectors_global_ideal: None,
             global_access_sizes: Vec::new(),
             global_executions: None,
+            shared: Vec::new(),
         };
         let record = NcuRecord {
             kernel: "k".to_owned(),
@@ -3112,6 +3141,7 @@ mod tests {
             l2_theoretical_sectors_global_ideal: Some(1),
             global_access_sizes: vec![32],
             global_executions: Some(32),
+            shared: Vec::new(),
         };
         let record = NcuRecord {
             kernel: "k".into(),
@@ -3153,6 +3183,7 @@ mod tests {
             l2_theoretical_sectors_global_ideal: Some(1),
             global_access_sizes: vec![32],
             global_executions: Some(32),
+            shared: Vec::new(),
         };
         let record = NcuRecord {
             kernel: "k".into(),
@@ -3206,6 +3237,7 @@ mod tests {
             l2_theoretical_sectors_global_ideal: None,
             global_access_sizes: Vec::new(),
             global_executions: None,
+            shared: Vec::new(),
         };
         let record = NcuRecord {
             kernel: "k".into(),

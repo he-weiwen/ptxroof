@@ -512,6 +512,25 @@ pub struct MeasuredBlock {
     /// Lines whose global access ptxas lowered at its own width, with
     /// their L2 sectors over the launch against Nsight Compute's.
     pub sectors: Vec<MeasuredSectors>,
+    /// Lines whose shared access's wavefronts are predicted, against
+    /// Nsight Compute's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub wavefronts: Vec<MeasuredWavefronts>,
+}
+
+/// Predicted shared memory wavefronts per warp request against the
+/// line's over its warp-level executions.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredWavefronts {
+    pub line: u32,
+    pub predicted: crate::analysis::memory_footprint::CountRange,
+    pub ideal: crate::analysis::memory_footprint::CountRange,
+    pub at_most: bool,
+    /// The warp-level instructions its shared SASS executed.
+    pub instructions: u64,
+    pub measured: u64,
+    pub measured_ideal: u64,
+    pub agrees: bool,
 }
 
 /// The launch's global load and store sectors: the predictions summed

@@ -812,7 +812,15 @@ One line each, with the trigger that would start it.
   in the records only the three copies above in
   `micro/shared_wavefronts.cp_async.ncu.json`, `tests/lit/gluon-ncu.test`), once
   the line's global SASS executed the predicted count, or within its
-  bound. ptxas may run
+  bound. A line whose shared SASS that request wavefronts are one opcode
+  at the width each lane of its one PTX shared access covers compares
+  the predicted wavefronts and ideal per warp request with the
+  record's over those SASS's warp-level executions
+  (`kernels[].measured[].wavefronts`, `measured shared wavefronts` in
+  the text report, `tests/lit/micro-shared-wavefronts.test`): all 265
+  such lines of the records agree, 103 of them in 18 B200 Triton
+  kernels and 104 in seven Gluon kernels and k5 on the RTX 4090
+  (`tests/ncu_corpus.rs`). ptxas may run
   a load less often than its statement: `tma_best_Q64N64w8s3._stage1_tma`'s
   line 544 executes 655,360 times where its loop iteration runs
   2,424,832 times, so it and one line of

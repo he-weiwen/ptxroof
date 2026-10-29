@@ -1,9 +1,10 @@
 use crate::analysis::instruction_counts::count_constraint::CountConstraint;
+use crate::analysis::memory_footprint::Wavefronts;
 use crate::ptx::ir::Module;
 use crate::report::bindings::BindingSpec;
 use crate::report::schema::{
-    MeasuredBlock, MeasuredLine, MeasuredSectors, MeasuredTotal, MeasuredTotals, SectorCount,
-    SectorOutcome, Verdict,
+    MeasuredBlock, MeasuredLine, MeasuredSectors, MeasuredTotal, MeasuredTotals,
+    MeasuredWavefronts, SectorCount, SectorOutcome, Verdict,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -31,6 +32,18 @@ pub struct NcuLine {
     #[serde(default)]
     pub global_access_sizes: Vec<u32>,
     pub global_executions: Option<u64>,
+    #[serde(default)]
+    pub shared: Vec<SharedSass>,
+}
+
+/// One shared memory SASS instruction of a line, as measure.py records it.
+#[derive(Debug, Deserialize)]
+pub struct SharedSass {
+    pub sass: String,
+    pub access_size: u32,
+    pub instructions_executed: u64,
+    pub l1_wavefronts_shared: u64,
+    pub l1_wavefronts_shared_ideal: u64,
 }
 
 pub struct Prediction {
@@ -39,6 +52,7 @@ pub struct Prediction {
     pub executions: Option<u64>,
     pub at_most: bool,
     pub sectors: Option<Sectors>,
+    pub wavefronts: Option<SharedWaves>,
     /// An `atom` or `red`, whose sectors the load and store counts leave out.
     pub atomic: bool,
 }
@@ -151,6 +165,7 @@ impl NcuRecord {
             agreeing: 0,
             differing: Vec::new(),
             sectors: Vec::new(),
+            wavefronts: Vec::new(),
         };
         let (mut confirmed, mut contradicted) = (false, false);
         for p in predictions {
@@ -188,6 +203,9 @@ impl NcuRecord {
                     outcome,
                 });
             }
+            if let Some(w) = wavefronts(p, measured) {
+                out.wavefronts.push(w);
+            }
             let Some(predicted) = p.executions else {
                 continue;
             };
@@ -221,6 +239,57 @@ impl NcuRecord {
     }
 }
 
+/// A shared access's wavefronts per warp request, each the most any warp
+/// takes when `at_most`, for SASS whose lanes each access `bits`.
+#[derive(Debug, Clone, Copy)]
+pub struct SharedWaves {
+    pub per_request: Wavefronts,
+    pub at_most: bool,
+    pub bits: u32,
+}
+
+/// A line's predicted wavefronts per warp request against its shared
+/// SASS's, which Nsight Compute counts over every warp-level execution
+/// whatever its predicate; a line whose SASS that request wavefronts
+/// differ in opcode or access size from each other or the prediction is
+/// not compared.
+fn wavefronts(p: &Prediction, measured: &NcuLine) -> Option<MeasuredWavefronts> {
+    let SharedWaves {
+        per_request: w,
+        at_most,
+        bits,
+    } = p.wavefronts?;
+    let sass: Vec<&SharedSass> = (measured.shared.iter())
+        .filter(|s| s.l1_wavefronts_shared + s.l1_wavefronts_shared_ideal > 0)
+        .collect();
+    let first = sass.first()?;
+    if sass
+        .iter()
+        .any(|s| s.sass != first.sass || s.access_size != bits)
+    {
+        return None;
+    }
+    let sum = |f: fn(&SharedSass) -> u64| sass.iter().map(|s| f(s)).sum::<u64>();
+    let instructions = sum(|s| s.instructions_executed);
+    let (measured, measured_ideal) = (
+        sum(|s| s.l1_wavefronts_shared),
+        sum(|s| s.l1_wavefronts_shared_ideal),
+    );
+    let within = |n: u64, c: crate::analysis::memory_footprint::CountRange| {
+        n <= u64::from(c.max) * instructions && (at_most || u64::from(c.min) * instructions <= n)
+    };
+    Some(MeasuredWavefronts {
+        line: p.line,
+        predicted: w.count,
+        ideal: w.ideal,
+        at_most,
+        instructions,
+        measured,
+        measured_ideal,
+        agrees: within(measured, w.count) && within(measured_ideal, w.ideal),
+    })
+}
+
 pub struct LineIndex(Vec<usize>);
 
 impl LineIndex {
@@ -251,6 +320,7 @@ mod tests {
             l2_theoretical_sectors_global_ideal: None,
             global_access_sizes: Vec::new(),
             global_executions: None,
+            shared: Vec::new(),
         };
         NcuRecord {
             kernel: "k".into(),
@@ -277,6 +347,7 @@ mod tests {
             executions: Some(executions),
             at_most,
             sectors: None,
+            wavefronts: None,
             atomic: false,
         }
     }
@@ -375,6 +446,7 @@ mod tests {
             executions: None,
             at_most: false,
             sectors: None,
+            wavefronts: None,
             atomic: false,
         };
         assert_eq!(

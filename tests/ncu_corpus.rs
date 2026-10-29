@@ -1,7 +1,7 @@
 //! Every Nsight Compute record's comparison in one reviewable snapshot:
 //! each block's verdict and counts, each record's L2 sector lines,
-//! those that differ by line, and its launch's load and store sectors
-//! against the L1TEX counts. A block that loses its verdict or a line
+//! those that differ by line, its shared wavefront lines, and its
+//! launch's load and store sectors against the L1TEX counts. A block that loses its verdict or a line
 //! or total that stops agreeing changes it as a contradiction would.
 
 use ptxroof::report::build::{AnalyzeOptions, analyze};
@@ -42,6 +42,7 @@ fn measured_verdicts_across_the_records() {
     records.sort();
     let mut verdicts: BTreeMap<String, u64> = BTreeMap::new();
     let mut sectors: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut wavefronts: BTreeMap<&str, u64> = BTreeMap::new();
     let mut totals: BTreeMap<String, u64> = BTreeMap::new();
     let mut out = String::new();
     for path in &records {
@@ -83,6 +84,8 @@ fn measured_verdicts_across_the_records() {
         let mut lines: BTreeMap<&str, u64> = BTreeMap::new();
         let mut differing = Vec::new();
         let mut uncompared = Vec::new();
+        let mut waves: BTreeMap<&str, u64> = BTreeMap::new();
+        let mut waves_differ = Vec::new();
         for b in blocks {
             let verdict = format!("{:?}", b.verdict).to_lowercase();
             *verdicts.entry(verdict.clone()).or_default() += 1;
@@ -100,12 +103,30 @@ fn measured_verdicts_across_the_records() {
                     SectorOutcome::Agrees => {}
                 }
             }
+            for w in &b.wavefronts {
+                let agrees = if w.agrees { "agree" } else { "differ" };
+                *waves.entry(agrees).or_default() += 1;
+                *wavefronts.entry(agrees).or_default() += 1;
+                if !w.agrees {
+                    waves_differ.push(w.line.to_string());
+                }
+            }
         }
         if !lines.is_empty() {
             let _ = writeln!(out, "  sectors\t{lines:?}");
         }
         if !differing.is_empty() {
             let _ = writeln!(out, "  sectors differ\tlines {}", differing.join(", "));
+        }
+        if !waves.is_empty() {
+            let _ = writeln!(out, "  wavefronts\t{waves:?}");
+        }
+        if !waves_differ.is_empty() {
+            let _ = writeln!(
+                out,
+                "  wavefronts differ\tlines {}",
+                waves_differ.join(", ")
+            );
         }
         if !uncompared.is_empty() {
             let _ = writeln!(
@@ -120,6 +141,6 @@ fn measured_verdicts_across_the_records() {
         None
     );
     insta::assert_snapshot!(format!(
-        "blocks {verdicts:?}\nsector lines {sectors:?}\nlaunch sectors {totals:?}\n\n{out}"
+        "blocks {verdicts:?}\nsector lines {sectors:?}\nwavefront lines {wavefronts:?}\nlaunch sectors {totals:?}\n\n{out}"
     ));
 }

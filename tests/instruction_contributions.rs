@@ -444,6 +444,7 @@ fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
                 l2_theoretical_sectors_global_ideal: None,
                 global_access_sizes: Vec::new(),
                 global_executions: None,
+                shared: Vec::new(),
             };
             let record = NcuRecord {
                 kernel: "k".to_owned(),
@@ -498,6 +499,7 @@ fn a_uniform_ignore_src_predicts_a_bound_of_sectors() {
         l2_theoretical_sectors_global_ideal: Some(0),
         global_access_sizes: vec![128],
         global_executions: Some(64),
+        shared: Vec::new(),
     };
     let record = NcuRecord {
         kernel: "k".to_owned(),

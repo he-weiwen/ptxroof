@@ -144,6 +144,16 @@ pub enum SharedRequest {
     Matrix(u32),
 }
 
+impl SharedRequest {
+    /// The bits each lane's address covers: its access, or its row.
+    pub fn access_bits(self) -> u32 {
+        match self {
+            SharedRequest::Load(b) | SharedRequest::Store(b) => 8 * b,
+            SharedRequest::Matrix(_) => 128,
+        }
+    }
+}
+
 /// Shared memory wavefronts per warp request, and the number with no
 /// two words of one group of lanes in one bank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
