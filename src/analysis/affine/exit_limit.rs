@@ -53,7 +53,7 @@ fn undivided(e: SymExpr) -> SymExpr {
 /// constant −A0/A1 that is not a positive integer is refused);
 /// `lt` → ceildiv(−A0, A1); `le` → floordiv(−A0, A1) + 1; `gt`/`ge`
 /// mirrored.
-pub(crate) fn solve(cond: Cmp, a1: i64, a0: SymExpr) -> Result<SymExpr, String> {
+pub(crate) fn exit_limit(cond: Cmp, a1: i64, a0: SymExpr) -> Result<SymExpr, String> {
     let neg = |e: SymExpr| SymExpr::mul(SymExpr::Const(-1), e);
 
     match cond {
@@ -86,8 +86,8 @@ pub(crate) fn solve(cond: Cmp, a1: i64, a0: SymExpr) -> Result<SymExpr, String> 
             _ => Err("loop bound moves away from the exit condition".to_owned()),
         },
         // D > 0 ⇔ −D < 0;   D ≥ 0 ⇔ −D ≤ 0.
-        Cmp::Gt => solve(Cmp::Lt, -a1, neg(a0)),
-        Cmp::Ge => solve(Cmp::Le, -a1, neg(a0)),
+        Cmp::Gt => exit_limit(Cmp::Lt, -a1, neg(a0)),
+        Cmp::Ge => exit_limit(Cmp::Le, -a1, neg(a0)),
         Cmp::Eq => {
             Err("loop continues only while values are equal — shape not recognized".to_owned())
         }

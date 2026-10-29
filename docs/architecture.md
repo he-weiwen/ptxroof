@@ -31,9 +31,9 @@ only declare modules and selected public entry points.
 | `analysis/affine/affine_expr` | Affine expressions over thread, CTA, loop and uniform variables |
 | `analysis/affine/int_type` | Integer types and representable ranges |
 | `analysis/affine/lane_eval` | Evaluate affine forms for lanes and warp layouts |
-| `analysis/affine/recurrences` | Recognize loop counter recurrences on SSA values |
-| `analysis/affine/loop_bounds` | Loop-exit inequalities solved for a trip count |
-| `analysis/affine/evolution` | Register values as affine forms and one loop's trip count; their mutual recursion and trip cache |
+| `analysis/affine/induction_variables` | Recognize loop counter induction variables on SSA values |
+| `analysis/affine/exit_limit` | Loop-exit inequalities solved for a trip count |
+| `analysis/affine/scalar_evolution` | Register values as affine forms and one loop's trip count; their mutual recursion and trip cache |
 | `analysis/affine/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
 | `analysis/loop_names` | Source-derived loop identities used by unroll pairing and display |
 | `analysis/thread_participation` | Predicates and sets of threads executing blocks and accesses |
@@ -78,7 +78,7 @@ reads bindings from `report/bindings`, not from the report builder.
 `ScalarEvolution`. A `ScalarEvolution` borrows a `KernelData`, reads
 uniformity, and holds the recursion between value and trip-count queries with
 its trip cache. `trip_counts` reads its per-loop results; nothing in
-`evolution` calls back into it.
+`scalar_evolution` calls back into it.
 
 ## Per-kernel flow
 

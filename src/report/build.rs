@@ -22,7 +22,7 @@
 //! per-iteration numbers — the altitude where the verdict lives.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
-use crate::analysis::affine::evolution::ScalarEvolution;
+use crate::analysis::affine::scalar_evolution::ScalarEvolution;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::trip_counts::{TripCountResults, trip_counts_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};

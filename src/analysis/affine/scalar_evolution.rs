@@ -4,10 +4,10 @@
 //! read from its latch through the same values. Address and
 //! branch-condition analyses read memory operands and predicates here.
 //!
-//! A loop counter is a recurrence (`super::recurrences`), read as its
-//! start plus `k − 1` steps; a φ at a join is the one value with no
-//! loop counter that every path writes, another φ one immediate every
-//! path writes, or refused. Supported arithmetic is followed down to
+//! A loop counter is an induction variable (`super::induction_variables`),
+//! read as its start plus `k − 1` steps; a φ at a join is the one value
+//! with no loop counter that every path writes, another φ one immediate
+//! every path writes, or refused. Supported arithmetic is followed down to
 //! `ld.param`, constants and special registers; an unsupported operation
 //! is a named reason, preferring the fundamental obstacle (a special
 //! register, a memory load, an atomic) behind arithmetic it does not
@@ -16,7 +16,7 @@
 //! A loop's latch (`setp` + `@%p bra`) is normalized to
 //! `continue while A1·k + A0 cmp 0` (k = iteration number; a counter
 //! read after its increment is init + k·step, read before it
-//! init + (k − 1)·step) and solved by [`super::loop_bounds::solve`].
+//! init + (k − 1)·step) and solved by [`super::exit_limit::exit_limit`].
 //! An ordered latch's count T is max(T, 0) per execution of a guard
 //! branch that skips the loop where the latch fails at k = 0, and
 //! max(T, 1) per entry otherwise, as LLVM's ScalarEvolution counts a
@@ -38,10 +38,10 @@
 //! and unsigned/signed comparison width is not modeled.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Cmp, Var};
+use crate::analysis::affine::exit_limit::{below_zero, exit_limit};
+use crate::analysis::affine::induction_variables::{InductionVariable, Step, induction_variables};
 use crate::analysis::affine::int_type::{IntKind, IntType};
 use crate::analysis::affine::lane_eval::depends_on_lane;
-use crate::analysis::affine::loop_bounds::{below_zero, solve};
-use crate::analysis::affine::recurrences::{Recurrence, Step, recurrences};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_data::KernelData;
@@ -65,7 +65,7 @@ const DEPTH_LIMIT: u32 = 256;
 pub(crate) struct ScalarEvolution<'a> {
     pub(crate) data: &'a KernelData<'a>,
     /// Each loop counter by its header φ, with its loop.
-    pub(crate) recurrences: HashMap<Value, (LoopId, Recurrence)>,
+    pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
     /// Nested loops' constant trip counts, for counters stepped by their
     /// exits; `None` while one is being solved, or when it is not one.
     trips: RefCell<HashMap<LoopId, Option<i64>>>,
@@ -86,7 +86,7 @@ impl<'a> ScalarEvolution<'a> {
         let (mut recurrences_by_phi, mut by_update) = (HashMap::new(), HashMap::new());
         for l in order {
             let lp = forest.get(l);
-            for r in recurrences(
+            for r in induction_variables(
                 data.module,
                 data.kernel,
                 data.cfg,
@@ -105,7 +105,7 @@ impl<'a> ScalarEvolution<'a> {
         }
         ScalarEvolution {
             data,
-            recurrences: recurrences_by_phi,
+            induction_variables: recurrences_by_phi,
             trips: RefCell::new(HashMap::new()),
             bindings: None,
             uniformity: OnceCell::new(),
@@ -377,7 +377,7 @@ impl<'a> ScalarEvolution<'a> {
                     false => format!("{name} has more than one reaching definition"),
                 })
         };
-        if let Some((l, r)) = self.recurrences.get(&v) {
+        if let Some((l, r)) = self.induction_variables.get(&v) {
             return (self.counter(*l, r, id, depth)).map_err(|why| why.unwrap_or_else(refused));
         }
         let mut defs = Vec::new();
@@ -409,7 +409,7 @@ impl<'a> ScalarEvolution<'a> {
     fn counter(
         &self,
         l: LoopId,
-        r: &Recurrence,
+        r: &InductionVariable,
         id: Option<LoopId>,
         depth: u32,
     ) -> Result<AffineExpr, Option<String>> {
@@ -1363,7 +1363,7 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
     if cond == Cmp::Ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
         return Err("latch condition never meets its `!=` bound".to_owned());
     }
-    let trips = solve(cond, a1, d.base.clone())?;
+    let trips = exit_limit(cond, a1, d.base.clone())?;
     let distance =
         (cond == Cmp::Ne).then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
     match (below_zero(cond, d.base), guard_test(se, id)) {

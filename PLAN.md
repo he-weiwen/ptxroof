@@ -147,7 +147,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `max(min(param_1 - 4, 8), 1)`); one
   through a parameter, `%ctaid` with no grid given or a symbolic trip
   count keeps scalar evolution's documented assumption
-  (`src/analysis/affine/evolution.rs`, module doc). A conversion to or from
+  (`src/analysis/affine/scalar_evolution.rs`, module doc). A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
 - **An and-mask that clears the sign bit keeps a value of unknown range
   as itself.** Up to the bit below the sign bit (nvcc's
@@ -199,7 +199,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `0xffffffffffffffff` (`mov.u64`, 3 kernels; `00101.ptx`).
 - **A `!=` latch with a symbolic distance is taken to meet its
   bound**: the trip solver divides the distance by the step, rounding
-  down, as `src/analysis/affine/loop_bounds.rs`'s `solve` assumes the
+  down, as `src/analysis/affine/exit_limit.rs`'s `exit_limit` assumes the
   division exact (k1's and k2's `K − K mod 4`, the fp8 GEMMs,
   `micro/two_register_counter.ptx`). A constant distance that is no
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
@@ -424,10 +424,10 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   waits and 177 read loaded values, 12 depend on `%ctaid` (1 through a
   `selp`), 95 are grid-stride loops, 1 unpack, 20 atomics, 2
   divisions, 17 multi-exit.
-- **Counters the recurrence search refuses** (a header φ every back
+- **Counters the induction variable search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
-  `src/analysis/affine/recurrences.rs`): a register stepped by a guarded
+  `src/analysis/affine/induction_variables.rs`): a register stepped by a guarded
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
   param_0) is no counter; its guard the same for every thread, it reads
   `[4 * uniform(%r1@29) + param_0]`, varying with the loop.

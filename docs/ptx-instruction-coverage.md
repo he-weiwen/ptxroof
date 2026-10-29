@@ -28,7 +28,7 @@ including corrections to stale parsing claims in the tables below.
 `instruction_counts/measurement.rs` owns the accounting axes (`Precision`,
 `Pipe`, `Space`, `Direction`, `ArithKind`) and contribution records;
 `instruction_counts/classify.rs` maps instructions to those records.
-Scalar instruction interpretation lives in `affine/evolution.rs`, with
+Scalar instruction interpretation lives in `affine/scalar_evolution.rs`, with
 integer widths in `affine/int_type.rs` and special-register sharing in
 `analysis/special_registers.rs`.
 

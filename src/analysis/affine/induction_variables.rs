@@ -1,7 +1,7 @@
-//! Loop counters as recurrences on register SSA values: a φ at a loop's
-//! header that every back edge feeds back plus the same step, as LLVM's
-//! ScalarEvolution recognizes an add-recurrence on a header PHI
-//! (`createAddRecFromPHI`). Recognition is structural; whether a
+//! Loop counters as induction variables on register SSA values: a φ at
+//! a loop's header that every back edge feeds back plus the same step,
+//! as LLVM's ScalarEvolution recognizes an add-recurrence on a header
+//! PHI (`createAddRecFromPHI`). Recognition is structural; whether a
 //! register step is free of every variable, and what the start is, are
 //! the reader's.
 
@@ -17,15 +17,15 @@ use std::collections::{BTreeSet, HashMap};
 /// A counter of a loop: `phi`, the header φ, is `start` on entry and
 /// `phi + step` on every back edge.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recurrence {
+pub struct InductionVariable {
     pub phi: Value,
     pub start: Value,
     pub step: Step,
 }
 
 /// A sum of constants and of registers, each read at the statement
-/// that adds it, with its sign, and of nested loops' recurrences, each
-/// adding its step once per trip of its loop.
+/// that adds it, with its sign, and of nested loops' induction
+/// variables, each adding its step once per trip of its loop.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Step {
     pub constant: i64,
@@ -33,17 +33,17 @@ pub struct Step {
     pub exits: Vec<(LoopId, Step)>,
 }
 
-/// The recurrences of loop `l`; `inner` holds those of the loops nested
+/// The induction variables of loop `l`; `inner` holds those of the loops nested
 /// in it, by the value each feeds back on its back edge.
-pub fn recurrences(
+pub fn induction_variables(
     module: &Module,
     kernel: &Kernel,
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
     ssa: &RegisterSsa,
     l: LoopId,
-    inner: &HashMap<Value, (LoopId, Recurrence)>,
-) -> Vec<Recurrence> {
+    inner: &HashMap<Value, (LoopId, InductionVariable)>,
+) -> Vec<InductionVariable> {
     let lp = forest.get(l);
     let start = cfg.block(lp.header).start;
     let in_loop = |b: BlockId| lp.blocks.binary_search(&b).is_ok();
@@ -103,7 +103,7 @@ pub fn recurrences(
             && steps.iter().all(|s| s.as_ref().is_some_and(same))
             && *step != Step::default()
         {
-            out.push(Recurrence {
+            out.push(InductionVariable {
                 phi,
                 start: *start,
                 step: step.clone(),
@@ -120,13 +120,13 @@ struct Walk<'a> {
     forest: &'a LoopForest,
     ssa: &'a RegisterSsa<'a>,
     l: LoopId,
-    inner: &'a HashMap<Value, (LoopId, Recurrence)>,
+    inner: &'a HashMap<Value, (LoopId, InductionVariable)>,
 }
 
 impl Walk<'_> {
     /// The step from `phi` to `v` through unguarded `mov`, integer `add`
     /// and `sub` in the loop's own blocks, and through a directly nested
-    /// loop's recurrence from its start to its exit, or `None`.
+    /// loop's induction variable from its start to its exit, or `None`.
     fn offset(&self, v: Value, phi: Value, depth: u32) -> Option<Step> {
         if v == phi {
             return Some(Step::default());
@@ -210,7 +210,7 @@ mod tests {
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
-    /// The recurrences of loop `loop_index` (by header order) in kernel
+    /// The induction variables of loop `loop_index` (by header order) in kernel
     /// `body`, one statement per line, as `reg: start → step`, the start
     /// `wN` (written at line N), `phiB` or `undef`, the step its constant
     /// and `±reg@N` per register.
@@ -233,10 +233,10 @@ mod tests {
         let ssa = RegisterSsa::new(&cfg, &forest.doms, table);
         let mut loops: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
         loops.sort_by_key(|&l| std::cmp::Reverse(forest.get(l).depth));
-        let mut found: HashMap<LoopId, Vec<Recurrence>> = HashMap::new();
+        let mut found: HashMap<LoopId, Vec<InductionVariable>> = HashMap::new();
         let mut inner = HashMap::new();
         for &l in &loops {
-            let rs = recurrences(&module, kernel, &cfg, &forest, &ssa, l, &inner);
+            let rs = induction_variables(&module, kernel, &cfg, &forest, &ssa, l, &inner);
             for r in &rs {
                 for (_, v) in ssa.incoming(r.phi).into_iter().filter(|(p, _)| {
                     p.is_some_and(|p| forest.get(l).blocks.binary_search(&p).is_ok())

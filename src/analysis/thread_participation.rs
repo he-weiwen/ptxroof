@@ -18,9 +18,9 @@
 //! one the same for every thread empties or keeps whole warps.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Cmp, Var};
-use crate::analysis::affine::evolution::ScalarEvolution;
 use crate::analysis::affine::int_type::{IntKind, IntType};
 use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, linear, thread, warps_of};
+use crate::analysis::affine::scalar_evolution::ScalarEvolution;
 use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};

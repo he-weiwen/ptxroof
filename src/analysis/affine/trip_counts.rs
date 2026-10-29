@@ -1,9 +1,9 @@
-//! Every loop's trip count (`super::evolution`), and nvcc's unroll
+//! Every loop's trip count (`super::scalar_evolution`), and nvcc's unroll
 //! main+remainder pairs — sibling loops on the same source line whose
 //! trips match `(X − X mod c)/c` and `X mod c` — linked into one logical
 //! loop with factor c.
 
-use crate::analysis::affine::evolution::ScalarEvolution;
+use crate::analysis::affine::scalar_evolution::ScalarEvolution;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::kernel_data::KernelData;
