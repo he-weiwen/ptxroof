@@ -5,8 +5,9 @@
 //! branch-condition analyses read memory operands and predicates here.
 //!
 //! A loop counter is a recurrence (`super::recurrences`), read as its
-//! start plus `k − 1` steps; another φ is one immediate every path
-//! writes, or refused. Supported arithmetic is followed down to
+//! start plus `k − 1` steps; a φ at a join is the one value with no
+//! loop counter that every path writes, another φ one immediate every
+//! path writes, or refused. Supported arithmetic is followed down to
 //! `ld.param`, constants and special registers; an unsupported operation
 //! is a named reason, preferring the fundamental obstacle (a special
 //! register, a memory load, an atomic) behind arithmetic it does not
@@ -136,6 +137,29 @@ impl<'a> ScalarEvolution<'a> {
                 return None;
             }
             value = Some(c);
+        }
+        value
+    }
+
+    /// The one value every one of these definitions writes to `reg`, with
+    /// no loop counter, which each definition reads in its own loops.
+    fn same_value(
+        &self,
+        defs: &[usize],
+        reg: Symbol,
+        id: Option<LoopId>,
+        depth: u32,
+    ) -> Option<Affine> {
+        let outer = self.unread.take();
+        let mut values = defs.iter().map(|&d| self.written(d, reg, id, depth).ok());
+        let value = (values.next().flatten())
+            .filter(|a| a.terms.keys().all(|v| v.counter().is_none()))
+            .filter(|a| values.all(|b| b.as_ref() == Some(a)));
+        let inner = self.unread.replace(outer);
+        if value.is_some()
+            && let Some(why) = inner
+        {
+            self.unread.borrow_mut().get_or_insert(why);
         }
         value
     }
@@ -286,8 +310,8 @@ impl<'a> ScalarEvolution<'a> {
         })
     }
 
-    /// A φ: a counter's `start + (k − 1)·step`, else one immediate every
-    /// path writes.
+    /// A φ: a counter's `start + (k − 1)·step`; at a join, the one value
+    /// every path writes; else one immediate every path writes.
     fn trace_phi(
         &self,
         v: Value,
@@ -326,10 +350,11 @@ impl<'a> ScalarEvolution<'a> {
             };
             return Err(self.obstacle_of_any_def(reg, id).unwrap_or(why));
         }
-        match self.same_immediate(&defs) {
-            Some(c) => Ok(Affine::from_base(SymExpr::Const(c))),
-            None => Err(refused()),
-        }
+        let common = match header {
+            true => (self.same_immediate(&defs)).map(|c| Affine::from_base(SymExpr::Const(c))),
+            false => self.same_value(&defs, reg, id, depth),
+        };
+        common.ok_or_else(refused)
     }
 
     /// Counter `r` of loop `l` in its iteration `k`: its start plus
@@ -1761,6 +1786,44 @@ mod tests {
             trips[0].1.as_ref().unwrap_err(),
             "%r3 is unwritten on some path"
         );
+    }
+
+    /// A bound two paths compute alike, as a shift and as a product, is
+    /// that value; two values apart, or one value through an enclosing
+    /// loop's counter, are not read.
+    #[test]
+    fn a_bound_every_path_computes_alike_is_that_value() {
+        let bound = |other_arm: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "ld.param.u32 %r1, [k_param_0];\nsetp.lt.u32 %p2, %r1, 4;\n\
+                     @%p2 bra $L__A;\n{other_arm}\nbra.uni $L__J;\n\
+                     $L__A:\nshl.b32 %r3, %r1, 2;\n$L__J:\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\n\
+                     setp.lt.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        let ok = |s: &str| Ok(s.to_owned());
+        assert_eq!(bound("mul.lo.s32 %r3, %r1, 4;"), ok("max(4 * param_0, 1)"));
+        assert_eq!(bound("shl.b32 %r3, %r1, 3;"), ok("max(uniform(%r3), 1)"));
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nsetp.lt.u32 %p2, %r1, 4;\nmov.u32 %r5, 0;\n\
+             $L__O:\nadd.s32 %r5, %r5, 1;\n@%p2 bra $L__A;\nadd.s32 %r3, %r5, 2;\n\
+             bra.uni $L__J;\n$L__A:\nadd.s32 %r3, %r5, 2;\n$L__J:\nmov.u32 %r2, 0;\n\
+             $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\n\
+             setp.lt.s32 %p3, %r5, 4;\n@%p3 bra $L__O;\nret;",
+        );
+        let trips = trips_of(&src);
+        let inner = trips
+            .iter()
+            .find(|(n, _)| n == "$L__L")
+            .expect("inner loop");
+        let why = "%r3 has more than one reaching definition";
+        assert_eq!(inner.1.as_ref().unwrap_err(), why);
     }
 
     /// PTX ISA §9.7.1.13, §9.7.1.14: a min or max of symbolic or constant

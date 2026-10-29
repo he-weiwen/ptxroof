@@ -361,7 +361,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `mma.m16n8k16` lines run 3,244,032 warp instructions, 13,287,555,072
   FLOPs.
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 1,227 have a trip count: 1,445 are mbarrier
+  inferred arguments), 1,229 have a trip count: 1,445 are mbarrier
   waits and 177 read loaded values, 12 depend on `%ctaid` (1 through a
   `selp`), 95 are grid-stride loops, 1 unpack, 20 atomics, 2
   divisions, 17 multi-exit.
@@ -372,6 +372,13 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
   param_0) is no counter; its guard the same for every thread, it reads
   `[4 * uniform(%r1@29) + param_0]`, varying with the loop.
+- **A join's φ whose paths write one value through a loop counter is
+  refused**, though both definitions and the join lie in one trip of
+  the loop: `micro/join_same_value.ptx`'s `micro_join_counter`,
+  128·i + %tid.x on both paths (words 0 to 255 on an RTX 4090), reads
+  "depends on special register %tid.x", and census kernel `00376.ptx`'s
+  four `st.global.v4.b32` of its source line 74 "div by a non-constant
+  divisor".
 - **Instruction families.** 77 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
