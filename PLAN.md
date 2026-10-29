@@ -21,8 +21,8 @@ warp's request takes and the number with no bank conflict, by how a
 request's lanes were measured to be served on an RTX 4090
 (`micro/shared_wavefronts.ptx`: the warp for 4-byte accesses,
 half-warps for 8-byte, quarter-warps for a 16-byte store, the 8 lanes
-of each matrix of an `ldmatrix`; on the census, 40,022 shared rows,
-6,096 of them in 91 kernels above their ideal); per
+of each matrix of an `ldmatrix`; on the census, 41,145 shared rows,
+6,684 of them in 96 kernels above their ideal); per
 block and per guarded instruction, which threads of the CTA run it
 when the branches it is control dependent on in one trip of its loop
 and the guard are thread-index comparisons
@@ -217,7 +217,13 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `setp.lt.s32` compares it, runs no trips.
 - **Addresses scalar evolution cannot read are unknown rows**, with the
   reason, unless every thread of the CTA computes the part it cannot
-  read alike: that part is then a variable, `uniform(%r54@90)`
+  read alike: that part is then a variable, `uniform(%r54@90)`, or,
+  where each of its definitions is an unguarded `shl` or `and` by a
+  constant that leaves its k low bits 0, 2^k times its floor over 2^k,
+  so an `or` with bits below 2^k adds (`micro/uniform_aligned.ptx`),
+  but a floor by a divisor 2^k neither divides nor is divided by is
+  then refused (`micro_uniform_aligned_div`: ⌊(3·%tid.x + b)/3⌋, which
+  `uniform(…)` alone read)
   (the grouped tile schedule's
   `pid / num_pid_n` in the Gluon fp8 GEMM's global copies, k1's
   remainder loop reading the main loop's final k;
@@ -227,9 +233,9 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   one bit, and constants: one variable, the xor of its runs of thread
   bits (`micro/xor_swizzle.ptx`, Triton's swizzle as
   `(16 * (⌊%tid.x/8⌋ mod 4) ⊕ 16 * (%tid.x mod 128))`, its offsets read
-  back on the RTX 4090; 20,679 census rows). Not read: an xor with a
+  back on the RTX 4090; 22,332 census rows). Not read: an xor with a
   side that is no such xor, "behind `xor.b32`" (13,746 of the census's
-  42,391 unknown address rows, all but one shared): a sum whose fields
+  38,021 unknown address rows, all but one shared): a sum whose fields
   share a bit (`micro_xor_overlap`), one thread bit times a constant
   with more bits than one, as the Gluon GEMM's epilogue stores' 2064
   times bit 2, which comes there from a signed `bfe` past bit 0, itself
@@ -266,8 +272,11 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   a bitwise or that is no add (`micro/or_disjoint.ptx`'s
   `128·⌊%tid.x/32⌋ | 16·%tid.x`: "or whose sides may both set bit 7"),
   or one side's bits unknown, a parameter not bound
-  (`micro_or_param`) or a value that may be negative
-  (`micro/or_negative.ptx`), or bounded by more bits than it sets: a
+  (`micro_or_param`), a value that may be negative
+  (`micro/or_negative.ptx`) or a value every thread reads alike with a
+  definition other than an unguarded `shl` or `and` by a constant
+  (`micro/uniform_aligned.ptx`'s `micro_uniform_aligned_guarded` and
+  `micro_uniform_aligned_count`), or bounded by more bits than it sets: a
   term c·v with v of 0 or 1 sets c's bits, `may_set` all from c's lowest
   to its highest (`micro/and_bit_select.ptx`'s `micro_and_select_or`,
   `2080·(%tid.x mod 2) | 128·⌊(%tid.x mod 16)/8⌋`: "or whose sides may
@@ -351,7 +360,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 
 - **Shared wavefronts are not counted for a `cp.async` destination, a
   shared atomic, or a 16-byte load two of whose lanes share a word**
-  (9,476 and 5,707 census rows). A copy's wavefronts follow its global
+  (11,639 and 5,825 census rows). A copy's wavefronts follow its global
   source as well as its destination: to `16·%tid.x` 4 from
   `16·%tid.x`, 8 from eight 64-byte rows, 16 from sixteen 32-byte rows,
   and to `32·%tid.x` 32 by `.cg`, 8 by `.ca`
@@ -454,7 +463,15 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 - **In a kernel with a cycle of more than one entry**, the uniformity
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare
-  (`a_value_from_a_cycle_with_two_entries_is_divergent_after_it`).
+  (`a_value_from_a_cycle_with_two_entries_is_divergent_after_it`), and
+  a branch as selecting the value at every φ its successors reach, not
+  only where their paths meet
+  (`with_a_cycle_of_two_entries_every_block_reached_is_a_join`).
+- **A φ at a loop header that every latch feeds the same value** is
+  still taken as selected by the branch between the latches, as LLVM
+  marks every φ of a join block (`taintAndPushPhiNodes`,
+  llvm/include/llvm/ADT/GenericUniformityImpl.h:949): the step counter
+  of `two_latches_select_at_the_header` is divergent.
 - **`setp`s not read as thread selectors.** A floating-point `setp`
   compares floats, not the traced integer forms, and `.f16x2` and
   `.bf16x2` each half on its own (PTX ISA §9.7.6.2, §9.7.7.2); an
@@ -545,10 +562,9 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   the B200 fused_rmsnorm's `4 * ⌊(⌊%tid.x/8⌋ mod 128)/4⌋` is
   `4 * ⌊%tid.x/32⌋` below 1024 threads.
 - **A refused φ names the obstacle on one of its source chains**: in
-  each Gluon `attn_fwd_ws` kernel 76 access rows say only "depends on
-  special register %ctaid.x" (34 in `tma_best`, 24 in
-  `bmm_kernel_persistent`), not that a join of two values stopped the
-  trace.
+  b200 `tma_best` 34 access rows say only "depends on special register
+  %ctaid.x" (8 in `bmm_kernel_persistent`), not that a join of two
+  values stopped the trace.
 - **A thread-index condition that holds on every thread still
   prints.** Under its record b200 scaled_mm's copies outside the K loop
   read their sources `on 128 threads in 4 warps (16 * (%tid.x mod 8) <
@@ -824,9 +840,9 @@ One line each, with the trigger that would start it.
   the predicted wavefronts and ideal per warp request with the
   record's over those SASS's warp-level executions
   (`kernels[].measured[].wavefronts`, `measured shared wavefronts` in
-  the text report, `tests/lit/micro-shared-wavefronts.test`): all 890
+  the text report, `tests/lit/micro-shared-wavefronts.test`): all 1,018
   such lines of the records agree, 544 of them in 25 B200 Triton
-  kernels and 286 in nine Gluon kernels and k5 on the RTX 4090
+  kernels and 414 in nine Gluon kernels and k5 on the RTX 4090
   (`tests/ncu_corpus.rs`). ptxas may run
   a load less often than its statement: `tma_best_Q64N64w8s3._stage1_tma`'s
   line 544 executes 655,360 times where its loop iteration runs

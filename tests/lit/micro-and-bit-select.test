@@ -24,7 +24,7 @@ FREE: st.global.u32  global store 4 B
 FREE-SAME: unknown: depends on special register (%tid.x mod 4), in a mod
 FREE: kernel micro_and_select_grid
 FREE: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
-FREE-SAME: [4 * uniform(%r5@154) + param_0]
+FREE-SAME: [256 * ⌊uniform(%r5@154)/64⌋ + param_0]
 FREE: kernel micro_and_select_or
 FREE: st.global.u32  global store 4 B
 FREE-SAME: unknown: or whose sides may both set bit 7

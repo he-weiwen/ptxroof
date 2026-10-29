@@ -4,9 +4,10 @@
 //! their operands (loads, warp collectives, tensor-core operations), and
 //! spreads forward through the definitions and branch predicates that
 //! read it, to a fixed point. Where definitions meet, the branches that
-//! select between them gate the value, as a γ's predicate does in Gated
-//! SSA; a definition inside a loop read outside it is gated by the
-//! loop's exits, as by an η's.
+//! select between them, those whose successors' paths meet again there
+//! (`control_flow::sync_dependence`), gate the value, as a γ's predicate
+//! does in Gated SSA; a definition inside a loop read outside it is
+//! gated by the loop's exits, as by an η's.
 
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
@@ -230,24 +231,58 @@ fn read_value(t: &KernelData, v: Value, pos: usize) -> Read {
     if sources.iter().any(|s| matches!(s, Value::Undef(_))) {
         return Read::Divergent(format!("reads {name}, which a path leaves unwritten"));
     }
-    read_sites(t, name, &defs, pos, node)
+    let (merges, left) = merges(t, v);
+    read_sites(t, name, &defs, pos, node, &merges, &left)
+}
+
+/// The blocks of the φs a read of `v` passes through, and the loops
+/// whose values they take from outside them.
+fn merges(t: &KernelData, v: Value) -> (Vec<BlockId>, Vec<LoopId>) {
+    let (mut seen, mut work, mut out, mut left) = (HashSet::new(), vec![v], Vec::new(), Vec::new());
+    while let Some(x) = work.pop() {
+        if let Value::Argument { block, .. } = x
+            && seen.insert(x)
+        {
+            out.push(block);
+            for (_, w) in t.ssa.incoming(x) {
+                let from = match w {
+                    Value::Result { op, .. } => Some(t.block_of(op)),
+                    Value::Argument { block, .. } => Some(block),
+                    Value::Undef(_) => None,
+                };
+                let mut l = from.and_then(|b| t.forest.block_loop[b.0 as usize]);
+                while let Some(id) = l {
+                    if !t.forest.get(id).blocks.contains(&block) {
+                        left.push(id);
+                    }
+                    l = t.forest.get(id).parent;
+                }
+                work.push(w);
+            }
+        }
+    }
+    (out, left)
 }
 
 /// A read at `pos` of `name`, whose value the statements `defs` may
-/// have written, each the source `node` names.
+/// have written, each the source `node` names, through φs in blocks
+/// `merges`.
 fn read_sites(
     t: &KernelData,
     name: &str,
     defs: &[usize],
     pos: usize,
     node: fn(usize) -> Node,
+    merges: &[BlockId],
+    left: &[LoopId],
 ) -> Read {
     let here = t.block_of(pos);
     let reaches = |a: BlockId, b: BlockId| a == b || t.reach[a.0 as usize][b.0 as usize];
     let mut sources: Vec<Node> = defs.iter().map(|&d| node(d)).collect();
     // An η's gating predicates: the exits of every loop holding a
-    // definition but not the read. A cycle with more than one entry is
-    // no loop of the forest, and its exits are not known.
+    // definition but not the read, or a value a φ outside it takes. A
+    // cycle with more than one entry is no loop of the forest, and its
+    // exits are not known.
     for &d in defs {
         let at = t.block_of(d);
         if !t.forest.irreducible_edges.is_empty()
@@ -264,29 +299,27 @@ fn read_sites(
             l = t.forest.get(id).parent;
         }
     }
-    // A γ's gating predicates: branches with two successors that reach
-    // the read, one of them through a definition.
+    for &id in left {
+        sources.extend(exits(t, id));
+    }
+    // A γ's gating predicates: branches whose successors' paths meet
+    // again at one of the φs.
     if defs.len() > 1 {
         let blocks = (0..t.cfg.blocks.len() as u32).map(BlockId);
         let reachable = blocks.filter(|&b| t.forest.doms.is_reachable(b));
-        sources.extend(reachable.filter_map(|b| {
-            let succs = &t.cfg.block(b).succs;
-            (succs.iter().filter(|&&s| reaches(s, here)).count() > 1
-                && defs
-                    .iter()
-                    .any(|&d| succs.iter().any(|&s| reaches(s, t.block_of(d)))))
-            .then_some(Node::Branch(b))
-        }));
+        sources.extend(
+            reachable
+                .filter(|b| (t.joins[b.0 as usize].iter()).any(|j| merges.contains(j)))
+                .map(Node::Branch),
+        );
     }
     Read::On(sources)
 }
 
-/// The branches of loop `id`'s blocks that can leave it.
+/// The branches that decide at which trip, or by which exit, a thread
+/// leaves loop `id`.
 fn exits<'a>(t: &'a KernelData, id: LoopId) -> impl Iterator<Item = Node> + 'a {
-    let blocks = &t.forest.get(id).blocks;
-    (blocks.iter())
-        .filter(|&&b| (t.cfg.block(b).succs.iter()).any(|s| blocks.binary_search(s).is_err()))
-        .map(|&b| Node::Branch(b))
+    (t.exit_branches[id.0 as usize].iter()).map(|&b| Node::Branch(b))
 }
 
 /// Each lane's result is a function of its own operands: a kernel
@@ -648,6 +681,110 @@ mod tests {
         };
         assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
         assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+    }
+
+    /// A spin-wait in a loop sends every thread on to the same block, and
+    /// selects none of the values the loop carries.
+    #[test]
+    fn a_spin_wait_selects_nothing() {
+        let body = "mov.u32 %r2, %r0;\n$L__H:\nsetp.ge.u32 %p1, %r2, 4;\n@%p1 bra $L__X;\n\
+                    $L__W:\nld.volatile.shared.u32 %r4, [%rd2];\nsetp.eq.u32 %p2, %r4, 0;\n\
+                    @%p2 bra $L__W;\nst.global.u32 [%rd9], %r2;\nadd.s32 %r2, %r2, %r0;\n\
+                    bra.uni $L__H;\n$L__X:";
+        assert_eq!(uniform(body, "%r2"), Ok(()));
+    }
+
+    /// Two latches meet at the header. Like LLVM, which marks every φ of
+    /// a join block, the branch between them also selects a φ both
+    /// latches carry the same value to.
+    #[test]
+    fn two_latches_select_at_the_header() {
+        let looped = |on: &str| {
+            format!(
+                "mov.u32 %r2, 0;\nmov.u32 %r5, 0;\n$L__H:\nst.global.u32 [%rd9], %r2;\n\
+                 setp.ge.u32 %p1, %r5, 2;\n@%p1 bra $L__X;\nadd.s32 %r5, %r5, 1;\n\
+                 setp.lt.u32 %p2, {on}, 16;\n@%p2 bra $L__W;\nbra.uni $L__H;\n\
+                 $L__W:\nxor.b32 %r2, %r2, 1;\nbra.uni $L__H;\n$L__X:"
+            )
+        };
+        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(uniform(&looped("%r1"), "%r5"), tid());
+    }
+
+    /// The threads a latch's branch sends around again leave through the
+    /// other exit, and meet those it lets out after the loop.
+    #[test]
+    fn going_around_again_selects_after_the_loop() {
+        let looped = |on: &str| {
+            format!(
+                "mov.u32 %r2, 0;\n$L__H:\nsetp.eq.s32 %p1, %r2, 2;\n@%p1 bra $L__A;\n\
+                 add.s32 %r2, %r2, 1;\nsetp.ge.u32 %p2, {on}, 16;\n@%p2 bra $L__H;\n\
+                 mov.u32 %r3, 128;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r3, 0;\n$L__J:"
+            )
+        };
+        assert_eq!(uniform(&looped("%r1"), "%r3"), tid());
+        assert_eq!(uniform(&looped("%r0"), "%r3"), Ok(()));
+    }
+
+    /// A branch that skips an exit test lets the threads leave at
+    /// different trips, though every exit compares the counter alike.
+    #[test]
+    fn a_branch_that_skips_an_exit_test_is_an_exit() {
+        let looped = |on: &str| {
+            format!(
+                "mov.u32 %r2, 0;\n$L__H:\nadd.s32 %r2, %r2, 1;\nsetp.ge.u32 %p1, {on}, 16;\n\
+                 @%p1 bra $L__L;\nsetp.eq.u32 %p2, %r2, 3;\n@%p2 bra $L__X;\n\
+                 $L__L:\nsetp.lt.u32 %p3, %r2, 4;\n@%p3 bra $L__H;\n$L__X:"
+            )
+        };
+        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+    }
+
+    /// A header's branch that skips the only exit test for some threads:
+    /// they leave at trip max(3, %tid.x + 1).
+    #[test]
+    fn a_header_branch_that_skips_the_exit_test_is_an_exit() {
+        let looped = |on: &str| {
+            format!(
+                "mov.u32 %r2, 0;\n$L__H:\nsetp.le.s32 %p1, %r2, {on};\n@%p1 bra $L__L;\n\
+                 setp.ge.s32 %p2, %r2, 3;\n@%p2 bra $L__X;\n$L__L:\nadd.s32 %r2, %r2, 1;\n\
+                 bra.uni $L__H;\n$L__X:"
+            )
+        };
+        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+    }
+
+    /// A value an inner loop leaves carried into its next run by the
+    /// outer loop: lane 0 leaves the first run before the value is 1, the
+    /// other lanes after.
+    #[test]
+    fn a_value_carried_out_of_an_inner_loop_and_back_is_gated_by_its_exits() {
+        let looped = |on: &str| {
+            format!(
+                "mov.u32 %r2, 0;\nmov.u32 %r4, 0;\n$L__H2:\nmov.u32 %r3, 0;\n$L__H1:\n\
+                 st.global.u32 [%rd9], %r2;\nsetp.eq.u32 %p1, {on}, 0;\n@%p1 bra $L__E1;\n\
+                 add.s32 %r3, %r3, 1;\nsetp.ge.u32 %p2, %r3, 4;\n@%p2 bra $L__E1;\n\
+                 mov.u32 %r2, 1;\nbra.uni $L__H1;\n$L__E1:\nadd.s32 %r4, %r4, 1;\n\
+                 setp.lt.u32 %p3, %r4, 2;\n@%p3 bra $L__H2;"
+            )
+        };
+        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+    }
+
+    /// A value a uniform branch sets before a loop and the loop toggles:
+    /// the lanes still in the loop agree on it, though they leave it at
+    /// different trips.
+    #[test]
+    fn a_value_merged_before_a_loop_is_not_gated_by_its_exits() {
+        let body = "setp.lt.u32 %p1, %r0, 4;\n@%p1 bra $L__A;\nmov.u32 %r2, 0;\nbra.uni $L__P;\n\
+                    $L__A:\nmov.u32 %r2, 1;\n$L__P:\nmov.u32 %r3, 0;\n$L__H:\n\
+                    st.global.u32 [%rd9], %r2;\nxor.b32 %r2, %r2, 1;\nadd.s32 %r3, %r3, 1;\n\
+                    setp.lt.u32 %p2, %r3, %r1;\n@%p2 bra $L__H;";
+        assert_eq!(uniform(body, "%r2"), Ok(()));
     }
 
     #[test]

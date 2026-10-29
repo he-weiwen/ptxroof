@@ -3,8 +3,8 @@ source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nwavefront lines {wavefronts:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
 blocks {"confirmed": 145, "consistent": 276, "unchecked": 491}
-sector lines {"differ": 3, "exact": 90, "not compared, its SASS ran otherwise": 2, "within a bound": 173, "within a range": 1170}
-wavefront lines {"agree": 890}
+sector lines {"differ": 3, "exact": 90, "not compared, its SASS ran otherwise": 2, "within a bound": 181, "within a range": 1171}
+wavefront lines {"agree": 1018}
 launch sectors {"loads agrees, stores agrees": 40, "not compared": 25}
 
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
@@ -201,6 +201,7 @@ tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_ker
   <block 27>	consistent	117 of 205 with SASS, 96 agreeing
   $L__BB0_23	confirmed	5 of 9 with SASS, 4 agreeing
   $L__BB0_24	confirmed	3 of 3 with SASS, 2 agreeing
+  sectors	{"within a bound": 8}
   wavefronts	{"agree": 32}
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 672
@@ -885,7 +886,7 @@ tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json
   $L__BB0_62	confirmed	3 of 3 with SASS, 2 agreeing
   $L__BB0_63	unchecked	1 of 1 with SASS, 0 agreeing
   sectors	{"within a range": 16}
-  wavefronts	{"agree": 1}
+  wavefronts	{"agree": 65}
 tests/fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ncu.json
   launch sectors	not compared, line 545
   $L__func_begin0	consistent	15 of 31 with SASS, 4 agreeing
@@ -964,7 +965,7 @@ tests/fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ncu.json
   $L__BB0_62	confirmed	3 of 3 with SASS, 2 agreeing
   $L__BB0_63	unchecked	1 of 1 with SASS, 0 agreeing
   sectors	{"within a range": 16}
-  wavefronts	{"agree": 1}
+  wavefronts	{"agree": 65}
 tests/fixtures/gluon/ce_chunk_kernel.sm_89.ncu.json
   launch sectors	not compared, line 64
   $L__func_begin0	consistent	17 of 39 with SASS, 5 agreeing
@@ -983,7 +984,7 @@ tests/fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ncu.json
   $L__BB0_2	consistent	10 of 24 with SASS, 6 agreeing
   $L__BB0_3	confirmed	217 of 265 with SASS, 173 agreeing
   $L__tmp29	confirmed	34 of 35 with SASS, 32 agreeing
-  sectors	{"exact": 4, "within a range": 2}
+  sectors	{"exact": 4, "within a range": 3}
   wavefronts	{"agree": 4}
 tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ncu.json
   launch sectors	loads agrees, stores agrees
