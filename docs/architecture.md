@@ -24,9 +24,9 @@ only declare modules and selected public entry points.
 | `analysis/control_flow/sync_dependence` | Where the paths from each branch's successors meet again (LLVM's sync dependence), and which branches decide when a thread leaves a loop |
 | `ssa` | Register SSA values and def/use queries over the PTX CFG |
 | `analysis/register_effects` | Instruction register reads and writes, CC included |
-| `analysis/kernel_data` | One kernel's register writes, SSA, parameter indices, reachability, branch joins and loop exit branches, with control-flow queries |
+| `analysis/kernel_analyses` | One kernel's register writes, SSA, parameter indices, reachability, branch joins and loop exit branches, with control-flow queries |
 | `analysis/special_registers` | Sharing and stability of PTX special-register values |
-| `analysis/uniformity` | Propagate divergence through definitions and controlling branches |
+| `analysis/uniformity_info` | Propagate divergence through definitions and controlling branches |
 | `analysis/affine/sym_expr` | Symbolic expressions and simplification |
 | `analysis/affine/affine_expr` | Affine expressions over thread, CTA, loop and uniform variables |
 | `analysis/affine/int_type` | Integer types and representable ranges |
@@ -73,9 +73,9 @@ owns `Precision`, `Pipe`, `Space`, `Direction` and `ArithKind` alongside
 `Contribution` and `MeasureKind`; `classify` produces those records. `measured`
 reads bindings from `report/bindings`, not from the report builder.
 
-`KernelData` holds one kernel's structure and no scalar interpretation.
-`Uniformity` borrows it and reads instruction semantics; it does not use
-`ScalarEvolution`. A `ScalarEvolution` borrows a `KernelData`, reads
+`KernelAnalyses` holds one kernel's structure and no scalar interpretation.
+`UniformityInfo` borrows it and reads instruction semantics; it does not use
+`ScalarEvolution`. A `ScalarEvolution` borrows a `KernelAnalyses`, reads
 uniformity, and holds the recursion between value and trip-count queries with
 its trip cache. `trip_counts` reads its per-loop results; nothing in
 `scalar_evolution` calls back into it.
@@ -84,7 +84,7 @@ its trip cache. `trip_counts` reads its per-loop results; nothing in
 
 `main::run` calls `report::analyze`, which parses the module, checks an NCU
 record against it, and for each kernel resolves the bindings and launch shape
-and builds the CFG, the loop forest and one `KernelData`. `KernelReportBuilder`
+and builds the CFG, the loop forest and one `KernelAnalyses`. `KernelReportBuilder`
 then:
 
 1. creates one `ScalarEvolution` under those bindings;
@@ -95,7 +95,7 @@ then:
    and count qualifiers with its dead edges;
 5. takes compile-time thread sets: the same sets when the bindings are exactly
    the `.reqntid` block shape, otherwise from a second `ScalarEvolution` over the
-   same `KernelData` under that shape, so runtime parameter bindings never make
+   same `KernelAnalyses` under that shape, so runtime parameter bindings never make
    a conditionally executed instruction look removable;
 6. marks dead code, then traces addresses and computes memory footprints.
 

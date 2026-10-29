@@ -25,7 +25,7 @@ use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::instruction_counts::classify::cp_async_size_operand;
-use crate::analysis::kernel_data::KernelData;
+use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
@@ -1112,7 +1112,7 @@ impl ThreadSets {
 }
 
 pub(crate) fn thread_sets(se: &ScalarEvolution) -> ThreadSets {
-    let KernelData {
+    let KernelAnalyses {
         module,
         kernel,
         cfg,
@@ -1871,7 +1871,7 @@ mod tests {
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
-        let data = KernelData::new(&m, k, &cfg, &forest);
+        let data = KernelAnalyses::new(&m, k, &cfg, &forest);
         let sets = thread_sets(&ScalarEvolution::new(&data));
         (m, sets)
     }

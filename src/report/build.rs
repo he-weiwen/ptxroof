@@ -34,7 +34,7 @@ use crate::analysis::instruction_counts::count_constraint::count_constraint;
 use crate::analysis::instruction_counts::measurement::{
     ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision, Space,
 };
-use crate::analysis::kernel_data::KernelData;
+use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{
     AccessForm, CountRange, SharedRequest, Wavefronts, loop_bytes, warp_footprint, warp_wavefronts,
@@ -111,7 +111,7 @@ pub fn analyze(
         let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
         let cfg = build_cfg(&module, kernel);
         let forest = loop_forest(&cfg);
-        let data = KernelData::new(&module, kernel, &cfg, &forest);
+        let data = KernelAnalyses::new(&module, kernel, &cfg, &forest);
         let k = KernelReportBuilder::new(&data, &bind_map, &lines).build(opts.launch, ncu);
         classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
         classified.den += k.instruction_classes.total;
@@ -900,11 +900,11 @@ struct KernelReportBuilder<'a> {
 
 impl<'a> KernelReportBuilder<'a> {
     fn new(
-        data: &'a KernelData<'a>,
+        data: &'a KernelAnalyses<'a>,
         bind_map: &'a HashMap<SymbolicConstant, i64>,
         lines: &'a LineIndex,
     ) -> Self {
-        let KernelData {
+        let KernelAnalyses {
             module,
             kernel,
             cfg,

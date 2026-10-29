@@ -6,7 +6,7 @@
 use crate::analysis::affine::scalar_evolution::ScalarEvolution;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::kernel_data::KernelData;
+use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::LoopName;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module};
@@ -47,7 +47,7 @@ pub fn trip_counts(
     names: &[LoopName],
     bindings: &HashMap<SymbolicConstant, i64>,
 ) -> TripCountResults {
-    let data = KernelData::new(module, kernel, cfg, forest);
+    let data = KernelAnalyses::new(module, kernel, cfg, forest);
     trip_counts_from(&ScalarEvolution::new(&data).with_bindings(bindings), names)
 }
 

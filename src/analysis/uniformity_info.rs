@@ -12,7 +12,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
 use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Space};
-use crate::analysis::kernel_data::KernelData;
+use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::register_effects::{reads_cc, split_operands};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;
@@ -36,13 +36,13 @@ enum Read {
     On(Vec<Node>),
 }
 
-pub(crate) struct Uniformity<'a> {
-    data: &'a KernelData<'a>,
+pub(crate) struct UniformityInfo<'a> {
+    data: &'a KernelAnalyses<'a>,
     divergent: HashMap<Node, String>,
 }
 
-impl<'a> Uniformity<'a> {
-    pub(crate) fn new(t: &'a KernelData<'a>) -> Self {
+impl<'a> UniformityInfo<'a> {
+    pub(crate) fn new(t: &'a KernelAnalyses<'a>) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
         let written = written(t);
         let defs: BTreeSet<usize> = (t.writes.iter())
@@ -103,7 +103,7 @@ impl<'a> Uniformity<'a> {
                 }
             }
         }
-        Uniformity { data: t, divergent }
+        UniformityInfo { data: t, divergent }
     }
 
     /// Whether every lane executing definition `d` writes the same value.
@@ -163,7 +163,7 @@ impl<'a> Uniformity<'a> {
 /// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
 /// guard and the value it keeps where the guard is false.
 fn def_reads(
-    t: &KernelData,
+    t: &KernelAnalyses,
     d: usize,
     carry_out: bool,
     written: Option<&BTreeSet<usize>>,
@@ -194,14 +194,14 @@ fn def_reads(
     rs
 }
 
-fn read(t: &KernelData, reg: Register, pos: usize) -> Read {
+fn read(t: &KernelAnalyses, reg: Register, pos: usize) -> Read {
     match t.ssa.value_before(pos, reg) {
         Some(v) => read_value(t, v, pos),
         None => Read::Divergent(format!("reads {} in a block no path reaches", name(t, reg))),
     }
 }
 
-fn name<'a>(t: &'a KernelData, reg: Register) -> &'a str {
+fn name<'a>(t: &'a KernelAnalyses, reg: Register) -> &'a str {
     match reg {
         Register::Named(r) => t.module.interner.resolve(r),
         Register::Cc => "CC.CF",
@@ -209,7 +209,7 @@ fn name<'a>(t: &'a KernelData, reg: Register) -> &'a str {
 }
 
 /// A read at `pos` of value `v`.
-fn read_value(t: &KernelData, v: Value, pos: usize) -> Read {
+fn read_value(t: &KernelAnalyses, v: Value, pos: usize) -> Read {
     let reg = match v {
         Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg) => reg,
     };
@@ -237,7 +237,7 @@ fn read_value(t: &KernelData, v: Value, pos: usize) -> Read {
 
 /// The blocks of the φs a read of `v` passes through, and the loops
 /// whose values they take from outside them.
-fn merges(t: &KernelData, v: Value) -> (Vec<BlockId>, Vec<LoopId>) {
+fn merges(t: &KernelAnalyses, v: Value) -> (Vec<BlockId>, Vec<LoopId>) {
     let (mut seen, mut work, mut out, mut left) = (HashSet::new(), vec![v], Vec::new(), Vec::new());
     while let Some(x) = work.pop() {
         if let Value::Argument { block, .. } = x
@@ -268,7 +268,7 @@ fn merges(t: &KernelData, v: Value) -> (Vec<BlockId>, Vec<LoopId>) {
 /// have written, each the source `node` names, through φs in blocks
 /// `merges`.
 fn read_sites(
-    t: &KernelData,
+    t: &KernelAnalyses,
     name: &str,
     defs: &[usize],
     pos: usize,
@@ -318,7 +318,7 @@ fn read_sites(
 
 /// The branches that decide at which trip, or by which exit, a thread
 /// leaves loop `id`.
-fn exits<'a>(t: &'a KernelData, id: LoopId) -> impl Iterator<Item = Node> + 'a {
+fn exits<'a>(t: &'a KernelAnalyses, id: LoopId) -> impl Iterator<Item = Node> + 'a {
     (t.exit_branches[id.0 as usize].iter()).map(|&b| Node::Branch(b))
 }
 
@@ -328,7 +328,7 @@ fn exits<'a>(t: &'a KernelData, id: LoopId) -> impl Iterator<Item = Node> + 'a {
 /// Table 7). A weak global load reads one value at an address where
 /// nothing writes it during the launch (PTX ISA §8, §9.7.9.8): its
 /// address points into kernel parameters `written` does not hold.
-fn lane_wise(t: &KernelData, instr: &Instr, written: Option<&BTreeSet<usize>>) -> bool {
+fn lane_wise(t: &KernelAnalyses, instr: &Instr, written: Option<&BTreeSet<usize>>) -> bool {
     let module = t.module;
     let mods: Vec<&str> = (module.modifiers(instr).iter())
         .map(|&m| module.interner.resolve(m))
@@ -356,7 +356,7 @@ fn lane_wise(t: &KernelData, instr: &Instr, written: Option<&BTreeSet<usize>>) -
 }
 
 /// The kernel parameter an `ld.param` reads.
-fn kernel_param(t: &KernelData, instr: &Instr) -> Option<usize> {
+fn kernel_param(t: &KernelAnalyses, instr: &Instr) -> Option<usize> {
     let module = t.module;
     let param = (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "param");
     if instr.mnemonic != Opcode::Ld || !param {
@@ -376,7 +376,7 @@ fn kernel_param(t: &KernelData, instr: &Instr) -> Option<usize> {
 /// The kernel parameters the addresses of `instr` may point into, as
 /// LLVM's `getUnderlyingObjects` (llvm/lib/Analysis/ValueTracking.cpp)
 /// collects them; `None` where one is not traced to them.
-fn pointees(t: &KernelData, instr: &Instr) -> Option<BTreeSet<usize>> {
+fn pointees(t: &KernelAnalyses, instr: &Instr) -> Option<BTreeSet<usize>> {
     let (mut seen, mut out) = (HashSet::new(), BTreeSet::new());
     for &o in t.module.operand_ids(instr.operands) {
         if let Operand::Memory { base, rest, .. } = t.module.operand(o) {
@@ -395,7 +395,7 @@ fn pointees(t: &KernelData, instr: &Instr) -> Option<BTreeSet<usize>> {
 /// `bfe` and a narrower `cvt` make offsets. `None` at anything else, a
 /// symbol, a vector or a statement not parsed.
 fn reach(
-    t: &KernelData,
+    t: &KernelAnalyses,
     op: OperandId,
     seen: &mut HashSet<Symbol>,
     out: &mut BTreeSet<usize>,
@@ -440,7 +440,7 @@ fn reach(
 /// where one may write anywhere: a store `pointees` does not trace, a
 /// `call`, an instruction the classifier does not handle that names
 /// `.global`, or a statement not parsed.
-fn written(t: &KernelData) -> Option<BTreeSet<usize>> {
+fn written(t: &KernelAnalyses) -> Option<BTreeSet<usize>> {
     let module = t.module;
     let mut out = BTreeSet::new();
     for (_, b) in t.cfg.blocks.iter_enumerated() {
@@ -485,7 +485,7 @@ fn read_special(reg: SpecialReg) -> Read {
     }
 }
 
-fn operand_reads(t: &KernelData, ops: &[OperandId], pos: usize) -> Vec<Read> {
+fn operand_reads(t: &KernelAnalyses, ops: &[OperandId], pos: usize) -> Vec<Read> {
     ops.iter()
         .flat_map(|&op| match t.module.operand(op) {
             Operand::Register(r) => vec![read(t, Register::Named(*r), pos)],
@@ -538,7 +538,7 @@ mod tests {
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
-        let t = KernelData::new(&m, k, &cfg, &forest);
+        let t = KernelAnalyses::new(&m, k, &cfg, &forest);
         let start = label.map_or(0, |l| {
             k.stmts
                 .iter()
@@ -548,7 +548,7 @@ mod tests {
         let pos = (start..k.stmts.len())
             .find(|&i| matches!(&k.stmts[i], Stmt::Instr(i) if m.opcode(i) == opcode))
             .expect("the read");
-        Uniformity::new(&t).is_uniform(m.interner.get(reg).expect("register"), pos)
+        UniformityInfo::new(&t).is_uniform(m.interner.get(reg).expect("register"), pos)
     }
 
     fn tid() -> Result<(), String> {

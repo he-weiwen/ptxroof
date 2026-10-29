@@ -44,10 +44,10 @@ use crate::analysis::affine::int_type::{IntKind, IntType};
 use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::kernel_data::KernelData;
+use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::register_effects::{registers, split_operands};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
-use crate::analysis::uniformity::Uniformity;
+use crate::analysis::uniformity_info::UniformityInfo;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
     Element, Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialScalar, SpecialVector,
@@ -63,7 +63,7 @@ use std::collections::{HashMap, HashSet};
 const DEPTH_LIMIT: u32 = 256;
 
 pub(crate) struct ScalarEvolution<'a> {
-    pub(crate) data: &'a KernelData<'a>,
+    pub(crate) data: &'a KernelAnalyses<'a>,
     /// Each loop counter by its header φ, with its loop.
     pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
     /// Nested loops' constant trip counts, for counters stepped by their
@@ -71,14 +71,14 @@ pub(crate) struct ScalarEvolution<'a> {
     trips: RefCell<HashMap<LoopId, Option<i64>>>,
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
-    uniformity: OnceCell<Uniformity<'a>>,
+    uniformity: OnceCell<UniformityInfo<'a>>,
     /// Why the trace in progress first read a uniform value it cannot
     /// interpret as a `Var::Unknown`.
     unread: RefCell<Option<String>>,
 }
 
 impl<'a> ScalarEvolution<'a> {
-    pub(crate) fn new(data: &'a KernelData<'a>) -> Self {
+    pub(crate) fn new(data: &'a KernelAnalyses<'a>) -> Self {
         let (forest, ssa) = (data.forest, &data.ssa);
         // Inner loops first: an outer counter may step by an inner exit.
         let mut order: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
@@ -464,8 +464,9 @@ impl<'a> ScalarEvolution<'a> {
 
     /// Which reads every lane executing them sees alike, built on first
     /// use.
-    pub(crate) fn uniformity(&self) -> &Uniformity<'a> {
-        self.uniformity.get_or_init(|| Uniformity::new(self.data))
+    pub(crate) fn uniformity(&self) -> &UniformityInfo<'a> {
+        self.uniformity
+            .get_or_init(|| UniformityInfo::new(self.data))
     }
 
     /// Loop `id`'s trip count.

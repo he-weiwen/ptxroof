@@ -12,7 +12,7 @@ use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
 use std::collections::HashMap;
 
-pub(crate) struct KernelData<'a> {
+pub(crate) struct KernelAnalyses<'a> {
     pub(crate) module: &'a Module,
     pub(crate) kernel: &'a Kernel,
     pub(crate) cfg: &'a ControlFlowGraph,
@@ -33,7 +33,7 @@ pub(crate) struct KernelData<'a> {
     pub(crate) exit_branches: Vec<Vec<BlockId>>,
 }
 
-impl<'a> KernelData<'a> {
+impl<'a> KernelAnalyses<'a> {
     pub(crate) fn new(
         module: &'a Module,
         kernel: &'a Kernel,

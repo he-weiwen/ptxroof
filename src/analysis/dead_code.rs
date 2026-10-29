@@ -123,7 +123,7 @@ fn reads(module: &Module, stmt: &Stmt, guard: Option<bool>) -> Vec<Register> {
 mod tests {
     use super::*;
     use crate::analysis::control_flow::loop_forest;
-    use crate::analysis::kernel_data::KernelData;
+    use crate::analysis::kernel_analyses::KernelAnalyses;
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
@@ -139,7 +139,7 @@ mod tests {
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
-        let data = KernelData::new(&m, k, &cfg, &forest);
+        let data = KernelAnalyses::new(&m, k, &cfg, &forest);
         let text = |s: usize| match &k.stmts[s] {
             Stmt::Instr(i) => m.opcode(i),
             _ => String::new(),
