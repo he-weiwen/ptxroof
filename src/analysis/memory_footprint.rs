@@ -86,53 +86,12 @@ pub fn warp_footprint(
             ideal: zero,
         });
     }
-    let mut lane_terms: Vec<(&Var, i64)> = Vec::new();
-    for (v, c) in &a.terms {
-        if !depends_on_lane(v) {
-            continue;
-        }
-        match c.as_const() {
-            Some(k) => lane_terms.push((v, k)),
-            None => return Err(format!("the coefficient of {v} is {c}; bind it")),
-        }
-    }
-    let [nx, ny, nz] = shape.map(i64::from);
-    let threads = nx * ny * nz;
-    if threads == 0 {
-        return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
-    }
-    if !offsets_fit(a, depends_on_lane, &in_block(shape)) {
-        return Err("lane offsets reach 2^62 bytes".to_owned());
-    }
     let bytes = i64::from(bytes);
     let align = i64::from(align.max(1));
-    let warps: Vec<Vec<i64>> = warps_of(shape)
-        .map(|warp| {
-            warp.map(|t| thread(t, shape))
-                .filter(|&tid| executes(tid))
-                .map(|tid| {
-                    lane_terms
-                        .iter()
-                        .map(|(v, k)| k * v.eval(&lanes(tid)))
-                        .sum()
-                })
-                .collect()
-        })
-        .filter(|offsets: &Vec<i64>| !offsets.is_empty())
+    let (lanes, residue) = warp_lanes(a, align, shape, executes)?;
+    let warps: Vec<Vec<i64>> = (lanes.iter())
+        .map(|w| w.iter().map(|&(_, o)| o).collect())
         .collect();
-    // PTX ISA §6.4.1 (Addresses as Operands): an address must be aligned
-    // to the access size, else the behavior is undefined. So the uniform
-    // part is congruent to minus the lanes' common residue.
-    let residue = warps.first().map_or(0, |w| w[0].rem_euclid(align));
-    if warps
-        .iter()
-        .flatten()
-        .any(|o| o.rem_euclid(align) != residue)
-    {
-        return Err(format!(
-            "lane addresses differ modulo the {align} B access size"
-        ));
-    }
     let (mut min, mut max) = (u32::MAX, 0u32);
     let (mut ideal_min, mut ideal_max) = (u32::MAX, 0u32);
     for offsets in &warps {
@@ -169,6 +128,67 @@ pub fn warp_footprint(
             max: ideal_max,
         },
     })
+}
+
+/// Per warp with an executing lane, each executing lane's index in its
+/// warp and an offset.
+type WarpLanes = Vec<Vec<(i64, i64)>>;
+
+/// Each warp's executing lanes with the lane-dependent part of `a` as
+/// their offset, and its common residue modulo `align`.
+fn warp_lanes(
+    a: &Affine,
+    align: i64,
+    shape: [u32; 3],
+    executes: impl Fn([i64; 3]) -> bool,
+) -> Result<(WarpLanes, i64), String> {
+    let mut lane_terms: Vec<(&Var, i64)> = Vec::new();
+    for (v, c) in &a.terms {
+        if !depends_on_lane(v) {
+            continue;
+        }
+        match c.as_const() {
+            Some(k) => lane_terms.push((v, k)),
+            None => return Err(format!("the coefficient of {v} is {c}; bind it")),
+        }
+    }
+    let [nx, ny, nz] = shape.map(i64::from);
+    let threads = nx * ny * nz;
+    if threads == 0 {
+        return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
+    }
+    if !offsets_fit(a, depends_on_lane, &in_block(shape)) {
+        return Err("lane offsets reach 2^62 bytes".to_owned());
+    }
+    let warps: WarpLanes = warps_of(shape)
+        .map(|warp| {
+            let first = warp.start;
+            warp.map(|t| (t - first, thread(t, shape)))
+                .filter(|&(_, tid)| executes(tid))
+                .map(|(lane, tid)| {
+                    let offset = (lane_terms.iter())
+                        .map(|(v, k)| k * v.eval(&lanes(tid)))
+                        .sum();
+                    (lane, offset)
+                })
+                .collect()
+        })
+        .filter(|lanes: &Vec<(i64, i64)>| !lanes.is_empty())
+        .collect();
+    // PTX ISA §6.4.1 (Addresses as Operands): an address must be aligned
+    // to the access size, else the behavior is undefined. So the uniform
+    // part is congruent to minus the lanes' common residue.
+    let residue = warps.first().map_or(0, |w| w[0].1.rem_euclid(align));
+    if warps
+        .iter()
+        .flatten()
+        .any(|(_, o)| o.rem_euclid(align) != residue)
+    {
+        return Err(format!(
+            "lane addresses differ modulo the {align} B access size"
+        ));
+    }
+    Ok((warps, residue))
 }
 
 /// The sectors an access of `bytes` at each of `offsets` moved by
