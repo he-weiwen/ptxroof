@@ -206,13 +206,27 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   remainder loop reading the main loop's final k;
   `micro/uniform_address.ptx`). Not read: xor swizzles of shared
   addresses (every ldmatrix and cp.async destination in the Gluon GEMM
-  and attention kernels, "behind `xor.b32`"); divisions of the thread
+  and attention kernels, "behind `xor.b32`"; 35,573 of the census's
+  63,082 unknown address rows, 35,567 shared and 6 global, 4 of these
+  census kernel `02994.ptx`'s Hadamard loads of the index xor 1, 2, 4
+  and 8, its lines 71–82); divisions of the thread
   index by a runtime value (`micro/uniform_address.ptx`'s
-  `micro_uniform_div_lanes`); an and-mask's run of bits whose remainder
+  `micro_uniform_div_lanes`; 4,194 census rows "div by a non-constant
+  divisor" and 578 "rem by a non-constant divisor": of 40 sampled,
+  binding the kernel's 32-bit parameters reads 24 past the division,
+  as census kernel `01155.ptx`'s `div.s32 %r11, %r8, %r9` of `%r9` =
+  param_5, and 16 stop at a divisor of the CTA index, Triton's grouped
+  tile schedule's `min(num_pid_m − first_pid_m, 8)`; none at a loaded
+  divisor); an and-mask's run of bits or a `rem` whose remainder
   the affine form does not hold, of a form whose offset, past its
   multiple of the modulus, is not below the coefficient of the term the
   modulus does not divide (`micro/and_runs.ptx`'s `micro_and_offset`,
-  `(%tid.x − 4) & 0x46`: "in a mod") or a negative coefficient, but for
+  `(%tid.x − 4) & 0x46`: "in a mod"; census kernel `01890.ptx` under
+  `--bind 6:p=64`, `(64·%ctaid.y | ⌊%tid.x/8⌋ mod 16 | 16) rem
+  param_6` on 134 rows: "depends on special register %ctaid.y, in a
+  division", where `(⌊%tid.x/8⌋ mod 16) rem 64` reads and
+  `((⌊%tid.x/8⌋ mod 16) + 16) rem 64` does not, `Affine::split`
+  refusing an offset k ≥ c) or a negative coefficient, but for
   a value of 0 or −1 under a mask below the sign bit
   (`micro/and_bit_select.ptx`; refused with the sign bit,
   `micro_and_select_sign`, and for −(%tid.x & 3),
@@ -245,7 +259,10 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   is the same for every thread and so
   a uniform variable the loop defines (`micro/counter_mod_offset.ptx`:
   `requested 16 B, unique unknown` where ptxas stores 8 distinct bytes;
-  k12's double buffer `tile % 2`, `uniform(%r10@365)`); an element a
+  k12's double buffer `tile % 2`, `uniform(%r10@365)`; census kernel
+  `00337.ptx`'s signed remainder `x − ((x + ((x >> 31) >>> 26)) & −64)`
+  of `x = param_4 + 1 + i` in its loop, its lines 60–66: "shift of an
+  induction variable"); an element a
   `mov.b64 {…}` unpacks from a register no single `mov` packed, after a
   join of packs (`micro/unpack.ptx`'s `micro_unpack_join`; b200
   `bmm_kernel_persistent`'s `cp.async` sources, whose `%rd175` three
