@@ -180,8 +180,12 @@ pub fn warp_wavefronts(
                     (lane, (word(0)..=word(bytes - 1)).collect())
                 })
                 .collect();
-            let served = served(request, &words)
-                .ok_or_else(|| format!("no measured rule for {bytes} B per lane"))?;
+            let served = served(request, &words).ok_or_else(|| match request {
+                SharedRequest::Load(16) => {
+                    "two lanes of a 16-byte load share a word: no measured rule".to_owned()
+                }
+                _ => format!("no measured rule for {bytes} B per lane"),
+            })?;
             seen.push(served);
             shift += bytes;
         }
@@ -199,8 +203,12 @@ pub fn warp_wavefronts(
 /// One warp's wavefronts and their ideal number, from each lane's index
 /// and words. A group of lanes reads a word once however many address
 /// it; a group takes as many wavefronts as the most words it has in one
-/// bank. The groups, measured: the warp for 4-byte accesses, and the 8
-/// lanes of each matrix, each its own wavefronts.
+/// bank. The groups, measured: the warp for 4-byte accesses; half-warps
+/// for 8-byte, each its own wavefronts for a store and sharing them in
+/// banks the other leaves free for a load, one wavefront when every lane
+/// loads one address; quarter-warps for a 16-byte store and the 8 lanes
+/// of each matrix, each its own wavefronts; the warp for a 16-byte load
+/// when no two lanes share a word, and no rule when they do.
 fn served(request: SharedRequest, lanes: &[(i64, Vec<i64>)]) -> Option<(u32, u32)> {
     let banks = |size: i64| {
         let mut groups: BTreeMap<i64, [BTreeSet<i64>; 32]> = BTreeMap::new();
@@ -222,9 +230,25 @@ fn served(request: SharedRequest, lanes: &[(i64, Vec<i64>)]) -> Option<(u32, u32
             groups.iter().map(packed).sum(),
         )
     };
+    let shared = |size| {
+        let groups = banks(size);
+        let at = |b: usize, n: &dyn Fn(&BTreeSet<i64>) -> usize| {
+            groups.iter().map(|g| n(&g[b])).sum::<usize>()
+        };
+        let top = |n: &dyn Fn(&BTreeSet<i64>) -> usize| {
+            (0..32).map(|b| at(b, n)).max().unwrap_or(0) as u32
+        };
+        (top(&BTreeSet::len), top(&|s| usize::from(!s.is_empty())))
+    };
+    let all: Vec<i64> = lanes.iter().flat_map(|(_, w)| w.iter().copied()).collect();
+    let distinct: BTreeSet<i64> = all.iter().copied().collect();
     match request {
         SharedRequest::Load(b) | SharedRequest::Store(b) if b <= 4 => Some(apart(32)),
-        SharedRequest::Matrix(_) => Some(apart(8)),
+        SharedRequest::Store(8) => Some(apart(16)),
+        SharedRequest::Store(16) | SharedRequest::Matrix(_) => Some(apart(8)),
+        SharedRequest::Load(8) if lanes.windows(2).all(|p| p[0].1 == p[1].1) => Some((1, 1)),
+        SharedRequest::Load(8) => Some(shared(16)),
+        SharedRequest::Load(16) if distinct.len() == all.len() => Some(apart(32)),
         _ => None,
     }
 }
@@ -635,6 +659,7 @@ mod tests {
         let x = || Box::new(Var::Tid(Axis::X));
         let t = |k| tid().scale(c(k));
         let rem = |m, k| Affine::var(Var::Mod(x(), m)).scale(c(k));
+        let floor = |d, k| Affine::var(Var::Div(x(), d)).scale(c(k));
         let wf = |a: &Affine, r| {
             let w = warp_wavefronts(a, r, [32, 1, 1], |_| true).unwrap();
             (w.count.max, w.ideal.max)
@@ -644,10 +669,19 @@ mod tests {
         assert_eq!(wf(&t(8), Load(4)), (2, 1));
         assert_eq!(wf(&t(128), Store(4)), (32, 1));
         assert_eq!(wf(&rem(16, 4), Load(4)), (1, 1));
+        assert_eq!(wf(&rem(16, 8), Load(8)), (2, 2));
+        assert_eq!(wf(&t(16), Load(8)), (4, 2));
+        let decode = rem(2, 64) + Affine::var(Var::Mod(Box::new(Var::Div(x(), 4)), 8)).scale(c(8));
+        assert_eq!(wf(&decode, Load(8)), (1, 1));
+        assert_eq!(wf(&Affine::from_base(c(0)), Load(8)), (1, 1));
+        assert_eq!(wf(&rem(16, 8), Store(8)), (2, 2));
+        assert_eq!(wf(&floor(16, 16), Store(16)), (4, 4));
+        assert_eq!(wf(&t(32), Store(16)), (8, 4));
+        assert_eq!(wf(&t(32), Load(16)), (8, 4));
         assert_eq!(wf(&t(16), Matrix(4)), (4, 4));
         assert_eq!(wf(&rem(8, 16), Matrix(2)), (2, 2));
         assert_eq!(wf(&t(128), Matrix(1)), (8, 1));
-        assert!(warp_wavefronts(&t(8), Load(8), [32, 1, 1], |_| true).is_err());
+        assert!(warp_wavefronts(&rem(16, 16), Load(16), [32, 1, 1], |_| true).is_err());
     }
 
     #[test]
