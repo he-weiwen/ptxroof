@@ -20,13 +20,13 @@
 //!    the coverage fractions agree with the class counts and the loop
 //!    tree.
 
+use ptxroof::analysis::affine::sym_expr::SymbolicConstant;
+use ptxroof::analysis::affine::trip_counts::trip_counts;
 use ptxroof::analysis::control_flow::loop_forest;
 use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
 use ptxroof::analysis::instruction_counts::measurement::Precision;
 use ptxroof::analysis::loop_names::loop_names;
-use ptxroof::analysis::scalar::symexpr::Leaf;
-use ptxroof::analysis::scalar::trip_counts::trip_counts;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
@@ -210,7 +210,10 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
         let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default());
-        let bind_map: HashMap<Leaf, i64> = [(Leaf::Param(param), value)].into_iter().collect();
+        let bind_map: HashMap<SymbolicConstant, i64> =
+            [(SymbolicConstant::KernelParam(param), value)]
+                .into_iter()
+                .collect();
         let trips_num: Vec<i64> = info
             .trips
             .iter()

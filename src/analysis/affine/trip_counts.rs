@@ -3,11 +3,11 @@
 //! trips match `(X − X mod c)/c` and `X mod c` — linked into one logical
 //! loop with factor c.
 
+use crate::analysis::affine::evolution::ScalarEvolution;
+use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::kernel_data::KernelData;
 use crate::analysis::loop_names::LoopName;
-use crate::analysis::scalar::evolution::ScalarEvolution;
-use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module};
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ pub fn trip_counts(
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
     names: &[LoopName],
-    bindings: &HashMap<Leaf, i64>,
+    bindings: &HashMap<SymbolicConstant, i64>,
 ) -> TripCountResults {
     let data = KernelData::new(module, kernel, cfg, forest);
     trip_counts_from(&ScalarEvolution::new(&data).with_bindings(bindings), names)
@@ -160,7 +160,7 @@ mod tests {
              setp.ne.s32 %p2, %r4, 0;\n@%p2 bra $L__R;\n\
              ret;\n}\n.file 1 \"kern.cu\"\n",
         );
-        let pairs = |src: &str, bindings: &HashMap<Leaf, i64>| {
+        let pairs = |src: &str, bindings: &HashMap<SymbolicConstant, i64>| {
             let m = parse(src).expect("parses");
             let k = &m.kernels[0];
             let cfg = build_cfg(&m, k);
@@ -181,7 +181,9 @@ mod tests {
             "ld.param.u32 %r1, [k_param_0];",
             "ld.param.u32 %r0, [k_param_0];\nmin.s32 %r1, %r0, 8;",
         );
-        let bound = [(Leaf::Param(0), 100)].into_iter().collect();
+        let bound = [(SymbolicConstant::KernelParam(0), 100)]
+            .into_iter()
+            .collect();
         assert_eq!(pairs(&src, &free), shape("min(param_0, 8)"));
         assert_eq!(pairs(&src, &bound), shape("min(param_0, 8)"));
         // A unit-step main loop below (X − X mod 4)/4, behind a guard that

@@ -21,6 +21,10 @@
 //! below that loop, which is why a guarded kernel still has exact
 //! per-iteration numbers — the altitude where the verdict lives.
 
+use crate::analysis::affine::affine_expr::{AffineExpr, Var};
+use crate::analysis::affine::evolution::ScalarEvolution;
+use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
+use crate::analysis::affine::trip_counts::{TripCountResults, trip_counts_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::control_flow::{dominators, loop_forest};
 use crate::analysis::dead_code::unused;
@@ -35,10 +39,6 @@ use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{
     AccessForm, CountRange, SharedRequest, Wavefronts, loop_bytes, warp_footprint, warp_wavefronts,
 };
-use crate::analysis::scalar::affine::{Affine, Var};
-use crate::analysis::scalar::evolution::ScalarEvolution;
-use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
-use crate::analysis::scalar::trip_counts::{TripCountResults, trip_counts_from};
 use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets, thread_sets};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
@@ -105,7 +105,7 @@ pub fn analyze(
                 .into_iter()
                 .zip(dims.into_iter().flatten())
             {
-                bind_map.insert(Leaf::Special(reg), i64::from(n));
+                bind_map.insert(SymbolicConstant::SpecialReg(reg), i64::from(n));
             }
         }
         let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
@@ -147,7 +147,7 @@ fn resolve_bindings(
     kernel: &Kernel,
     binds: &[BindingSpec],
     echo: &mut Vec<Binding>,
-) -> Result<HashMap<Leaf, i64>, AnalyzeError> {
+) -> Result<HashMap<SymbolicConstant, i64>, AnalyzeError> {
     let mut map = HashMap::new();
     for spec in binds {
         let index = match spec.index {
@@ -181,7 +181,7 @@ fn resolve_bindings(
                 kernel.params.len()
             )));
         }
-        map.insert(Leaf::Param(index), spec.value);
+        map.insert(SymbolicConstant::KernelParam(index), spec.value);
         if !echo.iter().any(|b: &Binding| b.param == index) {
             echo.push(Binding {
                 param: index,
@@ -214,8 +214,8 @@ impl KernelReportBuilder<'_> {
         let mut per_request = PerRequests::new();
         let mut per_wavefronts = PerWavefronts::new();
         let name = |v: &Var| match v {
-            Var::Iter(l) => format!("k[{}]", self.loop_ref(*l)),
-            Var::Uniform(u) => format!(
+            Var::Iteration(l) => format!("k[{}]", self.loop_ref(*l)),
+            Var::Unknown(u) => format!(
                 "uniform({})",
                 Self::value_name(self.module, self.kernel, self.cfg, self.lines, *u)
             ),
@@ -441,14 +441,16 @@ impl KernelReportBuilder<'_> {
                         let mut cur = scope;
                         while let Some(l) = cur {
                             let stepped = (a.terms.keys()).any(|v| {
-                                (*v != Var::Iter(l) && v.counter() == Some(l))
+                                (*v != Var::Iteration(l) && v.counter() == Some(l))
                                     || v.uniform().is_some_and(|u| se.data.defined_in(u, l))
                             });
                             reuse.push(Reuse {
                                 r#loop: display[l.0 as usize].clone(),
                                 stride: match stepped {
                                     true => Some("varies".to_owned()),
-                                    false => a.terms.get(&Var::Iter(l)).map(ToString::to_string),
+                                    false => {
+                                        a.terms.get(&Var::Iteration(l)).map(ToString::to_string)
+                                    }
                                 },
                             });
                             cur = forest.get(l).parent;
@@ -670,7 +672,7 @@ impl CountAccumulator {
             })
     }
 
-    fn count(&self, name: &dyn Fn(&Leaf) -> String) -> Count {
+    fn count(&self, name: &dyn Fn(&SymbolicConstant) -> String) -> Count {
         Count {
             expr: self.expr().render(name),
             at_most: self.at_most,
@@ -805,7 +807,7 @@ impl IssueAccumulator {
         }
     }
 
-    fn warps(&self, name: &dyn Fn(&Leaf) -> String) -> Option<Count> {
+    fn warps(&self, name: &dyn Fn(&SymbolicConstant) -> String) -> Option<Count> {
         self.warps.touched.then(|| self.warps.count(name))
     }
 }
@@ -845,7 +847,7 @@ impl FlopAccumulator {
         self.total.add_unknown();
     }
 
-    fn counts(&self, name: &dyn Fn(&Leaf) -> String) -> BTreeMap<String, Count> {
+    fn counts(&self, name: &dyn Fn(&SymbolicConstant) -> String) -> BTreeMap<String, Count> {
         let mut out: BTreeMap<String, Count> = self
             .by_precision
             .iter()
@@ -865,7 +867,7 @@ struct KernelReportBuilder<'a> {
     names: Vec<LoopName>,
     trip_info: TripCountResults,
     blocks: Vec<BlockMeasurements>,
-    bind_map: &'a HashMap<Leaf, i64>,
+    bind_map: &'a HashMap<SymbolicConstant, i64>,
     /// Trip expression per loop for aggregation (an opaque symbol when
     /// unresolved, one per loop name), already bound.
     trip_exprs: Vec<SymExpr>,
@@ -899,7 +901,7 @@ struct KernelReportBuilder<'a> {
 impl<'a> KernelReportBuilder<'a> {
     fn new(
         data: &'a KernelData<'a>,
-        bind_map: &'a HashMap<Leaf, i64>,
+        bind_map: &'a HashMap<SymbolicConstant, i64>,
         lines: &'a LineIndex,
     ) -> Self {
         let KernelData {
@@ -926,7 +928,7 @@ impl<'a> KernelReportBuilder<'a> {
             .enumerate()
             .map(|(i, t)| match t {
                 Ok(e) => e.bind(bind_map),
-                Err(_) => SymExpr::Sym(Leaf::Trips(LoopId(i as u32))),
+                Err(_) => SymExpr::Sym(SymbolicConstant::TripCount(LoopId(i as u32))),
             })
             .collect();
 
@@ -948,7 +950,7 @@ impl<'a> KernelReportBuilder<'a> {
 
         let shape = SpecialVector::Ntid.components().map(|reg| {
             bind_map
-                .get(&Leaf::Special(reg))
+                .get(&SymbolicConstant::SpecialReg(reg))
                 .map(|&v| v as u32)
                 .unwrap_or(0)
         });
@@ -1020,10 +1022,11 @@ impl<'a> KernelReportBuilder<'a> {
             };
             b.cond_entry[i] &= !always(b.trip_info.entries[i], targets);
         }
-        let compile_time: HashMap<Leaf, i64> = (SpecialVector::Ntid.components().into_iter())
-            .zip(kernel.reqntid.into_iter().flatten())
-            .map(|(reg, n)| (Leaf::Special(reg), i64::from(n)))
-            .collect();
+        let compile_time: HashMap<SymbolicConstant, i64> =
+            (SpecialVector::Ntid.components().into_iter())
+                .zip(kernel.reqntid.into_iter().flatten())
+                .map(|(reg, n)| (SymbolicConstant::SpecialReg(reg), i64::from(n)))
+                .collect();
         let static_sets;
         let sets = match compile_time == *bind_map {
             true => &b.sets,
@@ -1098,13 +1101,20 @@ impl<'a> KernelReportBuilder<'a> {
     /// it names no other address (a parameter in a coefficient, a
     /// module-scope array) and no 64-bit uniform value. An offset from a
     /// pointer is taken to stay in its allocation.
-    fn pointer(&self, key: &Affine) -> Option<usize> {
-        let pointer = |leaf: &Leaf| match leaf {
-            Leaf::Param(i) => (self.kernel.params.get(*i)).is_some_and(|p| p.ty.bytes() == Some(8)),
+    fn pointer(&self, key: &AffineExpr) -> Option<usize> {
+        let pointer = |leaf: &SymbolicConstant| match leaf {
+            SymbolicConstant::KernelParam(i) => {
+                (self.kernel.params.get(*i)).is_some_and(|p| p.ty.bytes() == Some(8))
+            }
             _ => false,
         };
-        let address =
-            |leaf: &Leaf| pointer(leaf) || !matches!(leaf, Leaf::Param(_) | Leaf::Special(_));
+        let address = |leaf: &SymbolicConstant| {
+            pointer(leaf)
+                || !matches!(
+                    leaf,
+                    SymbolicConstant::KernelParam(_) | SymbolicConstant::SpecialReg(_)
+                )
+        };
         let mut coefficients = Vec::new();
         for (v, c) in &key.terms {
             let wide = v.uniform().is_some_and(|u| {
@@ -1135,7 +1145,7 @@ impl<'a> KernelReportBuilder<'a> {
             _ => false,
         };
         match p {
-            Leaf::Param(i) if direct && pointer(p) => Some(*i),
+            SymbolicConstant::KernelParam(i) if direct && pointer(p) => Some(*i),
             _ => None,
         }
     }
@@ -1152,10 +1162,10 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// A symbol as the report prints it: a loop's unknown count by the
     /// loop's name, a uniform value by its register and line.
-    fn leaf_name(&self, leaf: &Leaf) -> String {
+    fn leaf_name(&self, leaf: &SymbolicConstant) -> String {
         match leaf {
-            Leaf::Trips(l) => format!("trips({})", self.loop_ref(*l)),
-            Leaf::Uniform(v) => format!(
+            SymbolicConstant::TripCount(l) => format!("trips({})", self.loop_ref(*l)),
+            SymbolicConstant::Unknown(v) => format!(
                 "uniform({})",
                 Self::value_name(self.module, self.kernel, self.cfg, self.lines, *v)
             ),
@@ -1177,7 +1187,7 @@ impl<'a> KernelReportBuilder<'a> {
         let warps = set.warps(self.shape);
         Some(ThreadsInfo {
             condition: set.render_named(&|v| match v {
-                Var::Iter(l) => format!("k[{}]", self.loop_ref(*l)),
+                Var::Iteration(l) => format!("k[{}]", self.loop_ref(*l)),
                 other => other.to_string(),
             })?,
             count: counted.map(|c| u64::from(c.possible)),
@@ -1296,7 +1306,8 @@ impl<'a> KernelReportBuilder<'a> {
         (self.trip_exprs[l.0 as usize].symbols().iter()).any(|s| {
             matches!(
                 s,
-                Leaf::Special(SpecialReg::Vector(SpecialVector::Ctaid, _)) | Leaf::Uniform(_)
+                SymbolicConstant::SpecialReg(SpecialReg::Vector(SpecialVector::Ctaid, _))
+                    | SymbolicConstant::Unknown(_)
             )
         })
     }
@@ -1318,11 +1329,15 @@ impl<'a> KernelReportBuilder<'a> {
     fn cta_weight(&self, loops: Vec<LoopId>) -> ([bool; 3], impl Fn([i64; 3]) -> Option<u64> + '_) {
         let regs = SpecialVector::Ctaid.components();
         let read = regs.map(|reg| {
-            let leaf = Leaf::Special(reg);
+            let leaf = SymbolicConstant::SpecialReg(reg);
             (loops.iter()).any(|l| self.trip_exprs[l.0 as usize].symbols().contains(&leaf))
         });
         let weight = move |c: [i64; 3]| {
-            let at: HashMap<Leaf, i64> = regs.map(Leaf::Special).into_iter().zip(c).collect();
+            let at: HashMap<SymbolicConstant, i64> = regs
+                .map(SymbolicConstant::SpecialReg)
+                .into_iter()
+                .zip(c)
+                .collect();
             loops.iter().try_fold(1u64, |w, l| {
                 let n = self.trip_exprs[l.0 as usize].bind(&at).as_const()?;
                 if let Some((x, step)) = &self.trip_info.distances[l.0 as usize] {
@@ -1678,7 +1693,7 @@ impl<'a> KernelReportBuilder<'a> {
             .values()
             .map(|t| t.total.expr())
             .fold(SymExpr::Const(0), SymExpr::add);
-        let name = |l: &Leaf| self.leaf_name(l);
+        let name = |l: &SymbolicConstant| self.leaf_name(l);
         let bytes_out: BTreeMap<String, DirectionCounts> = bytes
             .iter()
             .map(|(k, (l, s))| {
@@ -1871,7 +1886,7 @@ impl<'a> KernelReportBuilder<'a> {
                     weight.add(instrs, Some(&mult), false);
                 }
                 let weight = weight.expr();
-                let approx: HashMap<Leaf, i64> = weight
+                let approx: HashMap<SymbolicConstant, i64> = weight
                     .symbols()
                     .into_iter()
                     .map(|s| (s, (1 << 20) + 3))
@@ -2034,7 +2049,7 @@ impl<'a> KernelReportBuilder<'a> {
     fn grid(&self) -> Option<[u32; 3]> {
         let [x, y, z] = (SpecialVector::Nctaid.components()).map(|reg| {
             self.bind_map
-                .get(&Leaf::Special(reg))
+                .get(&SymbolicConstant::SpecialReg(reg))
                 .and_then(|&n| u32::try_from(n).ok())
         });
         Some([x?, y?, z?])

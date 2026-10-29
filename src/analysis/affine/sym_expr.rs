@@ -33,30 +33,30 @@ use std::fmt;
 
 /// What a symbol stands for.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Leaf {
+pub enum SymbolicConstant {
     /// Kernel parameter `i`'s value, `param_i`.
-    Param(usize),
+    KernelParam(usize),
     /// A special register one for the CTA: the launch shape, the CTA's
     /// index.
-    Special(SpecialReg),
+    SpecialReg(SpecialReg),
     /// A register value scalar evolution cannot interpret, one for every lane
     /// of the CTA reading it.
-    Uniform(Value),
+    Unknown(Value),
     /// The trip count of a loop whose count is not known.
-    Trips(LoopId),
+    TripCount(LoopId),
     /// A named location's address: a shared array, the dynamic shared
     /// base.
-    Symbol(String),
+    AddressOf(String),
 }
 
-impl fmt::Display for Leaf {
+impl fmt::Display for SymbolicConstant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Leaf::Param(i) => write!(f, "param_{i}"),
-            Leaf::Special(reg) => f.write_str(&reg.name()),
-            Leaf::Uniform(v) => write!(f, "uniform({v:?})"),
-            Leaf::Trips(l) => write!(f, "trips(loop {})", l.0),
-            Leaf::Symbol(name) => f.write_str(name),
+            SymbolicConstant::KernelParam(i) => write!(f, "param_{i}"),
+            SymbolicConstant::SpecialReg(reg) => f.write_str(&reg.name()),
+            SymbolicConstant::Unknown(v) => write!(f, "uniform({v:?})"),
+            SymbolicConstant::TripCount(l) => write!(f, "trips(loop {})", l.0),
+            SymbolicConstant::AddressOf(name) => f.write_str(name),
         }
     }
 }
@@ -64,7 +64,7 @@ impl fmt::Display for Leaf {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SymExpr {
     Const(i64),
-    Sym(Leaf),
+    Sym(SymbolicConstant),
     /// n-ary sum; invariant: ≥ 2 terms in `Ord` order, positive ones
     /// first, no nested `Sum`, constants folded into one trailing term
     /// while they fit in `i64` (an overflowing constant stays as its own
@@ -89,7 +89,7 @@ pub enum SymExpr {
 
 impl SymExpr {
     pub fn sym(name: impl Into<String>) -> SymExpr {
-        SymExpr::Sym(Leaf::Symbol(name.into()))
+        SymExpr::Sym(SymbolicConstant::AddressOf(name.into()))
     }
 
     /// The constant summand: the value with every symbol at 0.
@@ -155,7 +155,10 @@ impl SymExpr {
     /// The least and the greatest value, every symbol within `sym`'s
     /// bounds: `Err(false)` where a symbol has no bounds and `Err(true)`
     /// where a bound leaves `i128`.
-    pub fn span(&self, sym: &dyn Fn(&Leaf) -> Option<(i64, i64)>) -> Result<(i128, i128), bool> {
+    pub fn span(
+        &self,
+        sym: &dyn Fn(&SymbolicConstant) -> Option<(i64, i64)>,
+    ) -> Result<(i128, i128), bool> {
         let pair = |x: &SymExpr, y: &SymExpr| Ok((x.span(sym)?, y.span(sym)?));
         let fits = |x: Option<i128>| x.ok_or(true);
         Ok(match self {
@@ -420,7 +423,7 @@ impl SymExpr {
 
     /// Substitute symbols by value and re-simplify. Unbound symbols
     /// survive; a fully-bound expression collapses to `Const`.
-    pub fn bind(&self, bindings: &HashMap<Leaf, i64>) -> SymExpr {
+    pub fn bind(&self, bindings: &HashMap<SymbolicConstant, i64>) -> SymExpr {
         match self {
             SymExpr::Const(c) => SymExpr::Const(*c),
             SymExpr::Sym(leaf) => match bindings.get(leaf) {
@@ -446,8 +449,8 @@ impl SymExpr {
     }
 
     /// The symbols appearing in the expression, each once, in order.
-    pub fn symbols(&self) -> Vec<Leaf> {
-        fn walk(e: &SymExpr, out: &mut Vec<Leaf>) {
+    pub fn symbols(&self) -> Vec<SymbolicConstant> {
+        fn walk(e: &SymExpr, out: &mut Vec<SymbolicConstant>) {
             match e {
                 SymExpr::Const(_) => {}
                 SymExpr::Sym(leaf) if out.contains(leaf) => {}
@@ -518,12 +521,12 @@ fn parens_needed(e: &SymExpr, ctx: PrintContext) -> bool {
 
 impl SymExpr {
     /// The expression with each symbol printed by `name`.
-    pub fn render(&self, name: &dyn Fn(&Leaf) -> String) -> String {
+    pub fn render(&self, name: &dyn Fn(&SymbolicConstant) -> String) -> String {
         render(self, PrintContext::Top, name)
     }
 }
 
-fn render(e: &SymExpr, ctx: PrintContext, name: &dyn Fn(&Leaf) -> String) -> String {
+fn render(e: &SymExpr, ctx: PrintContext, name: &dyn Fn(&SymbolicConstant) -> String) -> String {
     let body = match e {
         SymExpr::Const(c) => c.to_string(),
         SymExpr::Sym(leaf) => name(leaf),
@@ -599,11 +602,14 @@ mod tests {
     use super::*;
 
     fn k() -> E {
-        E::Sym(Leaf::Param(2))
+        E::Sym(SymbolicConstant::KernelParam(2))
     }
 
-    fn bindings(pairs: &[(usize, i64)]) -> HashMap<Leaf, i64> {
-        pairs.iter().map(|&(i, v)| (Leaf::Param(i), v)).collect()
+    fn bindings(pairs: &[(usize, i64)]) -> HashMap<SymbolicConstant, i64> {
+        pairs
+            .iter()
+            .map(|&(i, v)| (SymbolicConstant::KernelParam(i), v))
+            .collect()
     }
 
     #[test]
@@ -787,7 +793,7 @@ mod tests {
             E::mul(E::sym("b"), E::sym("a")),
             E::ceil_div(E::sym("a"), 4),
         );
-        let name = |s: &str| Leaf::Symbol(s.to_owned());
+        let name = |s: &str| SymbolicConstant::AddressOf(s.to_owned());
         assert_eq!(e.symbols(), [name("a"), name("b")]);
         assert_eq!(E::Const(3).symbols(), []);
     }
@@ -805,7 +811,8 @@ mod tests {
     /// bounded; past i128 the whole line, though a remainder follows.
     #[test]
     fn ranges_over_bounded_symbols() {
-        let sym = |s: &Leaf| (*s == Leaf::Param(2)).then_some((0, 100));
+        let sym =
+            |s: &SymbolicConstant| (*s == SymbolicConstant::KernelParam(2)).then_some((0, 100));
         let row = E::sub(
             E::min(
                 E::add(E::mul(E::Const(16), k()), E::Const(16)),
@@ -857,8 +864,11 @@ mod tests {
             E::mul(E::Const(2), E::min(k(), E::sym("n"))).to_string(),
             "2 * min(param_2, n)"
         );
-        let n = Leaf::Symbol("n".to_owned());
-        assert_eq!(E::min(k(), E::sym("n")).symbols(), [Leaf::Param(2), n]);
+        let n = SymbolicConstant::AddressOf("n".to_owned());
+        assert_eq!(
+            E::min(k(), E::sym("n")).symbols(),
+            [SymbolicConstant::KernelParam(2), n]
+        );
         assert!(E::max(E::mul(E::Const(4), k()), E::Const(8)).divisible_by(4));
         assert!(!E::max(k(), E::Const(8)).divisible_by(4));
     }

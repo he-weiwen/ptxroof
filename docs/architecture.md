@@ -27,14 +27,14 @@ only declare modules and selected public entry points.
 | `analysis/kernel_data` | One kernel's register writes, SSA, parameter indices, reachability, branch joins and loop exit branches, with control-flow queries |
 | `analysis/special_registers` | Sharing and stability of PTX special-register values |
 | `analysis/uniformity` | Propagate divergence through definitions and controlling branches |
-| `analysis/scalar/symexpr` | Symbolic expressions and simplification |
-| `analysis/scalar/affine` | Affine values over thread, CTA, loop and uniform variables |
-| `analysis/scalar/integer` | Integer types and representable ranges |
-| `analysis/scalar/lane_eval` | Evaluate affine forms for lanes and warp layouts |
-| `analysis/scalar/recurrences` | Recognize loop counter recurrences on SSA values |
-| `analysis/scalar/loop_bounds` | Loop-exit inequalities solved for a trip count |
-| `analysis/scalar/evolution` | Register values as affine forms and one loop's trip count; their mutual recursion and trip cache |
-| `analysis/scalar/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
+| `analysis/affine/sym_expr` | Symbolic expressions and simplification |
+| `analysis/affine/affine_expr` | Affine expressions over thread, CTA, loop and uniform variables |
+| `analysis/affine/int_type` | Integer types and representable ranges |
+| `analysis/affine/lane_eval` | Evaluate affine forms for lanes and warp layouts |
+| `analysis/affine/recurrences` | Recognize loop counter recurrences on SSA values |
+| `analysis/affine/loop_bounds` | Loop-exit inequalities solved for a trip count |
+| `analysis/affine/evolution` | Register values as affine forms and one loop's trip count; their mutual recursion and trip cache |
+| `analysis/affine/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
 | `analysis/loop_names` | Source-derived loop identities used by unroll pairing and display |
 | `analysis/thread_participation` | Predicates and sets of threads executing blocks and accesses |
 | `analysis/dead_code` | Instructions with no live effect through register SSA |

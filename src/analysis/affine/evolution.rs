@@ -37,15 +37,15 @@
 //! grid given, a symbolic trip count) is assumed not to wrap its type,
 //! and unsigned/signed comparison width is not modeled.
 
+use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Cmp, Var};
+use crate::analysis::affine::int_type::{IntKind, IntType};
+use crate::analysis::affine::lane_eval::depends_on_lane;
+use crate::analysis::affine::loop_bounds::{below_zero, solve};
+use crate::analysis::affine::recurrences::{Recurrence, Step, recurrences};
+use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_data::KernelData;
 use crate::analysis::register_effects::{registers, split_operands};
-use crate::analysis::scalar::affine::{Affine, Axis, Cmp, Var};
-use crate::analysis::scalar::integer::{IntKind, IntType};
-use crate::analysis::scalar::lane_eval::depends_on_lane;
-use crate::analysis::scalar::loop_bounds::{below_zero, solve};
-use crate::analysis::scalar::recurrences::{Recurrence, Step, recurrences};
-use crate::analysis::scalar::symexpr::{Leaf, SymExpr};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::analysis::uniformity::Uniformity;
 use crate::ptx::cfg::BlockId;
@@ -70,10 +70,10 @@ pub(crate) struct ScalarEvolution<'a> {
     /// exits; `None` while one is being solved, or when it is not one.
     trips: RefCell<HashMap<LoopId, Option<i64>>>,
     /// `--bind` values, applied where a trace needs a constant.
-    pub(crate) bindings: Option<&'a HashMap<Leaf, i64>>,
+    pub(crate) bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
     uniformity: OnceCell<Uniformity<'a>>,
     /// Why the trace in progress first read a uniform value it cannot
-    /// interpret as a `Var::Uniform`.
+    /// interpret as a `Var::Unknown`.
     unread: RefCell<Option<String>>,
 }
 
@@ -149,7 +149,7 @@ impl<'a> ScalarEvolution<'a> {
         reg: Symbol,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Option<Affine> {
+    ) -> Option<AffineExpr> {
         let outer = self.unread.take();
         let mut values = defs.iter().map(|&d| self.written(d, reg, id, depth).ok());
         let value = (values.next().flatten())
@@ -194,23 +194,28 @@ impl<'a> ScalarEvolution<'a> {
     fn one_dimensional(&self) -> bool {
         self.bindings.is_some_and(|b| {
             let [_, y, z] = SpecialVector::Ntid.components();
-            b.get(&Leaf::Special(y)) == Some(&1) && b.get(&Leaf::Special(z)) == Some(&1)
+            b.get(&SymbolicConstant::SpecialReg(y)) == Some(&1)
+                && b.get(&SymbolicConstant::SpecialReg(z)) == Some(&1)
         })
     }
 
-    pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<Leaf, i64>) -> Self {
+    pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<SymbolicConstant, i64>) -> Self {
         self.bindings = Some(bindings);
         self
     }
 
     /// `f` of `a`, or of `a` under the bindings where `f` needs a
     /// coefficient the bindings make a constant.
-    fn reduced(&self, a: &Affine, f: impl Fn(Affine) -> Option<Affine>) -> Option<Affine> {
+    fn reduced(
+        &self,
+        a: &AffineExpr,
+        f: impl Fn(AffineExpr) -> Option<AffineExpr>,
+    ) -> Option<AffineExpr> {
         f(a.clone()).or_else(|| f(a.bind(self.bindings?)))
     }
 
     /// A constant, after the bindings if there are any.
-    pub(crate) fn constant(&self, a: &Affine) -> Option<i64> {
+    pub(crate) fn constant(&self, a: &AffineExpr) -> Option<i64> {
         match self.bindings {
             Some(b) => a.bind(b).as_const(),
             None => a.as_const(),
@@ -223,7 +228,7 @@ impl<'a> ScalarEvolution<'a> {
         pos: usize,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<Affine, String> {
+    ) -> Result<AffineExpr, String> {
         let module = self.data.module;
         match module.operand(op) {
             Operand::Register(reg) => self.trace_reg(*reg, pos, id, depth),
@@ -231,42 +236,42 @@ impl<'a> ScalarEvolution<'a> {
             Operand::Immediate(text) => {
                 let text = module.interner.resolve(*text);
                 parse_int(text)
-                    .map(|c| Affine::from_base(SymExpr::Const(c)))
+                    .map(|c| AffineExpr::from_base(SymExpr::Const(c)))
                     .ok_or_else(|| format!("non-integer immediate {text}"))
             }
             // A named location (a shared array, the dynamic shared base):
             // its address is a symbol.
-            Operand::SymbolRef(s) => {
-                Ok(Affine::from_base(SymExpr::sym(module.interner.resolve(*s))))
-            }
+            Operand::SymbolRef(s) => Ok(AffineExpr::from_base(SymExpr::sym(
+                module.interner.resolve(*s),
+            ))),
             Operand::Offset { base, offset } => Ok(self.trace_operand(*base, pos, id, depth)?
-                + Affine::from_base(SymExpr::Const(*offset))),
+                + AffineExpr::from_base(SymExpr::Const(*offset))),
             other => Err(format!(
                 "unsupported operand form in latch trace: {other:?}"
             )),
         }
     }
 
-    fn trace_special(&self, reg: SpecialReg) -> Result<Affine, String> {
+    fn trace_special(&self, reg: SpecialReg) -> Result<AffineExpr, String> {
         if let Some(v) = Var::special(reg) {
-            return Ok(Affine::var(v));
+            return Ok(AffineExpr::var(v));
         }
         match reg {
             _ if special_register(reg) == Some(SpecialRegister::Zero) => {
-                Ok(Affine::from_base(SymExpr::Const(0)))
+                Ok(AffineExpr::from_base(SymExpr::Const(0)))
             }
             // PTX ISA §10.3: %laneid is "the thread's lane within the
             // warp", and §3.1: a warp "contains threads of consecutive,
             // increasing thread IDs with the first warp containing
             // thread 0"; in a one-dimensional block that is %tid.x mod 32.
             SpecialReg::Scalar(SpecialScalar::Laneid) if self.one_dimensional() => {
-                Ok(Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
+                Ok(AffineExpr::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
             }
             // One value for the CTA (the launch shape, the cluster, the
             // shared memory sizes): a symbol, bound when known.
-            _ if special_register(reg) == Some(SpecialRegister::PerCta) => {
-                Ok(Affine::from_base(SymExpr::Sym(Leaf::Special(reg))))
-            }
+            _ if special_register(reg) == Some(SpecialRegister::PerCta) => Ok(
+                AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::SpecialReg(reg))),
+            ),
             _ => Err(format!(
                 "latch condition depends on special register {}",
                 reg.name()
@@ -280,7 +285,7 @@ impl<'a> ScalarEvolution<'a> {
         pos: usize,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<Affine, String> {
+    ) -> Result<AffineExpr, String> {
         let Some(v) = self.data.ssa.value_before(pos, Register::Named(reg)) else {
             let name = self.data.module.interner.resolve(reg);
             return Err(format!("{name} is read in a block no path reaches"));
@@ -292,10 +297,12 @@ impl<'a> ScalarEvolution<'a> {
                     && self.uniformity().is_uniform(reg, pos).is_ok() =>
             {
                 self.unread.borrow_mut().get_or_insert(why);
-                let u = Var::Uniform(v);
+                let u = Var::Unknown(v);
                 Ok(match self.low_zeros(v) {
-                    0 => Affine::var(u),
-                    k => Affine::term(Var::Div(Box::new(u), 1 << k), SymExpr::Const(1 << k)),
+                    0 => AffineExpr::var(u),
+                    k => {
+                        AffineExpr::term(Var::FloorDiv(Box::new(u), 1 << k), SymExpr::Const(1 << k))
+                    }
                 })
             }
             Err(why) => Err(why),
@@ -340,9 +347,9 @@ impl<'a> ScalarEvolution<'a> {
     /// `a` read at `pos`: the counter of a loop `pos` is outside, whose
     /// one latch exit comes after a constant number of trips, is that
     /// number.
-    fn after_exits(&self, a: Affine, pos: usize) -> Affine {
+    fn after_exits(&self, a: AffineExpr, pos: usize) -> AffineExpr {
         a.as_symbols(&|v| match v {
-            Var::Iter(l) if !self.data.in_loop(*l, pos) => {
+            Var::Iteration(l) if !self.data.in_loop(*l, pos) => {
                 self.constant_trips(*l).map(SymExpr::Const)
             }
             _ => None,
@@ -358,7 +365,7 @@ impl<'a> ScalarEvolution<'a> {
         reg: Symbol,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<Affine, String> {
+    ) -> Result<AffineExpr, String> {
         let name = self.data.module.interner.resolve(reg);
         let header = (self.data.forest.loops.iter()).any(|l| l.header == block);
         let refused = || {
@@ -390,7 +397,7 @@ impl<'a> ScalarEvolution<'a> {
             return Err(self.obstacle_of_any_def(reg, id).unwrap_or(why));
         }
         let common = match header {
-            true => (self.same_immediate(&defs)).map(|c| Affine::from_base(SymExpr::Const(c))),
+            true => (self.same_immediate(&defs)).map(|c| AffineExpr::from_base(SymExpr::Const(c))),
             false => self.same_value(&defs, reg, id, depth),
         };
         common.ok_or_else(refused)
@@ -405,14 +412,14 @@ impl<'a> ScalarEvolution<'a> {
         r: &Recurrence,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<Affine, Option<String>> {
+    ) -> Result<AffineExpr, Option<String>> {
         let module = self.data.module;
         let start = self.trace_value(r.start, id, depth + 1)?;
         let step = self.step(l, &r.step, depth)?;
         // The values the back edges feed, start + k·step for k in [1, n]
         // when the loop runs a constant n trips, stay in their type.
         if self.constant_trips(l).is_some() {
-            let fed = Affine::term(Var::Iter(l), step.clone()) + start.clone();
+            let fed = AffineExpr::term(Var::Iteration(l), step.clone()) + start.clone();
             let lp = self.data.forest.get(l);
             for (_, v) in (self.data.ssa.incoming(r.phi).into_iter())
                 .filter(|(p, _)| p.is_some_and(|p| lp.blocks.binary_search(&p).is_ok()))
@@ -431,7 +438,7 @@ impl<'a> ScalarEvolution<'a> {
             return Ok(start);
         }
         let back = SymExpr::mul(SymExpr::Const(-1), step.clone());
-        Ok(Affine::term(Var::Iter(l), step) + start + Affine::from_base(back))
+        Ok(AffineExpr::term(Var::Iteration(l), step) + start + AffineExpr::from_base(back))
     }
 
     /// A counter's step in loop `l`: its constant, its registers, each
@@ -479,15 +486,15 @@ impl<'a> ScalarEvolution<'a> {
         pos: usize,
         id: Option<LoopId>,
         name: &dyn Fn(&Var) -> String,
-    ) -> Result<Affine, String> {
+    ) -> Result<AffineExpr, String> {
         let a = self.first_reason(|| self.trace_operand(base, pos, id, 0))?
-            + Affine::from_base(SymExpr::Const(offset));
+            + AffineExpr::from_base(SymExpr::Const(offset));
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
         for v in a.terms.keys() {
             if let Some(l) = v.counter().filter(|&l| !self.data.in_loop(l, pos))
                 && let Err(why) = self.uniformity().exits_uniform(l)
             {
-                let k = name(&Var::Iter(l));
+                let k = name(&Var::Iteration(l));
                 return Err(format!(
                     "{k} differs between lanes after its loop, whose exit {why}"
                 ));
@@ -495,7 +502,7 @@ impl<'a> ScalarEvolution<'a> {
             if let Some(u) = v.uniform()
                 && let Err(why) = self.uniformity().value_uniform_at(u, pos)
             {
-                let u = name(&Var::Uniform(u));
+                let u = name(&Var::Unknown(u));
                 return Err(format!("{u} differs between lanes: {why}"));
             }
         }
@@ -523,13 +530,13 @@ impl<'a> ScalarEvolution<'a> {
         }
         self.trips.borrow_mut().insert(l, None);
         let n = (self.loop_trip_count(l).ok().map(|t| t.count))
-            .and_then(|t| self.constant(&Affine::from_base(t)))
+            .and_then(|t| self.constant(&AffineExpr::from_base(t)))
             .filter(|&n| n >= 1);
         self.trips.borrow_mut().insert(l, n);
         n
     }
 
-    fn trace_value(&self, v: Value, id: Option<LoopId>, depth: u32) -> Result<Affine, String> {
+    fn trace_value(&self, v: Value, id: Option<LoopId>, depth: u32) -> Result<AffineExpr, String> {
         let module = self.data.module;
         if depth > DEPTH_LIMIT {
             return Err("value trace exceeds depth limit".to_owned());
@@ -566,7 +573,7 @@ impl<'a> ScalarEvolution<'a> {
         reg: Symbol,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<Affine, String> {
+    ) -> Result<AffineExpr, String> {
         let module = self.data.module;
         let name = module.interner.resolve(reg);
         let Stmt::Instr(instr) = &self.data.kernel.stmts[def] else {
@@ -581,8 +588,9 @@ impl<'a> ScalarEvolution<'a> {
             .map(|&m| module.interner.resolve(m))
             .collect();
         let ops = module.operand_ids(instr.operands).to_vec();
-        let arg =
-            |i: usize| -> Result<Affine, String> { self.trace_operand(ops[i], def, id, depth + 1) };
+        let arg = |i: usize| -> Result<AffineExpr, String> {
+            self.trace_operand(ops[i], def, id, depth + 1)
+        };
         // A brace-enclosed destination's registers are the value's elements in
         // order (PTX ISA 6.4.3, "Vectors as Operands"): each is a parameter's
         // whole value only when the load has one element, and the element of
@@ -649,7 +657,9 @@ impl<'a> ScalarEvolution<'a> {
                     && let Operand::SymbolRef(pname) = module.operand(*base)
                     && let Some(&idx) = self.data.params.get(pname)
                 {
-                    return Ok(Affine::from_base(SymExpr::Sym(Leaf::Param(idx))));
+                    return Ok(AffineExpr::from_base(SymExpr::Sym(
+                        SymbolicConstant::KernelParam(idx),
+                    )));
                 }
                 if id.is_some_and(|l| self.data.in_loop(l, def)) {
                     Err("latch condition depends on a value loaded inside the loop".to_owned())
@@ -664,7 +674,7 @@ impl<'a> ScalarEvolution<'a> {
             Opcode::Neg
                 if ops.len() == 2 && matches!(mods.last(), Some(&("s16" | "s32" | "s64"))) =>
             {
-                Ok(Affine::from_base(SymExpr::Const(0)) - arg(1)?)
+                Ok(AffineExpr::from_base(SymExpr::Const(0)) - arg(1)?)
             }
             Opcode::And if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
@@ -685,14 +695,14 @@ impl<'a> ScalarEvolution<'a> {
                 let width = (mods.iter())
                     .find_map(|m| m.strip_prefix('b')?.parse::<u32>().ok())
                     .unwrap_or(32);
-                let modulo = |x: Affine, k: u32| -> Result<Affine, String> {
+                let modulo = |x: AffineExpr, k: u32| -> Result<AffineExpr, String> {
                     (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.bound(v))))
                         .ok_or_else(|| refuse(&x, id, "mod"))
                 };
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
                 let range = bound.range(&|v| self.bound(v));
                 let all = konst as u64 & u64::MAX >> (64 - width);
-                let (mut bits, mut sum) = (all, Affine::from_base(SymExpr::Const(0)));
+                let (mut bits, mut sum) = (all, AffineExpr::from_base(SymExpr::Const(0)));
                 let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
                 // A value of 0 or −1, all ones, keeps none or all of the
                 // mask: −mask·v, alike signed and unsigned below the sign bit.
@@ -732,7 +742,7 @@ impl<'a> ScalarEvolution<'a> {
                 // LLVM writes an add as `or` when no bit is set on both
                 // sides (its `or disjoint`, which PTX does not keep).
                 let (a, b) = (arg(1)?, arg(2)?);
-                let bound = |x: &Affine| self.bindings.map_or(x.clone(), |m| x.bind(m));
+                let bound = |x: &AffineExpr| self.bindings.map_or(x.clone(), |m| x.bind(m));
                 let largest = |v: &Var| self.bound(v).map(|(_, hi)| hi);
                 match bound(&a).may_set(&largest) & bound(&b).may_set(&largest) {
                     0 => Ok(a + b),
@@ -745,7 +755,8 @@ impl<'a> ScalarEvolution<'a> {
             // PTX ISA §9.7.8.3: a bitwise exclusive-or, of two xors of
             // thread index fields their xor.
             Opcode::Xor if ops.len() == 3 => {
-                let bits = |x: Affine| self.bindings.map_or(x.clone(), |m| x.bind(m)).lane_bits();
+                let bits =
+                    |x: AffineExpr| self.bindings.map_or(x.clone(), |m| x.bind(m)).xor_swizzle();
                 match (arg(1).map(bits), arg(2).map(bits)) {
                     (Ok(Some(x)), Ok(Some(y))) => Ok(x.xor(&y).affine()),
                     _ => Err(self.unread(instr, def, id)),
@@ -789,7 +800,7 @@ impl<'a> ScalarEvolution<'a> {
                     .find_map(|m| m.get(1..)?.parse::<i64>().ok());
                 match self.constant(&arg(2)?).map(|c| i64::from(c as u32)) {
                     Some(c) if width.is_some_and(|w| c >= w) => {
-                        Ok(Affine::from_base(SymExpr::Const(0)))
+                        Ok(AffineExpr::from_base(SymExpr::Const(0)))
                     }
                     Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".to_owned()),
@@ -831,10 +842,10 @@ impl<'a> ScalarEvolution<'a> {
                 // unless the value is known negative, so shifting it down is
                 // nvcc's `x / 2^n` sign fix-up.
                 if signed_width == Some(c + 1) && self.within(&v, (0, i128::MAX)) {
-                    return Ok(Affine::from_base(SymExpr::Const(0)));
+                    return Ok(AffineExpr::from_base(SymExpr::Const(0)));
                 }
                 if (0..63).contains(&c) {
-                    Ok(Affine::from_base(SymExpr::floor_div(v.base, 1i64 << c)))
+                    Ok(AffineExpr::from_base(SymExpr::floor_div(v.base, 1i64 << c)))
                 } else {
                     Err(format!("shift by {c} is out of range"))
                 }
@@ -874,20 +885,20 @@ impl<'a> ScalarEvolution<'a> {
                 if self.constant(&arg(3)?) != Some(31) {
                     return Err("shfl.idx in segments of the warp or a clamped lane".to_owned());
                 }
-                let warp = |v: Var| Affine::var(Var::Div(Box::new(v), 32));
-                let lane = |v: &Var| -> Option<Affine> {
+                let warp = |v: Var| AffineExpr::var(Var::FloorDiv(Box::new(v), 32));
+                let lane = |v: &Var| -> Option<AffineExpr> {
                     match v {
                         Var::Tid(Axis::X) => Some(
                             warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32))
-                                + Affine::from_base(SymExpr::Const(c)),
+                                + AffineExpr::from_base(SymExpr::Const(c)),
                         ),
-                        Var::Div(inner, d) if **inner == Var::Tid(Axis::X) => {
+                        Var::FloorDiv(inner, d) if **inner == Var::Tid(Axis::X) => {
                             if d % 32 == 0 {
-                                Some(Affine::var(v.clone()))
+                                Some(AffineExpr::var(v.clone()))
                             } else if 32 % d == 0 {
                                 Some(
                                     warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32 / d))
-                                        + Affine::from_base(SymExpr::Const(c / d)),
+                                        + AffineExpr::from_base(SymExpr::Const(c / d)),
                                 )
                             } else {
                                 None
@@ -895,15 +906,15 @@ impl<'a> ScalarEvolution<'a> {
                         }
                         Var::Mod(inner, m) if **inner == Var::Tid(Axis::X) => {
                             if 32 % m == 0 {
-                                Some(Affine::from_base(SymExpr::Const(c % m)))
+                                Some(AffineExpr::from_base(SymExpr::Const(c % m)))
                             } else if m % 32 == 0 {
                                 let w = Var::Mod(
-                                    Box::new(Var::Div(Box::new(Var::Tid(Axis::X)), 32)),
+                                    Box::new(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 32)),
                                     m / 32,
                                 );
                                 Some(
-                                    Affine::var(w).scale(SymExpr::Const(32))
-                                        + Affine::from_base(SymExpr::Const(c)),
+                                    AffineExpr::var(w).scale(SymExpr::Const(32))
+                                        + AffineExpr::from_base(SymExpr::Const(c)),
                                 )
                             } else {
                                 None
@@ -911,7 +922,7 @@ impl<'a> ScalarEvolution<'a> {
                         }
                         Var::Tid(_) => None,
                         other if depends_on_lane(other) => None,
-                        other => Some(Affine::var(other.clone())),
+                        other => Some(AffineExpr::var(other.clone())),
                     }
                 };
                 // Lane c's counter is this lane's only where lanes leave its
@@ -952,7 +963,7 @@ impl<'a> ScalarEvolution<'a> {
                     let opcode = module.opcode(instr);
                     return Err(format!("`{opcode}` of a value its type does not hold"));
                 }
-                Ok(Affine::from_base(match mnemonic {
+                Ok(AffineExpr::from_base(match mnemonic {
                     Opcode::Min => SymExpr::min(a.base, b.base),
                     _ => SymExpr::max(a.base, b.base),
                 }))
@@ -1020,7 +1031,7 @@ impl<'a> ScalarEvolution<'a> {
         count: usize,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Option<Result<Affine, String>> {
+    ) -> Option<Result<AffineExpr, String>> {
         let module = self.data.module;
         let Some(Value::Result { op, .. }) = self.data.ssa.value_before(pos, Register::Named(src))
         else {
@@ -1067,7 +1078,12 @@ impl<'a> ScalarEvolution<'a> {
     /// A `.wide` product's operands, which it reads as its type (PTX ISA
     /// §9.7.1.3, §9.7.1.4): one whose range over the known launch and
     /// constant trip counts the type does not hold is refused.
-    fn wide_operands(&self, ops: &[&Affine], instr: &Instr, mods: &[&str]) -> Result<(), String> {
+    fn wide_operands(
+        &self,
+        ops: &[&AffineExpr],
+        instr: &Instr,
+        mods: &[&str],
+    ) -> Result<(), String> {
         let Some(ty) = (mods.contains(&"wide"))
             .then(|| IntType::of(mods))
             .flatten()
@@ -1085,7 +1101,7 @@ impl<'a> ScalarEvolution<'a> {
 
     /// `a`'s range over the known launch and constant trip counts lies in
     /// [lo, hi), or is unknown.
-    fn within(&self, a: &Affine, (lo, hi): (i128, i128)) -> bool {
+    fn within(&self, a: &AffineExpr, (lo, hi): (i128, i128)) -> bool {
         let bound = self.bindings.map_or(a.clone(), |m| a.bind(m));
         (bound.range(&|v| self.bound(v))).is_none_or(|(x, y)| lo <= x && y < hi)
     }
@@ -1093,7 +1109,7 @@ impl<'a> ScalarEvolution<'a> {
     /// A 16- or 32-bit `add`, `sub`, `neg`, `mul.lo`, `mad.lo`, `shl` or `bfe`
     /// result, which wraps (PTX ISA §9.7.1), whose range over the known
     /// launch and constant trip counts leaves its type is refused.
-    fn fits(&self, value: Affine, instr: &Instr, mods: &[&str]) -> Result<Affine, String> {
+    fn fits(&self, value: AffineExpr, instr: &Instr, mods: &[&str]) -> Result<AffineExpr, String> {
         let checked = match instr.mnemonic {
             Opcode::Add | Opcode::Sub | Opcode::Neg | Opcode::Shl | Opcode::Bfe => true,
             Opcode::Mul | Opcode::Mad => mods.contains(&"lo"),
@@ -1121,14 +1137,16 @@ impl<'a> ScalarEvolution<'a> {
                 Axis::Y => 1,
                 Axis::Z => 2,
             };
-            let n = *self.bindings?.get(&Leaf::Special(vector.components()[i]))?;
+            let n = *self
+                .bindings?
+                .get(&SymbolicConstant::SpecialReg(vector.components()[i]))?;
             (n >= 1).then_some((0, n - 1))
         };
         match v {
             Var::Tid(axis) => shape(SpecialVector::Ntid, axis),
             Var::Ctaid(axis) => shape(SpecialVector::Nctaid, axis),
-            Var::Iter(l) => self.constant_trips(*l).map(|n| (1, n)),
-            Var::Div(..) | Var::Mod(..) | Var::Uniform(_) | Var::Bits(_) => None,
+            Var::Iteration(l) => self.constant_trips(*l).map(|n| (1, n)),
+            Var::FloorDiv(..) | Var::Mod(..) | Var::Unknown(_) | Var::Swizzle(_) => None,
         }
     }
 
@@ -1198,11 +1216,11 @@ fn special_obstacle(reg: SpecialReg) -> Option<String> {
 
 /// Why an arithmetic form is refused: a special register or an enclosing
 /// loop's counter among its variables outranks the generic reason.
-fn refuse(a: &Affine, id: Option<LoopId>, what: &str) -> String {
+fn refuse(a: &AffineExpr, id: Option<LoopId>, what: &str) -> String {
     for v in a.terms.keys() {
         match v {
-            Var::Iter(l) if Some(*l) == id => {}
-            Var::Iter(_) => {
+            Var::Iteration(l) if Some(*l) == id => {}
+            Var::Iteration(_) => {
                 return "latch condition depends on an enclosing loop's counter".to_owned();
             }
             other => {
@@ -1320,17 +1338,19 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
     let d = per_cta(d); // D = A − B; condition is `D cmp 0`
 
     // D(k) = A1·k + A0 in this loop's iteration number alone.
-    let k = Var::Iter(id);
+    let k = Var::Iteration(id);
     if let Some(v) = d.terms.keys().find(|v| **v != k) {
         return Err(match v {
-            Var::Iter(_) => "latch condition depends on an enclosing loop's counter".to_owned(),
+            Var::Iteration(_) => {
+                "latch condition depends on an enclosing loop's counter".to_owned()
+            }
             other => format!("latch condition depends on special register {other}"),
         });
     }
     let Some(coeff) = d.terms.get(&k) else {
         return Err("latch condition does not involve an induction variable".to_owned());
     };
-    let a1 = (se.constant(&Affine::from_base(coeff.clone())))
+    let a1 = (se.constant(&AffineExpr::from_base(coeff.clone())))
         .ok_or_else(|| "induction step is not a constant".to_owned())?;
     if a1 == i64::MIN {
         return Err("induction step is −2^63, which has no negation".to_owned());
@@ -1485,18 +1505,23 @@ fn exits_some(se: &ScalarEvolution<'_>, b: BlockId) -> bool {
 /// `a` with its terms in the CTA index as symbols of its base: `%ctaid`
 /// is the CTA's identifier, one value per CTA, never negative (PTX ISA
 /// §10.6).
-fn per_cta(a: Affine) -> Affine {
+fn per_cta(a: AffineExpr) -> AffineExpr {
     a.as_symbols(&|v| {
         let Var::Ctaid(axis) = v else { return None };
         let reg = SpecialVector::Ctaid.components()[*axis as usize];
-        Some(SymExpr::Sym(Leaf::Special(reg)))
+        Some(SymExpr::Sym(SymbolicConstant::SpecialReg(reg)))
     })
 }
 
 /// `a`, read at `pos`, with each uniform value as a symbol: one value at
 /// every trip of every entry of loop `id` where it is defined outside
 /// the loops holding `id` and every lane executing `pos` sees it alike.
-fn uniform_symbols(se: &ScalarEvolution<'_>, id: LoopId, pos: usize, a: Affine) -> Option<Affine> {
+fn uniform_symbols(
+    se: &ScalarEvolution<'_>,
+    id: LoopId,
+    pos: usize,
+    a: AffineExpr,
+) -> Option<AffineExpr> {
     let top = std::iter::successors(Some(id), |&l| se.data.forest.get(l).parent).last()?;
     let alike =
         |u: Value| !se.data.defined_in(u, top) && se.uniformity().value_uniform_at(u, pos).is_ok();
@@ -1504,7 +1529,7 @@ fn uniform_symbols(se: &ScalarEvolution<'_>, id: LoopId, pos: usize, a: Affine) 
         return None;
     }
     Some(a.as_symbols(&|v| match v {
-        Var::Uniform(u) => Some(SymExpr::Sym(Leaf::Uniform(*u))),
+        Var::Unknown(u) => Some(SymExpr::Sym(SymbolicConstant::Unknown(*u))),
         _ => None,
     }))
 }
@@ -1625,9 +1650,9 @@ fn predicate_phi_trips(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::affine::trip_counts::{TripCount, trip_counts};
     use crate::analysis::control_flow::loop_forest;
     use crate::analysis::loop_names::loop_names;
-    use crate::analysis::scalar::trip_counts::{TripCount, trip_counts};
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::ir::Module;
     use crate::ptx::parse::parser::parse;
@@ -1637,7 +1662,10 @@ mod tests {
         trips_under(src, &HashMap::new())
     }
 
-    fn trips_under(src: &str, bindings: &HashMap<Leaf, i64>) -> Vec<(String, TripCount)> {
+    fn trips_under(
+        src: &str,
+        bindings: &HashMap<SymbolicConstant, i64>,
+    ) -> Vec<(String, TripCount)> {
         let m = parse(src).expect("test source parses");
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
@@ -1659,7 +1687,9 @@ mod tests {
                 .expect("a sum or product has terms")
         };
         match e {
-            SymExpr::Sym(Leaf::Uniform(v)) => SymExpr::sym(format!("uniform({})", register(m)(v))),
+            SymExpr::Sym(SymbolicConstant::Unknown(v)) => {
+                SymExpr::sym(format!("uniform({})", register(m)(v)))
+            }
             SymExpr::Sum(ts) => all(ts, SymExpr::add),
             SymExpr::Prod(fs) => all(fs, SymExpr::mul),
             SymExpr::CeilDiv(x, c) => SymExpr::ceil_div(by_register(m, *x), c),
@@ -1744,7 +1774,9 @@ mod tests {
              $L__L:\nadd.s32 %r2, %r2, 2;\nsetp.ne.s32 %p1, %r2, %r3;\n@%p1 bra $L__L;\nret;",
         );
         let at = |n: i64| {
-            let bound = [(Leaf::Param(0), n)].into_iter().collect();
+            let bound = [(SymbolicConstant::KernelParam(0), n)]
+                .into_iter()
+                .collect();
             trips_under(&src, &bound)[0]
                 .1
                 .clone()
@@ -1919,7 +1951,10 @@ mod tests {
     #[test]
     fn a_bound_min_or_max_is_read_at_its_value() {
         let trips = |body: &str, n: Option<i64>| {
-            let bound: HashMap<Leaf, i64> = n.map(|n| (Leaf::Param(0), n)).into_iter().collect();
+            let bound: HashMap<SymbolicConstant, i64> = n
+                .map(|n| (SymbolicConstant::KernelParam(0), n))
+                .into_iter()
+                .collect();
             let t = trips_under(&kernel_with(N_PARAM, body), &bound)[0]
                 .1
                 .clone();
@@ -1944,7 +1979,9 @@ mod tests {
                       $L__O:\nmov.u32 %r3, 0;\n$L__I:\nadd.s32 %r3, %r3, 1;\nadd.s32 %r2, %r2, 1;\n\
                       setp.lt.s32 %p1, %r3, %r9;\n@%p1 bra $L__I;\n\
                       setp.lt.s32 %p2, %r2, 100;\n@%p2 bra $L__O;\nret;";
-        let bound = [(Leaf::Param(0), 4)].into_iter().collect();
+        let bound = [(SymbolicConstant::KernelParam(0), 4)]
+            .into_iter()
+            .collect();
         let outer = trips_under(&kernel_with(N_PARAM, nested), &bound);
         let outer = outer
             .iter()
@@ -2143,7 +2180,9 @@ mod tests {
                 ),
             );
             let grid = grid.into_iter().flat_map(|n| {
-                let [x, y, _] = SpecialVector::Nctaid.components().map(Leaf::Special);
+                let [x, y, _] = SpecialVector::Nctaid
+                    .components()
+                    .map(SymbolicConstant::SpecialReg);
                 [(x, n), (y, 1)]
             });
             let bindings = grid.collect();

@@ -147,7 +147,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `max(min(param_1 - 4, 8), 1)`); one
   through a parameter, `%ctaid` with no grid given or a symbolic trip
   count keeps scalar evolution's documented assumption
-  (`src/analysis/scalar/evolution.rs`, module doc). A conversion to or from
+  (`src/analysis/affine/evolution.rs`, module doc). A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
 - **An and-mask that clears the sign bit keeps a value of unknown range
   as itself.** Up to the bit below the sign bit (nvcc's
@@ -199,7 +199,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `0xffffffffffffffff` (`mov.u64`, 3 kernels; `00101.ptx`).
 - **A `!=` latch with a symbolic distance is taken to meet its
   bound**: the trip solver divides the distance by the step, rounding
-  down, as `src/analysis/scalar/loop_bounds.rs`'s `solve` assumes the
+  down, as `src/analysis/affine/loop_bounds.rs`'s `solve` assumes the
   division exact (k1's and k2's `K − K mod 4`, the fp8 GEMMs,
   `micro/two_register_counter.ptx`). A constant distance that is no
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
@@ -211,7 +211,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   and max(T, 1) per entry otherwise (`micro/latch_exits_first.ptx`);
   the max is dropped where T is never below it with every parameter,
   and every value a count reads as `uniform(…)`, taken as nonnegative
-  (`src/analysis/scalar/symexpr.rs`'s doc):
+  (`src/analysis/affine/sym_expr.rs`'s doc):
   `micro/single_loop.ptx` reads its `ld.param.u32` n as `param_1`,
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
@@ -268,7 +268,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `cp.async` of the rows `sorted_token_ids` selects, its source line
   262, `moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel`:
   "depends on a value loaded from memory"); an `or` whose sides may
-  both set a bit, by the bits the affine forms bound (`Affine::may_set`):
+  both set a bit, by the bits the affine forms bound (`AffineExpr::may_set`):
   a bitwise or that is no add (`micro/or_disjoint.ptx`'s
   `128·⌊%tid.x/32⌋ | 16·%tid.x`: "or whose sides may both set bit 7"),
   or one side's bits unknown, a parameter not bound
@@ -427,7 +427,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 - **Counters the recurrence search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
-  `src/analysis/scalar/recurrences.rs`): a register stepped by a guarded
+  `src/analysis/affine/recurrences.rs`): a register stepped by a guarded
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
   param_0) is no counter; its guard the same for every thread, it reads
   `[4 * uniform(%r1@29) + param_0]`, varying with the loop.

@@ -7,11 +7,11 @@
 //! set, so every alignment of it under which the lanes' accesses are
 //! aligned is tried and the count is reported as a range.
 
+use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
+use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, thread, warps_of};
+use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::measurement::Space;
-use crate::analysis::scalar::affine::{Affine, Axis, Var};
-use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes, thread, warps_of};
-use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::thread_participation::Pred;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -27,13 +27,13 @@ const OFFSET_LIMIT: i128 = 1 << 62;
 /// term's range taken on its own; each bound holds 0, so every partial
 /// sum does too.
 pub fn offsets_fit(
-    a: &Affine,
+    a: &AffineExpr,
     varies: impl Fn(&Var) -> bool,
     bound: &dyn Fn(&Var) -> Option<(i64, i64)>,
 ) -> bool {
     let mut sum = Some((0i128, 0i128));
     for (v, c) in a.terms.iter().filter(|(v, _)| varies(v)) {
-        let Some((lo, hi)) = Affine::term(v.clone(), c.clone()).range(bound) else {
+        let Some((lo, hi)) = AffineExpr::term(v.clone(), c.clone()).range(bound) else {
             return false;
         };
         sum = sum.and_then(|(x, y)| Some((x.checked_add(lo)?, y.checked_add(hi)?)));
@@ -74,7 +74,7 @@ pub struct Footprint {
 /// a lane coefficient that is not a constant (bind the parameter), or
 /// a block shape that is not known (`.reqntid` or `--launch`).
 pub fn warp_footprint(
-    a: &Affine,
+    a: &AffineExpr,
     bytes: u32,
     align: u32,
     shape: [u32; 3],
@@ -169,7 +169,7 @@ pub struct Wavefronts {
 /// how a request's lanes are grouped was measured on an RTX 4090
 /// (tests/fixtures/micro/shared_wavefronts.ptx).
 pub fn warp_wavefronts(
-    a: &Affine,
+    a: &AffineExpr,
     request: SharedRequest,
     shape: [u32; 3],
     executes: impl Fn([i64; 3]) -> bool,
@@ -270,7 +270,7 @@ type WarpLanes = Vec<Vec<(i64, i64)>>;
 /// Each warp's executing lanes with the lane-dependent part of `a` as
 /// their offset, and its common residue modulo `align`.
 fn warp_lanes(
-    a: &Affine,
+    a: &AffineExpr,
     align: i64,
     shape: [u32; 3],
     executes: impl Fn([i64; 3]) -> bool,
@@ -406,7 +406,7 @@ pub struct ByteRange {
 /// A memory operand's bound affine address, for the per-loop footprint.
 pub struct AccessForm {
     /// `None` when the address is not read.
-    pub form: Option<Affine>,
+    pub form: Option<AffineExpr>,
     pub bytes: u32,
     /// The access size the address is aligned to.
     pub align: u32,
@@ -438,7 +438,7 @@ pub fn loop_bytes(
     trips: i64,
     shape: [u32; 3],
     forms: &[AccessForm],
-    pointer: impl Fn(&Affine) -> Option<usize>,
+    pointer: impl Fn(&AffineExpr) -> Option<usize>,
 ) -> Option<LoopBytes> {
     let [nx, ny, nz] = shape.map(i64::from);
     let threads = nx * ny * nz;
@@ -456,9 +456,9 @@ pub fn loop_bytes(
     let mut complete = true;
     let mut at_most = false;
     let mut requested_at_most = false;
-    let mut per_base: HashMap<Affine, Vec<(i64, i64)>> = HashMap::new();
+    let mut per_base: HashMap<AffineExpr, Vec<(i64, i64)>> = HashMap::new();
     // Each warp's pattern, with the trips it is summed over.
-    let mut patterns: HashMap<Affine, Vec<(SectorPattern, i64)>> = HashMap::new();
+    let mut patterns: HashMap<AffineExpr, Vec<(SectorPattern, i64)>> = HashMap::new();
     for f in global {
         let set = &f.set;
         let lanes = (0..threads)
@@ -481,18 +481,18 @@ pub fn loop_bytes(
         };
         requested = requested.checked_add(u64::from(f.bytes).checked_mul(runs)?)?;
         let varies = |v: &Var| {
-            crate::analysis::scalar::lane_eval::depends_on_lane(v) || v.counter() == Some(id)
+            crate::analysis::affine::lane_eval::depends_on_lane(v) || v.counter() == Some(id)
         };
         let bound = |v: &Var| match v {
-            Var::Iter(l) if *l == id => Some((0, trips)),
+            Var::Iteration(l) if *l == id => Some((0, trips)),
             _ => in_block(shape)(v),
         };
-        let read = |a: &&Affine| offsets_fit(a, varies, &bound) && !f.uniform_varies;
+        let read = |a: &&AffineExpr| offsets_fit(a, varies, &bound) && !f.uniform_varies;
         let Some(form) = (f.form.as_ref()).filter(read) else {
             complete &= f.bytes == 0 || lanes == 0;
             continue;
         };
-        let stride = match form.terms.get(&Var::Iter(id)) {
+        let stride = match form.terms.get(&Var::Iteration(id)) {
             Some(c) => c.as_const()?,
             None => 0,
         };
@@ -500,7 +500,7 @@ pub fn loop_bytes(
         // value at each trip.
         let mut stepped = Vec::new();
         for (v, c) in &form.terms {
-            if *v != Var::Iter(id) && v.counter() == Some(id) {
+            if *v != Var::Iteration(id) && v.counter() == Some(id) {
                 stepped.push((v, c.as_const()?));
             }
         }
@@ -516,7 +516,7 @@ pub fn loop_bytes(
                     .sum::<i64>()
         };
         if form.terms.iter().any(|(v, c)| {
-            crate::analysis::scalar::lane_eval::depends_on_lane(v) && c.as_const().is_none()
+            crate::analysis::affine::lane_eval::depends_on_lane(v) && c.as_const().is_none()
         }) {
             return None;
         }
@@ -527,14 +527,14 @@ pub fn loop_bytes(
             && form
                 .terms
                 .keys()
-                .any(crate::analysis::scalar::lane_eval::depends_on_lane)
+                .any(crate::analysis::affine::lane_eval::depends_on_lane)
         {
             at_most = true;
             requested_at_most = true;
         }
         let mut key = form.clone();
         key.terms.retain(|v, _| {
-            !crate::analysis::scalar::lane_eval::depends_on_lane(v) && v.counter() != Some(id)
+            !crate::analysis::affine::lane_eval::depends_on_lane(v) && v.counter() != Some(id)
         });
         key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
         let intervals = per_base.entry(key.clone()).or_default();
@@ -542,7 +542,7 @@ pub fn loop_bytes(
             let offsets: Vec<i64> = warp
                 .map(|t| thread(t, shape))
                 .filter(|&tid| set.contains(tid, shape))
-                .map(|tid| crate::analysis::scalar::lane_eval::eval_lane(form, tid))
+                .map(|tid| crate::analysis::affine::lane_eval::eval_lane(form, tid))
                 .collect();
             let align = i64::from(f.align);
             let pats = patterns.entry(key.clone()).or_default();
@@ -561,7 +561,7 @@ pub fn loop_bytes(
             if !set.contains(tid, shape) {
                 continue;
             }
-            let base = crate::analysis::scalar::lane_eval::eval_lane(form, tid);
+            let base = crate::analysis::affine::lane_eval::eval_lane(form, tid);
             if intervals.len() as i64 + trips > 1 << 22 {
                 return None;
             }
@@ -632,18 +632,18 @@ fn union_len(mut intervals: Vec<(i64, i64)>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::scalar::symexpr::Leaf;
+    use crate::analysis::affine::sym_expr::SymbolicConstant;
 
-    fn tid() -> Affine {
-        Affine::var(Var::Tid(Axis::X))
+    fn tid() -> AffineExpr {
+        AffineExpr::var(Var::Tid(Axis::X))
     }
 
-    fn fp(a: &Affine, bytes: u32, shape: [u32; 3]) -> (u32, u32) {
+    fn fp(a: &AffineExpr, bytes: u32, shape: [u32; 3]) -> (u32, u32) {
         fp_of(a, bytes, shape, |_| true)
     }
 
     fn fp_of(
-        a: &Affine,
+        a: &AffineExpr,
         bytes: u32,
         shape: [u32; 3],
         executes: impl Fn([i64; 3]) -> bool,
@@ -652,7 +652,7 @@ mod tests {
     }
 
     fn fp_aligned(
-        a: &Affine,
+        a: &AffineExpr,
         bytes: u32,
         align: u32,
         shape: [u32; 3],
@@ -668,9 +668,9 @@ mod tests {
         let c = |n: i64| SymExpr::Const(n);
         let x = || Box::new(Var::Tid(Axis::X));
         let t = |k| tid().scale(c(k));
-        let rem = |m, k| Affine::var(Var::Mod(x(), m)).scale(c(k));
-        let floor = |d, k| Affine::var(Var::Div(x(), d)).scale(c(k));
-        let wf = |a: &Affine, r| {
+        let rem = |m, k| AffineExpr::var(Var::Mod(x(), m)).scale(c(k));
+        let floor = |d, k| AffineExpr::var(Var::FloorDiv(x(), d)).scale(c(k));
+        let wf = |a: &AffineExpr, r| {
             let w = warp_wavefronts(a, r, [32, 1, 1], |_| true).unwrap();
             (w.count.max, w.ideal.max)
         };
@@ -681,9 +681,10 @@ mod tests {
         assert_eq!(wf(&rem(16, 4), Load(4)), (1, 1));
         assert_eq!(wf(&rem(16, 8), Load(8)), (2, 2));
         assert_eq!(wf(&t(16), Load(8)), (4, 2));
-        let decode = rem(2, 64) + Affine::var(Var::Mod(Box::new(Var::Div(x(), 4)), 8)).scale(c(8));
+        let decode =
+            rem(2, 64) + AffineExpr::var(Var::Mod(Box::new(Var::FloorDiv(x(), 4)), 8)).scale(c(8));
         assert_eq!(wf(&decode, Load(8)), (1, 1));
-        assert_eq!(wf(&Affine::from_base(c(0)), Load(8)), (1, 1));
+        assert_eq!(wf(&AffineExpr::from_base(c(0)), Load(8)), (1, 1));
         assert_eq!(wf(&rem(16, 8), Store(8)), (2, 2));
         assert_eq!(wf(&floor(16, 16), Store(16)), (4, 4));
         assert_eq!(wf(&t(32), Store(16)), (8, 4));
@@ -706,15 +707,15 @@ mod tests {
         assert_eq!(fp(&tid().scale(c(128)), 4, [32, 1, 1]), (32, 32));
         // The same address for every lane.
         assert_eq!(
-            fp(&Affine::from_base(SymExpr::sym("p")), 4, [32, 1, 1]),
+            fp(&AffineExpr::from_base(SymExpr::sym("p")), 4, [32, 1, 1]),
             (1, 1)
         );
         // k5's A tile: 4 rows of 8 halves per warp, rows 512 B apart.
-        let row = Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 8)).scale(c(512));
-        let col = Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 8)).scale(c(2));
+        let row = AffineExpr::var(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 8)).scale(c(512));
+        let col = AffineExpr::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 8)).scale(c(2));
         assert_eq!(fp(&(row + col), 2, [64, 1, 1]), (4, 8));
         // A 2D block: a warp is two rows of 16 lanes, rows 64 B apart.
-        let a = tid().scale(c(4)) + Affine::var(Var::Tid(Axis::Y)).scale(c(64));
+        let a = tid().scale(c(4)) + AffineExpr::var(Var::Tid(Axis::Y)).scale(c(64));
         assert_eq!(fp(&a, 4, [16, 16, 1]), (4, 5));
     }
 
@@ -767,21 +768,25 @@ mod tests {
     #[test]
     fn the_ideal_packs_the_executing_lanes_bytes() {
         let c = |n: i64| SymExpr::Const(n);
-        let ideal = |a: &Affine, bytes: u32, shape: [u32; 3], executes: fn([i64; 3]) -> bool| {
-            let f = warp_footprint(a, bytes, bytes, shape, executes).unwrap();
-            (f.ideal.min, f.ideal.max)
-        };
+        let ideal =
+            |a: &AffineExpr, bytes: u32, shape: [u32; 3], executes: fn([i64; 3]) -> bool| {
+                let f = warp_footprint(a, bytes, bytes, shape, executes).unwrap();
+                (f.ideal.min, f.ideal.max)
+            };
         // 32 lanes × 2 B pack into two sectors; at a 128 B stride they take 32.
         assert_eq!(ideal(&tid().scale(c(128)), 2, [32, 1, 1], |_| true), (2, 2));
         // One address for the whole warp: one sector is all it needs.
         assert_eq!(
-            ideal(&Affine::from_base(SymExpr::sym("p")), 2, [32, 1, 1], |_| {
-                true
-            }),
+            ideal(
+                &AffineExpr::from_base(SymExpr::sym("p")),
+                2,
+                [32, 1, 1],
+                |_| { true }
+            ),
             (1, 1)
         );
         // Lanes t and t + 16 read the same word: 64 distinct bytes, two sectors.
-        let folded = Affine::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 16)).scale(c(4));
+        let folded = AffineExpr::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 16)).scale(c(4));
         assert_eq!(ideal(&folded, 4, [32, 1, 1], |_| true), (2, 2));
         // 8 lanes × 2 B fit one sector; a 1-lane 4 B word too.
         assert_eq!(
@@ -830,7 +835,7 @@ mod tests {
         let k = 1 << 60;
         // 2^60·x − 2^61·⌊x/2⌋ is at most 2^60, but 2^60·x alone reaches 2^63.
         let a = tid().scale(c(k))
-            + Affine::var(Var::Div(Box::new(Var::Tid(Axis::X)), 2)).scale(c(-2 * k));
+            + AffineExpr::var(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 2)).scale(c(-2 * k));
         assert_eq!(a.range(&in_block([8, 1, 1])), Some((0, i128::from(k))));
         assert!(!offsets_fit(&a, depends_on_lane, &in_block([8, 1, 1])));
         assert!(offsets_fit(&a, depends_on_lane, &in_block([2, 1, 1])));
@@ -851,7 +856,8 @@ mod tests {
 
     #[test]
     fn unknown_shape_or_symbolic_lane_coefficient_is_refused() {
-        let k = Affine::var(Var::Tid(Axis::Y)).scale(SymExpr::Sym(Leaf::Param(2)));
+        let k = AffineExpr::var(Var::Tid(Axis::Y))
+            .scale(SymExpr::Sym(SymbolicConstant::KernelParam(2)));
         assert!(
             warp_footprint(&k, 2, 2, [32, 32, 1], |_| true)
                 .unwrap_err()
@@ -874,10 +880,10 @@ mod tests {
     fn a_loop_requests_and_touches_its_lanes_bytes_at_every_trip() {
         let c = |n: i64| SymExpr::Const(n);
         let id = LoopId(0);
-        let form = Affine::from_base(SymExpr::Sym(Leaf::Param(0)))
+        let form = AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(0)))
             + tid().scale(c(4))
-            + Affine::var(Var::Iter(id)).scale(c(512));
-        let access = |form: &Affine| AccessForm {
+            + AffineExpr::var(Var::Iteration(id)).scale(c(512));
+        let access = |form: &AffineExpr| AccessForm {
             form: Some(form.clone()),
             bytes: 4,
             align: 4,
@@ -887,7 +893,7 @@ mod tests {
             conditional: false,
             uniform_varies: false,
         };
-        let on_param = |_: &Affine| Some(0);
+        let on_param = |_: &AffineExpr| Some(0);
         let one = loop_bytes(id, 4, [128, 1, 1], &[access(&form)], on_param).unwrap();
         assert_eq!(one.requested, 2048);
         assert_eq!(
@@ -914,7 +920,8 @@ mod tests {
                 max: 2048
             })
         );
-        let shifted = form.clone() + Affine::from_base(SymExpr::Sym(Leaf::Param(2)));
+        let shifted =
+            form.clone() + AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(2)));
         let forms = [access(&form), access(&shifted)];
         let two = loop_bytes(id, 4, [128, 1, 1], &forms, on_param).unwrap();
         assert_eq!(
