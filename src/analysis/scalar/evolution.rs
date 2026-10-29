@@ -647,7 +647,7 @@ impl<'a> ScalarEvolution<'a> {
                     .find_map(|m| m.strip_prefix('b')?.parse::<u32>().ok())
                     .unwrap_or(32);
                 let modulo = |x: Affine, k: u32| -> Result<Affine, String> {
-                    (self.reduced(&x, |x| x.modulo_const(1i64 << k)))
+                    (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.bound(v))))
                         .ok_or_else(|| refuse(&x, id, "mod"))
                 };
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
@@ -681,8 +681,9 @@ impl<'a> ScalarEvolution<'a> {
                             63 => {
                                 return Err(format!("and-mask {konst:#x} keeps bit 63 without 62"));
                             }
-                            _ => (self.reduced(&hi, |x| x.align_down(1i64 << low)))
-                                .ok_or_else(|| refuse(&hi, id, "mod"))?,
+                            _ => (self
+                                .reduced(&hi, |x| x.align_down(1i64 << low, &|v| self.bound(v))))
+                            .ok_or_else(|| refuse(&hi, id, "mod"))?,
                         };
                     bits &= u64::MAX.checked_shl(top).unwrap_or(0);
                 }
@@ -722,10 +723,12 @@ impl<'a> ScalarEvolution<'a> {
                 if signed || !(0..63).contains(&pos) || !(1..63).contains(&len) {
                     return Err(format!("bfe at {pos} of {len} bits"));
                 }
-                let shifted = (self.reduced(&a, |x| x.div_const(1i64 << pos)))
+                let shifted = (self.reduced(&a, |x| x.div_const(1i64 << pos, &|v| self.bound(v))))
                     .ok_or_else(|| refuse(&a, id, "bit field"))?;
-                (self.reduced(&shifted, |x| x.modulo_const(1i64 << len)))
-                    .ok_or_else(|| refuse(&shifted, id, "bit field"))
+                (self.reduced(&shifted, |x| {
+                    x.modulo_const(1i64 << len, &|v| self.bound(v))
+                }))
+                .ok_or_else(|| refuse(&shifted, id, "bit field"))
             }
             Opcode::Shl if ops.len() == 3 => {
                 let v = arg(1)?;
@@ -765,7 +768,7 @@ impl<'a> ScalarEvolution<'a> {
                     if !(0..63).contains(&c) {
                         return Err(format!("shift by {c} is out of range"));
                     }
-                    return (self.reduced(&v, |x| x.div_const(1i64 << c)))
+                    return (self.reduced(&v, |x| x.div_const(1i64 << c, &|v| self.bound(v))))
                         .ok_or_else(|| refuse(&v, id, "shift"));
                 }
                 let signed_width = mods.iter().find_map(|m| match *m {
@@ -801,9 +804,9 @@ impl<'a> ScalarEvolution<'a> {
                     return Err(format!("{} by a non-constant divisor", mnemonic.name()));
                 };
                 let result = if mnemonic == Opcode::Div {
-                    self.reduced(&a, |x| x.div_const(d))
+                    self.reduced(&a, |x| x.div_const(d, &|v| self.bound(v)))
                 } else {
-                    self.reduced(&a, |x| x.modulo_const(d))
+                    self.reduced(&a, |x| x.modulo_const(d, &|v| self.bound(v)))
                 };
                 result.ok_or_else(|| refuse(&a, id, "division"))
             }

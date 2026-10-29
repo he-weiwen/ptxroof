@@ -1,0 +1,88 @@
+//
+// HAND-WRITTEN: in blocks of 128 and a grid of 1 x 2, each kernel
+// stores the remainder of 64·%ctaid.y plus a form of %tid.x plus an
+// offset by param_1 = 64 at param_0 plus 4 times that remainder, census
+// kernel 01890.ptx's (64·%ctaid.y | ⌊%tid.x/8⌋ mod 16 | 16) rem seq_len.
+// The words written, measured on an RTX 4090 (ptxas 13.4, sm_89):
+// - micro_rem_offset_mod: (⌊%tid.x/8⌋ mod 16) + 16, below 64 whatever
+//   the launch: words 16 to 31 hold 16 to 31.
+// - micro_rem_offset_block: ⌊%tid.x/64⌋ + 62, below 64 in blocks of
+//   128: words 62 and 63 hold 62 and 63.
+// - micro_rem_offset_wraps: (⌊%tid.x/8⌋ mod 16) + 56 passes 64: words
+//   56 to 63 and 0 to 7 hold 56 to 63 and 0 to 7.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_rem_offset_mod(
+	.param .u64 micro_rem_offset_mod_param_0,
+	.param .u32 micro_rem_offset_mod_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<9>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_rem_offset_mod_param_0];
+	ld.param.u32 	%r1, [micro_rem_offset_mod_param_1];
+	mov.u32 	%r2, %ctaid.y;
+	shl.b32 	%r3, %r2, 6;
+	mov.u32 	%r4, %tid.x;
+	bfe.u32 	%r5, %r4, 3, 4;
+	or.b32 	%r6, %r5, %r3;
+	or.b32 	%r7, %r6, 16;
+	rem.s32 	%r8, %r7, %r1;
+	mul.wide.s32 	%rd2, %r8, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r8;
+	ret;
+}
+
+.visible .entry micro_rem_offset_block(
+	.param .u64 micro_rem_offset_block_param_0,
+	.param .u32 micro_rem_offset_block_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<9>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_rem_offset_block_param_0];
+	ld.param.u32 	%r1, [micro_rem_offset_block_param_1];
+	mov.u32 	%r2, %ctaid.y;
+	shl.b32 	%r3, %r2, 6;
+	mov.u32 	%r4, %tid.x;
+	shr.u32 	%r5, %r4, 6;
+	or.b32 	%r6, %r5, %r3;
+	or.b32 	%r7, %r6, 62;
+	rem.s32 	%r8, %r7, %r1;
+	mul.wide.s32 	%rd2, %r8, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r8;
+	ret;
+}
+
+.visible .entry micro_rem_offset_wraps(
+	.param .u64 micro_rem_offset_wraps_param_0,
+	.param .u32 micro_rem_offset_wraps_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<9>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_rem_offset_wraps_param_0];
+	ld.param.u32 	%r1, [micro_rem_offset_wraps_param_1];
+	mov.u32 	%r2, %ctaid.y;
+	shl.b32 	%r3, %r2, 6;
+	mov.u32 	%r4, %tid.x;
+	bfe.u32 	%r5, %r4, 3, 4;
+	add.s32 	%r6, %r5, %r3;
+	add.s32 	%r7, %r6, 56;
+	rem.s32 	%r8, %r7, %r1;
+	mul.wide.s32 	%rd2, %r8, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r8;
+	ret;
+}

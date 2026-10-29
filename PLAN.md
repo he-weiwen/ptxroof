@@ -207,7 +207,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   `micro/uniform_address.ptx`). Not read: xor swizzles of shared
   addresses (every ldmatrix and cp.async destination in the Gluon GEMM
   and attention kernels, "behind `xor.b32`"; 35,573 of the census's
-  63,082 unknown address rows, 35,567 shared and 6 global, 4 of these
+  63,070 unknown address rows, 35,567 shared and 6 global, 4 of these
   census kernel `02994.ptx`'s Hadamard loads of the index xor 1, 2, 4
   and 8, its lines 71–82); divisions of the thread
   index by a runtime value (`micro/uniform_address.ptx`'s
@@ -220,13 +220,12 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   divisor); an and-mask's run of bits or a `rem` whose remainder
   the affine form does not hold, of a form whose offset, past its
   multiple of the modulus, is not below the coefficient of the term the
-  modulus does not divide (`micro/and_runs.ptx`'s `micro_and_offset`,
-  `(%tid.x − 4) & 0x46`: "in a mod"; census kernel `01890.ptx` under
-  `--bind 6:p=64`, `(64·%ctaid.y | ⌊%tid.x/8⌋ mod 16 | 16) rem
-  param_6` on 134 rows: "depends on special register %ctaid.y, in a
-  division", where `(⌊%tid.x/8⌋ mod 16) rem 64` reads and
-  `((⌊%tid.x/8⌋ mod 16) + 16) rem 64` does not, `Affine::split`
-  refusing an offset k ≥ c) or a negative coefficient, but for
+  modulus does not divide and which that term's range, from the launch
+  or as a remainder, can carry past the modulus
+  (`micro/and_runs.ptx`'s `micro_and_offset`, `(%tid.x − 4) & 0x46`:
+  "in a mod"; `micro/rem_offset.ptx`'s `micro_rem_offset_wraps`,
+  `((⌊%tid.x/8⌋ mod 16) + 56) rem 64`: "in a division") or a negative
+  coefficient, but for
   a value of 0 or −1 under a mask below the sign bit
   (`micro/and_bit_select.ptx`; refused with the sign bit,
   `micro_and_select_sign`, and for −(%tid.x & 3),
