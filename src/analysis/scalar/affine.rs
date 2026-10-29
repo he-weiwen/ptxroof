@@ -33,6 +33,80 @@ pub enum Var {
     /// A register value scalar evolution cannot interpret that every lane
     /// executing its read sees alike.
     Uniform(Value),
+    /// An xor of fields of `%tid.x`.
+    Bits(LaneBits),
+}
+
+/// `constant ⊕ ⊕ᵢ tᵢ·columns[i]` over the bits tᵢ of `%tid.x`, which is
+/// below 1024 ("Maximum values of %ntid.{x,y,z}", PTX ISA §10.2).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LaneBits {
+    pub columns: [u64; 10],
+    pub constant: u64,
+}
+
+impl LaneBits {
+    pub fn xor(&self, other: &LaneBits) -> LaneBits {
+        LaneBits {
+            columns: std::array::from_fn(|i| self.columns[i] ^ other.columns[i]),
+            constant: self.constant ^ other.constant,
+        }
+    }
+
+    pub fn eval(&self, tid: i64) -> i64 {
+        let set = (0..10).filter(|&i| tid >> i & 1 == 1);
+        set.fold(self.constant, |x, i| x ^ self.columns[i]) as i64
+    }
+
+    /// The least and greatest values over `%tid.x` in `tid`, or over every
+    /// thread index.
+    fn range(&self, tid: Option<(i64, i64)>) -> (i64, i64) {
+        let (lo, hi) = tid.map_or((0, 1023), |(lo, hi)| (lo.max(0), hi.min(1023)));
+        let values = (lo..=hi.max(lo)).map(|t| self.eval(t));
+        (values.clone().min().unwrap_or(0), values.max().unwrap_or(0))
+    }
+
+    /// The xor of `2^p · (⌊%tid.x/2^i⌋ mod 2^n)` over each run of n thread
+    /// bits from i that set the bits from p, and of the constant.
+    fn render(&self, name: &impl Fn(&Var) -> String) -> String {
+        let mut pairs: Vec<(i64, usize)> = (0..10)
+            .flat_map(|i| {
+                let column = self.columns[i];
+                (0..64i64)
+                    .filter(move |p| column >> p & 1 == 1)
+                    .map(move |p| (p - i as i64, i))
+            })
+            .collect();
+        pairs.sort_unstable();
+        let mut runs: Vec<(i64, usize, usize)> = Vec::new();
+        for (shift, i) in pairs {
+            match runs.last_mut() {
+                Some((s, from, n)) if *s == shift && *from + *n == i => *n += 1,
+                _ => runs.push((shift, i, 1)),
+            }
+        }
+        let tid = name(&Var::Tid(Axis::X));
+        let mut fields: Vec<String> = (runs.iter())
+            .map(|&(shift, i, n)| {
+                let x = match i {
+                    0 => tid.clone(),
+                    _ => format!("⌊{tid}/{}⌋", 1 << i),
+                };
+                let x = match i + n {
+                    10 => x,
+                    _ => format!("({x} mod {})", 1 << n),
+                };
+                match shift + i as i64 {
+                    0 => x,
+                    p => format!("{} * {x}", 1i64 << p),
+                }
+            })
+            .collect();
+        if self.constant != 0 {
+            fields.push(self.constant.to_string());
+        }
+        format!("({})", fields.join(" ⊕ "))
+    }
 }
 
 impl Var {
@@ -62,7 +136,7 @@ impl Var {
         match self {
             Var::Iter(l) => Some(*l),
             Var::Div(inner, _) | Var::Mod(inner, _) => inner.counter(),
-            Var::Tid(_) | Var::Ctaid(_) | Var::Uniform(_) => None,
+            Var::Tid(_) | Var::Ctaid(_) | Var::Uniform(_) | Var::Bits(_) => None,
         }
     }
 
@@ -71,7 +145,7 @@ impl Var {
         match self {
             Var::Uniform(v) => Some(*v),
             Var::Div(inner, _) | Var::Mod(inner, _) => inner.uniform(),
-            Var::Tid(_) | Var::Ctaid(_) | Var::Iter(_) => None,
+            Var::Tid(_) | Var::Ctaid(_) | Var::Iter(_) | Var::Bits(_) => None,
         }
     }
 
@@ -81,6 +155,7 @@ impl Var {
         match self {
             Var::Div(v, d) => v.eval(leaf).div_euclid(*d),
             Var::Mod(v, m) => v.eval(leaf).rem_euclid(*m),
+            Var::Bits(b) => b.eval(leaf(&Var::Tid(Axis::X))),
             v => leaf(v),
         }
     }
@@ -90,6 +165,7 @@ impl Var {
         match self {
             Var::Div(v, d) => format!("⌊{}/{d}⌋", v.render(name)),
             Var::Mod(v, m) => format!("({} mod {m})", v.render(name)),
+            Var::Bits(b) => b.render(name),
             leaf => name(leaf),
         }
     }
@@ -109,6 +185,7 @@ impl fmt::Display for Var {
             Var::Div(v, d) => write!(f, "⌊{v}/{d}⌋"),
             Var::Mod(v, m) => write!(f, "({v} mod {m})"),
             Var::Uniform(v) => write!(f, "uniform({v:?})"),
+            Var::Bits(b) => f.write_str(&b.render(&|v| v.to_string())),
         }
     }
 }
@@ -554,6 +631,7 @@ fn greatest(v: &Var, largest: &dyn Fn(&Var) -> Option<i64>) -> Option<i64> {
     match v {
         Var::Mod(_, m) => Some(m - 1),
         Var::Div(x, d) => Some(greatest(x, largest)?.div_euclid(*d)),
+        Var::Bits(b) => Some(b.range(largest(&Var::Tid(Axis::X)).map(|hi| (0, hi))).1),
         Var::Tid(_) | Var::Ctaid(_) | Var::Iter(_) => largest(v),
         Var::Uniform(_) => None,
     }
@@ -620,6 +698,7 @@ fn own_range(v: &Var) -> Option<(i64, i64)> {
         Var::Div(inner, d) => {
             own_range(inner).map(|(lo, hi)| (lo.div_euclid(*d), hi.div_euclid(*d)))
         }
+        Var::Bits(b) => Some(b.range(None)),
         _ => None,
     }
 }
@@ -634,6 +713,7 @@ fn var_range(v: &Var, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i64
             (lo, hi) if lo >= 0 && hi < *m => Some((lo, hi)),
             _ => Some((0, m - 1)),
         },
+        Var::Bits(b) => Some(b.range(bound(&Var::Tid(Axis::X)))),
         _ => bound(v),
     }
 }
@@ -651,6 +731,39 @@ mod tests {
     fn free(_: &Var) -> Option<(i64, i64)> {
         None
     }
+    #[test]
+    fn lane_bits_evaluate_render_and_bound_an_xor_of_fields() {
+        // The Gluon swizzle ((t << 4) & 2032) ^ ((t << 1) & 48)
+        // (fp8_gemm_kernel.c_fc.sm_89.ptx:213): thread bit i sets bit i + 4,
+        // and bits 3 and 4 also bits 4 and 5.
+        let mut columns: [u64; 10] = std::array::from_fn(|i| (1 << (i + 4)) & 2032);
+        columns[3] |= 1 << 4;
+        columns[4] |= 1 << 5;
+        let swizzle = LaneBits {
+            columns,
+            constant: 0,
+        };
+        let want = |t: i64| ((t << 4) & 2032) ^ ((t << 1) & 48);
+        assert!((0..1024).all(|t| swizzle.eval(t) == want(t)));
+        let shifted = swizzle.xor(&LaneBits {
+            columns: [0; 10],
+            constant: 64,
+        });
+        assert!((0..1024).all(|t| shifted.eval(t) == want(t) ^ 64));
+        let bits = Var::Bits(swizzle);
+        assert_eq!(
+            bits.to_string(),
+            "(16 * (⌊%tid.x/8⌋ mod 4) ⊕ 16 * (%tid.x mod 128))"
+        );
+        let block = |v: &Var| (*v == Var::Tid(Axis::X)).then_some((0, 127));
+        let range = (0..128).map(want);
+        let expected = (
+            range.clone().min().unwrap().into(),
+            range.max().unwrap().into(),
+        );
+        assert_eq!(Affine::var(bits).range(&block), Some(expected));
+    }
+
     #[test]
     fn a_range_spans_each_term_at_both_ends_of_its_variable() {
         let tid = Affine::var(Var::Tid(Axis::X));

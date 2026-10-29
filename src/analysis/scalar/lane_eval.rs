@@ -8,6 +8,7 @@ pub fn depends_on_lane(v: &Var) -> bool {
         Var::Tid(_) => true,
         Var::Ctaid(_) | Var::Iter(_) | Var::Uniform(_) => false,
         Var::Div(inner, _) | Var::Mod(inner, _) => depends_on_lane(inner),
+        Var::Bits(b) => b.columns.iter().any(|&c| c != 0),
     }
 }
 

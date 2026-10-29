@@ -1076,7 +1076,7 @@ impl<'a> ScalarEvolution<'a> {
             Var::Tid(axis) => shape(SpecialVector::Ntid, axis),
             Var::Ctaid(axis) => shape(SpecialVector::Nctaid, axis),
             Var::Iter(l) => self.constant_trips(*l).map(|n| (1, n)),
-            Var::Div(..) | Var::Mod(..) | Var::Uniform(_) => None,
+            Var::Div(..) | Var::Mod(..) | Var::Uniform(_) | Var::Bits(_) => None,
         }
     }
 
