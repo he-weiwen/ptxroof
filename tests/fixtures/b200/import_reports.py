@@ -5,7 +5,10 @@ and a tools/ncu/measure.py record of the report's predicated-on thread
 instructions executed per PTX line and, on a line with a global memory
 instruction, the L2 sectors they request, the ideal number, each such
 instruction's access size in bits and their predicated-on thread
-instructions executed. A TMA instruction, whose access size the
+instructions executed, and on a line with a shared memory instruction
+each such instruction's opcode, access size, warp-level instructions
+executed, L1 shared wavefronts and their ideal number (measure.py's
+per_line). A TMA instruction, whose access size the
 report leaves out and whose sectors it counts as 0, is not one. A line
 with an LDGSTS reading P0 keeps no sectors (measure.py's
 ldgsts_reading_p0). For the launch it keeps the L1TEX hardware counts
@@ -65,8 +68,9 @@ def report_kernels(rep):
         rows = table(body)
         column = {c: i for i, c in enumerate(rows[0])}
         instrs = [r for r in rows[1:] if r and r[0].startswith("0x")]
-        in_global = lambda r: "Global" in re.findall(r"\w+", r[column["Address Space"]]) and r[column["Access Size"]].isdigit()
+        space = lambda r, s: s in re.findall(r"\w+", r[column["Address Space"]]) and r[column["Access Size"]].isdigit()
         sectors = ("L2 Theoretical Sectors Global", "L2 Theoretical Sectors Global Ideal", "Access Size")
+        wavefronts = ("Access Size", "Instructions Executed", "L1 Wavefronts Shared", "L1 Wavefronts Shared Ideal")
         yield {
             "id": row[col["ID"]],
             "kernel": name,
@@ -74,7 +78,8 @@ def report_kernels(rep):
             "block": [int(n) for n in re.findall(r"\d+", row[col["Block Size"]])],
             "sass": sass.normalize([r[1] for r in instrs], int(instrs[0][0], 16)),
             "executed": [int(r[column["Predicated-On Thread Instructions Executed"]]) for r in instrs],
-            "global": [in_global(r) and [int(r[column[c]]) for c in sectors] for r in instrs],
+            "global": [space(r, "Global") and [int(r[column[c]]) for c in sectors] for r in instrs],
+            "shared": [space(r, "Shared") and [int(r[column[c]]) for c in wavefronts] for r in instrs],
             "counters": {m: integral(row[raw[0].index(m)]) for m in L1TEX_SECTORS}
             if row[raw[0].index("l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum")] != "nan" else {},
         }
@@ -210,7 +215,8 @@ def import_reports(sol, corpus, launches_path, out):
                     assert got == k["sass"], f"{source_ptx.name} of {name} assembles to other SASS than the report's"
                 attributed = line_of_each_instruction(bin_dir / "nvdisasm", tmp / "out.cubin")
             lines, ptx_lines, unreliable = {}, text.split("\n"), set()
-            for n, instr, executed, access in zip(attributed, k["sass"], k["executed"], k["global"], strict=True):
+            each = zip(attributed, k["sass"], k["executed"], k["global"], k["shared"], strict=True)
+            for n, instr, executed, access, shared in each:
                 if n is None:
                     continue
                 line = lines.setdefault(str(n), {"ptx": " ".join(ptx_lines[n - 1].split()), "sass": {}, "executions": 0})
@@ -223,6 +229,9 @@ def import_reports(sol, corpus, launches_path, out):
                     line["l2_theoretical_sectors_global_ideal"] = line.get("l2_theoretical_sectors_global_ideal", 0) + ideal
                     line.setdefault("global_access_sizes", []).append(bits)
                     line["global_executions"] = line.get("global_executions", 0) + executed
+                if shared:
+                    keys = ("access_size", "instructions_executed", "l1_wavefronts_shared", "l1_wavefronts_shared_ideal")
+                    line.setdefault("shared", []).append({"sass": op, **dict(zip(keys, shared))})
                 if ldgsts_reading_p0(instr):
                     unreliable.add(str(n))
             for n in unreliable:

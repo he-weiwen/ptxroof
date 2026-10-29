@@ -734,7 +734,11 @@ One line each, with the trigger that would start it.
   instructions executed, and on a line with a global memory
   instruction Nsight Compute's L2 theoretical sectors, their ideal,
   each such SASS's access size and their predicated-on thread
-  instructions executed, and for the launch the L1TEX hardware counts
+  instructions executed, on a line with a shared memory instruction
+  each such SASS's opcode, access size, warp-level instructions
+  executed, L1 shared wavefronts and their ideal (the Profiling
+  Guide's "assuming each not predicated-off thread performed the
+  operation", not a count without bank conflicts), and for the launch the L1TEX hardware counts
   of the sectors its global loads and stores request
   (`l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum`, `…_op_st.sum`)
   (`tests/fixtures/k5/k5.sm_89.256.ncu.json`;
@@ -752,7 +756,13 @@ One line each, with the trigger that would start it.
   grid, with `i64:`, `i1:` and `tensormap:128` for the parameters of a
   tensor descriptor, which launch.c does not take; the PTX
   must still assemble to the recorded SASS (`b200-sass.test`, under
-  ptxas 13.4 only). `ci.sh` does not re-measure them with
+  ptxas 13.4 only). `regen.sh` no longer regenerates them: against
+  sol-study `e1d124c` with uncommitted changes its replay of
+  `attn_lightllm/deepseek-v3/decode` fails in Triton's binder
+  (`dynamic_func() takes 6 positional arguments but 30 were given`),
+  and the kernel corpus's `MANIFEST.jsonl` no longer lists the extend
+  attention kernel's source; the shared memory entries were imported
+  with the launches the records hold and the PTX headers kept. `ci.sh` does not re-measure them with
   `measure.py --check`, which would launch on zeroed inputs.
   `analyze --ncu RECORD` takes the record's grid, block shape and
   `u32` and `i32` parameters for `--grid`, `--launch` and `--bind`, and

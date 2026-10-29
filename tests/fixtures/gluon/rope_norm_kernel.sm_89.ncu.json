@@ -6,7 +6,7 @@
  "shared": 0,
  "params": ["ptr:3145728", "ptr:262144", "ptr:262144", "ptr:3145728", "i32:12288", "i32:2048", "i32:6", "f32:0.0078125", "f32:1.2", "ptr:0", "ptr:0"],
  "gpu": "NVIDIA GeForce RTX 4090",
- "driver": "580.178.04",
+ "driver": "580.196.07",
  "arch": "sm_89",
  "ptxas": "Cuda compilation tools, release 13.4, V13.4.92",
  "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",

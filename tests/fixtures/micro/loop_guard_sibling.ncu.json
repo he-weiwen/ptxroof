@@ -5,7 +5,7 @@
  "block": [32, 1, 1],
  "params": ["ptr:4", "u32:20"],
  "gpu": "NVIDIA GeForce RTX 4090",
- "driver": "580.178.04",
+ "driver": "580.196.07",
  "arch": "sm_89",
  "ptxas": "Cuda compilation tools, release 13.4, V13.4.92",
  "ncu": "Version 2026.3.1.0 (build 38829034) (public-release)",

@@ -11,14 +11,17 @@ attributed to it, and their predicated-on thread instructions executed;
 on a line with a global memory instruction also the L2 sectors they
 request, the ideal number, each such instruction's access size in
 bits, and their predicated-on thread instructions executed, though not
-the sectors where one is an LDGSTS reading P0; and for the launch the
-L1TEX hardware counts of the sectors its global loads and stores
-request.
+the sectors where one is an LDGSTS reading P0; on a line with a shared
+memory instruction, for each such instruction, its opcode, access size,
+warp-level instructions executed and L1 shared wavefronts and their
+ideal number; and for the launch the L1TEX hardware counts of the
+sectors its global loads and stores request.
 Lines of a loop that branches back on an mbarrier test_wait or try_wait
 result are marked timing_dependent. With --check the record is measured
 again on the GPU it names, if this is that GPU, and must not change but
-for those lines' executions; on another GPU it is skipped, or with
-PTXROOF_REQUIRE_GPU=1 fails. Either way it prints one line.
+for those lines' executions and shared memory counts; on another GPU it
+is skipped, or with PTXROOF_REQUIRE_GPU=1 fails. Either way it prints
+one line.
 
 Usage: measure.py [--check] RECORD
 """
@@ -108,12 +111,15 @@ def per_line(table):
     """Nsight Compute's memory_l2_theoretical_sectors_global is the "theoretical number of sectors
     requested in L2 from global memory instructions", its _ideal "assuming each not predicated-off
     thread performed the operation" (Profiling Guide, Source Counters). A line with an LDGSTS reading
-    P0 keeps neither."""
+    P0 keeps neither. memory_l1_wavefronts_shared is the "number of wavefronts in L1 from shared memory
+    instructions", its _ideal again "assuming each not predicated-off thread performed the operation"
+    (ibid.): not the number without bank conflicts."""
     rows = list(csv.reader(table.splitlines()))
     head = next(i for i, r in enumerate(rows) if r[:1] == ["Line No"])
     column = {c: i for i, c in enumerate(rows[head])}
     executed = column["Predicated-On Thread Instructions Executed"]
-    in_global = lambda r: "Address Space" in column and "Global" in re.findall(r"\w+", r[column["Address Space"]])
+    space = lambda r, s: "Address Space" in column and s in re.findall(r"\w+", r[column["Address Space"]])
+    in_global = lambda r: space(r, "Global")
     lines, unreliable = {}, set()
     for r in rows[head + 1 :]:
         if r[0]:
@@ -130,6 +136,13 @@ def per_line(table):
             if in_global(r):
                 line["global_access_sizes"].append(int(r[column["Access Size"]]))
                 line["global_executions"] += int(r[executed])
+            if space(r, "Shared"):
+                line.setdefault("shared", []).append({
+                    "sass": op, "access_size": int(r[column["Access Size"]]),
+                    "instructions_executed": int(r[column["Instructions Executed"]]),
+                    "l1_wavefronts_shared": int(r[column["L1 Wavefronts Shared"]]),
+                    "l1_wavefronts_shared_ideal": int(r[column["L1 Wavefronts Shared Ideal"]]),
+                })
             if ldgsts_reading_p0(r[3]):
                 unreliable.add(n)
     for n in unreliable:
@@ -172,8 +185,9 @@ def main(path, check):
     stored = json.loads(Path(path).read_text()).get("lines", {}) if check else {}
     for n in timing_dependent(ptx.read_text()) & set(map(int, lines)):
         lines[str(n)]["timing_dependent"] = True
-        if str(n) in stored:
-            lines[str(n)]["executions"] = stored[str(n)]["executions"]
+        for key in ("executions", "shared"):
+            if key in stored.get(str(n), {}):
+                lines[str(n)][key] = stored[str(n)][key]
     record.update(gpu=gpu, driver=driver, arch=arch, ptxas=ptxas, ncu=ncu)
     record.update((m, integral(raw[2][raw[0].index(m)])) for m in L1TEX_SECTORS)
     record["lines"] = lines
