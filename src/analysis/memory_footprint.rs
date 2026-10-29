@@ -1,5 +1,6 @@
 //! What one warp's execution of a memory instruction touches: the
-//! 32-byte sectors the addresses of its executing lanes fall in, from the affine address, the element width, the
+//! 32-byte sectors the addresses of its executing lanes fall in, or the
+//! shared memory wavefronts that serve them, from the affine address, the element width, the
 //! block shape and the threads that execute the instruction.
 //! The lane-dependent part is evaluated for every lane; the uniform
 //! part (CTA index, loop counters, parameters) only shifts the whole
@@ -13,7 +14,7 @@ use crate::analysis::scalar::lane_eval::{depends_on_lane, lanes, thread, warps_o
 use crate::analysis::scalar::symexpr::SymExpr;
 use crate::analysis::thread_participation::Pred;
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const SECTOR: i64 = 32;
 
@@ -128,6 +129,104 @@ pub fn warp_footprint(
             max: ideal_max,
         },
     })
+}
+
+/// A shared memory request, for the wavefronts that serve it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedRequest {
+    /// `ld.shared` of this many bytes per lane.
+    Load(u32),
+    /// `st.shared` of this many bytes per lane.
+    Store(u32),
+    /// `ldmatrix` or `stmatrix` `.m8n8` `.b16` of this many matrices:
+    /// lanes 0 to 8·n − 1 give one 16-byte row each (PTX ISA
+    /// §9.7.15.5.15–16).
+    Matrix(u32),
+}
+
+/// Shared memory wavefronts per warp request, and the number with no
+/// two words of one group of lanes in one bank.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Wavefronts {
+    pub count: CountRange,
+    pub ideal: CountRange,
+}
+
+/// Shared memory wavefronts per warp request of `request` at `a`, over
+/// the warps and the alignments of the uniform part. "Shared memory has
+/// 32 banks that are organized such that successive 32-bit words map to
+/// successive banks" (Nsight Compute Profiling Guide, Shared Memory);
+/// how a request's lanes are grouped was measured on an RTX 4090
+/// (tests/fixtures/micro/shared_wavefronts.ptx).
+pub fn warp_wavefronts(
+    a: &Affine,
+    request: SharedRequest,
+    shape: [u32; 3],
+    executes: impl Fn([i64; 3]) -> bool,
+) -> Result<Wavefronts, String> {
+    let (bytes, rows) = match request {
+        SharedRequest::Load(b) | SharedRequest::Store(b) => (i64::from(b.max(1)), 32),
+        SharedRequest::Matrix(n) => (16, 8 * i64::from(n)),
+    };
+    let (warps, residue) = warp_lanes(a, bytes, shape, executes)?;
+    let mut seen = Vec::new();
+    for lanes in &warps {
+        let mut shift = (bytes - residue) % bytes;
+        while shift < bytes.max(4) {
+            let words: Vec<(i64, Vec<i64>)> = (lanes.iter())
+                .filter(|&&(lane, _)| lane < rows)
+                .map(|&(lane, o)| {
+                    let word = |b: i64| (o + shift + b).div_euclid(4);
+                    (lane, (word(0)..=word(bytes - 1)).collect())
+                })
+                .collect();
+            let served = served(request, &words)
+                .ok_or_else(|| format!("no measured rule for {bytes} B per lane"))?;
+            seen.push(served);
+            shift += bytes;
+        }
+    }
+    let range = |f: fn(&(u32, u32)) -> u32| CountRange {
+        min: seen.iter().map(f).min().unwrap_or(0),
+        max: seen.iter().map(f).max().unwrap_or(0),
+    };
+    Ok(Wavefronts {
+        count: range(|s| s.0),
+        ideal: range(|s| s.1),
+    })
+}
+
+/// One warp's wavefronts and their ideal number, from each lane's index
+/// and words. A group of lanes reads a word once however many address
+/// it; a group takes as many wavefronts as the most words it has in one
+/// bank. The groups, measured: the warp for 4-byte accesses, and the 8
+/// lanes of each matrix, each its own wavefronts.
+fn served(request: SharedRequest, lanes: &[(i64, Vec<i64>)]) -> Option<(u32, u32)> {
+    let banks = |size: i64| {
+        let mut groups: BTreeMap<i64, [BTreeSet<i64>; 32]> = BTreeMap::new();
+        for (lane, words) in lanes {
+            let group = groups.entry(lane / size).or_default();
+            for &w in words {
+                group[w.rem_euclid(32) as usize].insert(w);
+            }
+        }
+        groups.into_values().collect::<Vec<_>>()
+    };
+    let most = |g: &[BTreeSet<i64>; 32]| g.iter().map(BTreeSet::len).max().unwrap_or(0) as u32;
+    let packed =
+        |g: &[BTreeSet<i64>; 32]| g.iter().map(BTreeSet::len).sum::<usize>().div_ceil(32) as u32;
+    let apart = |size| {
+        let groups = banks(size);
+        (
+            groups.iter().map(most).sum(),
+            groups.iter().map(packed).sum(),
+        )
+    };
+    match request {
+        SharedRequest::Load(b) | SharedRequest::Store(b) if b <= 4 => Some(apart(32)),
+        SharedRequest::Matrix(_) => Some(apart(8)),
+        _ => None,
+    }
 }
 
 /// Per warp with an executing lane, each executing lane's index in its
@@ -527,6 +626,28 @@ mod tests {
     ) -> (u32, u32) {
         let f = warp_footprint(a, bytes, align, shape, executes).unwrap();
         (f.sectors.min, f.sectors.max)
+    }
+
+    #[test]
+    fn shared_wavefronts_follow_the_measured_lane_groups() {
+        use SharedRequest::{Load, Matrix, Store};
+        let c = |n: i64| SymExpr::Const(n);
+        let x = || Box::new(Var::Tid(Axis::X));
+        let t = |k| tid().scale(c(k));
+        let rem = |m, k| Affine::var(Var::Mod(x(), m)).scale(c(k));
+        let wf = |a: &Affine, r| {
+            let w = warp_wavefronts(a, r, [32, 1, 1], |_| true).unwrap();
+            (w.count.max, w.ideal.max)
+        };
+        // tests/fixtures/micro/shared_wavefronts.ptx on an RTX 4090.
+        assert_eq!(wf(&t(4), Load(4)), (1, 1));
+        assert_eq!(wf(&t(8), Load(4)), (2, 1));
+        assert_eq!(wf(&t(128), Store(4)), (32, 1));
+        assert_eq!(wf(&rem(16, 4), Load(4)), (1, 1));
+        assert_eq!(wf(&t(16), Matrix(4)), (4, 4));
+        assert_eq!(wf(&rem(8, 16), Matrix(2)), (2, 2));
+        assert_eq!(wf(&t(128), Matrix(1)), (8, 1));
+        assert!(warp_wavefronts(&t(8), Load(8), [32, 1, 1], |_| true).is_err());
     }
 
     #[test]
