@@ -496,9 +496,16 @@ impl<'a> ScalarEvolution<'a> {
             .get_or_init(|| UniformityInfo::new(self.data))
     }
 
-    /// Loop `id`'s trip count. One that read itself, through a counter
-    /// that needs it, is counted again with that count and kept only
-    /// where both agree.
+    /// Loop `id`'s trip count. Counting a loop reads its counter, which
+    /// holds only while the values its back edges feed stay in their
+    /// type over the trips, and checking that needs the count: a count
+    /// that read itself so assumed they do. It is counted again with
+    /// itself as a candidate, which readers see, and kept only where both
+    /// counts agree. For `for (int k = 0; k < K; k += 8)` under
+    /// K = 2^31 − 1 the first count is ⌈K/8⌉ = 2^28; counted again, the
+    /// last trip's `add.s32` yields 2^28 · 8 = 2^31, past `int`, where
+    /// the hardware wraps to −2^31 and the loop goes on, so the count is
+    /// refused (`a_signed_counter_that_wraps_before_its_count_has_no_count`).
     pub(crate) fn loop_trip_count(&self, id: LoopId) -> Result<LoopTripCount, String> {
         let unfinished = || Err("the trip count is being counted".to_owned());
         self.memoized(&self.trips, id, unfinished, |frame| {
@@ -1835,6 +1842,21 @@ mod tests {
     }
 
     const N_PARAM: &str = ".param .u32 k_param_0";
+
+    #[test]
+    fn a_signed_counter_that_wraps_before_its_count_has_no_count() {
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r2, 0;\n\
+             $L__L:\nadd.s32 %r2, %r2, 8;\n\
+             setp.lt.s32 %p1, %r2, %r1;\n@%p1 bra $L__L;\nret;",
+        );
+        let k = |n: i64| HashMap::from([(SymbolicConstant::KernelParam(0), n)]);
+        let trips = |n| trips_under(&src, &k(n))[0].1.clone().map(|t| t.to_string());
+        assert_eq!(trips(4096), Ok("max(⌈param_0/8⌉, 1)".to_owned()));
+        let wraps = Err("`add.s32` leaves 32 bits".to_owned());
+        assert_eq!(trips(i64::from(i32::MAX)), wraps);
+    }
 
     #[test]
     fn a_count_its_counter_refuses_once_known_is_unknown_to_every_reader() {

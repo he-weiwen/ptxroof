@@ -370,6 +370,14 @@ a comparison or a widening.
 
 ### Reported as unknowns
 
+- **A counter's no-wrap check reads its update's type, not the
+  comparison's.** The values a counter's back edges feed are checked
+  against the type of the `add` that steps it: k5's
+  `for (uint bkIdx = 0; bkIdx < K; bkIdx += BK)` steps by `add.s32`
+  and compares `setp.lt.u32`, so under `--bind 2:K=2147483647` its
+  outer loop reads `trips = unknown`, "`add.s32` leaves 32 bits", where
+  it runs 2^28 trips, its last value 2^31 lying in `.u32`
+  (`a_count_its_counter_refuses_once_known_is_unknown_to_every_reader`).
 - **Shared wavefronts are not counted for a `cp.async` destination, a
   shared atomic, or a 16-byte load two of whose lanes share a word**
   (11,639 and 5,825 census rows). A copy's wavefronts follow its global
