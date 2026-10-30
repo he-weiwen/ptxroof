@@ -9,9 +9,8 @@
 //! with no loop counter that every path writes, another φ one immediate
 //! every path writes, or refused. Supported arithmetic is followed down to
 //! `ld.param`, constants and special registers; an unsupported operation
-//! is a named reason, preferring the fundamental obstacle (a special
-//! register, a memory load, an atomic) behind arithmetic it does not
-//! read.
+//! is a named reason, every special register, memory load and atomic it
+//! is computed from through arithmetic the analysis does not read.
 //!
 //! A loop's latch (`setp` + `@%p bra`) is normalized to
 //! `continue while A1·k + A0 cmp 0` (k = iteration number; a counter
@@ -54,7 +53,7 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::register_effects::{registers, split_operands};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
-use crate::analysis::uniformity_info::UniformityInfo;
+use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
     Element, Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialScalar, SpecialVector,
@@ -73,7 +72,6 @@ mod transfer;
 /// for a debug build's 2 MB thread stack.
 const DEPTH_LIMIT: u32 = 32;
 
-type Traced = (AffineProperties, Option<UnknownReason>);
 type Memo<K, T> = RefCell<HashMap<K, Slot<T>>>;
 
 /// A cached result, the frame computing it, or the count a loop's
@@ -90,9 +88,8 @@ pub(crate) struct AffineAnalysis<'a> {
     pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
     /// Each loop's trip count.
     trips: Memo<LoopId, Result<LoopTripCount, UnknownReason>>,
-    /// Each value's trace, with the first reason it read a uniform value
-    /// as a variable.
-    values: Memo<Value, Traced>,
+    /// Each value's trace.
+    values: Memo<Value, AffineProperties>,
     /// How many traces and counts are being computed.
     frames: Cell<usize>,
     /// The outermost of them the result being computed read, or 0 after a
@@ -105,9 +102,6 @@ pub(crate) struct AffineAnalysis<'a> {
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
     uniformity: &'a UniformityInfo<'a>,
-    /// Why the trace in progress first read a uniform value it cannot
-    /// interpret as a `Var::Unknown`.
-    unread: RefCell<Option<UnknownReason>>,
 }
 
 impl<'a> AffineAnalysis<'a> {
@@ -154,7 +148,6 @@ impl<'a> AffineAnalysis<'a> {
             cut: Cell::new(None),
             bindings,
             uniformity,
-            unread: RefCell::new(None),
         };
         for &l in &order {
             let _ = analysis.loop_trip_count(l);
@@ -193,39 +186,70 @@ impl<'a> AffineAnalysis<'a> {
     /// The one value every one of these definitions writes to `reg`, with
     /// no loop counter, which each definition reads in its own loops.
     fn same_value(&self, defs: &[usize], reg: Symbol, depth: u32) -> Option<AffineExpr> {
-        let outer = self.unread.take();
         let mut values = defs.iter().map(|&d| self.transfer(d, reg, depth).ok());
-        let value = (values.next().flatten())
+        (values.next().flatten())
             .filter(|a| a.terms.keys().all(|v| v.counter().is_none()))
-            .filter(|a| values.all(|b| b.as_ref() == Some(a)));
-        let inner = self.unread.replace(outer);
-        if value.is_some()
-            && let Some(why) = inner
-        {
-            self.unread.borrow_mut().get_or_insert(why);
-        }
-        value
+            .filter(|a| values.all(|b| b.as_ref() == Some(a)))
     }
 
-    /// A merged value: the obstacle on any of its definitions' chains.
-    pub(crate) fn obstacle_of_any_def(&self, reg: Symbol) -> Option<UnknownReason> {
-        self.defs_obstacle(reg, &mut HashSet::from([reg]))
-    }
-
-    /// The obstacle on any of `reg`'s definitions' chains, through
-    /// registers not yet `seen`.
-    fn defs_obstacle(&self, reg: Symbol, seen: &mut HashSet<Symbol>) -> Option<UnknownReason> {
-        self.data
-            .writes
-            .get(&Register::Named(reg))?
-            .iter()
-            .find_map(|&d| {
-                let Stmt::Instr(instr) = &self.data.kernel.stmts[d] else {
-                    return None;
+    /// The loads, atomics and special registers not one value for the CTA
+    /// that `values` are computed from, besides those `found` already:
+    /// through every other instruction, by the definitions reaching each
+    /// read, the reason a reader can act on, not the `or` or `bfe` in
+    /// between; all of them, so that no operand order picks one.
+    pub(crate) fn depends_on(
+        &self,
+        mut values: Vec<Value>,
+        mut found: Vec<UnknownReason>,
+    ) -> Option<UnknownReason> {
+        let module = self.data.module;
+        let mut seen = HashSet::new();
+        while let Some(v) = values.pop() {
+            for s in self.data.ssa.sources(v) {
+                let Value::Result { op, .. } = s else {
+                    continue;
                 };
-                (split_operands(self.data.module, instr).1.iter())
-                    .find_map(|&op| self.operand_obstacle(op, d, seen))
-            })
+                let Stmt::Instr(instr) = &self.data.kernel.stmts[op] else {
+                    continue;
+                };
+                if !seen.insert(op) {
+                    continue;
+                }
+                let param = (module.modifiers(instr).iter())
+                    .any(|&m| module.interner.resolve(m) == "param");
+                match instr.mnemonic {
+                    Opcode::Ld if !param => found.push(UnknownReason::Load { def: op }),
+                    Opcode::Atom => found.push(UnknownReason::Atomic),
+                    _ => self.inputs(instr, op, &mut values, &mut found),
+                }
+            }
+        }
+        match found.len() {
+            0 => None,
+            1 => found.pop(),
+            _ => Some(UnknownReason::DependsOn(found)),
+        }
+    }
+
+    /// Statement `pos`'s register inputs, as the values reaching it, onto
+    /// `values`, and its special registers not one value for the CTA onto
+    /// `found`.
+    pub(crate) fn inputs(
+        &self,
+        instr: &Instr,
+        pos: usize,
+        values: &mut Vec<Value>,
+        found: &mut Vec<UnknownReason>,
+    ) {
+        for &op in split_operands(self.data.module, instr).1 {
+            match self.data.module.operand(op) {
+                Operand::Register(r) => {
+                    values.extend(self.data.ssa.value_before(pos, Register::Named(*r)))
+                }
+                Operand::Special(reg) => found.extend(special_obstacle(*reg)),
+                _ => {}
+            }
+        }
     }
 
     /// The bound block shape has one row and one plane.
@@ -319,12 +343,10 @@ impl<'a> AffineAnalysis<'a> {
         match self.properties(v, depth) {
             AffineProperties::Expr(a) => Ok(self.after_exits(a, pos)),
             AffineProperties::Unknown {
-                reason,
-                min_trailing_zeros,
+                min_trailing_zeros, ..
             } if !matches!(v, Value::Undef(_))
-                && self.uniformity().is_uniform(reg, pos).is_ok() =>
+                && self.uniformity().register_uniformity(reg, pos).is_ok() =>
             {
-                self.unread.borrow_mut().get_or_insert(reason);
                 let u = Var::Unknown(v);
                 Ok(match min_trailing_zeros {
                     0 => AffineExpr::var(u),
@@ -396,12 +418,9 @@ impl<'a> AffineAnalysis<'a> {
         let name = self.data.module.interner.resolve(reg);
         let header = (self.data.forest.loops.iter()).any(|l| l.header == block);
         let refused = || {
-            self.obstacle_of_any_def(reg)
+            self.depends_on(vec![v], Vec::new())
                 .unwrap_or_else(|| match header {
-                    true => format!(
-                        "latch condition depends on {name}, carried around an enclosing loop"
-                    )
-                    .into(),
+                    true => UnknownReason::LoopCarried(name.to_owned()),
                     false => format!("{name} has more than one reaching definition").into(),
                 })
         };
@@ -422,7 +441,7 @@ impl<'a> AffineAnalysis<'a> {
                 },
                 _ => format!("{name} is unwritten on some path"),
             };
-            return Err(self.obstacle_of_any_def(reg).unwrap_or_else(|| why.into()));
+            return Err((self.depends_on(vec![v], Vec::new())).unwrap_or_else(|| why.into()));
         }
         let common = match header {
             true => (self.same_immediate(&defs)).map(|c| AffineExpr::from_base(SymExpr::Const(c))),
@@ -474,8 +493,7 @@ impl<'a> AffineAnalysis<'a> {
     fn step(&self, step: &Step, depth: u32) -> Result<SymExpr, Option<UnknownReason>> {
         let mut sum = SymExpr::Const(step.constant);
         for &(reg, at, sign) in &step.registers {
-            let s = self.first_reason(|| self.at_use(reg, at, depth + 1));
-            let s = s.map_err(|_| None)?;
+            let s = self.at_use(reg, at, depth + 1).map_err(|_| None)?;
             if !s.is_symbolic_or_constant() {
                 return Err(None);
             }
@@ -515,50 +533,68 @@ impl<'a> AffineAnalysis<'a> {
     }
 
     /// The address `offset` bytes past `base` at `pos` under the bindings,
-    /// one form for every lane unless it counts the iterations of a loop
-    /// that does not hold `pos` and that lanes leave at different
-    /// iterations, or holds a uniform value the lanes executing `pos` do
-    /// not see alike: then each lane reads its own, and the reason prints
-    /// that variable by `name`.
+    /// one form for the lanes of a warp unless a variable of it is not
+    /// one value for them (`alike`): then each lane reads its own.
     pub(crate) fn address(
         &self,
         base: OperandId,
         offset: i64,
         pos: usize,
-        name: &dyn Fn(&Var) -> String,
     ) -> Result<AffineExpr, UnknownReason> {
-        let a = self.first_reason(|| self.operand_at(base, pos, 0))?
-            + AffineExpr::from_base(SymExpr::Const(offset));
+        let a = self.operand_at(base, pos, 0)? + AffineExpr::from_base(SymExpr::Const(offset));
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
-        for v in a.terms.keys() {
-            if let Some(l) = v.counter().filter(|&l| !self.data.in_loop(l, pos))
-                && let Err(why) = self.uniformity().exits_uniform(l)
-            {
-                let k = name(&Var::Iteration(l));
-                return Err(
-                    format!("{k} differs between lanes after its loop, whose exit {why}").into(),
-                );
-            }
-            if let Some(u) = v.uniform()
-                && let Err(why) = self.uniformity().value_uniform_at(u, pos)
-            {
-                let u = name(&Var::Unknown(u));
-                return Err(format!("{u} differs between lanes: {why}").into());
-            }
-        }
+        self.alike(&a, pos, Uniform::Warp, None)?;
         Ok(a)
     }
 
-    /// `f`, failing for the first reason it read a uniform value as a
-    /// variable, if it did.
-    pub(crate) fn first_reason<T>(
+    /// Whether `a`, read at `pos`, is one value for the threads `level`
+    /// names: each counter of a loop not holding `pos` that they leave
+    /// together, and each unknown value they see alike, defined outside
+    /// loop `scope`. Else the first variable that is not, why, and, for
+    /// an unknown value they may share, why affine analysis has no form
+    /// for it, read now (a counter's wrap is known only while its count
+    /// is computed).
+    pub(crate) fn alike(
         &self,
-        f: impl FnOnce() -> Result<T, UnknownReason>,
-    ) -> Result<T, UnknownReason> {
-        let outer = self.unread.take();
-        let t = f();
-        let first = self.unread.replace(outer);
-        t.map_err(|why| first.unwrap_or(why))
+        a: &AffineExpr,
+        pos: usize,
+        level: Uniform,
+        scope: Option<LoopId>,
+    ) -> Result<(), UnknownReason> {
+        let uniformity = self.uniformity();
+        for v in a.terms.keys() {
+            let (var, why, own) = match (v.counter(), v.unknown()) {
+                (Some(l), _) if !self.data.in_loop(l, pos) => {
+                    let why = match uniformity.exit_uniformity(l) {
+                        Ok(u) if u <= level => continue,
+                        Ok(_) => "is one value per warp only after its loop".into(),
+                        Err(why) => {
+                            format!("differs between lanes after its loop, whose exit {why}")
+                        }
+                    };
+                    (Var::Iteration(l), why, None)
+                }
+                (_, Some(u)) => {
+                    let (why, own) = match uniformity.value_uniformity(u, pos) {
+                        _ if scope.is_some_and(|l| self.data.defined_in(u, l)) => {
+                            ("is defined in an enclosing loop".into(), true)
+                        }
+                        Ok(x) if x <= level => continue,
+                        Ok(_) => ("is one value per warp only".into(), true),
+                        Err(why) => (format!("differs between lanes: {why}"), false),
+                    };
+                    let own = match own.then(|| self.properties(u, 0)) {
+                        Some(AffineProperties::Unknown { reason, .. }) => Some(Box::new(reason)),
+                        _ => None,
+                    };
+                    (Var::Unknown(u), why, own)
+                }
+                _ => continue,
+            };
+            let var = Box::new(var);
+            return Err(UnknownReason::NotOneValue { var, why, own });
+        }
+        Ok(())
     }
 
     /// Loop `l`'s trip count when it is a constant of at least 1 under the
@@ -630,7 +666,6 @@ impl<'a> AffineAnalysis<'a> {
         if self.frames.get() > 0 {
             return query();
         }
-        let unread = self.unread.borrow().is_some();
         let mut tried = HashSet::new();
         loop {
             let t = query();
@@ -646,9 +681,6 @@ impl<'a> AffineAnalysis<'a> {
                     _ => _ = cuts.pop(),
                 }
             }
-            if !unread {
-                self.unread.take();
-            }
         }
     }
 
@@ -663,27 +695,17 @@ impl<'a> AffineAnalysis<'a> {
             reason,
             min_trailing_zeros: self.min_trailing_zeros(v),
         };
-        let unfinished = || (unknown("value depends on itself".into()), None);
+        let unfinished = || unknown("value depends on itself".into());
         let trace = || {
-            let outer = self.unread.take();
-            let p = self
-                .trace_uncached(v, depth)
-                .map_or_else(unknown, AffineProperties::Expr);
-            (p, self.unread.replace(outer))
+            self.trace_uncached(v, depth)
+                .map_or_else(unknown, AffineProperties::Expr)
         };
-        let settle = |first: Traced, again: Traced| match (&first.0, &again.0) {
+        let settle = |first: AffineProperties, again: AffineProperties| match (&first, &again) {
             (AffineProperties::Unknown { .. }, _) => first,
             (_, AffineProperties::Unknown { .. }) => again,
-            _ => (
-                unknown("the value changes once its loop's count is known".into()),
-                again.1,
-            ),
+            _ => unknown("the value changes once its loop's count is known".into()),
         };
-        let (p, why) = self.memoized(&self.values, v, unfinished, trace, settle);
-        if let Some(why) = why {
-            self.unread.borrow_mut().get_or_insert(why);
-        }
-        p
+        self.memoized(&self.values, v, unfinished, trace, settle)
     }
 
     fn trace_uncached(&self, v: Value, depth: u32) -> Result<AffineExpr, UnknownReason> {
@@ -739,60 +761,14 @@ impl<'a> AffineAnalysis<'a> {
             Var::FloorDiv(..) | Var::Mod(..) | Var::Unknown(_) | Var::Swizzle(_) => None,
         }
     }
-
-    /// Why a value cannot be traced, looking through arithmetic it
-    /// does not read: a special register, a memory load or an
-    /// atomic on some operand chain is the reason a reader can act on,
-    /// not the `or` or `bfe` in between.
-    pub(crate) fn obstacle(
-        &self,
-        reg: Symbol,
-        pos: usize,
-        seen: &mut HashSet<Symbol>,
-    ) -> Option<UnknownReason> {
-        let module = self.data.module;
-        if !seen.insert(reg) || seen.len() > 64 {
-            return None;
-        }
-        let def = match self.data.ssa.value_before(pos, Register::Named(reg)) {
-            Some(Value::Result { op, .. }) => op,
-            Some(Value::Argument { .. }) => return self.defs_obstacle(reg, seen),
-            Some(Value::Undef(_)) | None => return None,
-        };
-        let Stmt::Instr(instr) = &self.data.kernel.stmts[def] else {
-            return None;
-        };
-        let is_param_load = self
-            .data
-            .module
-            .modifiers(instr)
-            .iter()
-            .any(|&m| module.interner.resolve(m) == "param");
-        match instr.mnemonic {
-            Opcode::Ld if !is_param_load => Some(UnknownReason::Load { def }),
-            Opcode::Atom => Some(UnknownReason::Atomic),
-            _ => (split_operands(module, instr).1.iter())
-                .find_map(|&op| self.operand_obstacle(op, def, seen)),
-        }
-    }
-
-    fn operand_obstacle(
-        &self,
-        op: OperandId,
-        pos: usize,
-        seen: &mut HashSet<Symbol>,
-    ) -> Option<UnknownReason> {
-        match self.data.module.operand(op) {
-            Operand::Register(r) => self.obstacle(*r, pos, seen),
-            Operand::Special(reg) => special_obstacle(*reg),
-            _ => None,
-        }
-    }
 }
 
 fn special_obstacle(reg: SpecialReg) -> Option<UnknownReason> {
-    (special_register(reg) != Some(SpecialRegister::Zero))
-        .then_some(UnknownReason::SpecialRegister(reg))
+    let alike = matches!(
+        special_register(reg),
+        Some(SpecialRegister::Zero | SpecialRegister::PerCta)
+    );
+    (!alike).then_some(UnknownReason::SpecialRegister(reg))
 }
 
 /// The count, the block it is per execution of, and a `!=` latch's
@@ -818,7 +794,7 @@ fn per_cta(a: AffineExpr) -> AffineExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::affine::trip_counts::{TripCount, trip_counts};
+    use crate::analysis::affine::trip_counts::{TripCount, trip_counts, unknown_by_register};
     use crate::analysis::control_flow::loop_forest;
     use crate::analysis::loop_names::loop_names;
     use crate::ptx::cfg::build_cfg;
@@ -856,7 +832,7 @@ mod tests {
         };
         match e {
             SymExpr::Sym(SymbolicConstant::Unknown(v)) => {
-                SymExpr::sym(format!("uniform({})", register(m)(v)))
+                SymExpr::sym(unknown_by_register(m, &Var::Unknown(v)))
             }
             SymExpr::Sum(ts) => all(ts, SymExpr::add),
             SymExpr::Prod(fs) => all(fs, SymExpr::mul),
@@ -866,18 +842,6 @@ mod tests {
             SymExpr::Min(a, b) => SymExpr::min(by_register(m, *a), by_register(m, *b)),
             SymExpr::Max(a, b) => SymExpr::max(by_register(m, *a), by_register(m, *b)),
             other => other,
-        }
-    }
-
-    /// A value by its register's name.
-    fn register(m: &Module) -> impl Fn(Value) -> String + '_ {
-        |v| match v {
-            Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg) => {
-                match reg {
-                    Register::Named(r) => m.interner.resolve(r).to_owned(),
-                    Register::Cc => "CC.CF".to_owned(),
-                }
-            }
         }
     }
 
@@ -930,10 +894,15 @@ mod tests {
             if read_first {
                 let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, 0);
             }
-            (affine.loop_trip_count(LoopId(0)).err())
-                .map(|r| r.render(&data, Some(LoopId(0)), true))
+            (affine.loop_trip_count(LoopId(0)).err()).map(|r| {
+                r.render(&data, Some(LoopId(0)), true, &|v| {
+                    unknown_by_register(&m, v)
+                })
+            })
         };
-        let wraps = Some("`add.u32` leaves 32 bits".to_owned());
+        let wraps = Some(
+            "uniform(%r1) is defined in an enclosing loop: `add.u32` leaves 32 bits".to_owned(),
+        );
         assert_eq!(counted(false), wraps);
         assert_eq!(counted(true), wraps);
     }
@@ -947,7 +916,9 @@ mod tests {
              setp.le.u32 %p1, %r1, 4294967295;\nadd.u32 %r1, %r1, 1;\n\
              @%p1 bra $L__O;\nret;",
         );
-        let wraps = Err("`add.u32` leaves 32 bits".to_owned());
+        let wraps = Err(
+            "uniform(%r1) is defined in an enclosing loop: `add.u32` leaves 32 bits".to_owned(),
+        );
         assert_eq!(trips_of(&src)[0], ("$L__O".to_owned(), wraps));
     }
 
@@ -977,7 +948,7 @@ mod tests {
             }
             let a = affine.operand_at(last, at, 0);
             a.map(|a| a.to_string())
-                .map_err(|r| r.render(&data, None, false))
+                .map_err(|r| r.render(&data, None, false, &|v| unknown_by_register(&m, v)))
         };
         assert_eq!(read(false), Ok("%tid.x + 300".to_owned()));
         assert_eq!(read(true), read(false));
@@ -994,7 +965,9 @@ mod tests {
         let k = |n: i64| HashMap::from([(SymbolicConstant::KernelParam(0), n)]);
         let trips = |n| trips_under(&src, &k(n))[0].1.clone().map(|t| t.to_string());
         assert_eq!(trips(4096), Ok("max(⌈param_0/8⌉, 1)".to_owned()));
-        let wraps = Err("`add.s32` leaves 32 bits".to_owned());
+        let wraps = Err(
+            "uniform(%r2) is defined in an enclosing loop: `add.s32` leaves 32 bits".to_owned(),
+        );
         assert_eq!(trips(i64::from(i32::MAX)), wraps);
     }
 
@@ -1014,9 +987,10 @@ mod tests {
             .find(|&l| f.get(l).parent.is_none())
             .expect("an outer loop");
         assert_eq!(affine.constant_trips(outer), None);
-        let count =
-            (affine.loop_trip_count(outer).err()).map(|r| r.render(&data, Some(outer), true));
-        assert_eq!(count.as_deref(), Some("`add.s32` leaves 32 bits"));
+        let count = (affine.loop_trip_count(outer).err())
+            .map(|r| r.render(&data, Some(outer), true, &|v| unknown_by_register(&m, v)));
+        let wraps = "uniform(%r134) is defined in an enclosing loop: `add.s32` leaves 32 bits";
+        assert_eq!(count.as_deref(), Some(wraps));
     }
 
     #[test]
@@ -1103,7 +1077,7 @@ mod tests {
              $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p1, %r2, %r3;\n\
              @%p2 mov.u32 %r3, 0;\n@%p1 bra $L__L;\nret;",
         );
-        let why = "%r3 is written under a guard on some path";
+        let why = "uniform(%r3) is defined in an enclosing loop: %r3 is written under a guard on some path";
         assert_eq!(trips_of(&src)[0].1.as_ref().unwrap_err(), why);
     }
 
@@ -1111,7 +1085,7 @@ mod tests {
     /// leaves 0 (PTX ISA §9.7.8.8), a product past 2^32 is not read and
     /// stays the value it computes, the same for every thread.
     #[test]
-    fn a_bound_past_its_register_width_wraps_or_is_a_uniform_value() {
+    fn a_bound_past_its_register_width_wraps_or_is_a_cta_uniform_value() {
         let bound = |compute: &str| {
             let src = kernel_with(
                 N_PARAM,
@@ -1191,7 +1165,7 @@ mod tests {
             .iter()
             .find(|(n, _)| n == "$L__L")
             .expect("inner loop");
-        let why = "%r3 has more than one reaching definition";
+        let why = "uniform(%r3) is defined in an enclosing loop: %r3 has more than one reaching definition";
         assert_eq!(inner.1.as_ref().unwrap_err(), why);
     }
 
@@ -1822,18 +1796,18 @@ mod tests {
         let src = kernel_with(
             ".param .u64 k_param_0",
             "ld.param.u64 %rd1, [k_param_0];\n\
-             $L__L:\nld.global.f32 %f1, [%rd1];\nadd.s64 %rd1, %rd1, 4;\n\
-             setp.gt.f32 %p1, %f1, 0f00000000;\n@%p1 bra $L__L;\nret;",
+             $L__L:\nld.global.u32 %r1, [%rd1];\nadd.s64 %rd1, %rd1, 4;\n\
+             setp.gt.s32 %p1, %r1, 0;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
         assert_eq!(
             trips[0].1.as_ref().unwrap_err(),
-            "latch condition depends on a value loaded inside the loop"
+            "uniform(%r1) is defined in an enclosing loop: depends on a value loaded inside the loop"
         );
     }
 
     #[test]
-    fn the_reason_is_the_obstacle_behind_unread_arithmetic() {
+    fn the_reason_is_what_unread_arithmetic_depends_on() {
         // LLVM writes m_start + 127 as `or` on a value with zero low bits;
         // the CTA index one value per CTA, the bound is read.
         let src = kernel_with(
@@ -1844,16 +1818,17 @@ mod tests {
         );
         let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
         assert_eq!(trips, Ok("128 * %ctaid.x + 127".to_owned()));
-        // A loaded bound behind `bfe` is a loaded bound, one that may
-        // differ between threads where the kernel writes its pointer.
+        // A loaded bound behind `bfe` is a loaded bound, one value per
+        // warp only.
         let src = kernel_with(
             ".param .u64 k_param_0",
             "ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r1, [%rd1];\n\
              bfe.s32 %r3, %r1, 0, 26;\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
-             st.global.u32 [%rd1], %r4;\nsetp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+             setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
         );
         let err = trips_of(&src)[0].1.clone().unwrap_err();
-        assert_eq!(err, "latch condition depends on a value loaded from memory");
+        let why = "uniform(%r1) is one value per warp only: depends on a value loaded from memory";
+        assert_eq!(err, why);
         // Nothing fundamental behind it, the same for every thread: the
         // value, unread.
         let src = kernel_with(
@@ -1863,6 +1838,35 @@ mod tests {
         );
         let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
         assert_eq!(trips, Ok("max(uniform(%r3), 1)".to_owned()));
+        // A `selp` between a loaded value and one of %tid.x names both,
+        // whichever operand comes first.
+        let bound = |selp: &str| {
+            let src = kernel_with(
+                ".param .u64 k_param_0",
+                &format!(
+                    "ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r1, [%rd1];\n\
+                     mov.u32 %r2, %tid.x;\nsetp.lt.u32 %p2, %r2, 32;\n{selp}\n\
+                     mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+                     setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().unwrap_err()
+        };
+        let why = "latch condition depends on a value loaded from memory and special register \
+                   %tid.x, behind `selp.b32`";
+        assert_eq!(bound("selp.b32 %r3, %r1, %r2, %p2;"), why);
+        assert_eq!(bound("selp.b32 %r3, %r2, %r1, %p2;"), why);
+        // A value of %tid.y both paths overwrite is not what the join
+        // depends on.
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u32 %r3, %tid.y;\nmov.u32 %r1, %tid.x;\nsetp.lt.u32 %p2, %r1, 32;\n\
+             @%p2 bra $L__A;\nmov.u32 %r3, 5;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r3, 7;\n\
+             $L__J:\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+             setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+        );
+        let err = trips_of(&src)[0].1.clone().unwrap_err();
+        assert_eq!(err, "%r3 has more than one reaching definition");
     }
 
     #[test]
@@ -1925,7 +1929,7 @@ mod tests {
     /// parameter selects it alike for every thread, one on the thread
     /// index does not.
     #[test]
-    fn a_value_merged_from_two_paths_is_a_uniform_value() {
+    fn a_value_merged_from_two_paths_is_a_cta_uniform_value() {
         let merged = |on: &str| {
             let src = kernel_with(
                 N_PARAM,

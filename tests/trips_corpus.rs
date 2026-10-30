@@ -100,10 +100,11 @@ fn attention_trip_reasons_are_pinned() {
     assert_eq!(
         reasons,
         [
-            "unknown: latch condition depends on special register %ctaid.x",
             "unknown: latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison",
             "unknown: loop exit is not at the latch",
             "unknown: loop has multiple latches",
+            "unknown: uniform(%r1773) is defined in an enclosing loop: depends on %r1773, carried around an enclosing loop",
+            "unknown: uniform(%r1884) is defined in an enclosing loop: depends on %r1884, carried around an enclosing loop",
         ]
     );
 }
@@ -139,11 +140,11 @@ fn micro_trip_counts_and_honest_unknowns() {
     let (trips, _) = info_of("micro/no_loc.ptx");
     assert_eq!(trips, ["ok: param_1"]);
 
-    // The honesty case: a pointer-chase latch has no static trip count
-    // and the reason is named, never guessed (S9.1).
+    // The honesty case: a latch on loaded floats has no static trip
+    // count and the reason is named, never guessed (S9.1).
     let (trips, _) = info_of("micro/data_dep.ptx");
     assert_eq!(
         trips,
-        ["unknown: latch condition depends on a value loaded inside the loop"]
+        ["unknown: latch condition compares floating-point values"]
     );
 }

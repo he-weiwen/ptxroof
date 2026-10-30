@@ -210,11 +210,12 @@ contract (Codex's review of 2b2731b).
   read only in a block of one row.
 - **`shfl.sync.idx` reads one floor or mod of `%tid.x`**: a thread
   index under more, `⌊%tid.x/8⌋ mod 16` from a `bfe.u32` or
-  `⌊(%tid.x mod 32)/4⌋` from `%laneid`, is unknown, even where it is
+  `⌊(%tid.x mod 32)/4⌋` from `%laneid`, is no form, only the
+  shuffle's value, one for a warp (`uniform(%r6@57)`), even where it is
   the same across a warp (`⌊⌊%tid.x/8⌋/4⌋`, whose shuffle ptxas drops);
-  so is a fourth operand other than 31, which splits the warp into
-  sub-segments or clamps the lane (PTX ISA §9.7.9.6):
-  `micro/shfl_idx.ptx`.
+  a fourth operand other than 31, which splits the warp into
+  sub-segments or clamps the lane (PTX ISA §9.7.9.6), leaves it
+  unknown: `micro/shfl_idx.ptx`.
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
@@ -249,8 +250,8 @@ contract (Codex's review of 2b2731b).
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
 - **Addresses affine analysis cannot read are unknown rows**, with the
-  reason, unless every thread of the CTA computes the part it cannot
-  read alike: that part is then a variable, `uniform(%r54@90)`, or,
+  reason, unless the lanes of a warp compute the part it cannot read
+  alike: that part is then a variable, `uniform(%r54@90)`, or,
   where each of its definitions is an unguarded `shl` or `and` by a
   constant that leaves its k low bits 0, 2^k times its floor over 2^k,
   so an `or` with bits below 2^k adds (`micro/uniform_aligned.ptx`),
@@ -267,15 +268,15 @@ contract (Codex's review of 2b2731b).
   bits (`micro/xor_swizzle.ptx`, Triton's swizzle as
   `(16 * (⌊%tid.x/8⌋ mod 4) ⊕ 16 * (%tid.x mod 128))`, its offsets read
   back on the RTX 4090; 22,332 census rows). Not read: an xor with a
-  side that is no such xor, "behind `xor.b32`" (13,746 of the census's
-  38,021 unknown address rows, all but one shared): a sum whose fields
+  side that is no such xor, "behind `xor.b32`" (14,081 of the census's
+  36,283 unknown address rows, all but three shared): a sum whose fields
   share a bit (`micro_xor_overlap`), one thread bit times a constant
   with more bits than one, as the Gluon GEMM's epilogue stores' 2064
   times bit 2, which comes there from a signed `bfe` past bit 0, itself
   unread (`bfe at 2 of 1 bits`); divisions of the thread
   index by a runtime value (`micro/uniform_address.ptx`'s
-  `micro_uniform_div_lanes`; 4,194 census rows "div by a non-constant
-  divisor" and 578 "rem by a non-constant divisor": of 40 sampled,
+  `micro_uniform_div_lanes`; 1,622 census rows "div by a non-constant
+  divisor" and 3,525 "rem by a non-constant divisor": of 40 sampled,
   binding the kernel's 32-bit parameters reads 24 past the division,
   as census kernel `01155.ptx`'s `div.s32 %r11, %r8, %r9` of `%r9` =
   param_5, and 16 stop at a divisor of the CTA index, Triton's grouped
@@ -295,8 +296,9 @@ contract (Codex's review of 2b2731b).
   `micro_and_select_two_bits`), or a 64-bit mask's run that starts at
   bit 63 (`micro/and_runs.ptx`'s `micro_and_bit63`); the bit select by a
   signed `bfe` of one bit (`micro/and_bit_select.ptx`'s
-  `micro_and_select_bfe`: "bfe at 2 of 1 bits"; 1,227 census rows stop
-  at a one-bit signed `bfe`); values loaded
+  `micro_and_select_bfe`: "bfe at 2 of 1 bits"; 586 census rows stop
+  at a one-bit signed `bfe`, 658 at a mod or shift of one read as a
+  variable, "depends on ⌊uniform(…)/2^k⌋, in a mod"); values loaded
   from memory that may differ between threads (the fused MoE kernel's
   `cp.async` of the rows `sorted_token_ids` selects, its source line
   262, `moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel`:
@@ -341,27 +343,38 @@ contract (Codex's review of 2b2731b).
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
   (`micro/offsets_wide.ptx`: `warp: ? (lane offsets reach 2^62
   bytes)`; `requested 32 B, unique unknown` for 8 distinct stores).
-- **A loop footprint takes an address holding a uniform variable the
-  loop computes as unread**: requested bytes only, unique and sector
-  bytes unknown (`micro/uniform_address.ptx`, `micro_uniform_in_loop`:
-  requested 2048 B, unique unknown).
-- **A global load is taken to read one value for every thread of the
-  CTA** where its address is the same for them and no store of the
-  kernel writes through its pointer parameter; PTX ISA §8.5 makes no
-  warp or CTA one observer ("the warp is not a scope"), so this assumes
-  nothing else writes it during the launch: a store through another
-  pointer parameter aliasing it (as the loop footprint assumes, below),
-  the host, another stream, or a grid before `griddepcontrol.wait`. A
-  store whose pointer is not traced to parameters (loaded, from an
-  atomic or another operation the trace does not follow, a symbol, a
-  vector), a tensor copy to global, whose tensor map holds the
-  address, a `call` and an unclassified instruction naming `.global`
-  count as writing everything; a `.volatile`, `.relaxed`, `.acquire`,
-  `.mmio` or generic load is never one value
-  (`a_global_load_through_a_pointer_nothing_writes_is_lane_wise`). The
-  cross-entropy's target column, its index loaded through param_1, reads
-  `[65536 * %ctaid.x + 2 * uniform(%rd14@86) + param_0]`, 1 sector, as
-  its record measures (`gluon-ce-chunk.test`).
+- **A loop footprint takes an address holding an unknown value the
+  loop computes, or one that is one value per warp only, as unread**:
+  requested bytes only, unique and sector bytes unknown
+  (`micro/uniform_address.ptx`, `micro_uniform_in_loop`: requested
+  2048 B, unique unknown; `micro/footprint_unknown.ptx`, a pointer the
+  loop loads: requested 64 B, unique unknown).
+- **A load is taken to give the lanes of a warp one value where its
+  address is the same for them**: a weak `.global`, `.shared` or
+  `.const` load, as LLVM's NVPTX and AMDGPU targets take it
+  (`isSourceOfDivergence`, AMDGPU: "if threads issue loads with the same
+  arguments, they will always get the same result"). PTX ISA §8.5 does
+  not give it ("the warp is not a scope; the CTA is the smallest
+  collection of threads that qualifies as a scope"): this assumes the
+  hardware executes the load once for the lanes executing it together.
+  A warp-specialized dispatch reads its state byte so
+  (`micro/warp_dispatch.ptx`: the dispatched store's sectors read
+  `warp: 4–5 sectors (ideal 4)`, `micro-warp-dispatch.test`); over the
+  65 records the access rows whose warp sectors or wavefronts are a
+  bound go from 333 to 201, all in `gluon/attn_fwd_ws_kernel`'s two
+  shapes. The records keep thread instructions only
+  (`tools/ncu/measure.py`), not the warp instructions per line that
+  would check it. The cross-entropy's target column, its index loaded
+  through param_1, reads `[65536 * %ctaid.x + 2 * uniform(%rd14@86) +
+  param_0]`, 1 sector, as its record measures (`gluon-ce-chunk.test`).
+  A `.volatile`, `.relaxed`, `.acquire`, `.mmio` or generic load is
+  never one value (`a_global_load_at_one_address_is_one_value_per_warp`).
+  No load is one value for the CTA, so a loop bounded by a loaded value
+  has no trip count: 9 counts over the 65 records
+  (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`'s
+  `$L__BB0_2`: "uniform(%r4@79) is one value per warp only: depends on
+  uniform(%r19@75), in a min", its sequence length), 240 of the
+  census's 1,230.
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B
@@ -372,8 +385,9 @@ contract (Codex's review of 2b2731b).
   16–32 B, 16 B with `--bind 1:n=0`; `micro/uniform_bases.ptx`), count
   the loop's own blocks only, and need a numeric trip count, the block
   shape, constant lane and counter coefficients, every global access's
-  bytes (else no footprint, `micro/tensor_copies.ptx`) and address
-  (else `unique unknown`, `micro/footprint_unknown.ptx`), and
+  bytes (else no footprint, `micro/tensor_copies.ptx`) and address,
+  its unknown values one for the CTA (else `unique unknown`,
+  `micro/footprint_unknown.ptx`), and
   are bounds where which threads run the loop is not known. k5's K loop at
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
   k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B, a bound until M and
@@ -441,8 +455,8 @@ contract (Codex's review of 2b2731b).
   that combines its comparison with a predicate
   (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
   compares floats (`micro/latch_float.ptx`: "latch condition compares
-  floating-point values"), a bound through a `selp` or shift of the
-  CTA index, the mbarrier spin-waits
+  floating-point values"), a bound one value per warp only (a load, or
+  arithmetic on one), the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. A bound
   affine analysis does not read, the same for every thread, is the value of the
@@ -457,16 +471,16 @@ contract (Codex's review of 2b2731b).
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`). In `gluon/attn_fwd_ws_kernel.sm_89.ptx` the
   persistent loops (`gluon_attn_fwd.py:126`, exit not at the latch;
-  `:213`, several latches) and the causal loop (`:143`, latch reads
-  `%ctaid.x`) are unknown, so under its record the tensor FLOPs over
+  `:213`, several latches) and the causal loop (`:143`, its bound
+  carried around the tile loop) are unknown, so under its record the tensor FLOPs over
   the launch read `0` as a lower bound, where the record's
   `mma.m16n8k16` lines run 3,244,032 warp instructions, 13,287,555,072
   FLOPs.
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 1,229 have a trip count: 1,445 are mbarrier
-  waits and 177 read loaded values, 12 depend on `%ctaid` (1 through a
-  `selp`), 95 are grid-stride loops, 1 unpack, 20 atomics, 2
-  divisions, 17 multi-exit.
+  inferred arguments), 990 have a trip count: 1,445 are mbarrier
+  waits, 315 read a value one per warp only (205 name a load), 95 a
+  value an enclosing loop defines, 30 a loaded value lanes may see
+  differently, 95 are grid-stride loops, 20 atomics, 18 multi-exit.
 - **Counters the induction variable search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
@@ -478,9 +492,8 @@ contract (Codex's review of 2b2731b).
   refused**, though both definitions and the join lie in one trip of
   the loop: `micro/join_same_value.ptx`'s `micro_join_counter`,
   128·i + %tid.x on both paths (words 0 to 255 on an RTX 4090), reads
-  "depends on special register %tid.x", and census kernel `00376.ptx`'s
-  four `st.global.v4.b32` of its source line 74 "div by a non-constant
-  divisor".
+  "depends on special register %tid.x", as census kernel `00376.ptx`'s
+  four `st.global.v4.b32` of its source line 74 do.
 - **Instruction families.** 75 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk copies, their
@@ -555,8 +568,9 @@ contract (Codex's review of 2b2731b).
   (`a_launch_sums_each_cta_s_threads_and_warps`). Without a grid the masks
   Triton builds from `pid·BLOCK + arange` leave what they guard a bound
   (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
-  is an unknown selector too (`micro/guards.ptx`: the store total stays
-  a bound). A comparison with a loop counter is counted trip by trip
+  is an unknown selector too, one for a warp's lanes where the load's
+  address is (`micro/guards.ptx`: the store total stays a bound, a
+  request's sectors are exact). A comparison with a loop counter is counted trip by trip
   (`micro/counter_guard.ptx`: 384 barriers and 300 stores per CTA, as
   measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `k < 511`,
   confirmed at 12,533,760, `gluon-counter-guard.test`) only where the
@@ -628,9 +642,9 @@ contract (Codex's review of 2b2731b).
 - A kernel's `unknowns:` line lists what leaves a count incomplete
   (unparsed statements, unclassified instructions, unknown trip
   counts, calls), not unknown addresses, which are only on their access
-  rows: `micro/footprint_unknown.ptx` reads `unknowns: none` beside a
-  store whose address is `unknown`
-  (`tests/lit/micro-footprint-unknown.test`).
+  rows: `micro/uniform_address.ptx`'s `micro_uniform_div_lanes` reads
+  `unknowns: none` beside a store whose address is `unknown`
+  (`tests/lit/micro-uniform-address.test`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
@@ -788,11 +802,15 @@ contract (Codex's review of 2b2731b).
 
 ## Missing features
 
-- A value affine analysis cannot read but every thread of the CTA shares as
+- A value affine analysis cannot read but the lanes of a warp share as
   an affine variable, `uniform(v)`, keyed by its register SSA value:
-  addresses and loop footprints read it (`micro/uniform_address.ptx`,
-  `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`); trip counts
-  and thread selectors do not. Register SSA
+  addresses read it, and loop footprints where every thread of the CTA
+  shares it (`micro/uniform_address.ptx`,
+  `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`), and trip
+  counts where every thread of the CTA shares it and no enclosing loop
+  defines it (`micro/trip_max.ptx`: `max(uniform(%r3@54), 1)`), else
+  their reason names it (`micro-trip-uniform.test`); thread selectors
+  do not. Register SSA
   itself
   (`src/ssa.rs`) is what affine analysis, the uniformity analysis
   and the predicate reader read.
@@ -931,11 +949,12 @@ One line each, with the trigger that would start it.
   shape, strides, box and swizzle: the B200 records keep `tensormap:128`
   only (`record_launches.py`), and the reports give TMA instructions no
   access size and 0 sectors.
-- Values loaded from memory as inputs: a loop bounded by one counts in
-  a symbol `--bind` cannot set
-  (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
-  `uniform(%r4@79)` from the sequence length its `ld.global` at line 64
-  reads). Trigger: wanting such a kernel's count for given lengths.
+- Values loaded from memory as inputs: a loop bounded by one has no
+  count (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
+  the sequence length its `ld.global` at line 64 reads); a count in a
+  symbol `--bind` sets needs the loaded value one for the CTA, which
+  PTX ISA §8.5 does not give. Trigger: wanting such a kernel's count
+  for given lengths.
 - A coverage summary per metric over a corpus: how many trip counts,
   FLOPs, byte totals, addresses and sector lines are exact, bounds or
   unknown. Trigger: comparing coverage between commits, so far done by

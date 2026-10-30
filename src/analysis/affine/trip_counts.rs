@@ -4,13 +4,15 @@
 //! loop with factor c.
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
+use crate::analysis::affine::affine_expr::Var;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::LoopName;
 use crate::analysis::uniformity_info::UniformityInfo;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module};
+use crate::ptx::ir::{Kernel, Module, Register};
+use crate::ssa::Value;
 use std::collections::HashMap;
 
 /// Trip count of one loop: an expression, or a named reason there
@@ -53,18 +55,38 @@ pub fn trip_counts(
     trip_counts_from(
         &AffineAnalysis::new(&data, &uniformity, Some(bindings)),
         names,
+        &|v| unknown_by_register(module, v),
     )
 }
 
-/// Every loop's trip count under `affine`'s bindings.
-pub(crate) fn trip_counts_from(affine: &AffineAnalysis, names: &[LoopName]) -> TripCountResults {
+/// Variable `v` as a reason prints it outside a report, its unknown
+/// value by register: `uniform(%r3)`.
+pub(crate) fn unknown_by_register(module: &Module, v: &Var) -> String {
+    match v {
+        Var::Unknown(
+            Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg),
+        ) => match reg {
+            Register::Named(s) => format!("uniform({})", module.interner.resolve(*s)),
+            Register::Cc => "uniform(CC.CF)".to_owned(),
+        },
+        other => other.to_string(),
+    }
+}
+
+/// Every loop's trip count under `affine`'s bindings, a reason's unknown
+/// values as `name` prints them.
+pub(crate) fn trip_counts_from(
+    affine: &AffineAnalysis,
+    names: &[LoopName],
+    name: &dyn Fn(&Var) -> String,
+) -> TripCountResults {
     let forest = affine.data.forest;
     let (mut trips, mut entries, mut distances) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..forest.loops.len() as u32 {
         let (t, entry, distance) = match affine.loop_trip_count(LoopId(i)) {
             Ok(t) => (Ok(t.count), t.entry, t.distance),
             Err(e) => (
-                Err(e.render(affine.data, Some(LoopId(i)), true)),
+                Err(e.render(affine.data, Some(LoopId(i)), true, name)),
                 forest.get(LoopId(i)).header,
                 None,
             ),

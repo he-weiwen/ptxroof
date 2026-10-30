@@ -364,25 +364,9 @@ impl AffineAnalysis<'_> {
                         other => Some(AffineExpr::var(other.clone())),
                     }
                 };
-                // Lane c's counter is this lane's only where lanes leave its
-                // loop together.
-                for l in (a.terms.keys()).filter_map(Var::counter) {
-                    if !self.data.in_loop(l, def)
-                        && let Err(why) = self.uniformity().exits_uniform(l)
-                    {
-                        return Err(format!(
-                            "shfl.idx of a counter that differs between lanes after its loop, whose exit {why}"
-                        ).into());
-                    }
-                }
-                for u in (a.terms.keys()).filter_map(Var::uniform) {
-                    if let Err(why) = self.uniformity().value_uniform_at(u, def) {
-                        return Err(format!(
-                            "shfl.idx of a value that differs between lanes: {why}"
-                        )
-                        .into());
-                    }
-                }
+                // Lane c's counter and unknown values are this lane's only
+                // where the warp's lanes share them.
+                self.alike(&a, def, Uniform::Warp, None)?;
                 a.map_vars(lane).ok_or_else(|| {
                     "shfl.idx of a value the tracer does not read in another lane".into()
                 })
@@ -441,14 +425,13 @@ impl AffineAnalysis<'_> {
         self.fits(value, instr, &mods)
     }
 
-    /// Why statement `def`'s instruction gives no value: the obstacle on
-    /// an operand chain behind it, else the instruction.
+    /// Why statement `def`'s instruction gives no value: what its inputs
+    /// depend on behind it (`depends_on`), else the instruction.
     fn unread(&self, instr: &Instr, def: usize) -> UnknownReason {
         let module = self.data.module;
-        let mut seen = HashSet::new();
-        let fundamental = (split_operands(module, instr).1.iter())
-            .find_map(|&op| self.operand_obstacle(op, def, &mut seen));
-        match fundamental {
+        let (mut values, mut found) = (Vec::new(), Vec::new());
+        self.inputs(instr, def, &mut values, &mut found);
+        match self.depends_on(values, found) {
             Some(reason) => UnknownReason::Behind {
                 reason: Box::new(reason),
                 opcode: module.opcode(instr).to_string(),

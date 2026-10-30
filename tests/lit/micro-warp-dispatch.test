@@ -1,0 +1,8 @@
+# Warps 4 to 7 run <block 2> where the byte each reads at
+# ⌊%tid.x/32⌋ + state is 0. A load at an address a warp's lanes read
+# alike gives them one value, so a warp runs the block on all its lanes
+# or on none: which warps is unknown, but the store's sectors per warp
+# request are a range, not a bound.
+RUN: %ptxroof analyze %fixtures/micro/warp_dispatch.ptx | FileCheck "%s"
+CHECK: <block 2>{{ +}}(no line info){{ +}}4{{ +}}<= 128 in <= 4 warps (⌊%tid.x/32⌋ >= 4)
+CHECK: <block 2>{{ +}}st.global.u32{{ +}}global store 4 B{{ +}}warp: 4–5 sectors (ideal 4)

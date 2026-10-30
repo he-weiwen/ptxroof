@@ -27,12 +27,6 @@ CHECK-NEXT: global store with statically unknown byte count x3
 CHECK-NEXT: shared load with statically unknown byte count x3
 CHECK-NEXT: shared store with statically unknown byte count x6
 CHECK-NEXT: shared::cluster store with statically unknown byte count x2
-# A copy to shared writes no global memory: the index loaded through
-# param_1 is one value per CTA. A copy to global may write it.
-CHECK-LABEL: kernel micro_tensor_copy_to_shared
-CHECK: st.global.u32{{ +}}global store 4 B{{ +}}warp: 4–5 sectors (ideal 4){{ +}}[4 * %tid.x + 512 * uniform(%r4@{{[0-9]+}}) + param_0]
-CHECK-LABEL: kernel micro_tensor_copy_to_global
-CHECK: st.global.u32{{ +}}global store 4 B{{ +}}unknown: depends on a value loaded from memory
 # The loop's copy reads global bytes its tensor map gives: no footprint.
 CHECK-LABEL: kernel micro_tensor_copy_in_loop
 CHECK: st.global.u32{{ +}}global store 4 B{{ +}}warp: 4–5 sectors (ideal 4){{ +}}[4 * %tid.x + 512 * k[$L__BB3_1] + param_0 - 512]

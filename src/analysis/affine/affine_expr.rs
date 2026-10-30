@@ -31,10 +31,11 @@ pub enum Var {
     /// `v mod m`, m > 0: its thread column, `tid.x % 8`.
     Mod(Box<Var>, i64),
     /// A register value affine analysis cannot interpret, as each lane
-    /// reads it. It is read so only where every lane executing the read
-    /// sees it alike; a use that takes it as one value for several
-    /// lanes, an address's warp footprint, a shuffle or a trip count,
-    /// checks that again where it reads it.
+    /// reads it. It is read so only where the lanes of a warp executing
+    /// the read see it alike; a use that takes it as one value for
+    /// several lanes checks that again where it reads it, for the lanes
+    /// of a warp (an address's warp footprint, a shuffle) or every
+    /// thread of the CTA (a trip count, a loop's footprint).
     Unknown(Value),
     /// An xor of fields of `%tid.x`.
     Swizzle(XorSwizzle),
@@ -158,11 +159,11 @@ impl Var {
         }
     }
 
-    /// The uniform value this is, or a floor or mod of.
-    pub fn uniform(&self) -> Option<Value> {
+    /// The unknown value this is, or a floor or mod of.
+    pub fn unknown(&self) -> Option<Value> {
         match self {
             Var::Unknown(v) => Some(*v),
-            Var::FloorDiv(inner, _) | Var::Mod(inner, _) => inner.uniform(),
+            Var::FloorDiv(inner, _) | Var::Mod(inner, _) => inner.unknown(),
             Var::Tid(_) | Var::Ctaid(_) | Var::Iteration(_) | Var::Swizzle(_) => None,
         }
     }

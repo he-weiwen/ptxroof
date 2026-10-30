@@ -1,9 +1,11 @@
-//! Which register reads the lanes executing a statement see alike: LLVM's
-//! UniformityAnalysis over PTX registers. Divergence starts at per-thread
-//! special registers and at instructions not computed lane by lane from
-//! their operands (loads, warp collectives, tensor-core operations), and
-//! spreads forward through the definitions and branch predicates that
-//! read it, to a fixed point. Where definitions meet, the branches that
+//! Which register reads the lanes executing a statement see alike, in
+//! the CTA or in a warp: LLVM's UniformityAnalysis over PTX registers.
+//! Divergence starts at per-thread special registers and at instructions
+//! not computed lane by lane from their operands (loads, warp collectives,
+//! tensor-core operations); a shuffle from one lane and a load at an
+//! address a warp reads alike give that warp one value instead. Both
+//! spread forward through the definitions and branch predicates that read
+//! them, to a fixed point. Where definitions meet, the branches that
 //! select between them, those whose successors' paths meet again there
 //! (`control_flow::sync_dependence`), gate the value, as a γ's predicate
 //! does in Gated SSA; a definition inside a loop read outside it is
@@ -11,12 +13,13 @@
 
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
-use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Space};
+use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::register_effects::{reads_cc, split_operands};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
+use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -30,8 +33,19 @@ enum Node {
     Branch(BlockId),
 }
 
+/// The threads a uniform read gives one value: every thread of the CTA,
+/// or the lanes of a warp that execute it together, "all active threads
+/// in a warp that are currently executing this instruction" (PTX ISA
+/// §9.7.13.3). One value for the CTA is one for each of its warps, so
+/// `Cta < Warp`, and the larger of two is what both give.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Uniform {
+    Cta,
+    Warp,
+}
+
 enum Read {
-    Uniform,
+    Uniform(Uniform),
     Divergent(String),
     On(Vec<Node>),
 }
@@ -39,26 +53,26 @@ enum Read {
 pub(crate) struct UniformityInfo<'a> {
     data: &'a KernelAnalyses<'a>,
     divergent: HashMap<Node, String>,
+    warp_uniform: HashSet<Node>,
 }
 
 impl<'a> UniformityInfo<'a> {
     pub(crate) fn new(t: &'a KernelAnalyses<'a>) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
-        let written = written(t);
         let defs: BTreeSet<usize> = (t.writes.iter())
             .filter(|(r, _)| matches!(r, Register::Named(_)))
             .flat_map(|(_, ds)| ds.iter().copied())
             .collect();
         for d in defs {
             reads.extend(
-                def_reads(t, d, false, written.as_ref())
+                def_reads(t, d, false)
                     .into_iter()
                     .map(|r| (Node::Def(d), r)),
             );
         }
         for &d in t.writes.get(&Register::Cc).into_iter().flatten() {
             reads.extend(
-                def_reads(t, d, true, written.as_ref())
+                def_reads(t, d, true)
                     .into_iter()
                     .map(|r| (Node::Carry(d), r)),
             );
@@ -78,10 +92,14 @@ impl<'a> UniformityInfo<'a> {
         }
         let mut users: HashMap<Node, Vec<Node>> = HashMap::new();
         let mut divergent = HashMap::new();
+        let mut warp_uniform = HashSet::new();
         let mut queue = Vec::new();
         for (node, r) in reads {
             match r {
-                Read::Uniform => {}
+                Read::Uniform(Uniform::Cta) => {}
+                Read::Uniform(Uniform::Warp) => {
+                    warp_uniform.insert(node);
+                }
                 Read::Divergent(why) => {
                     if divergent.insert(node, why).is_none() {
                         queue.push(node);
@@ -103,84 +121,102 @@ impl<'a> UniformityInfo<'a> {
                 }
             }
         }
-        UniformityInfo { data: t, divergent }
-    }
-
-    /// Whether every lane executing definition `d` writes the same value.
-    pub(crate) fn is_uniform_def(&self, d: usize) -> bool {
-        !self.divergent.contains_key(&Node::Def(d))
-    }
-
-    /// Whether the branches between `reg`'s definition and `pos` (the
-    /// exits of loops holding the definition but not `pos`, and those
-    /// selecting among definitions) send every lane the same way; the
-    /// reason when not.
-    pub(crate) fn gates_uniform(&self, reg: Symbol, pos: usize) -> Result<(), String> {
-        match read(self.data, Register::Named(reg), pos) {
-            Read::Uniform => Ok(()),
-            Read::Divergent(why) => Err(why),
-            Read::On(sources) => (sources.iter())
-                .filter(|s| matches!(s, Node::Branch(_)))
-                .find_map(|s| self.divergent.get(s))
-                .map_or(Ok(()), |why| Err(why.clone())),
+        let mut queue: Vec<Node> = warp_uniform.iter().copied().collect();
+        while let Some(n) = queue.pop() {
+            for &m in users.get(&n).into_iter().flatten() {
+                if warp_uniform.insert(m) {
+                    queue.push(m);
+                }
+            }
+        }
+        UniformityInfo {
+            data: t,
+            divergent,
+            warp_uniform,
         }
     }
 
-    /// Whether the lanes in loop `id` leave it at the same iteration: its
-    /// exits are uniform; the reason when not.
-    pub(crate) fn exits_uniform(&self, id: LoopId) -> Result<(), String> {
-        exits(self.data, id)
-            .find_map(|n| self.divergent.get(&n))
-            .map_or(Ok(()), |why| Err(why.clone()))
+    /// What every lane executing definition `d` writes.
+    pub(crate) fn def_uniformity(&self, d: usize) -> Result<Uniform, String> {
+        self.of(&[Node::Def(d)])
     }
 
-    /// Whether every lane executing `pos` reads the same value of `reg`;
-    /// the reason when not.
-    pub(crate) fn is_uniform(&self, reg: Symbol, pos: usize) -> Result<(), String> {
+    /// How alike the branches between `reg`'s definition and `pos` (the
+    /// exits of loops holding the definition but not `pos`, and those
+    /// selecting among definitions) send the lanes; the reason when each
+    /// lane may go its own way.
+    pub(crate) fn gate_uniformity(&self, reg: Symbol, pos: usize) -> Result<Uniform, String> {
+        match read(self.data, Register::Named(reg), pos) {
+            Read::Uniform(_) => Ok(Uniform::Cta),
+            Read::Divergent(why) => Err(why),
+            Read::On(sources) => self.of(&(sources.into_iter())
+                .filter(|s| matches!(s, Node::Branch(_)))
+                .collect::<Vec<_>>()),
+        }
+    }
+
+    /// How alike the lanes in loop `id` leave it: at the same iteration
+    /// where its exits are uniform; the reason when not.
+    pub(crate) fn exit_uniformity(&self, id: LoopId) -> Result<Uniform, String> {
+        self.of(&exits(self.data, id).collect::<Vec<_>>())
+    }
+
+    /// How alike the lanes executing `pos` read `reg`; the reason when
+    /// each may read its own value.
+    pub(crate) fn register_uniformity(&self, reg: Symbol, pos: usize) -> Result<Uniform, String> {
         self.answer(read(self.data, Register::Named(reg), pos))
     }
 
-    /// Whether every lane executing `pos` sees value `v` alike, wherever
-    /// it was read: its definitions, and the loop exits and branches
+    /// How alike the lanes executing `pos` see value `v`, wherever it
+    /// was read: its definitions, and the loop exits and branches
     /// between them and `pos`.
-    pub(crate) fn value_uniform_at(&self, v: Value, pos: usize) -> Result<(), String> {
+    pub(crate) fn value_uniformity(&self, v: Value, pos: usize) -> Result<Uniform, String> {
         self.answer(read_value(self.data, v, pos))
     }
 
-    fn answer(&self, r: Read) -> Result<(), String> {
+    fn answer(&self, r: Read) -> Result<Uniform, String> {
         match r {
-            Read::Uniform => Ok(()),
+            Read::Uniform(u) => Ok(u),
             Read::Divergent(why) => Err(why),
-            Read::On(sources) => sources
-                .iter()
-                .find_map(|s| self.divergent.get(s))
-                .map_or(Ok(()), |why| Err(why.clone())),
+            Read::On(sources) => self.of(&sources),
         }
+    }
+
+    /// What reading every one of `nodes` gives.
+    fn of(&self, nodes: &[Node]) -> Result<Uniform, String> {
+        if let Some(why) = nodes.iter().find_map(|n| self.divergent.get(n)) {
+            return Err(why.clone());
+        }
+        Ok(match nodes.iter().any(|n| self.warp_uniform.contains(n)) {
+            true => Uniform::Warp,
+            false => Uniform::Cta,
+        })
     }
 }
 
 /// What the registers statement `d` writes depend on, or with
 /// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
 /// guard and the value it keeps where the guard is false.
-fn def_reads(
-    t: &KernelAnalyses,
-    d: usize,
-    carry_out: bool,
-    written: Option<&BTreeSet<usize>>,
-) -> Vec<Read> {
+fn def_reads(t: &KernelAnalyses, d: usize, carry_out: bool) -> Vec<Read> {
     let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
         return vec![Read::Divergent(
             "comes from a statement not parsed".to_owned(),
         )];
     };
-    if !lane_wise(t, instr, written) {
-        return vec![Read::Divergent(format!(
-            "comes from `{}`",
-            t.module.opcode(instr)
-        ))];
-    }
+    let lane_wise = lane_wise(t, instr);
     let (written, inputs) = split_operands(t.module, instr);
-    let mut rs = operand_reads(t, data_inputs(t, instr, inputs), d);
+    let mut rs = match lane_wise {
+        true => operand_reads(t, data_inputs(t, instr, inputs), d),
+        false => match warp_reads(t, instr, inputs, d) {
+            Some(rs) => rs,
+            None => {
+                return vec![Read::Divergent(format!(
+                    "comes from `{}`",
+                    t.module.opcode(instr)
+                ))];
+            }
+        },
+    };
     if reads_cc(t.module, instr) {
         rs.push(read(t, Register::Cc, d));
     }
@@ -192,6 +228,52 @@ fn def_reads(
         }
     }
     rs
+}
+
+/// What a result one for the lanes of a warp executing it together
+/// reads, where `instr` gives one: `shfl.sync.idx` from a lane they read
+/// alike in one segment clamped at 31, "j = minLane | (bval[4:0] &
+/// ~segmask[4:0])" (PTX ISA §9.7.9.6); and a weak load from global,
+/// shared or constant memory at an address they read alike, which the
+/// hardware executes once for the warp, as LLVM's NVPTX and AMDGPU
+/// targets take it (`isSourceOfDivergence`).
+fn warp_reads(
+    t: &KernelAnalyses,
+    instr: &Instr,
+    inputs: &[OperandId],
+    d: usize,
+) -> Option<Vec<Read>> {
+    let module = t.module;
+    let mods: Vec<&str> = (module.modifiers(instr).iter())
+        .map(|&m| module.interner.resolve(m))
+        .collect();
+    let reads = match (instr.mnemonic, inputs) {
+        (Opcode::Shfl, [_, lane, c, _]) if mods.contains(&"idx") => {
+            let Operand::Immediate(c) = module.operand(*c) else {
+                return None;
+            };
+            let c = parse_int(module.interner.resolve(*c))?;
+            if c & 0x1f != 0x1f || (c >> 8) & 0x1f != 0 {
+                return None;
+            }
+            operand_reads(t, &[*lane], d)
+        }
+        (Opcode::Ld, _)
+            if (mods.iter())
+                .any(|m| matches!(*m, "global" | "shared" | "shared::cta" | "const"))
+                && !(mods.iter())
+                    .any(|m| matches!(*m, "volatile" | "relaxed" | "acquire" | "mmio")) =>
+        {
+            operand_reads(t, data_inputs(t, instr, inputs), d)
+        }
+        _ => return None,
+    };
+    Some(
+        reads
+            .into_iter()
+            .chain([Read::Uniform(Uniform::Warp)])
+            .collect(),
+    )
 }
 
 /// The `inputs` of `instr` its result is computed from: an `ld`'s but
@@ -338,21 +420,9 @@ fn exits<'a>(t: &'a KernelAnalyses, id: LoopId) -> impl Iterator<Item = Node> + 
 /// Each lane's result is a function of its own operands: a kernel
 /// parameter is read-only and one per grid, a function's `.param`, a
 /// call's return value among them, one per thread (PTX ISA §5.1.6,
-/// Table 7). A weak global load reads one value at an address where
-/// nothing writes it during the launch (PTX ISA §8, §9.7.9.8): its
-/// address points into kernel parameters `written` does not hold.
-fn lane_wise(t: &KernelAnalyses, instr: &Instr, written: Option<&BTreeSet<usize>>) -> bool {
-    let module = t.module;
-    let mods: Vec<&str> = (module.modifiers(instr).iter())
-        .map(|&m| module.interner.resolve(m))
-        .collect();
-    if instr.mnemonic == Opcode::Ld
-        && mods.contains(&"global")
-        && !(mods.iter()).any(|m| matches!(*m, "volatile" | "relaxed" | "acquire" | "mmio"))
-    {
-        return pointees(t, instr).is_some_and(|p| written.is_some_and(|w| w.is_disjoint(&p)));
-    }
-    let c = classify(module, instr);
+/// Table 7).
+fn lane_wise(t: &KernelAnalyses, instr: &Instr) -> bool {
+    let c = classify(t.module, instr);
     match c.category {
         InstructionCategory::NonFlopArith { .. } => true,
         InstructionCategory::Flop => c.contributions.iter().all(|k| {
@@ -386,114 +456,10 @@ fn kernel_param(t: &KernelAnalyses, instr: &Instr) -> Option<usize> {
     })
 }
 
-/// The kernel parameters the addresses of `instr` may point into, as
-/// LLVM's `getUnderlyingObjects` (llvm/lib/Analysis/ValueTracking.cpp)
-/// collects them; `None` where one is not traced to them, or is a
-/// tensor map's coordinates, whose address the map holds.
-fn pointees(t: &KernelAnalyses, instr: &Instr) -> Option<BTreeSet<usize>> {
-    let (mut seen, mut out) = (HashSet::new(), BTreeSet::new());
-    for &o in t.module.operand_ids(instr.operands) {
-        if let Operand::Memory { base, rest, .. } = t.module.operand(o) {
-            // PTX ISA §9.7.9.26.5.2: `[tensorMap, tensorCoords]`.
-            if !rest.is_empty() {
-                return None;
-            }
-            reach(t, *base, &mut seen, &mut out)?;
-        }
-    }
-    (!out.is_empty()).then_some(out)
-}
-
-/// Through every write of a register, the operands of `mov`, `cvta`,
-/// `add`, `sub`, `and`, `or`, `xor`, `min`, `max` and a 64-bit `cvt`,
-/// `selp`'s values and a `mad`'s addend, to the kernel parameters
-/// `ld.param` reads; `mul`, `shl`, `shr`, `div`, `rem`, `neg`, `not`,
-/// `bfe` and a narrower `cvt` make offsets. `None` at anything else, a
-/// symbol, a vector or a statement not parsed.
-fn reach(
-    t: &KernelAnalyses,
-    op: OperandId,
-    seen: &mut HashSet<Symbol>,
-    out: &mut BTreeSet<usize>,
-) -> Option<()> {
-    let reg = match t.module.operand(op) {
-        Operand::Register(r) => *r,
-        Operand::SymbolRef(_) | Operand::VectorList { .. } => return None,
-        _ => return Some(()),
-    };
-    if !seen.insert(reg) {
-        return Some(());
-    }
-    for &d in t.writes.get(&Register::Named(reg)).into_iter().flatten() {
-        let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
-            return None;
-        };
-        let ops = t.module.operand_ids(instr.operands);
-        let wide = (t.module.modifiers(instr).last())
-            .is_some_and(|&m| t.module.interner.resolve(m).ends_with("64"));
-        let from = match instr.mnemonic {
-            Opcode::Mov | Opcode::Cvta | Opcode::Add | Opcode::Sub => &ops[1..],
-            Opcode::And | Opcode::Or | Opcode::Xor | Opcode::Min | Opcode::Max => &ops[1..],
-            Opcode::Cvt if wide => &ops[1..],
-            Opcode::Selp => ops.get(1..3)?,
-            Opcode::Mad => &ops[ops.len() - 1..],
-            Opcode::Ld => {
-                out.insert(kernel_param(t, instr)?);
-                &[]
-            }
-            Opcode::Mul | Opcode::Shl | Opcode::Shr | Opcode::Div | Opcode::Rem => &[],
-            Opcode::Neg | Opcode::Not | Opcode::Bfe | Opcode::Cvt => &[],
-            _ => return None,
-        };
-        for &o in from {
-            reach(t, o, seen, out)?;
-        }
-    }
-    Some(())
-}
-
-/// The kernel parameters a store may write global memory through; `None`
-/// where one may write anywhere: a store `pointees` does not trace, a
-/// tensor copy to global among them, a `call`, an instruction the
-/// classifier does not handle that names `.global`, or a statement not
-/// parsed.
-fn written(t: &KernelAnalyses) -> Option<BTreeSet<usize>> {
-    let module = t.module;
-    let mut out = BTreeSet::new();
-    for (_, b) in t.cfg.blocks.iter_enumerated() {
-        for stmt in &t.kernel.stmts[b.start..b.end] {
-            let instr = match stmt {
-                Stmt::Instr(instr) => instr,
-                Stmt::Unparsed { .. } => return None,
-                _ => continue,
-            };
-            let c = classify(module, instr);
-            let global =
-                (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "global");
-            if instr.mnemonic == Opcode::Call
-                || c.category == InstructionCategory::Unknown && global
-            {
-                return None;
-            }
-            let stores = c.contributions.iter().any(|k| match k.kind {
-                MeasureKind::Bytes { space, direction }
-                | MeasureKind::UnquantifiedBytes { space, direction } => {
-                    matches!(space, Space::Global | Space::Generic) && direction == Direction::Store
-                }
-                _ => false,
-            });
-            if stores {
-                out.extend(pointees(t, instr)?);
-            }
-        }
-    }
-    Some(out)
-}
-
 fn read_special(reg: SpecialReg) -> Read {
     let name = reg.name();
     match special_register(reg) {
-        Some(SpecialRegister::PerCta | SpecialRegister::Zero) => Read::Uniform,
+        Some(SpecialRegister::PerCta | SpecialRegister::Zero) => Read::Uniform(Uniform::Cta),
         Some(SpecialRegister::PerThread) => Read::Divergent(format!("depends on {name}")),
         Some(SpecialRegister::Varying) => {
             Read::Divergent(format!("{name} can change between reads"))
@@ -532,10 +498,18 @@ mod tests {
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
-    /// Whether `reg` is uniform where the first `st.global.u32` reads it,
-    /// one after `body` if it has none; `%r0` holds a parameter and `%r1`
-    /// the thread index.
-    fn uniform(body: &str, reg: &str) -> Result<(), String> {
+    /// `Ok` where the CTA reads one value; the reason where it does not.
+    fn cta_uniform(r: Result<Uniform, String>) -> Result<(), String> {
+        match r? {
+            Uniform::Cta => Ok(()),
+            Uniform::Warp => Err("is one value per warp only".to_owned()),
+        }
+    }
+
+    /// How alike the lanes read `reg` where the first `st.global.u32`
+    /// reads it, one after `body` if it has none; `%r0` holds a parameter
+    /// and `%r1` the thread index.
+    fn uniformity_in(body: &str, reg: &str) -> Result<Uniform, String> {
         let store = match body.contains("st.global.u32") {
             true => String::new(),
             false => format!("st.global.u32 [%rd9], {reg};"),
@@ -546,11 +520,20 @@ mod tests {
              ld.param.u32 %r0, [k_param_0];\nmov.u32 %r1, %tid.x;\n{body}\n\
              {store}\nret;\n}}\n"
         );
-        uniform_at(&src, reg, None, "st.global.u32")
+        uniformity_at(&src, reg, None, "st.global.u32")
     }
 
-    /// Whether `reg` is uniform at the first `opcode` after `label`.
-    fn uniform_at(src: &str, reg: &str, label: Option<&str>, opcode: &str) -> Result<(), String> {
+    fn cta_uniform_in(body: &str, reg: &str) -> Result<(), String> {
+        cta_uniform(uniformity_in(body, reg))
+    }
+
+    /// How alike the lanes read `reg` at the first `opcode` after `label`.
+    fn uniformity_at(
+        src: &str,
+        reg: &str,
+        label: Option<&str>,
+        opcode: &str,
+    ) -> Result<Uniform, String> {
         let m = parse(src).expect("test source parses");
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
@@ -565,7 +548,16 @@ mod tests {
         let pos = (start..k.stmts.len())
             .find(|&i| matches!(&k.stmts[i], Stmt::Instr(i) if m.opcode(i) == opcode))
             .expect("the read");
-        UniformityInfo::new(&t).is_uniform(m.interner.get(reg).expect("register"), pos)
+        UniformityInfo::new(&t).register_uniformity(m.interner.get(reg).expect("register"), pos)
+    }
+
+    fn cta_uniform_at(
+        src: &str,
+        reg: &str,
+        label: Option<&str>,
+        opcode: &str,
+    ) -> Result<(), String> {
+        cta_uniform(uniformity_at(src, reg, label, opcode))
     }
 
     fn tid() -> Result<(), String> {
@@ -574,50 +566,49 @@ mod tests {
 
     #[test]
     fn divergence_follows_data_from_per_thread_registers_and_loads() {
-        assert_eq!(uniform("shl.b32 %r2, %r1, 2;", "%r2"), tid());
-        assert_eq!(uniform("", "%r0"), Ok(()));
+        assert_eq!(cta_uniform_in("shl.b32 %r2, %r1, 2;", "%r2"), tid());
+        assert_eq!(cta_uniform_in("", "%r0"), Ok(()));
         let cta = "mov.u32 %r2, %ctaid.x;\nmad.lo.s32 %r3, %r2, %r0, 7;";
-        assert_eq!(uniform(cta, "%r3"), Ok(()));
+        assert_eq!(cta_uniform_in(cta, "%r3"), Ok(()));
         assert_eq!(
-            uniform("ld.global.u32 %r2, [%rd1];\nadd.s32 %r3, %r2, 1;", "%r3"),
-            Err("comes from `ld.global.u32`".to_owned())
-        );
-        assert_eq!(
-            uniform("shfl.sync.idx.b32 %r2, %r0, 0, 31, -1;", "%r2"),
-            Err("comes from `shfl.sync.idx.b32`".to_owned())
+            cta_uniform_in("ld.local.u32 %r2, [%rd1];\nadd.s32 %r3, %r2, 1;", "%r3"),
+            Err("comes from `ld.local.u32`".to_owned())
         );
         // The carry out of a per-thread sum: 1 in lanes 16 and up.
         let carry = "add.cc.u32 %r2, %r1, 0xfffffff0;\naddc.u32 %r3, 0, 0;";
-        assert_eq!(uniform(carry, "%r3"), tid());
+        assert_eq!(cta_uniform_in(carry, "%r3"), tid());
         let carry = "add.cc.u32 %r2, %r0, 0xfffffff0;\naddc.u32 %r3, 0, 0;";
-        assert_eq!(uniform(carry, "%r3"), Ok(()));
+        assert_eq!(cta_uniform_in(carry, "%r3"), Ok(()));
         // A guarded `add.cc` leaves the per-thread carry where it is skipped.
         let carry = "add.cc.u32 %r2, %r1, 0xfffffff0;\nsetp.eq.u32 %p1, %r0, 0;\n\
                      mov.u32 %r4, 0;\n@%p1 add.cc.u32 %r4, %r0, 1;\naddc.u32 %r3, 0, 0;";
-        assert_eq!(uniform(carry, "%r3"), tid());
+        assert_eq!(cta_uniform_in(carry, "%r3"), tid());
         // The carry it keeps is not part of its register result.
-        assert_eq!(uniform(carry, "%r4"), Ok(()));
+        assert_eq!(cta_uniform_in(carry, "%r4"), Ok(()));
         // PTX ISA §9.7.2: calls do not preserve CC.CF, and neither does
         // a statement the parser cannot read.
         let carry = "add.cc.u32 %r2, %r0, 1;\ncall (%r5), f, (%r0);\naddc.u32 %r3, 0, 0;";
-        assert_eq!(uniform(carry, "%r3"), Err("comes from `call`".to_owned()));
+        assert_eq!(
+            cta_uniform_in(carry, "%r3"),
+            Err("comes from `call`".to_owned())
+        );
         let carry = "add.cc.u32 %r2, %r0, 1;\nfuture.op %r5;\naddc.u32 %r3, 0, 0;";
         assert_eq!(
-            uniform(carry, "%r3"),
+            cta_uniform_in(carry, "%r3"),
             Err("comes from a statement not parsed".to_owned())
         );
         // One after the last terminator is in no block, and never runs.
         let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
                    .visible .entry k()\n{\nadd.cc.u32 %r0, 0, 0;\nbra L;\nL:\n\
                    addc.u32 %r1, 0, 0;\nret;\ncall (%r2), f, ();\n}\n";
-        assert_eq!(uniform_at(src, "%r1", Some("L"), "ret"), Ok(()));
+        assert_eq!(cta_uniform_at(src, "%r1", Some("L"), "ret"), Ok(()));
     }
 
-    /// A weak global load is one value for the CTA where its address is
-    /// and no store of the kernel may write through its pointer
-    /// parameter; `%rd1` is param_0 + 4·%ctaid.x.
+    /// A weak global load is one value for a warp's lanes where its
+    /// address is, whatever the kernel stores; `%rd1` is param_0 +
+    /// 4·%ctaid.x.
     #[test]
-    fn a_global_load_through_a_pointer_nothing_writes_is_lane_wise() {
+    fn a_global_load_at_one_address_is_one_value_per_warp() {
         let load = |ld: &str, rest: &str| {
             let src = format!(
                 ".version 8.7\n.target sm_80\n.address_size 64\n\
@@ -626,43 +617,48 @@ mod tests {
                  mov.u32 %r1, %ctaid.x;\nmul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd1, %rd0, %rd2;\n\
                  {ld} %r2, [%rd1];\n{rest}\nst.shared.u32 [%r9], %r2;\nret;\n}}\n"
             );
-            uniform_at(&src, "%r2", None, "st.shared.u32")
+            uniformity_at(&src, "%r2", None, "st.shared.u32")
         };
         let from = |op: &str| Err(format!("comes from `{op}`"));
-        assert_eq!(load("ld.global.u32", ""), Ok(()));
-        assert_eq!(load("ld.global.nc.L1::evict_last.u32", ""), Ok(()));
-        let elsewhere = "st.global.u32 [%rd9], 0;";
-        assert_eq!(load("ld.global.u32", elsewhere), Ok(()));
+        assert_eq!(load("ld.global.u32", ""), Ok(Uniform::Warp));
+        assert_eq!(
+            load("ld.global.nc.L1::evict_last.u32", ""),
+            Ok(Uniform::Warp)
+        );
         let written = "st.global.u32 [%rd1], 0;";
-        assert_eq!(load("ld.global.u32", written), from("ld.global.u32"));
+        assert_eq!(load("ld.global.u32", written), Ok(Uniform::Warp));
         let volatile = "ld.volatile.global.u32";
         assert_eq!(load(volatile, ""), from(volatile));
         assert_eq!(load("ld.u32", ""), from("ld.u32"));
-        // A store through a pointer loaded from memory may write anywhere;
-        // an index loaded from memory is an offset from its pointer.
-        let scatter = "ld.global.u64 %rd5, [%rd9];\nst.global.u32 [%rd5], 0;";
-        assert_eq!(load("ld.global.u32", scatter), from("ld.global.u32"));
-        let gather = "ld.global.u32 %r5, [%rd9];\nmul.wide.u32 %rd6, %r5, 4;\n\
-                      add.s64 %rd7, %rd9, %rd6;\nst.global.u32 [%rd7], 0;";
-        assert_eq!(load("ld.global.u32", gather), Ok(()));
-        let masked = "and.b64 %rd8, %rd0, -16;\nst.global.u32 [%rd8], 0;";
-        assert_eq!(load("ld.global.u32", masked), from("ld.global.u32"));
-        // A pointer through `cvt.u64.s64` keeps its parameter, and one
-        // from an atomic may point anywhere.
-        let selected = "cvt.u64.s64 %rd3, %rd0;\nselp.b64 %rd4, %rd9, %rd3, %p1;\n\
-                        st.global.u32 [%rd4], 0;";
-        assert_eq!(load("ld.global.u32", selected), from("ld.global.u32"));
-        let swapped = "atom.global.exch.b64 %rd3, [%rd9], 0;\n\
-                       selp.b64 %rd4, %rd9, %rd3, %p1;\nst.global.u32 [%rd4], 0;";
-        assert_eq!(load("ld.global.u32", swapped), from("ld.global.u32"));
-        // A tensor copy to shared writes no global memory; one to global
-        // writes where its tensor map points.
-        let to_shared = "cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes \
-                         [%r6], [%rd9, {%r1}], [%r7];";
-        assert_eq!(load("ld.global.u32", to_shared), Ok(()));
-        let to_global =
-            "cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd9, {%r1}], [%r6];";
-        assert_eq!(load("ld.global.u32", to_global), from("ld.global.u32"));
+    }
+
+    /// `%r1` is %tid.x; `%r4` its warp's index, from lane 0.
+    #[test]
+    fn a_shuffle_from_one_lane_and_a_load_at_its_address_are_one_per_warp() {
+        let warp = "shr.u32 %r5, %r1, 5;\nshfl.sync.idx.b32 %r4, %r5, 0, 31, -1;";
+        let read = |body: &str| uniformity_in(&format!("{warp}\n{body}"), "%r3");
+        let from = |op: &str| Err(format!("comes from `{op}`"));
+        assert_eq!(read("mov.u32 %r3, %r4;"), Ok(Uniform::Warp));
+        assert_eq!(
+            read("shfl.sync.idx.b32 %r3, %r1, %r4, 31, -1;"),
+            Ok(Uniform::Warp)
+        );
+        let by_lane = "shfl.sync.idx.b32 %r3, %r0, %r1, 31, -1;";
+        assert_eq!(read(by_lane), Err("depends on %tid.x".to_owned()));
+        let shfl = "shfl.sync.idx.b32";
+        assert_eq!(
+            read("shfl.sync.idx.b32 %r3, %r0, 0, 0x81f, -1;"),
+            from(shfl)
+        );
+        assert_eq!(read("shfl.sync.idx.b32 %r3, %r0, 0, 30, -1;"), from(shfl));
+        assert_eq!(read("ld.shared.u32 %r3, [%r4];"), Ok(Uniform::Warp));
+        assert_eq!(
+            read("ld.shared.u32 %r3, [%r1];"),
+            Err("depends on %tid.x".to_owned())
+        );
+        assert_eq!(read("ld.local.u32 %r3, [%r4];"), from("ld.local.u32"));
+        let strong = "ld.relaxed.cta.shared.u32";
+        assert_eq!(read("ld.relaxed.cta.shared.u32 %r3, [%r4];"), from(strong));
     }
 
     /// The lightllm decode kernels' loads under a `createpolicy` policy,
@@ -678,11 +674,12 @@ mod tests {
                  {ld} %r2, [%rd0], %rd1;\nadd.s64 %rd2, %rd1, 0;\n\
                  st.shared.u32 [%r9], {read};\nret;\n}}\n"
             );
-            uniform_at(&src, read, None, "st.shared.u32")
+            uniformity_at(&src, read, None, "st.shared.u32")
         };
         let cached = "ld.global.L1::evict_last.L2::cache_hint.u32";
-        assert_eq!(load(cached, "%r2"), Ok(()));
-        assert_eq!(load("ld.global.nc.L2::cache_hint.u32", "%r2"), Ok(()));
+        assert_eq!(load(cached, "%r2"), Ok(Uniform::Warp));
+        let nc = "ld.global.nc.L2::cache_hint.u32";
+        assert_eq!(load(nc, "%r2"), Ok(Uniform::Warp));
         let policy = "createpolicy.fractional.L2::evict_last.b64";
         assert_eq!(load(cached, "%rd2"), Err(format!("comes from `{policy}`")));
     }
@@ -690,11 +687,11 @@ mod tests {
     #[test]
     fn a_guarded_write_keeps_the_old_value_in_lanes_it_skips() {
         let on_tid = "setp.lt.u32 %p1, %r1, 16;\nmov.u32 %r2, 0;\n@%p1 mov.u32 %r2, 1;";
-        assert_eq!(uniform(on_tid, "%r2"), tid());
+        assert_eq!(cta_uniform_in(on_tid, "%r2"), tid());
         let on_param = "setp.lt.u32 %p1, %r0, 16;\nmov.u32 %r2, 0;\n@%p1 mov.u32 %r2, 1;";
-        assert_eq!(uniform(on_param, "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(on_param, "%r2"), Ok(()));
         let old_on_tid = "setp.lt.u32 %p1, %r0, 16;\nmov.u32 %r2, %r1;\n@%p1 mov.u32 %r2, 1;";
-        assert_eq!(uniform(old_on_tid, "%r2"), tid());
+        assert_eq!(cta_uniform_in(old_on_tid, "%r2"), tid());
     }
 
     #[test]
@@ -705,8 +702,8 @@ mod tests {
                  bra.uni $L__J;\n$L__A:\nmov.u32 %r2, 0;\n$L__J:"
             )
         };
-        assert_eq!(uniform(&join("%r1"), "%r2"), tid());
-        assert_eq!(uniform(&join("%r0"), "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&join("%r1"), "%r2"), tid());
+        assert_eq!(cta_uniform_in(&join("%r0"), "%r2"), Ok(()));
         // A divergent branch whose other side never reaches the read
         // selects nothing (k1's bounds check around its K loop).
         let guarded = format!(
@@ -714,11 +711,11 @@ mod tests {
              st.global.u32 [%rd9], %r2;\n$L__X:",
             join("%r0")
         );
-        assert_eq!(uniform(&guarded, "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&guarded, "%r2"), Ok(()));
     }
 
     #[test]
-    fn a_counter_is_uniform_in_its_loop_unless_a_divergent_branch_skips_its_step() {
+    fn a_counter_is_cta_uniform_in_its_loop_unless_a_divergent_branch_skips_its_step() {
         let looped = |skip: &str| {
             format!(
                 "mov.u32 %r2, 0;\n$L__L:\nst.global.u32 [%rd9], %r2;\n\
@@ -726,8 +723,8 @@ mod tests {
                  $L__S:\nsetp.lt.u32 %p1, %r2, %r0;\n@%p1 bra $L__L;"
             )
         };
-        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
-        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+        assert_eq!(cta_uniform_in(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&looped("%r1"), "%r2"), tid());
     }
 
     /// A spin-wait in a loop sends every thread on to the same block, and
@@ -738,7 +735,7 @@ mod tests {
                     $L__W:\nld.volatile.shared.u32 %r4, [%rd2];\nsetp.eq.u32 %p2, %r4, 0;\n\
                     @%p2 bra $L__W;\nst.global.u32 [%rd9], %r2;\nadd.s32 %r2, %r2, %r0;\n\
                     bra.uni $L__H;\n$L__X:";
-        assert_eq!(uniform(body, "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(body, "%r2"), Ok(()));
     }
 
     /// Two latches meet at the header. Like LLVM, which marks every φ of
@@ -754,9 +751,9 @@ mod tests {
                  $L__W:\nxor.b32 %r2, %r2, 1;\nbra.uni $L__H;\n$L__X:"
             )
         };
-        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
-        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
-        assert_eq!(uniform(&looped("%r1"), "%r5"), tid());
+        assert_eq!(cta_uniform_in(&looped("%r1"), "%r2"), tid());
+        assert_eq!(cta_uniform_in(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&looped("%r1"), "%r5"), tid());
     }
 
     /// The threads a latch's branch sends around again leave through the
@@ -770,8 +767,8 @@ mod tests {
                  mov.u32 %r3, 128;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r3, 0;\n$L__J:"
             )
         };
-        assert_eq!(uniform(&looped("%r1"), "%r3"), tid());
-        assert_eq!(uniform(&looped("%r0"), "%r3"), Ok(()));
+        assert_eq!(cta_uniform_in(&looped("%r1"), "%r3"), tid());
+        assert_eq!(cta_uniform_in(&looped("%r0"), "%r3"), Ok(()));
     }
 
     /// A branch that skips an exit test lets the threads leave at
@@ -785,8 +782,8 @@ mod tests {
                  $L__L:\nsetp.lt.u32 %p3, %r2, 4;\n@%p3 bra $L__H;\n$L__X:"
             )
         };
-        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
-        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&looped("%r1"), "%r2"), tid());
+        assert_eq!(cta_uniform_in(&looped("%r0"), "%r2"), Ok(()));
     }
 
     /// A header's branch that skips the only exit test for some threads:
@@ -800,8 +797,8 @@ mod tests {
                  bra.uni $L__H;\n$L__X:"
             )
         };
-        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
-        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&looped("%r1"), "%r2"), tid());
+        assert_eq!(cta_uniform_in(&looped("%r0"), "%r2"), Ok(()));
     }
 
     /// A value an inner loop leaves carried into its next run by the
@@ -818,8 +815,8 @@ mod tests {
                  setp.lt.u32 %p3, %r4, 2;\n@%p3 bra $L__H2;"
             )
         };
-        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
-        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&looped("%r1"), "%r2"), tid());
+        assert_eq!(cta_uniform_in(&looped("%r0"), "%r2"), Ok(()));
     }
 
     /// A value a uniform branch sets before a loop and the loop toggles:
@@ -831,7 +828,7 @@ mod tests {
                     $L__A:\nmov.u32 %r2, 1;\n$L__P:\nmov.u32 %r3, 0;\n$L__H:\n\
                     st.global.u32 [%rd9], %r2;\nxor.b32 %r2, %r2, 1;\nadd.s32 %r3, %r3, 1;\n\
                     setp.lt.u32 %p2, %r3, %r1;\n@%p2 bra $L__H;";
-        assert_eq!(uniform(body, "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(body, "%r2"), Ok(()));
     }
 
     #[test]
@@ -841,14 +838,14 @@ mod tests {
         let body = "setp.lt.u32 %p1, %r0, 4;\n@%p1 bra $L__A;\nmov.u32 %r2, 1;\nbra $L__J;\n\
                     setp.eq.u32 %p3, %r1, 0;\n@%p3 bra $L__J;\n\
                     $L__A:\nmov.u32 %r2, 2;\n$L__J:";
-        assert_eq!(uniform(body, "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(body, "%r2"), Ok(()));
     }
 
     #[test]
     fn a_value_one_path_leaves_unwritten_is_divergent() {
         let body = "setp.lt.u32 %p1, %r0, 4;\n@%p1 bra $L__J;\nmov.u32 %r2, 7;\n$L__J:";
         let why = "reads %r2, which a path leaves unwritten".to_owned();
-        assert_eq!(uniform(body, "%r2"), Err(why));
+        assert_eq!(cta_uniform_in(body, "%r2"), Err(why));
     }
 
     #[test]
@@ -859,11 +856,11 @@ mod tests {
                  setp.lt.u32 %p1, %r2, {exit};\n@%p1 bra $L__L;"
             )
         };
-        assert_eq!(uniform(&looped("%r0"), "%r2"), Ok(()));
-        assert_eq!(uniform(&looped("%r1"), "%r2"), tid());
+        assert_eq!(cta_uniform_in(&looped("%r0"), "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&looped("%r1"), "%r2"), tid());
         // The lanes still in the loop agree on it.
         let inside = looped("%r1").replace("add.s32", "st.global.u32 [%rd9], %r2;\nadd.s32");
-        assert_eq!(uniform(&inside, "%r2"), Ok(()));
+        assert_eq!(cta_uniform_in(&inside, "%r2"), Ok(()));
     }
 
     /// A cycle entered at A or B: no loop of the forest, so its exits do
@@ -874,7 +871,7 @@ mod tests {
                     $L__A:\nadd.s32 %r2, %r2, 1;\n$L__B:\nadd.s32 %r2, %r2, 1;\n\
                     setp.lt.u32 %p2, %r2, %r1;\n@%p2 bra $L__A;";
         assert_eq!(
-            uniform(body, "%r2"),
+            cta_uniform_in(body, "%r2"),
             Err("%r2 is read after a cycle defining it".to_owned())
         );
     }
@@ -883,10 +880,10 @@ mod tests {
     /// when K < 4 skips it; both choices compare parameters only, and the
     /// bounds check on the thread index skips both loops.
     #[test]
-    fn k1s_counter_after_its_main_loop_is_uniform() {
+    fn k1s_counter_after_its_main_loop_is_cta_uniform() {
         let k1 = include_str!("../../tests/fixtures/k1/k1.sm_89.ptx");
         assert_eq!(
-            uniform_at(k1, "%r34", Some("$L__BB0_5"), "mad.lo.s32"),
+            cta_uniform_at(k1, "%r34", Some("$L__BB0_5"), "mad.lo.s32"),
             Ok(())
         );
     }
