@@ -265,8 +265,8 @@ requested.
 | 9.7.9.5 | `shfl` (deprecated) | `Communication` | OK — same arm as `shfl.sync`; zero DRAM bytes is the correct accounting for intra-warp exchange. |
 | 9.7.9.6 | `shfl.sync` | `Communication` | OK. |
 | 9.7.9.7 | `prmt` | `Integer` | OK. |
-| 9.7.9.8 | `ld` | `Memory { space, Load, width × v2/v4/v8 }` | OK — space from modifiers with `Generic` as its own honest bucket (`cvta`-provenance refinement is documented anti-scope until a fixture emits generic loads); `.shared::cta` folds into `Shared`, `.shared::cluster` distinct; `volatile`/cache-op/eviction modifiers transparent. The parser keeps an address's `.unified` (`micro/unified_load.ptx`). |
-| 9.7.9.9 | `ld.global.nc` | `Memory { Global, Load, bytes }` (via the `ld` arm; verified) | OK. |
+| 9.7.9.8 | `ld` | `Memory { space, Load, width × v2/v4/v8 }` | OK — space from modifiers with `Generic` as its own honest bucket (`cvta`-provenance refinement is documented anti-scope until a fixture emits generic loads); `.shared::cta` folds into `Shared`, `.shared::cluster` distinct; `volatile`/cache-op/eviction modifiers transparent. The parser keeps an address's `.unified` (`micro/unified_load.ptx`). The uniformity analysis takes the loaded value from the address alone, not from the cache_policy `.L2::cache_hint` adds, which "is treated as a performance hint only" (§9.7.9.8; `a_load_does_not_read_its_cache_policy`). |
+| 9.7.9.9 | `ld.global.nc` | `Memory { Global, Load, bytes }` (via the `ld` arm; verified) | OK. Its cache_policy is no input of the loaded value either (§9.7.9.9: "a performance hint only"). |
 | 9.7.9.10 | `ldu` | `Memory { Global, Load, bytes }` | OK. |
 | 9.7.9.11 | `st` | `Memory { space, Store, bytes }` | OK. |
 | 9.7.9.12 | `st.async` | `Memory` store via the `st` arm (verified: `st.async.shared::cluster.b32` ⇒ `{SharedCluster, Store, 4}`) | OK for byte accounting. ⚠ model misfit (mild, §B) — the bytes land in a *remote* CTA's shared memory with mbarrier completion; per-thread attribution is still right, but a future cluster-traffic view would need the remote/local distinction the modifier already carries. No action until a cluster fixture exists. |
