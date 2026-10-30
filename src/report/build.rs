@@ -43,7 +43,9 @@ use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets, thread
 use crate::analysis::uniformity_info::UniformityInfo;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
-use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialReg, SpecialVector, Stmt};
+use crate::ptx::ir::{
+    Instr, Kernel, Module, Opcode, Register, SharedSize, SpecialReg, SpecialVector, Stmt,
+};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::bindings::BindingSpec;
@@ -2034,9 +2036,9 @@ impl<'a> KernelReportBuilder<'a> {
     }
 
     /// Shared memory the kernel reserves per CTA: the sum over its
-    /// `.shared` array declarations of `element_count × element_width`,
-    /// plus whether it declares a launch-sized `.extern .shared` array.
-    /// See [`SharedMemory`].
+    /// `.shared` declarations of `element_count × element_width`, a
+    /// scalar's count being 1, plus whether it declares a launch-sized
+    /// `.extern .shared` array. See [`SharedMemory`].
     fn shared_memory(&self) -> SharedMemory {
         let mut static_bytes = 0u64;
         let mut dynamic = false;
@@ -2046,9 +2048,11 @@ impl<'a> KernelReportBuilder<'a> {
             .iter()
             .chain(&self.module.shared_decls)
         {
+            let bytes = decl.ty.bytes().map_or(0, u64::from);
             match decl.size {
-                Some(count) => static_bytes += count * decl.ty.bytes().map_or(0, u64::from),
-                None => dynamic = true,
+                SharedSize::Scalar => static_bytes += bytes,
+                SharedSize::Array(count) => static_bytes += count * bytes,
+                SharedSize::Dynamic => dynamic = true,
             }
         }
         SharedMemory {
@@ -3101,6 +3105,8 @@ mod tests {
             sm(".shared .b64 w[4];\n.shared .b128 q[2];\n"),
             (4 * 8 + 2 * 16, false)
         );
+        // A scalar reserves its type's size.
+        assert_eq!(sm(".shared .align 8 .b64 bar;\n"), (8, false));
         // The k1 shape: no shared memory at all.
         assert_eq!(sm(""), (0, false));
         // Dynamic extern shared: out of the static total, flagged.

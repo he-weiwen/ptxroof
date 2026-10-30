@@ -905,7 +905,8 @@ One line each, with the trigger that would start it.
   outcome and its launch totals in one snapshot: 137 blocks confirmed,
   274 consistent, 499 unchecked; 1,414 sector lines agree, none differ,
   2 not compared; 38 launches' totals agree. `ci.sh` measures every record again on the GPU it
-  names (`measure.py --check`) and fails if it changed; a record of
+  names (`measure.py --check`) and fails if it changed, but for the
+  driver version past its first two components; a record of
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.
 - Per-line HTML view. Trigger: wanting it.

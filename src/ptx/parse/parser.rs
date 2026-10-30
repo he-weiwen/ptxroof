@@ -21,7 +21,7 @@
 use crate::ptx::ir::register_member;
 use crate::ptx::ir::{
     FileDirective, FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, Param,
-    Predicate, RegDecl, SharedDecl, SourceLoc, SpecialReg, Stmt,
+    Predicate, RegDecl, SharedDecl, SharedSize, SourceLoc, SpecialReg, Stmt,
 };
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::lexer::{Token, TokenKind, tokenize};
@@ -789,10 +789,12 @@ impl<'a> Parser<'a> {
         } else {
             return None;
         };
-        let mut size = None;
+        let mut size = SharedSize::Scalar;
         if self.eat(TokenKind::LBracket) {
+            size = SharedSize::Dynamic;
             if self.at(TokenKind::Number) {
-                size = parse_int(self.bump().text).and_then(|v| u64::try_from(v).ok());
+                size = (parse_int(self.bump().text).and_then(|v| u64::try_from(v).ok()))
+                    .map_or(SharedSize::Dynamic, SharedSize::Array);
             }
             if !self.eat(TokenKind::RBracket) {
                 return None;
@@ -1402,8 +1404,8 @@ mod tests {
         assert_eq!(k.reg_decls[0].count, Some(9));
         assert_eq!(m.interner.resolve(k.reg_decls[1].prefix), "%f");
         assert_eq!(k.shared_decls.len(), 2);
-        assert_eq!(k.shared_decls[0].size, Some(1024));
-        assert_eq!(k.shared_decls[1].size, None); // dynamic
+        assert_eq!(k.shared_decls[0].size, SharedSize::Array(1024));
+        assert_eq!(k.shared_decls[1].size, SharedSize::Dynamic);
     }
 
     #[test]
@@ -1570,7 +1572,7 @@ mod tests {
         assert_eq!(m.kernels.len(), 1);
         assert_eq!(m.shared_decls.len(), 2);
         assert_eq!(m.interner.resolve(m.shared_decls[0].name), "smem");
-        assert_eq!(m.shared_decls[0].size, None);
+        assert_eq!(m.shared_decls[0].size, SharedSize::Dynamic);
     }
 
     #[test]

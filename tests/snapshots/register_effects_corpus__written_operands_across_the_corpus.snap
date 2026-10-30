@@ -22,7 +22,7 @@ and.b64	1	30
 and.pred	1	688
 atom.global.gpu.acq_rel.max.s32	1	3
 bar.red.popc.u32	1	1
-bar.sync	0	559
+bar.sync	0	560
 bar.warp.sync	0	77
 barrier.sync	0	71
 bfe.s32	1	40
@@ -70,9 +70,9 @@ cvt.s64.s32	1	178
 cvt.u16.u32	1	27
 cvt.u32.u16	1	49
 cvt.u32.u64	1	83
-cvt.u64.u32	1	419
+cvt.u64.u32	1	420
 cvta.param.u64	1	24
-cvta.to.global.u64	1	40
+cvta.to.global.u64	1	41
 div.approx.f32	1	2
 div.full.f32	1	837
 div.s32	1	95
@@ -111,7 +111,7 @@ ld.param.f32	1	21
 ld.param.s32	1	36
 ld.param.u16	1	1
 ld.param.u32	1	94
-ld.param.u64	1	278
+ld.param.u64	1	279
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -119,6 +119,7 @@ ld.shared.b8	1	132
 ld.shared.s32	1	8
 ld.shared.u16	1	32
 ld.shared.u32	1	8
+ld.shared.u64	1	1
 ld.shared.v2.b32	1	22
 ld.shared.v2.b64	1	63
 ld.shared.v2.u32	1	10
@@ -159,7 +160,7 @@ mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	107
 mov.u16	1	294
-mov.u32	1	1353
+mov.u32	1	1354
 mov.u64	1	51
 mul.f32	1	1827
 mul.hi.s32	1	1
@@ -194,7 +195,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	35
 rem.s64	1	10
 rem.u32	1	8
-ret	0	284
+ret	0	285
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	801
@@ -254,7 +255,7 @@ st.global.b64	0	9
 st.global.f32	0	16
 st.global.u16	0	198
 st.global.u32	0	238
-st.global.u64	0	1
+st.global.u64	0	2
 st.global.u8	0	2
 st.global.v2.b32	0	46
 st.global.v2.f32	0	2
@@ -268,6 +269,7 @@ st.shared.b16	0	4
 st.shared.b32	0	30
 st.shared.u16	0	32
 st.shared.u32	0	9
+st.shared.u64	0	2
 st.shared.v2.b32	0	36
 st.shared.v2.b64	0	48
 st.shared.v2.u32	0	7

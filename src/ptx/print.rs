@@ -9,7 +9,7 @@
 //! collapses to its effective location. Unparsed statements print as comments.
 //! The k14 round-trip allowlist records a discarded `.local` declaration.
 
-use crate::ptx::ir::{Kernel, Module, Operand, OperandId, SharedDecl, SourceLoc, Stmt};
+use crate::ptx::ir::{Kernel, Module, Operand, OperandId, SharedDecl, SharedSize, SourceLoc, Stmt};
 use std::fmt::Write;
 
 pub fn dump(module: &Module) -> String {
@@ -133,10 +133,13 @@ fn dump_shared_decl(m: &Module, decl: &SharedDecl, out: &mut String) {
     let name = m.interner.resolve(decl.name);
     let ty = decl.ty.name();
     match decl.size {
-        Some(n) => {
+        SharedSize::Scalar => {
+            let _ = writeln!(out, ".shared {align}.{ty} {name};");
+        }
+        SharedSize::Array(n) => {
             let _ = writeln!(out, ".shared {align}.{ty} {name}[{n}];");
         }
-        None => {
+        SharedSize::Dynamic => {
             let _ = writeln!(out, ".extern .shared {align}.{ty} {name}[];");
         }
     }
