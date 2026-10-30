@@ -388,14 +388,17 @@ fn kernel_param(t: &KernelData, instr: &Instr) -> Option<usize> {
 
 /// The kernel parameters the addresses of `instr` may point into, as
 /// LLVM's `getUnderlyingObjects` (llvm/lib/Analysis/ValueTracking.cpp)
-/// collects them; `None` where one is not traced to them.
+/// collects them; `None` where one is not traced to them, or is a
+/// tensor map's coordinates, whose address the map holds.
 fn pointees(t: &KernelData, instr: &Instr) -> Option<BTreeSet<usize>> {
     let (mut seen, mut out) = (HashSet::new(), BTreeSet::new());
     for &o in t.module.operand_ids(instr.operands) {
         if let Operand::Memory { base, rest, .. } = t.module.operand(o) {
-            for &r in std::iter::once(base).chain(t.module.operand_ids(*rest)) {
-                reach(t, r, &mut seen, &mut out)?;
+            // PTX ISA §9.7.9.26.5.2: `[tensorMap, tensorCoords]`.
+            if !rest.is_empty() {
+                return None;
             }
+            reach(t, *base, &mut seen, &mut out)?;
         }
     }
     (!out.is_empty()).then_some(out)
@@ -451,8 +454,9 @@ fn reach(
 
 /// The kernel parameters a store may write global memory through; `None`
 /// where one may write anywhere: a store `pointees` does not trace, a
-/// `call`, an instruction the classifier does not handle that names
-/// `.global`, or a statement not parsed.
+/// tensor copy to global among them, a `call`, an instruction the
+/// classifier does not handle that names `.global`, or a statement not
+/// parsed.
 fn written(t: &KernelData) -> Option<BTreeSet<usize>> {
     let module = t.module;
     let mut out = BTreeSet::new();
@@ -651,6 +655,14 @@ mod tests {
         let swapped = "atom.global.exch.b64 %rd3, [%rd9], 0;\n\
                        selp.b64 %rd4, %rd9, %rd3, %p1;\nst.global.u32 [%rd4], 0;";
         assert_eq!(load("ld.global.u32", swapped), from("ld.global.u32"));
+        // A tensor copy to shared writes no global memory; one to global
+        // writes where its tensor map points.
+        let to_shared = "cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes \
+                         [%r6], [%rd9, {%r1}], [%r7];";
+        assert_eq!(load("ld.global.u32", to_shared), Ok(()));
+        let to_global =
+            "cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd9, {%r1}], [%r6];";
+        assert_eq!(load("ld.global.u32", to_global), from("ld.global.u32"));
     }
 
     /// The lightllm decode kernels' loads under a `createpolicy` policy,

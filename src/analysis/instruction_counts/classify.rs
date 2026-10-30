@@ -427,10 +427,14 @@ fn matrix_fragments(mods: &[&str], direction: Direction) -> ClassifiedInstructio
 /// optional immediate `src-size` is the number of bytes actually
 /// read ("remaining bytes in destination dst are filled with
 /// zeros"). The group bookkeeping instructions (§9.7.9.26.3.2–3) and
-/// the mbarrier arrive are synchronization; the bulk and tensor
-/// forms (§9.7.9.26.4–5) are not modeled.
+/// the mbarrier arrive are synchronization; the bulk forms and the
+/// tensor ones but `cp.async.bulk.tensor` (§9.7.9.26.4, §9.7.9.26.5.3–4)
+/// are not modeled.
 fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     let has = |name: &str| mods.contains(&name);
+    if mods.starts_with(&["async", "bulk", "tensor"]) {
+        return tensor_copy(mods);
+    }
     if !has("async") || has("bulk") || has("reduce") {
         return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     }
@@ -449,6 +453,31 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     let cp_size = immediate(module.operand_ids(instr.operands).get(2).copied());
     let src_size = immediate(cp_async_size_operand(module, instr));
     ClassifiedInstruction::copy(Space::Global, Space::Shared, src_size.or(cp_size), cp_size)
+}
+
+/// `cp.async.bulk.tensor` (PTX ISA §9.7.9.26.5.2) copies "tensor data
+/// from the location in .src state space to the location in the .dst
+/// state space": global to shared::cta or shared::cluster, or
+/// shared::cta to global. `.dst` is the first state space named, which
+/// may follow `.load_mode`, as in the manual's example
+/// `cp.async.bulk.tensor.3d.im2col.shared::cluster.global`. The bytes
+/// are the bounding box the tensor map gives (§5.5.3.1, §5.5.8), not
+/// the instruction.
+fn tensor_copy(mods: &[&str]) -> ClassifiedInstruction {
+    let spaces: Vec<Space> = (mods.iter())
+        .filter_map(|m| match *m {
+            "global" => Some(Space::Global),
+            "shared::cta" => Some(Space::Shared),
+            "shared::cluster" => Some(Space::SharedCluster),
+            _ => None,
+        })
+        .collect();
+    match spaces[..] {
+        [Space::Shared | Space::SharedCluster, Space::Global] | [Space::Global, Space::Shared] => {
+            ClassifiedInstruction::copy(spaces[1], spaces[0], None, None)
+        }
+        _ => ClassifiedInstruction::simple(InstructionCategory::Unknown),
+    }
 }
 
 /// `classify`, with a `cp.async` read whose src-size is a register, not
@@ -992,7 +1021,64 @@ mod tests {
         for text in [
             "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%r1], [%rd1], 1024, [%r2];",
             "cp.reduce.async.bulk.global.shared::cta.bulk_group.add.f32 [%rd1], [%r1], 256;",
-            "cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes [%r1], [%rd1, {%r2, %r3}], [%r4];",
+        ] {
+            assert_eq!(
+                class_of(text).category,
+                InstructionCategory::Unknown,
+                "{text}"
+            );
+        }
+    }
+
+    /// The forms of `tests/fixtures/micro/tensor_copies.ptx`, which
+    /// ptxas 13.4 assembles for sm_100a.
+    #[test]
+    fn a_tensor_copy_moves_the_bytes_its_tensor_map_gives() {
+        let copy = |from, to| ClassifiedInstruction::copy(from, to, None, None);
+        let to_cta = copy(Space::Global, Space::Shared);
+        let to_cluster = copy(Space::Global, Space::SharedCluster);
+        let to_global = copy(Space::Shared, Space::Global);
+        for (text, expected) in [
+            (
+                "cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes.tile \
+                 [%r1], [%rd1, {%r2}], [%r3];",
+                &to_cta,
+            ),
+            (
+                "cp.async.bulk.tensor.2d.tile::gather4.shared::cta.global.mbarrier::complete_tx::bytes \
+                 [%r1], [%rd1, {%r2, %r3, %r3, %r3, %r3}], [%r4];",
+                &to_cta,
+            ),
+            (
+                "cp.async.bulk.tensor.5d.shared::cta.global.im2col::w::128.mbarrier::complete_tx::bytes\
+                 .cta_group::2.L2::cache_hint [%r1], [%rd1, {%r2, %r2, %r2, %r2, %r2}], [%r3], \
+                 {%rs1, %rs2}, %rd2;",
+                &to_cta,
+            ),
+            (
+                "cp.async.bulk.tensor.3d.im2col.shared::cluster.global.mbarrier::complete_tx::bytes\
+                 .multicast::cluster [%r1], [%rd1, {%r2, %r2, %r2}], [%r3], {%rs1}, %rs2;",
+                &to_cluster,
+            ),
+            (
+                "cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd1, {%r2}], [%r1];",
+                &to_global,
+            ),
+            (
+                "cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group.L2::cache_hint \
+                 [%rd1, {%r2, %r3, %r3, %r3, %r3}], [%r1], %rd2;",
+                &to_global,
+            ),
+        ] {
+            assert_eq!(&class_of(text), expected, "{text}");
+        }
+        // ptxas 13.4: "State space incorrect for instruction
+        // 'cp.async.bulk.tensor'"; and the other tensor copies.
+        for text in [
+            "cp.async.bulk.tensor.1d.global.shared::cluster.bulk_group [%rd1, {%r2}], [%r1];",
+            "cp.async.bulk.tensor.1d.shared.global.mbarrier::complete_tx::bytes [%r1], [%rd1, {%r2}], [%r3];",
+            "cp.reduce.async.bulk.tensor.1d.global.shared::cta.add.tile.bulk_group [%rd1, {%r2}], [%r1];",
+            "cp.async.bulk.prefetch.tensor.1d.L2.global.tile [%rd1, {%r2}];",
         ] {
             assert_eq!(
                 class_of(text).category,

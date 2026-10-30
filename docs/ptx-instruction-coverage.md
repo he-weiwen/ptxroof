@@ -290,8 +290,9 @@ requested.
 ### §9.7.9.26 Asynchronous copy
 
 Rows below route through the bare `cp` (or `multimem`) mnemonic.
-Ordinary `cp.async` and its synchronization forms are handled; bulk,
-tensor and multimem variants remain visible, counted `Unknown` work.
+Ordinary `cp.async` and its synchronization forms are handled, and
+`cp.async.bulk.tensor`; the other bulk, tensor and multimem variants
+remain visible, counted `Unknown` work.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
@@ -304,7 +305,7 @@ tensor and multimem variants remain visible, counted `Unknown` work.
 | 9.7.9.26.4.3 | `cp.async.bulk.prefetch` | `Unknown` | OK (deferred, Tier 2) — target `Ignore`, consistent with the `prefetch` policy. |
 | 9.7.9.26.4.4 | `multimem.cp.async.bulk` | `Unknown` | OK (deferred, Tier 4) — misfit §F. |
 | 9.7.9.26.4.5 | `multimem.cp.reduce.async.bulk` | `Unknown` | OK (deferred, Tier 4) — misfit §A+§F. |
-| 9.7.9.26.5.2 | `cp.async.bulk.tensor` | `Unknown` | OK (deferred, Tier 2) — ⚠⚠ misfit §B+§C: TMA. Bytes live in a host-side tensor-map descriptor, **permanently unknowable from the PTX text**; `UnquantifiedBytes` is the correct end state, not a stopgap (unless a `--bind`-style flag supplies the map). Single-thread-issued, CTA-scale. |
+| 9.7.9.26.5.2 | `cp.async.bulk.tensor` | `Memory`: an `UnquantifiedBytes` load from `.src` and store to `.dst`, global to shared::cta or to shared::cluster (`.multicast::cluster` included), or shared::cta to global; another pair of state spaces stays `Unknown` | OK — "an asynchronous copy operation of tensor data from the location in .src state space to the location in the .dst state space" (§9.7.9.26.5.2). `.dst` is the first state space named: the manual's own example `cp.async.bulk.tensor.3d.im2col.shared::cluster.global` and Triton put `.load_mode` before it. The bytes are the bounding box of the tensor map, "a 128-byte opaque object" that "describes the tensor properties and the access properties" (§5.5.8, §5.5.3.1), **permanently unknowable from the PTX text**: `UnquantifiedBytes` is the end state (misfit §C), unless a `--bind`-style flag supplies the map. The shared side's row traces its address; the global side's reads `unknown: the tensor map holds the address`, and a copy to global keeps the uniformity analysis from taking a weak global load as one value per CTA, where a copy to shared does not. Pinned by `a_tensor_copy_moves_the_bytes_its_tensor_map_gives`, `a_global_load_through_a_pointer_nothing_writes_is_lane_wise` and `micro/tensor_copies.ptx`: every `.dim`, `.load_mode`, completion mechanism, `.multicast::cluster`, `.cta_group` and `.L2::cache_hint` form, which ptxas 13.4 assembles to its UTMALDG or UTMASTG, and its `--dump-ast` to the same SASS (`tests/lit/roundtrip`); its rows by `micro-tensor-copies.test`. Single-thread-issued, CTA-scale (§B): one op per issuing thread. |
 | 9.7.9.26.5.3 | `cp.reduce.async.bulk.tensor` | `Unknown` | OK (deferred, Tier 2) — same, plus misfit §A (reduction). |
 | 9.7.9.26.5.4 | `cp.async.bulk.prefetch.tensor` | `Unknown` | OK (deferred, Tier 2) — target `Ignore` per the prefetch policy. |
 | 9.7.9.26.6.1 | `cp.async.bulk.commit_group` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
@@ -549,13 +550,16 @@ three orders of magnitude, and a single thread's share of a
 CTA-scale copy is not a whole number of bytes — so **a scope axis on
 `Measurement` is the structural prerequisite for every Tier 2
 family**, and the reason those arms should not be added piecemeal
-ahead of it.
+ahead of it. `cp.async.bulk.tensor` landed without it: its bytes are
+unquantified, an op per issuing thread, so there is no byte count to
+overcount.
 
 **§C — bytes that are not in the instruction text.**
 `cp.async.bulk.tensor` (+`.reduce`/`.prefetch` tensor forms): the byte
 count lives in a host-side tensor-map descriptor — *permanently*
 unknowable from PTX; `UnquantifiedBytes` is the correct end state
-unless a `--bind`-style flag supplies the map. Register-sized
+unless a `--bind`-style flag supplies the map, and is what
+`cp.async.bulk.tensor` classifies as. Register-sized
 `cp.async.bulk`/`st.bulk`: classic `UnquantifiedBytes`. `tex`/`tld4`/
 `suld`/`sust`: coordinate- and descriptor-dependent footprints.
 Related asymmetries where bytes-in ≠ bytes-out of a single
@@ -658,7 +662,7 @@ scope-axis extension (misfit §B), which should land once, first, not
 per-family**.
 
 - `wgmma.mma_async` (+ `.sp`), with `wgmma.fence` / `commit_group` / `wait_group` as `Sync`
-- TMA: `cp.async.bulk`, `cp.async.bulk.tensor`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`), with `cp.async.bulk.commit_group` / `wait_group` as `Sync`; tensor variants land as honest unquantified bytes (misfit §C)
+- TMA: `cp.async.bulk`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`), with `cp.async.bulk.commit_group` / `wait_group` as `Sync`; tensor variants land as honest unquantified bytes (misfit §C), as `cp.async.bulk.tensor` has
 - Hopper warp-specialization boilerplate is already classified: `elect.sync` (`Communication`, with the `d|p` operand form in the parser), `setmaxnreg` (`Ignore`)
 - `red.async`, `movmatrix`, `mma.sp` (sparse policy, misfit §D), `st.async` remote-attribution review
 - `tcgen05.*` (all 14 entries) — tensor memory as a new `Space`, single-thread-issue scope

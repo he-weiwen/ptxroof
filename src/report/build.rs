@@ -298,10 +298,19 @@ impl KernelReportBuilder<'_> {
                         || !set.lane_exact())
                         && set.count(shape).is_none_or(|c| c.certain != c.possible);
                     let threads = guard.is_some().then(|| self.threads_info(&set)).flatten();
-                    let Operand::Memory { base, offset, .. } = module.operand(mem_ops[i]) else {
+                    let Operand::Memory {
+                        base, offset, rest, ..
+                    } = module.operand(mem_ops[i])
+                    else {
                         continue;
                     };
                     let (address, unknown, form) = match module.operand(*base) {
+                        // PTX ISA §9.7.9.26.5.2: `[tensorMap, tensorCoords]`.
+                        _ if !rest.is_empty() => (
+                            None,
+                            Some("the tensor map holds the address".to_owned()),
+                            None,
+                        ),
                         Operand::SymbolRef(s) => {
                             let sym = shorten(module.interner.resolve(*s).to_owned());
                             let addr = if *offset == 0 {
