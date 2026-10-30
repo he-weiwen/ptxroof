@@ -73,7 +73,6 @@ mod transfer;
 /// for a debug build's 2 MB thread stack.
 const DEPTH_LIMIT: u32 = 32;
 
-type Traced = (AffineProperties, Option<UnknownReason>);
 type Memo<K, T> = RefCell<HashMap<K, Slot<T>>>;
 
 /// A cached result, the frame computing it, or the count a loop's
@@ -90,9 +89,8 @@ pub(crate) struct AffineAnalysis<'a> {
     pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
     /// Each loop's trip count.
     trips: Memo<LoopId, Result<LoopTripCount, UnknownReason>>,
-    /// Each value's trace, with the first reason it read a uniform value
-    /// as a variable.
-    values: Memo<Value, Traced>,
+    /// Each value's trace.
+    values: Memo<Value, AffineProperties>,
     /// How many traces and counts are being computed.
     frames: Cell<usize>,
     /// The outermost of them the result being computed read, or 0 after a
@@ -105,9 +103,6 @@ pub(crate) struct AffineAnalysis<'a> {
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
     uniformity: &'a UniformityInfo<'a>,
-    /// Why the trace in progress first read a uniform value it cannot
-    /// interpret as a `Var::Unknown`.
-    unread: RefCell<Option<UnknownReason>>,
 }
 
 impl<'a> AffineAnalysis<'a> {
@@ -154,7 +149,6 @@ impl<'a> AffineAnalysis<'a> {
             cut: Cell::new(None),
             bindings,
             uniformity,
-            unread: RefCell::new(None),
         };
         for &l in &order {
             let _ = analysis.loop_trip_count(l);
@@ -193,18 +187,10 @@ impl<'a> AffineAnalysis<'a> {
     /// The one value every one of these definitions writes to `reg`, with
     /// no loop counter, which each definition reads in its own loops.
     fn same_value(&self, defs: &[usize], reg: Symbol, depth: u32) -> Option<AffineExpr> {
-        let outer = self.unread.take();
         let mut values = defs.iter().map(|&d| self.transfer(d, reg, depth).ok());
-        let value = (values.next().flatten())
+        (values.next().flatten())
             .filter(|a| a.terms.keys().all(|v| v.counter().is_none()))
-            .filter(|a| values.all(|b| b.as_ref() == Some(a)));
-        let inner = self.unread.replace(outer);
-        if value.is_some()
-            && let Some(why) = inner
-        {
-            self.unread.borrow_mut().get_or_insert(why);
-        }
-        value
+            .filter(|a| values.all(|b| b.as_ref() == Some(a)))
     }
 
     /// A merged value: the obstacle on any of its definitions' chains.
@@ -319,12 +305,10 @@ impl<'a> AffineAnalysis<'a> {
         match self.properties(v, depth) {
             AffineProperties::Expr(a) => Ok(self.after_exits(a, pos)),
             AffineProperties::Unknown {
-                reason,
-                min_trailing_zeros,
+                min_trailing_zeros, ..
             } if !matches!(v, Value::Undef(_))
                 && self.uniformity().register_uniformity(reg, pos).is_ok() =>
             {
-                self.unread.borrow_mut().get_or_insert(reason);
                 let u = Var::Unknown(v);
                 Ok(match min_trailing_zeros {
                     0 => AffineExpr::var(u),
@@ -471,8 +455,7 @@ impl<'a> AffineAnalysis<'a> {
     fn step(&self, step: &Step, depth: u32) -> Result<SymExpr, Option<UnknownReason>> {
         let mut sum = SymExpr::Const(step.constant);
         for &(reg, at, sign) in &step.registers {
-            let s = self.first_reason(|| self.at_use(reg, at, depth + 1));
-            let s = s.map_err(|_| None)?;
+            let s = self.at_use(reg, at, depth + 1).map_err(|_| None)?;
             if !s.is_symbolic_or_constant() {
                 return Err(None);
             }
@@ -524,8 +507,7 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
         name: &dyn Fn(&Var) -> String,
     ) -> Result<AffineExpr, UnknownReason> {
-        let a = self.first_reason(|| self.operand_at(base, pos, 0))?
-            + AffineExpr::from_base(SymExpr::Const(offset));
+        let a = self.operand_at(base, pos, 0)? + AffineExpr::from_base(SymExpr::Const(offset));
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
         for v in a.terms.keys() {
             if let Some(l) = v.counter().filter(|&l| !self.data.in_loop(l, pos))
@@ -544,21 +526,6 @@ impl<'a> AffineAnalysis<'a> {
             }
         }
         Ok(a)
-    }
-
-    /// `f`, failing for the first reason it read a uniform value as a
-    /// variable, if it did.
-    pub(crate) fn first_reason<T>(
-        &self,
-        f: impl FnOnce() -> Result<T, UnknownReason>,
-    ) -> Result<T, UnknownReason> {
-        let outer = self.unread.take();
-        let t = f();
-        let first = self.unread.replace(outer);
-        t.map_err(|why| match why {
-            UnknownReason::NotOneValue { .. } => why,
-            _ => first.unwrap_or(why),
-        })
     }
 
     /// Loop `l`'s trip count when it is a constant of at least 1 under the
@@ -630,7 +597,6 @@ impl<'a> AffineAnalysis<'a> {
         if self.frames.get() > 0 {
             return query();
         }
-        let unread = self.unread.borrow().is_some();
         let mut tried = HashSet::new();
         loop {
             let t = query();
@@ -646,9 +612,6 @@ impl<'a> AffineAnalysis<'a> {
                     _ => _ = cuts.pop(),
                 }
             }
-            if !unread {
-                self.unread.take();
-            }
         }
     }
 
@@ -663,27 +626,17 @@ impl<'a> AffineAnalysis<'a> {
             reason,
             min_trailing_zeros: self.min_trailing_zeros(v),
         };
-        let unfinished = || (unknown("value depends on itself".into()), None);
+        let unfinished = || unknown("value depends on itself".into());
         let trace = || {
-            let outer = self.unread.take();
-            let p = self
-                .trace_uncached(v, depth)
-                .map_or_else(unknown, AffineProperties::Expr);
-            (p, self.unread.replace(outer))
+            self.trace_uncached(v, depth)
+                .map_or_else(unknown, AffineProperties::Expr)
         };
-        let settle = |first: Traced, again: Traced| match (&first.0, &again.0) {
+        let settle = |first: AffineProperties, again: AffineProperties| match (&first, &again) {
             (AffineProperties::Unknown { .. }, _) => first,
             (_, AffineProperties::Unknown { .. }) => again,
-            _ => (
-                unknown("the value changes once its loop's count is known".into()),
-                again.1,
-            ),
+            _ => unknown("the value changes once its loop's count is known".into()),
         };
-        let (p, why) = self.memoized(&self.values, v, unfinished, trace, settle);
-        if let Some(why) = why {
-            self.unread.borrow_mut().get_or_insert(why);
-        }
-        p
+        self.memoized(&self.values, v, unfinished, trace, settle)
     }
 
     fn trace_uncached(&self, v: Value, depth: u32) -> Result<AffineExpr, UnknownReason> {

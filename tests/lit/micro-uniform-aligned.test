@@ -11,9 +11,9 @@ CHECK-LABEL: kernel micro_uniform_aligned
 CHECK: warp: 4–5 sectors (ideal 4)
 CHECK-SAME: [4 * %tid.x + 512 * ⌊uniform(%r3@$L__BB0_1)/128⌋ + param_0]
 CHECK-LABEL: kernel micro_uniform_aligned_guarded
-CHECK: unknown: depends on a value loaded from memory
+CHECK: unknown: or whose sides may both set bit 0
 CHECK-LABEL: kernel micro_uniform_aligned_count
-CHECK: unknown: depends on a value loaded from memory
+CHECK: unknown: or whose sides may both set bit 0
 CHECK-LABEL: kernel micro_uniform_aligned_mask
 CHECK: warp: 4–5 sectors (ideal 4)
 CHECK-SAME: [4 * %tid.x + 512 * ⌊uniform(%r6@118)/128⌋ + param_0]
@@ -24,4 +24,4 @@ CHECK-LABEL: kernel micro_shift_wide_count
 CHECK: warp: 16–17 sectors (ideal 4)
 CHECK-SAME: [16 * %tid.x + param_0]
 CHECK-LABEL: kernel micro_uniform_aligned_div
-CHECK: unknown: depends on a value loaded from memory
+CHECK: unknown: depends on ⌊uniform(%r3@$L__BB6_1)/128⌋, in a division

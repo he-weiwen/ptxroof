@@ -1,5 +1,5 @@
-# Addresses through a division by a parameter. One every thread of the
-# CTA computes alike is the variable uniform(%r@line), and the warp's
+# Addresses through a division by a parameter. One the lanes of a warp
+# compute alike is the variable uniform(%r@line), and the warp's
 # sectors are counted as for a parameter base; a quotient that differs
 # by lane, read after a loop lanes leave at different trips, copied
 # there, minus lane 0's shuffle of it, or copied under a guard on the
@@ -25,4 +25,4 @@ CHECK: unknown: uniform(%r4@138) differs between lanes: depends on %tid.x
 CHECK-LABEL: kernel micro_uniform_shfl_after_divergent_exit
 CHECK: unknown: uniform(%r4@165) differs between lanes: depends on %tid.x
 CHECK-LABEL: kernel micro_uniform_guarded_copy
-CHECK: unknown: div by a non-constant divisor
+CHECK: unknown: %r6 is written under a guard

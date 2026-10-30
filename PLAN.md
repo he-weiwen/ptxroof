@@ -268,15 +268,15 @@ contract (Codex's review of 2b2731b).
   bits (`micro/xor_swizzle.ptx`, Triton's swizzle as
   `(16 * (⌊%tid.x/8⌋ mod 4) ⊕ 16 * (%tid.x mod 128))`, its offsets read
   back on the RTX 4090; 22,332 census rows). Not read: an xor with a
-  side that is no such xor, "behind `xor.b32`" (13,746 of the census's
-  38,021 unknown address rows, all but one shared): a sum whose fields
+  side that is no such xor, "behind `xor.b32`" (14,081 of the census's
+  36,283 unknown address rows, all but three shared): a sum whose fields
   share a bit (`micro_xor_overlap`), one thread bit times a constant
   with more bits than one, as the Gluon GEMM's epilogue stores' 2064
   times bit 2, which comes there from a signed `bfe` past bit 0, itself
   unread (`bfe at 2 of 1 bits`); divisions of the thread
   index by a runtime value (`micro/uniform_address.ptx`'s
-  `micro_uniform_div_lanes`; 4,194 census rows "div by a non-constant
-  divisor" and 578 "rem by a non-constant divisor": of 40 sampled,
+  `micro_uniform_div_lanes`; 1,622 census rows "div by a non-constant
+  divisor" and 3,525 "rem by a non-constant divisor": of 40 sampled,
   binding the kernel's 32-bit parameters reads 24 past the division,
   as census kernel `01155.ptx`'s `div.s32 %r11, %r8, %r9` of `%r9` =
   param_5, and 16 stop at a divisor of the CTA index, Triton's grouped
@@ -296,8 +296,9 @@ contract (Codex's review of 2b2731b).
   `micro_and_select_two_bits`), or a 64-bit mask's run that starts at
   bit 63 (`micro/and_runs.ptx`'s `micro_and_bit63`); the bit select by a
   signed `bfe` of one bit (`micro/and_bit_select.ptx`'s
-  `micro_and_select_bfe`: "bfe at 2 of 1 bits"; 1,227 census rows stop
-  at a one-bit signed `bfe`); values loaded
+  `micro_and_select_bfe`: "bfe at 2 of 1 bits"; 586 census rows stop
+  at a one-bit signed `bfe`, 658 at a mod or shift of one read as a
+  variable, "depends on ⌊uniform(…)/2^k⌋, in a mod"); values loaded
   from memory that may differ between threads (the fused MoE kernel's
   `cp.async` of the rows `sorted_token_ids` selects, its source line
   262, `moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel`:
@@ -491,9 +492,8 @@ contract (Codex's review of 2b2731b).
   refused**, though both definitions and the join lie in one trip of
   the loop: `micro/join_same_value.ptx`'s `micro_join_counter`,
   128·i + %tid.x on both paths (words 0 to 255 on an RTX 4090), reads
-  "depends on special register %tid.x", and census kernel `00376.ptx`'s
-  four `st.global.v4.b32` of its source line 74 "div by a non-constant
-  divisor".
+  "depends on special register %tid.x", as census kernel `00376.ptx`'s
+  four `st.global.v4.b32` of its source line 74 do.
 - **Instruction families.** 75 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
   and block-scaled `mma`; `wgmma`; `tcgen05`; bulk copies, their

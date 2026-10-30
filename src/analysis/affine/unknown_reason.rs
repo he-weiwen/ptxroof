@@ -40,8 +40,8 @@ pub(crate) enum UnknownReason {
 impl UnknownReason {
     /// The reason as a sentence for a read in loop `scope`, a latch's
     /// condition where `latch`: a load inside or outside that loop, a
-    /// variable other than its counter, an unknown value as `name`
-    /// prints it.
+    /// variable other than its counter, one holding an unknown value
+    /// first, as `name` prints it.
     pub(crate) fn render(
         &self,
         data: &KernelAnalyses,
@@ -72,17 +72,14 @@ impl UnknownReason {
                 )
             }
             UnknownReason::NotAffine { what, vars } => {
+                if let Some(u) = vars.iter().find(|v| v.unknown().is_some()) {
+                    return format!("{prefix}depends on {}, in a {what}", u.render(&name));
+                }
                 for v in vars {
                     match v {
                         Var::Iteration(l) if Some(*l) == scope => {}
                         Var::Iteration(_) => {
                             return format!("{prefix}depends on an enclosing loop's counter");
-                        }
-                        other if other.unknown().is_some() => {
-                            return format!(
-                                "{prefix}depends on {}, in a {what}",
-                                other.render(&name)
-                            );
                         }
                         other => {
                             return format!(

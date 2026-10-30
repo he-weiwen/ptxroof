@@ -5,13 +5,8 @@
 use super::*;
 
 impl AffineAnalysis<'_> {
-    /// The latch read with each uniform value it cannot interpret a
-    /// variable.
+    /// The count loop `id`'s latch comparison gives.
     pub(super) fn counted_trips(&self, id: LoopId) -> Result<LoopTripCount, UnknownReason> {
-        self.first_reason(|| self.latch_trips(id))
-    }
-
-    fn latch_trips(&self, id: LoopId) -> Result<LoopTripCount, UnknownReason> {
         let (module, cfg) = (self.data.module, self.data.cfg);
         let l = self.data.forest.get(id);
 
