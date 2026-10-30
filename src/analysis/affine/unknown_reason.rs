@@ -4,6 +4,7 @@ use crate::analysis::affine::affine_expr::Var;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::ptx::ir::SpecialReg;
+use std::collections::BTreeSet;
 
 /// Why an SSA value has no affine expression: a fact about its
 /// definition, which `render` puts in words for a reader.
@@ -15,6 +16,9 @@ pub(crate) enum UnknownReason {
     Atomic,
     /// A special register that is not one value for the CTA.
     SpecialRegister(SpecialReg),
+    /// Every load, atomic and special register of those three kinds a
+    /// value is computed from, where it is more than one.
+    DependsOn(Vec<UnknownReason>),
     /// Register `0`, which a loop header's φ carries from one trip of an
     /// enclosing loop to the next.
     LoopCarried(String),
@@ -50,17 +54,29 @@ impl UnknownReason {
         name: &dyn Fn(&Var) -> String,
     ) -> String {
         let prefix = if latch { "latch condition " } else { "" };
+        let read = |r: &UnknownReason| match r {
+            UnknownReason::Load { def } => match scope.is_some_and(|l| data.in_loop(l, *def)) {
+                true => "a value loaded inside the loop".to_owned(),
+                false => "a value loaded from memory".to_owned(),
+            },
+            UnknownReason::Atomic => "an atomic operation".to_owned(),
+            UnknownReason::SpecialRegister(reg) => format!("special register {}", reg.name()),
+            _ => String::new(),
+        };
         match self {
-            UnknownReason::Load { def } => {
-                let place = match scope.is_some_and(|l| data.in_loop(l, *def)) {
-                    true => "inside the loop",
-                    false => "from memory",
+            UnknownReason::Load { .. }
+            | UnknownReason::Atomic
+            | UnknownReason::SpecialRegister(_) => format!("{prefix}depends on {}", read(self)),
+            UnknownReason::DependsOn(found) => {
+                let all: BTreeSet<String> = found.iter().map(read).collect();
+                let all: Vec<String> = all.into_iter().collect();
+                let all = match all.split_last() {
+                    Some((last, rest)) if !rest.is_empty() => {
+                        format!("{} and {last}", rest.join(", "))
+                    }
+                    _ => all.concat(),
                 };
-                format!("{prefix}depends on a value loaded {place}")
-            }
-            UnknownReason::Atomic => format!("{prefix}depends on an atomic operation"),
-            UnknownReason::SpecialRegister(reg) => {
-                format!("{prefix}depends on special register {}", reg.name())
+                format!("{prefix}depends on {all}")
             }
             UnknownReason::LoopCarried(reg) => {
                 format!("{prefix}depends on {reg}, carried around an enclosing loop")

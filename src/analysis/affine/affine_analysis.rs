@@ -9,9 +9,8 @@
 //! with no loop counter that every path writes, another φ one immediate
 //! every path writes, or refused. Supported arithmetic is followed down to
 //! `ld.param`, constants and special registers; an unsupported operation
-//! is a named reason, preferring the fundamental obstacle (a special
-//! register, a memory load, an atomic) behind arithmetic it does not
-//! read.
+//! is a named reason, every special register, memory load and atomic it
+//! is computed from through arithmetic the analysis does not read.
 //!
 //! A loop's latch (`setp` + `@%p bra`) is normalized to
 //! `continue while A1·k + A0 cmp 0` (k = iteration number; a counter
@@ -193,25 +192,64 @@ impl<'a> AffineAnalysis<'a> {
             .filter(|a| values.all(|b| b.as_ref() == Some(a)))
     }
 
-    /// A merged value: the obstacle on any of its definitions' chains.
-    pub(crate) fn obstacle_of_any_def(&self, reg: Symbol) -> Option<UnknownReason> {
-        self.defs_obstacle(reg, &mut HashSet::from([reg]))
+    /// The loads, atomics and special registers not one value for the CTA
+    /// that `values` are computed from, besides those `found` already:
+    /// through every other instruction, by the definitions reaching each
+    /// read, the reason a reader can act on, not the `or` or `bfe` in
+    /// between; all of them, so that no operand order picks one.
+    pub(crate) fn depends_on(
+        &self,
+        mut values: Vec<Value>,
+        mut found: Vec<UnknownReason>,
+    ) -> Option<UnknownReason> {
+        let module = self.data.module;
+        let mut seen = HashSet::new();
+        while let Some(v) = values.pop() {
+            for s in self.data.ssa.sources(v) {
+                let Value::Result { op, .. } = s else {
+                    continue;
+                };
+                let Stmt::Instr(instr) = &self.data.kernel.stmts[op] else {
+                    continue;
+                };
+                if !seen.insert(op) {
+                    continue;
+                }
+                let param = (module.modifiers(instr).iter())
+                    .any(|&m| module.interner.resolve(m) == "param");
+                match instr.mnemonic {
+                    Opcode::Ld if !param => found.push(UnknownReason::Load { def: op }),
+                    Opcode::Atom => found.push(UnknownReason::Atomic),
+                    _ => self.inputs(instr, op, &mut values, &mut found),
+                }
+            }
+        }
+        match found.len() {
+            0 => None,
+            1 => found.pop(),
+            _ => Some(UnknownReason::DependsOn(found)),
+        }
     }
 
-    /// The obstacle on any of `reg`'s definitions' chains, through
-    /// registers not yet `seen`.
-    fn defs_obstacle(&self, reg: Symbol, seen: &mut HashSet<Symbol>) -> Option<UnknownReason> {
-        self.data
-            .writes
-            .get(&Register::Named(reg))?
-            .iter()
-            .find_map(|&d| {
-                let Stmt::Instr(instr) = &self.data.kernel.stmts[d] else {
-                    return None;
-                };
-                (split_operands(self.data.module, instr).1.iter())
-                    .find_map(|&op| self.operand_obstacle(op, d, seen))
-            })
+    /// Statement `pos`'s register inputs, as the values reaching it, onto
+    /// `values`, and its special registers not one value for the CTA onto
+    /// `found`.
+    pub(crate) fn inputs(
+        &self,
+        instr: &Instr,
+        pos: usize,
+        values: &mut Vec<Value>,
+        found: &mut Vec<UnknownReason>,
+    ) {
+        for &op in split_operands(self.data.module, instr).1 {
+            match self.data.module.operand(op) {
+                Operand::Register(r) => {
+                    values.extend(self.data.ssa.value_before(pos, Register::Named(*r)))
+                }
+                Operand::Special(reg) => found.extend(special_obstacle(*reg)),
+                _ => {}
+            }
+        }
     }
 
     /// The bound block shape has one row and one plane.
@@ -380,7 +418,7 @@ impl<'a> AffineAnalysis<'a> {
         let name = self.data.module.interner.resolve(reg);
         let header = (self.data.forest.loops.iter()).any(|l| l.header == block);
         let refused = || {
-            self.obstacle_of_any_def(reg)
+            self.depends_on(vec![v], Vec::new())
                 .unwrap_or_else(|| match header {
                     true => UnknownReason::LoopCarried(name.to_owned()),
                     false => format!("{name} has more than one reaching definition").into(),
@@ -403,7 +441,7 @@ impl<'a> AffineAnalysis<'a> {
                 },
                 _ => format!("{name} is unwritten on some path"),
             };
-            return Err(self.obstacle_of_any_def(reg).unwrap_or_else(|| why.into()));
+            return Err((self.depends_on(vec![v], Vec::new())).unwrap_or_else(|| why.into()));
         }
         let common = match header {
             true => (self.same_immediate(&defs)).map(|c| AffineExpr::from_base(SymExpr::Const(c))),
@@ -721,55 +759,6 @@ impl<'a> AffineAnalysis<'a> {
             Var::Ctaid(axis) => shape(SpecialVector::Nctaid, axis),
             Var::Iteration(l) => self.constant_trips(*l).map(|n| (1, n)),
             Var::FloorDiv(..) | Var::Mod(..) | Var::Unknown(_) | Var::Swizzle(_) => None,
-        }
-    }
-
-    /// Why a value cannot be traced, looking through arithmetic it
-    /// does not read: a special register, a memory load or an
-    /// atomic on some operand chain is the reason a reader can act on,
-    /// not the `or` or `bfe` in between.
-    pub(crate) fn obstacle(
-        &self,
-        reg: Symbol,
-        pos: usize,
-        seen: &mut HashSet<Symbol>,
-    ) -> Option<UnknownReason> {
-        let module = self.data.module;
-        if !seen.insert(reg) || seen.len() > 64 {
-            return None;
-        }
-        let def = match self.data.ssa.value_before(pos, Register::Named(reg)) {
-            Some(Value::Result { op, .. }) => op,
-            Some(Value::Argument { .. }) => return self.defs_obstacle(reg, seen),
-            Some(Value::Undef(_)) | None => return None,
-        };
-        let Stmt::Instr(instr) = &self.data.kernel.stmts[def] else {
-            return None;
-        };
-        let is_param_load = self
-            .data
-            .module
-            .modifiers(instr)
-            .iter()
-            .any(|&m| module.interner.resolve(m) == "param");
-        match instr.mnemonic {
-            Opcode::Ld if !is_param_load => Some(UnknownReason::Load { def }),
-            Opcode::Atom => Some(UnknownReason::Atomic),
-            _ => (split_operands(module, instr).1.iter())
-                .find_map(|&op| self.operand_obstacle(op, def, seen)),
-        }
-    }
-
-    fn operand_obstacle(
-        &self,
-        op: OperandId,
-        pos: usize,
-        seen: &mut HashSet<Symbol>,
-    ) -> Option<UnknownReason> {
-        match self.data.module.operand(op) {
-            Operand::Register(r) => self.obstacle(*r, pos, seen),
-            Operand::Special(reg) => special_obstacle(*reg),
-            _ => None,
         }
     }
 }
@@ -1818,7 +1807,7 @@ mod tests {
     }
 
     #[test]
-    fn the_reason_is_the_obstacle_behind_unread_arithmetic() {
+    fn the_reason_is_what_unread_arithmetic_depends_on() {
         // LLVM writes m_start + 127 as `or` on a value with zero low bits;
         // the CTA index one value per CTA, the bound is read.
         let src = kernel_with(
@@ -1849,6 +1838,35 @@ mod tests {
         );
         let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
         assert_eq!(trips, Ok("max(uniform(%r3), 1)".to_owned()));
+        // A `selp` between a loaded value and one of %tid.x names both,
+        // whichever operand comes first.
+        let bound = |selp: &str| {
+            let src = kernel_with(
+                ".param .u64 k_param_0",
+                &format!(
+                    "ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r1, [%rd1];\n\
+                     mov.u32 %r2, %tid.x;\nsetp.lt.u32 %p2, %r2, 32;\n{selp}\n\
+                     mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+                     setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().unwrap_err()
+        };
+        let why = "latch condition depends on a value loaded from memory and special register \
+                   %tid.x, behind `selp.b32`";
+        assert_eq!(bound("selp.b32 %r3, %r1, %r2, %p2;"), why);
+        assert_eq!(bound("selp.b32 %r3, %r2, %r1, %p2;"), why);
+        // A value of %tid.y both paths overwrite is not what the join
+        // depends on.
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u32 %r3, %tid.y;\nmov.u32 %r1, %tid.x;\nsetp.lt.u32 %p2, %r1, 32;\n\
+             @%p2 bra $L__A;\nmov.u32 %r3, 5;\nbra.uni $L__J;\n$L__A:\nmov.u32 %r3, 7;\n\
+             $L__J:\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+             setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+        );
+        let err = trips_of(&src)[0].1.clone().unwrap_err();
+        assert_eq!(err, "%r3 has more than one reaching definition");
     }
 
     #[test]

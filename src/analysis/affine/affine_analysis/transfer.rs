@@ -425,14 +425,13 @@ impl AffineAnalysis<'_> {
         self.fits(value, instr, &mods)
     }
 
-    /// Why statement `def`'s instruction gives no value: the obstacle on
-    /// an operand chain behind it, else the instruction.
+    /// Why statement `def`'s instruction gives no value: what its inputs
+    /// depend on behind it (`depends_on`), else the instruction.
     fn unread(&self, instr: &Instr, def: usize) -> UnknownReason {
         let module = self.data.module;
-        let mut seen = HashSet::new();
-        let fundamental = (split_operands(module, instr).1.iter())
-            .find_map(|&op| self.operand_obstacle(op, def, &mut seen));
-        match fundamental {
+        let (mut values, mut found) = (Vec::new(), Vec::new());
+        self.inputs(instr, def, &mut values, &mut found);
+        match self.depends_on(values, found) {
             Some(reason) => UnknownReason::Behind {
                 reason: Box::new(reason),
                 opcode: module.opcode(instr).to_string(),
