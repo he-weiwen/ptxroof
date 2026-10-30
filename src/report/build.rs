@@ -21,8 +21,8 @@
 //! below that loop, which is why a guarded kernel still has exact
 //! per-iteration numbers — the altitude where the verdict lives.
 
+use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
-use crate::analysis::affine::scalar_evolution::ScalarEvolution;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::trip_counts::{TripCountResults, trip_counts_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
@@ -201,7 +201,7 @@ impl KernelReportBuilder<'_> {
     /// one `load+store` row. Parameter loads are not accesses.
     fn accesses_by_scope(
         &self,
-        se: &ScalarEvolution,
+        affine: &AffineAnalysis,
     ) -> (
         ByScope<Access>,
         ByScope<AccessForm>,
@@ -320,7 +320,7 @@ impl KernelReportBuilder<'_> {
                             (Some(addr), None, None)
                         }
                         Operand::Register(_) => {
-                            match se.trace_address(*base, *offset, pos, scope, &name) {
+                            match affine.address(*base, *offset, pos, scope, &name) {
                                 Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
                                 Err(reason) => (
                                     None,
@@ -422,8 +422,9 @@ impl KernelReportBuilder<'_> {
                     }
                     if let Some(b) = bytes.filter(|_| !self.unused[pos]) {
                         let uniform_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
-                            v.uniform()
-                                .is_some_and(|u| scope.is_some_and(|l| se.data.defined_in(u, l)))
+                            v.uniform().is_some_and(|u| {
+                                scope.is_some_and(|l| affine.data.defined_in(u, l))
+                            })
                         });
                         forms.entry(scope).or_default().push(AccessForm {
                             form: form.clone(),
@@ -442,7 +443,7 @@ impl KernelReportBuilder<'_> {
                         while let Some(l) = cur {
                             let stepped = (a.terms.keys()).any(|v| {
                                 (*v != Var::Iteration(l) && v.counter() == Some(l))
-                                    || v.uniform().is_some_and(|u| se.data.defined_in(u, l))
+                                    || v.uniform().is_some_and(|u| affine.data.defined_in(u, l))
                             });
                             reuse.push(Reuse {
                                 r#loop: display[l.0 as usize].clone(),
@@ -911,9 +912,9 @@ impl<'a> KernelReportBuilder<'a> {
             forest,
             ..
         } = *data;
-        let se = ScalarEvolution::new(data).with_bindings(bind_map);
+        let affine = AffineAnalysis::new(data).with_bindings(bind_map);
         let names = loop_names(module, kernel, cfg, forest);
-        let trip_info = trip_counts_from(&se, &names);
+        let trip_info = trip_counts_from(&affine, &names);
         let blocks = collect(module, kernel, cfg, forest);
 
         let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
@@ -977,7 +978,7 @@ impl<'a> KernelReportBuilder<'a> {
             source_launches: HashMap::new(),
             lines,
         };
-        b.sets = thread_sets(&se);
+        b.sets = thread_sets(&affine);
         if let Some(grid) = b.grid() {
             for (block, blk) in b.cfg.blocks.iter_enumerated() {
                 let guarded = (blk.start..blk.end).filter(|s| b.sets.guards.contains_key(s));
@@ -1031,7 +1032,7 @@ impl<'a> KernelReportBuilder<'a> {
         let sets = match compile_time == *bind_map {
             true => &b.sets,
             false => {
-                static_sets = thread_sets(&ScalarEvolution::new(data).with_bindings(&compile_time));
+                static_sets = thread_sets(&AffineAnalysis::new(data).with_bindings(&compile_time));
                 &static_sets
             }
         };
@@ -1041,7 +1042,7 @@ impl<'a> KernelReportBuilder<'a> {
                 false => (sets.guards.get(&s) == Some(&Pred::True)).then_some(true),
             }
         });
-        let (accesses, access_forms, per_request, per_wavefronts) = b.accesses_by_scope(&se);
+        let (accesses, access_forms, per_request, per_wavefronts) = b.accesses_by_scope(&affine);
         b.accesses = accesses;
         b.access_forms = access_forms;
         b.per_request = per_request;
@@ -2922,7 +2923,7 @@ mod tests {
     }
 
     /// The base at depth 0, `%r30` at 2 and `%r0` at 32, the deepest
-    /// definition scalar evolution follows: `%tid.x` below it is a leaf.
+    /// definition affine analysis follows: `%tid.x` below it is a leaf.
     #[test]
     fn a_special_register_at_the_depth_limit_is_read() {
         let opts = AnalyzeOptions::default();

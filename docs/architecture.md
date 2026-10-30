@@ -33,7 +33,7 @@ only declare modules and selected public entry points.
 | `analysis/affine/lane_eval` | Evaluate affine forms for lanes and warp layouts |
 | `analysis/affine/induction_variables` | Recognize loop counter induction variables on SSA values |
 | `analysis/affine/exit_limit` | Loop-exit inequalities solved for a trip count |
-| `analysis/affine/scalar_evolution` | Register values as affine forms and one loop's trip count; their mutual recursion and the cache of both |
+| `analysis/affine/affine_analysis` | Register values as affine forms and one loop's trip count; their mutual recursion and the cache of both |
 | `analysis/affine/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
 | `analysis/loop_names` | Source-derived loop identities used by unroll pairing and display |
 | `analysis/thread_participation` | Predicates and sets of threads executing blocks and accesses |
@@ -75,11 +75,11 @@ reads bindings from `report/bindings`, not from the report builder.
 
 `KernelAnalyses` holds one kernel's structure and no scalar interpretation.
 `UniformityInfo` borrows it and reads instruction semantics; it does not use
-`ScalarEvolution`. A `ScalarEvolution` borrows a `KernelAnalyses`, reads
+`AffineAnalysis`. An `AffineAnalysis` borrows a `KernelAnalyses`, reads
 uniformity, and holds the recursion between value and trip-count queries with
 a cache of both that keeps no result read from one still being computed
 outside it. `trip_counts` reads its per-loop results; nothing in
-`scalar_evolution` calls back into it.
+`affine_analysis` calls back into it.
 
 ## Per-kernel flow
 
@@ -88,14 +88,14 @@ record against it, and for each kernel resolves the bindings and launch shape
 and builds the CFG, the loop forest and one `KernelAnalyses`. `KernelReportBuilder`
 then:
 
-1. creates one `ScalarEvolution` under those bindings;
+1. creates one `AffineAnalysis` under those bindings;
 2. names loops, collects every loop's trip count from that instance, and pairs
    unrolled loops;
 3. collects instruction contributions per block;
 4. computes thread participation from the same instance, and refines dominance
    and count qualifiers with its dead edges;
 5. takes compile-time thread sets: the same sets when the bindings are exactly
-   the `.reqntid` block shape, otherwise from a second `ScalarEvolution` over the
+   the `.reqntid` block shape, otherwise from a second `AffineAnalysis` over the
    same `KernelAnalyses` under that shape, so runtime parameter bindings never make
    a conditionally executed instruction look removable;
 6. marks dead code, then traces addresses and computes memory footprints.

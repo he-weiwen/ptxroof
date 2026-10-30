@@ -39,7 +39,7 @@ pub enum SymbolicConstant {
     /// A special register one for the CTA: the launch shape, the CTA's
     /// index.
     SpecialReg(SpecialReg),
-    /// A register value scalar evolution cannot interpret, one for every lane
+    /// A register value affine analysis cannot interpret, one for every lane
     /// of the CTA reading it.
     Unknown(Value),
     /// The trip count of a loop whose count is not known.

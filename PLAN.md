@@ -107,7 +107,7 @@ a comparison or a widening.
   `16·(%tid.x mod 16)` to `16·%tid.x` takes 16 (line 694, predicted
   8–9). Every other `cp.async` line of the records agrees
   (`tests/ncu_corpus.rs`).
-- **Register effects are incomplete.** Scalar evolution records the
+- **Register effects are incomplete.** Affine analysis records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
   destinations (`micro/vector_def.ptx`: a guard on a register a vector
@@ -227,7 +227,7 @@ a comparison or a widening.
   `micro/single_loop.ptx` reads its `ld.param.u32` n as `param_1`,
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
-- **Addresses scalar evolution cannot read are unknown rows**, with the
+- **Addresses affine analysis cannot read are unknown rows**, with the
   reason, unless every thread of the CTA computes the part it cannot
   read alike: that part is then a variable, `uniform(%r54@90)`, or,
   where each of its definitions is an unguarded `shl` or `and` by a
@@ -422,7 +422,7 @@ a comparison or a widening.
   CTA index, the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. A bound
-  scalar evolution does not read, the same for every thread, is the value of the
+  affine analysis does not read, the same for every thread, is the value of the
   register whose trace fails, `uniform(%r3@30)` for a division by a
   parameter not bound (`micro/trip_div_param.ptx`, `param_1 / 4` with
   `--bind 2:d=4`), taken as one value per CTA, so the totals per launch
@@ -758,13 +758,13 @@ a comparison or a widening.
 
 ## Missing features
 
-- A value scalar evolution cannot read but every thread of the CTA shares as
+- A value affine analysis cannot read but every thread of the CTA shares as
   an affine variable, `uniform(v)`, keyed by its register SSA value:
   addresses and loop footprints read it (`micro/uniform_address.ptx`,
   `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`); trip counts
   and thread selectors do not. Register SSA
   itself
-  (`src/ssa.rs`) is what scalar evolution, the uniformity analysis
+  (`src/ssa.rs`) is what affine analysis, the uniformity analysis
   and the predicate reader read.
 
 One line each, with the trigger that would start it.

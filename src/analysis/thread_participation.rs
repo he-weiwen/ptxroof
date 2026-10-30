@@ -17,10 +17,10 @@
 //! value) is an unknown selector, and the block's counts stay bounds;
 //! one the same for every thread empties or keeps whole warps.
 
+use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Cmp, Var};
 use crate::analysis::affine::int_type::{IntKind, IntType};
 use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, linear, thread, warps_of};
-use crate::analysis::affine::scalar_evolution::ScalarEvolution;
 use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
@@ -51,14 +51,14 @@ pub struct Constraint {
 /// The condition under which a thread executes an instruction: the
 /// selecting branches on its block's dominator chain and its own guard,
 /// each a thread-index comparison, a combination of them, or `Unknown`
-/// when scalar evolution does not read it.
+/// when affine analysis does not read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pred {
     True,
     False,
     Unknown,
     /// A condition that cannot be evaluated but is the same for every
-    /// thread of the CTA: a comparison scalar evolution reads of
+    /// thread of the CTA: a comparison affine analysis reads of
     /// parameters, CTA indices and loop counters only, or one the
     /// uniformity analysis finds uniform.
     Uniform,
@@ -787,7 +787,7 @@ struct PredicateReader<'a, 's> {
     kernel: &'a Kernel,
     cfg: &'a ControlFlowGraph,
     forest: &'a LoopForest,
-    se: &'a ScalarEvolution<'s>,
+    affine: &'a AffineAnalysis<'s>,
     /// Per scope, the top level and then each loop: post-dominance over
     /// one trip, its edges [`kept`], and the branches each block is
     /// control dependent on there.
@@ -905,9 +905,9 @@ impl PredicateReader<'_, '_> {
     /// Which threads at loop header `h` leave its loop by a given exit:
     /// every thread alike where its exits are uniform.
     fn leaving(&self, h: BlockId) -> Pred {
-        let se = self.se;
+        let affine = self.affine;
         match self.forest.block_loop[h.0 as usize] {
-            Some(l) if se.uniformity().exits_uniform(l).is_ok() => Pred::Uniform,
+            Some(l) if affine.uniformity().exits_uniform(l).is_ok() => Pred::Uniform,
             _ => Pred::Unknown,
         }
     }
@@ -915,9 +915,9 @@ impl PredicateReader<'_, '_> {
     /// Which threads at `x` take its branch toward `c` in one trip of
     /// scope `s`, read for block `b`.
     fn toward(&mut self, s: Option<LoopId>, x: BlockId, c: BlockId, b: BlockId) -> Pred {
-        let se = self.se;
+        let affine = self.affine;
         let (Some((pos, instr)), &[taken, _]) =
-            (se.data.last_instr(x), &self.cfg.block(x).succs[..])
+            (affine.data.last_instr(x), &self.cfg.block(x).succs[..])
         else {
             return Pred::Unknown;
         };
@@ -946,9 +946,9 @@ impl PredicateReader<'_, '_> {
     /// but the uniformity analysis finds it so, and whether the depth
     /// budget cut the reading short (then it is not memoized).
     fn read(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
-        let se = self.se;
+        let affine = self.affine;
         match self.read_definition(reg, pos, depth) {
-            (Pred::Unknown, cut) if se.uniformity().is_uniform(reg, pos).is_ok() => {
+            (Pred::Unknown, cut) if affine.uniformity().is_uniform(reg, pos).is_ok() => {
                 (Pred::Uniform, cut)
             }
             read => read,
@@ -957,14 +957,14 @@ impl PredicateReader<'_, '_> {
 
     fn read_definition(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
         let Some(Value::Result { op: def, .. }) =
-            self.se.data.ssa.value_before(pos, Register::Named(reg))
+            self.affine.data.ssa.value_before(pos, Register::Named(reg))
         else {
             return (Pred::Unknown, false);
         };
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return (Pred::Unknown, false);
         };
-        if instr.predicate.is_some() || self.se.uniformity().gates_uniform(reg, pos).is_err() {
+        if instr.predicate.is_some() || self.affine.uniformity().gates_uniform(reg, pos).is_err() {
             return (Pred::Unknown, false);
         }
         if depth >= 8 {
@@ -1020,7 +1020,7 @@ impl PredicateReader<'_, '_> {
         };
         match (instr.mnemonic, mods.as_slice(), ops) {
             (Opcode::Setp, _, _) => (
-                condition(self.module, self.kernel, self.se, def).unwrap_or(Pred::Unknown),
+                condition(self.module, self.kernel, self.affine, def).unwrap_or(Pred::Unknown),
                 false,
             ),
             (Opcode::And | Opcode::Or, ["pred"], [_, a, b]) => {
@@ -1121,14 +1121,14 @@ impl ThreadSets {
     }
 }
 
-pub(crate) fn thread_sets(se: &ScalarEvolution) -> ThreadSets {
+pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
     let KernelAnalyses {
         module,
         kernel,
         cfg,
         forest,
         ..
-    } = *se.data;
+    } = *affine.data;
     let exit = BlockId(cfg.blocks.len() as u32);
     let trips = std::iter::once(None)
         .chain((0..forest.loops.len() as u32).map(|l| Some(LoopId(l))))
@@ -1144,7 +1144,7 @@ pub(crate) fn thread_sets(se: &ScalarEvolution) -> ThreadSets {
         kernel,
         cfg,
         forest,
-        se,
+        affine,
         trips,
         memo: HashMap::new(),
         blocks: vec![None; cfg.blocks.len()],
@@ -1161,14 +1161,14 @@ pub(crate) fn thread_sets(se: &ScalarEvolution) -> ThreadSets {
         if instr.mnemonic == Opcode::Bra {
             continue;
         }
-        let b = se.data.block_of(pos);
+        let b = affine.data.block_of(pos);
         let p = (reader.of(guard.reg, pos, 0))
             .in_loops(&|l| forest.get(l).blocks.binary_search(&b).is_ok());
         guards.insert(pos, if guard.negated { !p } else { p });
     }
     let mut dead_edges = Vec::new();
     for (b, blk) in cfg.blocks.iter_enumerated() {
-        if let Some((pos, instr)) = se.data.last_instr(b)
+        if let Some((pos, instr)) = affine.data.last_instr(b)
             && let (Opcode::Bra, Some(guard), &[taken, fallthrough]) =
                 (instr.mnemonic, instr.predicate, &blk.succs[..])
             && taken != fallthrough
@@ -1190,7 +1190,7 @@ pub(crate) fn thread_sets(se: &ScalarEvolution) -> ThreadSets {
         let Operand::Register(r) = module.operand(op) else {
             continue;
         };
-        let b = se.data.block_of(pos);
+        let b = affine.data.block_of(pos);
         let read = match kernel.register_type(module, *r) {
             Some(FundamentalType::Pred) => !(reader.of(*r, pos, 0))
                 .in_loops(&|l| forest.get(l).blocks.binary_search(&b).is_ok()),
@@ -1216,7 +1216,7 @@ pub(crate) fn thread_sets(se: &ScalarEvolution) -> ThreadSets {
 }
 
 /// The `setp` at `def` as `a − b cmp 0` over the thread index, its
-/// operands read under scalar evolution's bindings (`--bind`, the block
+/// operands read under affine analysis's bindings (`--bind`, the block
 /// shape), when it compares two such forms as integers: an `lt`, `le`,
 /// `gt` or `ge`
 /// only when both lie in the range of its type, [0, 2^width) or
@@ -1226,7 +1226,12 @@ pub(crate) fn thread_sets(se: &ScalarEvolution) -> ThreadSets {
 /// index whose comparison the uniformity analysis finds divergent is
 /// none, unless it is a loop counter's compared within its type, one
 /// value at each trip.
-fn condition(module: &Module, kernel: &Kernel, se: &ScalarEvolution, def: usize) -> Option<Pred> {
+fn condition(
+    module: &Module,
+    kernel: &Kernel,
+    affine: &AffineAnalysis,
+    def: usize,
+) -> Option<Pred> {
     let Stmt::Instr(setp) = &kernel.stmts[def] else {
         return None;
     };
@@ -1249,14 +1254,14 @@ fn condition(module: &Module, kernel: &Kernel, se: &ScalarEvolution, def: usize)
         return None;
     }
     let bound = |op| {
-        let x = se.trace_operand(op, def, None, 0).ok()?;
-        Some(se.bindings.map_or(x.clone(), |m| x.bind(m)))
+        let x = affine.operand_at(op, def, None, 0).ok()?;
+        Some(affine.bindings.map_or(x.clone(), |m| x.bind(m)))
     };
     let (a, b) = (bound(ops[1])?, bound(ops[2])?);
     let form = a.clone() - b.clone();
     // %ctaid below the bound grid, PTX ISA §10.6.
     let range = |v: &Var| match v {
-        Var::Ctaid(_) | Var::Iteration(_) => se.bound(v),
+        Var::Ctaid(_) | Var::Iteration(_) => affine.var_bounds(v),
         _ => any_block(v),
     };
     // The input contract (PLAN.md): an operand of unknown range does not
@@ -1293,8 +1298,8 @@ fn condition(module: &Module, kernel: &Kernel, se: &ScalarEvolution, def: usize)
         });
     }
     let lanes = form.terms.keys().any(depends_on_lane);
-    let trip = per_trip(se, &form, def).filter(|_| comparable(&a, &b));
-    if !lanes && trip.is_none() && !se.uniformity().is_uniform_def(def) {
+    let trip = per_trip(affine, &form, def).filter(|_| comparable(&a, &b));
+    if !lanes && trip.is_none() && !affine.uniformity().is_uniform_def(def) {
         None
     } else if on_lane_only(&form) && comparable(&a, &b) {
         Some(Pred::Cmp(Constraint {
@@ -1312,7 +1317,9 @@ fn condition(module: &Module, kernel: &Kernel, se: &ScalarEvolution, def: usize)
         }))
     } else if on_index(&form)
         && comparable(&a, &b)
-        && let Some(p) = across_ctas(&form, cmp, &|v| se.bound(v).or_else(|| any_block(v)))
+        && let Some(p) = across_ctas(&form, cmp, &|v| {
+            affine.var_bounds(v).or_else(|| any_block(v))
+        })
     {
         Some(p)
     } else if !lanes {
@@ -1325,7 +1332,11 @@ fn condition(module: &Module, kernel: &Kernel, se: &ScalarEvolution, def: usize)
 /// A form of the thread index and one loop's counter, read in that loop
 /// so its current trip's, the loop's trip count a constant n: the loop
 /// and the range of the counter's term over trips 1 to n.
-fn per_trip(se: &ScalarEvolution, form: &AffineExpr, def: usize) -> Option<(LoopId, (i128, i128))> {
+fn per_trip(
+    affine: &AffineAnalysis,
+    form: &AffineExpr,
+    def: usize,
+) -> Option<(LoopId, (i128, i128))> {
     let mut rest = form.clone();
     let mut counters = (form.terms.iter()).filter(|(v, _)| matches!(v, Var::Iteration(_)));
     let (Some((v @ Var::Iteration(l), c)), None) = (counters.next(), counters.next()) else {
@@ -1333,13 +1344,13 @@ fn per_trip(se: &ScalarEvolution, form: &AffineExpr, def: usize) -> Option<(Loop
     };
     rest.terms.remove(v);
     let c = i128::from(c.as_const().filter(|&c| c != 0)?);
-    let (_, n) = se.bound(v)?;
-    let inside = se
+    let (_, n) = affine.var_bounds(v)?;
+    let inside = affine
         .data
         .forest
         .get(*l)
         .blocks
-        .binary_search(&se.data.block_of(def))
+        .binary_search(&affine.data.block_of(def))
         .is_ok();
     (on_lane_only(&rest) && inside)
         .then_some((*l, (c.min(c * i128::from(n)), c.max(c * i128::from(n)))))
@@ -1884,7 +1895,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &forest);
-        let sets = thread_sets(&ScalarEvolution::new(&data));
+        let sets = thread_sets(&AffineAnalysis::new(&data));
         (m, sets)
     }
 

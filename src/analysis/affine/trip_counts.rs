@@ -1,9 +1,9 @@
-//! Every loop's trip count (`super::scalar_evolution`), and nvcc's unroll
+//! Every loop's trip count (`super::affine_analysis`), and nvcc's unroll
 //! main+remainder pairs — sibling loops on the same source line whose
 //! trips match `(X − X mod c)/c` and `X mod c` — linked into one logical
 //! loop with factor c.
 
-use crate::analysis::affine::scalar_evolution::ScalarEvolution;
+use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::kernel_analyses::KernelAnalyses;
@@ -48,15 +48,15 @@ pub fn trip_counts(
     bindings: &HashMap<SymbolicConstant, i64>,
 ) -> TripCountResults {
     let data = KernelAnalyses::new(module, kernel, cfg, forest);
-    trip_counts_from(&ScalarEvolution::new(&data).with_bindings(bindings), names)
+    trip_counts_from(&AffineAnalysis::new(&data).with_bindings(bindings), names)
 }
 
-/// Every loop's trip count under `se`'s bindings.
-pub(crate) fn trip_counts_from(se: &ScalarEvolution, names: &[LoopName]) -> TripCountResults {
-    let forest = se.data.forest;
+/// Every loop's trip count under `affine`'s bindings.
+pub(crate) fn trip_counts_from(affine: &AffineAnalysis, names: &[LoopName]) -> TripCountResults {
+    let forest = affine.data.forest;
     let (mut trips, mut entries, mut distances) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..forest.loops.len() as u32 {
-        let (t, entry, distance) = match se.loop_trip_count(LoopId(i)) {
+        let (t, entry, distance) = match affine.loop_trip_count(LoopId(i)) {
             Ok(t) => (Ok(t.count), t.entry, t.distance),
             Err(e) => (Err(e), forest.get(LoopId(i)).header, None),
         };

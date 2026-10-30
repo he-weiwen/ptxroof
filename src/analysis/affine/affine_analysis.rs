@@ -1,4 +1,4 @@
-//! Scalar evolution: a register's value at a statement, from register
+//! Affine analysis: a register's value at a statement, from register
 //! SSA (`crate::ssa`), as an affine form over thread and CTA indices,
 //! loop counters and the kernel parameters; and one loop's trip count,
 //! read from its latch through the same values. Address and
@@ -21,7 +21,7 @@
 //! branch that skips the loop where the latch fails at k = 0, and
 //! max(T, 1) per entry otherwise, as LLVM's ScalarEvolution counts a
 //! rotated loop's backedges from max(RHS, Start) unless a guard covers
-//! it (llvm/lib/Analysis/ScalarEvolution.cpp:13628–13643 at
+//! it (llvm/lib/Analysis/AffineAnalysis.cpp:13628–13643 at
 //! e32776a129f5).
 //!
 //! The two queries recurse into each other: a value after a loop, a
@@ -78,7 +78,7 @@ enum Slot<T> {
     Done(T),
 }
 
-pub(crate) struct ScalarEvolution<'a> {
+pub(crate) struct AffineAnalysis<'a> {
     pub(crate) data: &'a KernelAnalyses<'a>,
     /// Each loop counter by its header φ, with its loop.
     pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
@@ -101,7 +101,7 @@ pub(crate) struct ScalarEvolution<'a> {
     unread: RefCell<Option<String>>,
 }
 
-impl<'a> ScalarEvolution<'a> {
+impl<'a> AffineAnalysis<'a> {
     pub(crate) fn new(data: &'a KernelAnalyses<'a>) -> Self {
         let (forest, ssa) = (data.forest, &data.ssa);
         // Inner loops first: an outer counter may step by an inner exit.
@@ -127,7 +127,7 @@ impl<'a> ScalarEvolution<'a> {
                 recurrences_by_phi.insert(r.phi, (l, r));
             }
         }
-        ScalarEvolution {
+        AffineAnalysis {
             data,
             induction_variables: recurrences_by_phi,
             trips: RefCell::new(HashMap::new()),
@@ -178,7 +178,7 @@ impl<'a> ScalarEvolution<'a> {
         depth: u32,
     ) -> Option<AffineExpr> {
         let outer = self.unread.take();
-        let mut values = defs.iter().map(|&d| self.written(d, reg, id, depth).ok());
+        let mut values = defs.iter().map(|&d| self.transfer(d, reg, id, depth).ok());
         let value = (values.next().flatten())
             .filter(|a| a.terms.keys().all(|v| v.counter().is_none()))
             .filter(|a| values.all(|b| b.as_ref() == Some(a)));
@@ -249,7 +249,7 @@ impl<'a> ScalarEvolution<'a> {
         }
     }
 
-    pub(crate) fn trace_operand(
+    pub(crate) fn operand_at(
         &self,
         op: OperandId,
         pos: usize,
@@ -258,7 +258,7 @@ impl<'a> ScalarEvolution<'a> {
     ) -> Result<AffineExpr, String> {
         let module = self.data.module;
         match module.operand(op) {
-            Operand::Register(reg) => self.trace_reg(*reg, pos, id, depth),
+            Operand::Register(reg) => self.at_use(*reg, pos, id, depth),
             Operand::Special(reg) => self.trace_special(*reg),
             Operand::Immediate(text) => {
                 let text = module.interner.resolve(*text);
@@ -271,7 +271,7 @@ impl<'a> ScalarEvolution<'a> {
             Operand::SymbolRef(s) => Ok(AffineExpr::from_base(SymExpr::sym(
                 module.interner.resolve(*s),
             ))),
-            Operand::Offset { base, offset } => Ok(self.trace_operand(*base, pos, id, depth)?
+            Operand::Offset { base, offset } => Ok(self.operand_at(*base, pos, id, depth)?
                 + AffineExpr::from_base(SymExpr::Const(*offset))),
             other => Err(format!(
                 "unsupported operand form in latch trace: {other:?}"
@@ -306,7 +306,7 @@ impl<'a> ScalarEvolution<'a> {
         }
     }
 
-    pub(crate) fn trace_reg(
+    pub(crate) fn at_use(
         &self,
         reg: Symbol,
         pos: usize,
@@ -325,7 +325,7 @@ impl<'a> ScalarEvolution<'a> {
             {
                 self.unread.borrow_mut().get_or_insert(why);
                 let u = Var::Unknown(v);
-                Ok(match self.low_zeros(v) {
+                Ok(match self.min_trailing_zeros(v) {
                     0 => AffineExpr::var(u),
                     k => {
                         AffineExpr::term(Var::FloorDiv(Box::new(u), 1 << k), SymExpr::Const(1 << k))
@@ -341,7 +341,7 @@ impl<'a> ScalarEvolution<'a> {
     /// constant's unsigned 32-bit value (PTX ISA §9.7.8.8), all of them
     /// where it reaches the width, and an unguarded `and` with a constant
     /// clears those its mask does.
-    fn low_zeros(&self, v: Value) -> u32 {
+    fn min_trailing_zeros(&self, v: Value) -> u32 {
         let module = self.data.module;
         let zeros = |s: &Value| {
             let Value::Result { op, .. } = *s else {
@@ -385,7 +385,7 @@ impl<'a> ScalarEvolution<'a> {
 
     /// A φ: a counter's `start + (k − 1)·step`; at a join, the one value
     /// every path writes; else one immediate every path writes.
-    fn trace_phi(
+    fn transfer_phi(
         &self,
         v: Value,
         block: BlockId,
@@ -474,7 +474,7 @@ impl<'a> ScalarEvolution<'a> {
     fn step(&self, l: LoopId, step: &Step, depth: u32) -> Result<SymExpr, Option<String>> {
         let mut sum = SymExpr::Const(step.constant);
         for &(reg, at, sign) in &step.registers {
-            let s = self.first_reason(|| self.trace_reg(reg, at, Some(l), depth + 1));
+            let s = self.first_reason(|| self.at_use(reg, at, Some(l), depth + 1));
             let s = s.map_err(|_| None)?;
             if !s.is_symbolic_or_constant() {
                 return Err(None);
@@ -528,7 +528,7 @@ impl<'a> ScalarEvolution<'a> {
     /// iterations, or holds a uniform value the lanes executing `pos` do
     /// not see alike: then each lane reads its own, and the reason prints
     /// that variable by `name`.
-    pub(crate) fn trace_address(
+    pub(crate) fn address(
         &self,
         base: OperandId,
         offset: i64,
@@ -536,7 +536,7 @@ impl<'a> ScalarEvolution<'a> {
         id: Option<LoopId>,
         name: &dyn Fn(&Var) -> String,
     ) -> Result<AffineExpr, String> {
-        let a = self.first_reason(|| self.trace_operand(base, pos, id, 0))?
+        let a = self.first_reason(|| self.operand_at(base, pos, id, 0))?
             + AffineExpr::from_base(SymExpr::Const(offset));
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
         for v in a.terms.keys() {
@@ -650,14 +650,14 @@ impl<'a> ScalarEvolution<'a> {
             Value::Argument {
                 block,
                 reg: Register::Named(reg),
-            } => return self.trace_phi(v, block, reg, id, depth),
+            } => return self.transfer_phi(v, block, reg, id, depth),
             Value::Undef(Register::Named(reg)) => {
                 let name = module.interner.resolve(reg);
                 return Err(format!("no definition found for {name}"));
             }
             _ => return Err("value is the carry flag".to_owned()),
         };
-        let value = self.written(def, reg, id, depth)?;
+        let value = self.transfer(def, reg, id, depth)?;
         if let Stmt::Instr(instr) = &self.data.kernel.stmts[def]
             && instr.predicate.is_some()
         {
@@ -668,7 +668,7 @@ impl<'a> ScalarEvolution<'a> {
     }
 
     /// The value statement `def` writes to `reg`, were its guard true.
-    fn written(
+    fn transfer(
         &self,
         def: usize,
         reg: Symbol,
@@ -690,7 +690,7 @@ impl<'a> ScalarEvolution<'a> {
             .collect();
         let ops = module.operand_ids(instr.operands).to_vec();
         let arg = |i: usize| -> Result<AffineExpr, String> {
-            self.trace_operand(ops[i], def, id, depth + 1)
+            self.operand_at(ops[i], def, id, depth + 1)
         };
         // A brace-enclosed destination's registers are the value's elements in
         // order (PTX ISA 6.4.3, "Vectors as Operands"): each is a parameter's
@@ -729,7 +729,7 @@ impl<'a> ScalarEvolution<'a> {
         let value = match mnemonic {
             Opcode::Mov => arg(1),
             Opcode::Cvta => {
-                self.trace_operand(*ops.last().expect("cvta has operands"), def, id, depth + 1)
+                self.operand_at(*ops.last().expect("cvta has operands"), def, id, depth + 1)
             }
             // PTX ISA §9.7.9.22: an integer `cvt` keeps a value its source
             // type reads that its destination type holds; any other
@@ -743,7 +743,7 @@ impl<'a> ScalarEvolution<'a> {
                     return Err(format!("`{opcode}` is not an integer conversion"));
                 };
                 let a =
-                    self.trace_operand(*ops.last().expect("cvt has operands"), def, id, depth + 1)?;
+                    self.operand_at(*ops.last().expect("cvt has operands"), def, id, depth + 1)?;
                 for ty in [from, to] {
                     if !self.within(&a, ty.values()) {
                         return Err(format!("`{opcode}` leaves {} bits", ty.width));
@@ -797,11 +797,11 @@ impl<'a> ScalarEvolution<'a> {
                     .find_map(|m| m.strip_prefix('b')?.parse::<u32>().ok())
                     .unwrap_or(32);
                 let modulo = |x: AffineExpr, k: u32| -> Result<AffineExpr, String> {
-                    (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.bound(v))))
+                    (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.var_bounds(v))))
                         .ok_or_else(|| refuse(&x, id, "mod"))
                 };
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
-                let range = bound.range(&|v| self.bound(v));
+                let range = bound.range(&|v| self.var_bounds(v));
                 let all = konst as u64 & u64::MAX >> (64 - width);
                 let (mut bits, mut sum) = (all, AffineExpr::from_base(SymExpr::Const(0)));
                 let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
@@ -831,8 +831,9 @@ impl<'a> ScalarEvolution<'a> {
                             63 => {
                                 return Err(format!("and-mask {konst:#x} keeps bit 63 without 62"));
                             }
-                            _ => (self
-                                .reduced(&hi, |x| x.align_down(1i64 << low, &|v| self.bound(v))))
+                            _ => (self.reduced(&hi, |x| {
+                                x.align_down(1i64 << low, &|v| self.var_bounds(v))
+                            }))
                             .ok_or_else(|| refuse(&hi, id, "mod"))?,
                         };
                     bits &= u64::MAX.checked_shl(top).unwrap_or(0);
@@ -844,7 +845,7 @@ impl<'a> ScalarEvolution<'a> {
                 // sides (its `or disjoint`, which PTX does not keep).
                 let (a, b) = (arg(1)?, arg(2)?);
                 let bound = |x: &AffineExpr| self.bindings.map_or(x.clone(), |m| x.bind(m));
-                let largest = |v: &Var| self.bound(v).map(|(_, hi)| hi);
+                let largest = |v: &Var| self.var_bounds(v).map(|(_, hi)| hi);
                 match bound(&a).may_set(&largest) & bound(&b).may_set(&largest) {
                     0 => Ok(a + b),
                     both => Err(format!(
@@ -883,10 +884,11 @@ impl<'a> ScalarEvolution<'a> {
                 if signed || !(0..63).contains(&pos) || !(1..63).contains(&len) {
                     return Err(format!("bfe at {pos} of {len} bits"));
                 }
-                let shifted = (self.reduced(&a, |x| x.div_const(1i64 << pos, &|v| self.bound(v))))
-                    .ok_or_else(|| refuse(&a, id, "bit field"))?;
+                let shifted = (self
+                    .reduced(&a, |x| x.div_const(1i64 << pos, &|v| self.var_bounds(v))))
+                .ok_or_else(|| refuse(&a, id, "bit field"))?;
                 (self.reduced(&shifted, |x| {
-                    x.modulo_const(1i64 << len, &|v| self.bound(v))
+                    x.modulo_const(1i64 << len, &|v| self.var_bounds(v))
                 }))
                 .ok_or_else(|| refuse(&shifted, id, "bit field"))
             }
@@ -929,7 +931,7 @@ impl<'a> ScalarEvolution<'a> {
                     if !(0..63).contains(&c) {
                         return Err(format!("shift by {c} is out of range"));
                     }
-                    return (self.reduced(&v, |x| x.div_const(1i64 << c, &|v| self.bound(v))))
+                    return (self.reduced(&v, |x| x.div_const(1i64 << c, &|v| self.var_bounds(v))))
                         .ok_or_else(|| refuse(&v, id, "shift"));
                 }
                 let signed_width = mods.iter().find_map(|m| match *m {
@@ -965,9 +967,9 @@ impl<'a> ScalarEvolution<'a> {
                     return Err(format!("{} by a non-constant divisor", mnemonic.name()));
                 };
                 let result = if mnemonic == Opcode::Div {
-                    self.reduced(&a, |x| x.div_const(d, &|v| self.bound(v)))
+                    self.reduced(&a, |x| x.div_const(d, &|v| self.var_bounds(v)))
                 } else {
-                    self.reduced(&a, |x| x.modulo_const(d, &|v| self.bound(v)))
+                    self.reduced(&a, |x| x.modulo_const(d, &|v| self.var_bounds(v)))
                 };
                 result.ok_or_else(|| refuse(&a, id, "division"))
             }
@@ -1165,7 +1167,7 @@ impl<'a> ScalarEvolution<'a> {
                 {
                     return None;
                 }
-                Some(self.trace_operand(element, op, id, depth + 1))
+                Some(self.operand_at(element, op, id, depth + 1))
             }
             &Operand::Register(copied) if matches!(module.operand(dest), Operand::Register(_)) => {
                 self.unpacked(copied, op, place, count, id, depth + 1)
@@ -1207,7 +1209,7 @@ impl<'a> ScalarEvolution<'a> {
     /// [lo, hi), or is unknown.
     fn within(&self, a: &AffineExpr, (lo, hi): (i128, i128)) -> bool {
         let bound = self.bindings.map_or(a.clone(), |m| a.bind(m));
-        (bound.range(&|v| self.bound(v))).is_none_or(|(x, y)| lo <= x && y < hi)
+        (bound.range(&|v| self.var_bounds(v))).is_none_or(|(x, y)| lo <= x && y < hi)
     }
 
     /// A 16- or 32-bit `add`, `sub`, `neg`, `mul.lo`, `mad.lo`, `shl` or `bfe`
@@ -1234,7 +1236,7 @@ impl<'a> ScalarEvolution<'a> {
     /// A variable's least and greatest value when the launch or a
     /// constant trip count fixes it: `%tid` below the bound block shape,
     /// `%ctaid` below a bound grid, a counter in [1, n].
-    pub(crate) fn bound(&self, v: &Var) -> Option<(i64, i64)> {
+    pub(crate) fn var_bounds(&self, v: &Var) -> Option<(i64, i64)> {
         let shape = |vector: SpecialVector, axis: &Axis| {
             let i = match axis {
                 Axis::X => 0,
@@ -1346,13 +1348,13 @@ pub(crate) struct LoopTripCount {
 
 /// The latch read with each uniform value it cannot interpret a
 /// variable.
-fn counted_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, String> {
-    se.first_reason(|| latch_trips(se, id))
+fn counted_trips(affine: &AffineAnalysis<'_>, id: LoopId) -> Result<LoopTripCount, String> {
+    affine.first_reason(|| latch_trips(affine, id))
 }
 
-fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, String> {
-    let (module, cfg) = (se.data.module, se.data.cfg);
-    let l = se.data.forest.get(id);
+fn latch_trips(affine: &AffineAnalysis<'_>, id: LoopId) -> Result<LoopTripCount, String> {
+    let (module, cfg) = (affine.data.module, affine.data.cfg);
+    let l = affine.data.forest.get(id);
 
     // Structural requirements: one latch, one exit edge, at the latch.
     if l.latches.len() != 1 {
@@ -1377,7 +1379,7 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
 
     // The latch terminator: `@%p bra HEADER` (or inverted).
     let latch_block = cfg.block(latch);
-    let branch = se
+    let branch = affine
         .data
         .last_instr(latch)
         .ok_or_else(|| "latch block has no instructions".to_owned())?;
@@ -1393,9 +1395,9 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
     }
 
     // The setp defining the branch predicate, inside the latch block.
-    let Some((setp_idx, setp)) = se.data.find_setp(latch, branch.0, pred.reg) else {
-        return predicate_phi_trips(se, id, latch, branch.0, pred.reg, continue_if_true)
-            .unwrap_or_else(|| Err(predicate_reason(se, latch, branch.0, pred.reg)))
+    let Some((setp_idx, setp)) = affine.data.find_setp(latch, branch.0, pred.reg) else {
+        return predicate_phi_trips(affine, id, latch, branch.0, pred.reg, continue_if_true)
+            .unwrap_or_else(|| Err(predicate_reason(affine, latch, branch.0, pred.reg)))
             .map(|count| LoopTripCount {
                 count,
                 entry: l.header,
@@ -1406,7 +1408,7 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
         let name = module.interner.resolve(pred.reg);
         return Err(format!("{name} is written under a guard"));
     }
-    let cmp = se
+    let cmp = affine
         .data
         .module
         .modifiers(setp)
@@ -1429,8 +1431,8 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
         4 => return Err("latch condition combines a comparison with a predicate".to_owned()),
         _ => return Err("setp with unexpected operand count".to_owned()),
     }
-    let a = se.trace_operand(ops[1], setp_idx, Some(id), 0)?;
-    let b = se.trace_operand(ops[2], setp_idx, Some(id), 0)?;
+    let a = affine.operand_at(ops[1], setp_idx, Some(id), 0)?;
+    let b = affine.operand_at(ops[2], setp_idx, Some(id), 0)?;
     // PTX ISA §9.7.6.2: a floating-point `setp` compares floats, not the traced integers.
     if (module.modifiers(setp).last()).is_some_and(|&m| {
         let ty = module.interner.resolve(m);
@@ -1438,7 +1440,7 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
     }) {
         return Err("latch condition compares floating-point values".to_owned());
     }
-    let d = uniform_symbols(se, id, setp_idx, a - b)
+    let d = uniform_symbols(affine, id, setp_idx, a - b)
         .ok_or_else(|| "latch condition depends on a value an enclosing loop defines".to_owned())?;
     let d = per_cta(d); // D = A − B; condition is `D cmp 0`
 
@@ -1455,7 +1457,7 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
     let Some(coeff) = d.terms.get(&k) else {
         return Err("latch condition does not involve an induction variable".to_owned());
     };
-    let a1 = (se.constant(&AffineExpr::from_base(coeff.clone())))
+    let a1 = (affine.constant(&AffineExpr::from_base(coeff.clone())))
         .ok_or_else(|| "induction step is not a constant".to_owned())?;
     if a1 == i64::MIN {
         return Err("induction step is −2^63, which has no negation".to_owned());
@@ -1464,14 +1466,14 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
         return Err(format!("unsupported latch comparison `{cmp}`"));
     };
     let cond = if continue_if_true { cmp } else { cmp.inverse() };
-    let bound = se.bindings.and_then(|b| d.base.bind(b).as_const());
+    let bound = affine.bindings.and_then(|b| d.base.bind(b).as_const());
     if cond == Cmp::Ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
         return Err("latch condition never meets its `!=` bound".to_owned());
     }
     let trips = exit_limit(cond, a1, d.base.clone())?;
     let distance =
         (cond == Cmp::Ne).then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
-    match (below_zero(cond, d.base), guard_test(se, id)) {
+    match (below_zero(cond, d.base), guard_test(affine, id)) {
         (Some(at_zero), Some((g, test))) if test == at_zero => Ok(LoopTripCount {
             count: SymExpr::max(trips, SymExpr::Const(0)),
             entry: g,
@@ -1500,8 +1502,8 @@ fn latch_trips(se: &ScalarEvolution<'_>, id: LoopId) -> Result<LoopTripCount, St
 /// and its test of entering the loop, read from the `setp` that reaches
 /// its branch predicate, as `e < 0`; `!=` and `==` of a side never
 /// negative as `>` and `<=`.
-fn guard_test(se: &ScalarEvolution<'_>, id: LoopId) -> Option<(BlockId, SymExpr)> {
-    let (module, cfg, forest) = (se.data.module, se.data.cfg, se.data.forest);
+fn guard_test(affine: &AffineAnalysis<'_>, id: LoopId) -> Option<(BlockId, SymExpr)> {
+    let (module, cfg, forest) = (affine.data.module, affine.data.cfg, affine.data.forest);
     let l = forest.get(id);
     let mut outside =
         (cfg.block(l.header).preds.iter()).filter(|p| l.blocks.binary_search(p).is_err());
@@ -1511,8 +1513,8 @@ fn guard_test(se: &ScalarEvolution<'_>, id: LoopId) -> Option<(BlockId, SymExpr)
     let (mut g, mut into) = (pre, l.header);
     loop {
         (g, into) = match (&cfg.block(g).succs[..], &cfg.block(g).preds[..]) {
-            ([_], &[p]) if !exits_some(se, g) => (p, g),
-            ([_, _], _) => match sibling_entry(se, g, into) {
+            ([_], &[p]) if !exits_some(affine, g) => (p, g),
+            ([_, _], _) => match sibling_entry(affine, g, into) {
                 Some(entry) => entry,
                 None => break,
             },
@@ -1524,16 +1526,19 @@ fn guard_test(se: &ScalarEvolution<'_>, id: LoopId) -> Option<(BlockId, SymExpr)
     };
     let skip = if taken == into { other } else { taken };
     let in_loop = |b: BlockId| forest.block_loop[b.0 as usize];
-    if taken == other || in_loop(g) != l.parent || se.data.path_avoiding(skip, l.header, g) {
+    if taken == other || in_loop(g) != l.parent || affine.data.path_avoiding(skip, l.header, g) {
         return None;
     }
-    let (pos, bra) = se.data.last_instr(g)?;
+    let (pos, bra) = affine.data.last_instr(g)?;
     let pred = bra.predicate?;
-    let Some(Value::Result { op, .. }) = se.data.ssa.value_before(pos, Register::Named(pred.reg))
+    let Some(Value::Result { op, .. }) =
+        affine.data.ssa.value_before(pos, Register::Named(pred.reg))
     else {
         return None;
     };
-    let (def, setp) = se.data.find_setp(se.data.block_of(op), op + 1, pred.reg)?;
+    let (def, setp) = affine
+        .data
+        .find_setp(affine.data.block_of(op), op + 1, pred.reg)?;
     let mods: Vec<&str> = (module.modifiers(setp).iter())
         .map(|&m| module.interner.resolve(m))
         .collect();
@@ -1548,10 +1553,10 @@ fn guard_test(se: &ScalarEvolution<'_>, id: LoopId) -> Option<(BlockId, SymExpr)
         return None;
     }
     let form = per_cta(uniform_symbols(
-        se,
+        affine,
         id,
         def,
-        se.trace_operand(a, def, None, 0).ok()? - se.trace_operand(b, def, None, 0).ok()?,
+        affine.operand_at(a, def, None, 0).ok()? - affine.operand_at(b, def, None, 0).ok()?,
     )?);
     let cmp = Cmp::from_name(mods.first()?)?;
     let cmp = if (taken == into) != pred.negated {
@@ -1581,17 +1586,18 @@ fn guard_test(se: &ScalarEvolution<'_>, id: LoopId) -> Option<(BlockId, SymExpr)
 /// The one block entering loop S from outside, and S's header, where `g`
 /// is S's one latch and `g → into` its one exit edge.
 fn sibling_entry(
-    se: &ScalarEvolution<'_>,
+    affine: &AffineAnalysis<'_>,
     g: BlockId,
     into: BlockId,
 ) -> Option<(BlockId, BlockId)> {
-    let (forest, cfg) = (se.data.forest, se.data.cfg);
+    let (forest, cfg) = (affine.data.forest, affine.data.cfg);
     let s = forest.get(forest.block_loop[g.0 as usize]?);
     let inside = |b: &BlockId| s.blocks.binary_search(b).is_ok();
     let exits = (s.blocks.iter())
         .flat_map(|&b| cfg.block(b).succs.iter().map(move |&t| (b, t)))
         .filter(|(_, t)| !inside(t));
-    if s.latches != [g] || !exits.eq([(g, into)]) || s.blocks.iter().any(|&b| exits_some(se, b)) {
+    if s.latches != [g] || !exits.eq([(g, into)]) || s.blocks.iter().any(|&b| exits_some(affine, b))
+    {
         return None;
     }
     let mut outside = (cfg.block(s.header).preds.iter()).filter(|p| !inside(p));
@@ -1603,8 +1609,9 @@ fn sibling_entry(
 
 /// Block `b` ends in a predicated `ret` or `exit`, which the CFG reads as
 /// falling through.
-fn exits_some(se: &ScalarEvolution<'_>, b: BlockId) -> bool {
-    (se.data.last_instr(b)).is_some_and(|(_, i)| matches!(i.mnemonic, Opcode::Ret | Opcode::Exit))
+fn exits_some(affine: &AffineAnalysis<'_>, b: BlockId) -> bool {
+    (affine.data.last_instr(b))
+        .is_some_and(|(_, i)| matches!(i.mnemonic, Opcode::Ret | Opcode::Exit))
 }
 
 /// `a` with its terms in the CTA index as symbols of its base: `%ctaid`
@@ -1622,14 +1629,15 @@ fn per_cta(a: AffineExpr) -> AffineExpr {
 /// every trip of every entry of loop `id` where it is defined outside
 /// the loops holding `id` and every lane executing `pos` sees it alike.
 fn uniform_symbols(
-    se: &ScalarEvolution<'_>,
+    affine: &AffineAnalysis<'_>,
     id: LoopId,
     pos: usize,
     a: AffineExpr,
 ) -> Option<AffineExpr> {
-    let top = std::iter::successors(Some(id), |&l| se.data.forest.get(l).parent).last()?;
-    let alike =
-        |u: Value| !se.data.defined_in(u, top) && se.uniformity().value_uniform_at(u, pos).is_ok();
+    let top = std::iter::successors(Some(id), |&l| affine.data.forest.get(l).parent).last()?;
+    let alike = |u: Value| {
+        !affine.data.defined_in(u, top) && affine.uniformity().value_uniform_at(u, pos).is_ok()
+    };
     if !a.terms.keys().filter_map(Var::uniform).all(alike) {
         return None;
     }
@@ -1642,16 +1650,16 @@ fn uniform_symbols(
 /// No setp defines the latch predicate: say what does, if anything
 /// in the latch block does (`mbarrier.test_wait` in a spin-wait).
 fn predicate_reason(
-    se: &ScalarEvolution<'_>,
+    affine: &AffineAnalysis<'_>,
     latch: BlockId,
     before: usize,
     pred: Symbol,
 ) -> String {
-    let module = se.data.module;
-    let definer = se
+    let module = affine.data.module;
+    let definer = affine
         .data
         .last_write_in(latch, before, pred)
-        .map(|d| &se.data.kernel.stmts[d]);
+        .map(|d| &affine.data.kernel.stmts[d]);
     match definer {
         Some(Stmt::Instr(i)) if i.mnemonic == Opcode::Setp => {
             format!(
@@ -1672,14 +1680,19 @@ fn predicate_reason(
 /// -1; header: mov.pred %p, %q; latch: mov.pred %q, 0; @%p bra
 /// header`). Trips: 2 if the initial value continues, else 1.
 fn predicate_phi_trips(
-    se: &ScalarEvolution<'_>,
+    affine: &AffineAnalysis<'_>,
     id: LoopId,
     latch: BlockId,
     branch_idx: usize,
     pred: Symbol,
     continue_if_true: bool,
 ) -> Option<Result<SymExpr, String>> {
-    let (module, kernel, cfg, ssa) = (se.data.module, se.data.kernel, se.data.cfg, &se.data.ssa);
+    let (module, kernel, cfg, ssa) = (
+        affine.data.module,
+        affine.data.kernel,
+        affine.data.cfg,
+        &affine.data.ssa,
+    );
     let mov_src = |site: usize| -> Option<&Operand> {
         let Stmt::Instr(instr) = &kernel.stmts[site] else {
             return None;
@@ -1699,24 +1712,24 @@ fn predicate_phi_trips(
     let Operand::Register(phi) = mov_src(copy)? else {
         return None;
     };
-    if !se.data.in_loop(id, copy) {
+    if !affine.data.in_loop(id, copy) {
         return None;
     }
     let latch_blk = cfg.block(latch);
-    let mut in_loop = se
+    let mut in_loop = affine
         .data
         .writes
         .get(&Register::Named(*phi))?
         .iter()
-        .filter(|&&d| se.data.in_loop(id, d));
+        .filter(|&&d| affine.data.in_loop(id, d));
     let (&latch_def, None) = (in_loop.next()?, in_loop.next()) else {
         return None;
     };
     if latch_def < latch_blk.start || latch_def >= latch_blk.end {
         return None;
     }
-    let lp = se.data.forest.get(id);
-    let entry = se
+    let lp = affine.data.forest.get(id);
+    let entry = affine
         .data
         .ssa
         .value_before(cfg.block(lp.header).start, Register::Named(*phi))?;
@@ -1867,13 +1880,13 @@ mod tests {
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
         let k_max = HashMap::from([(SymbolicConstant::KernelParam(2), i64::from(i32::MAX))]);
-        let se = ScalarEvolution::new(&data).with_bindings(&k_max);
+        let affine = AffineAnalysis::new(&data).with_bindings(&k_max);
         let mut loops = (0..f.loops.len() as u32).map(LoopId);
         let outer = loops
             .find(|&l| f.get(l).parent.is_none())
             .expect("an outer loop");
-        assert_eq!(se.constant_trips(outer), None);
-        let count = se.loop_trip_count(outer).err();
+        assert_eq!(affine.constant_trips(outer), None);
+        let count = affine.loop_trip_count(outer).err();
         assert_eq!(count.as_deref(), Some("`add.s32` leaves 32 bits"));
     }
 
