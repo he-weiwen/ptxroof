@@ -101,6 +101,18 @@ contract (Codex's review of 2b2731b).
 
 ### Wrong output
 
+- **Static shared bytes leave out the padding alignment puts between
+  declarations.** "The variable will be aligned to an address which is
+  an integer multiple of byte-count" (PTX ISA §5.4.5), but the static
+  bytes are the declarations' sizes summed: a kernel declaring
+  `.shared .align 4 .b8 a[4];` then `.shared .align 8 .b8 b[8];` reads
+  `shared memory [static]: 12 B per CTA`, where `ptxas -v` (13.4,
+  sm_90) reports `16 bytes smem`.
+- **A vector `.shared` variable is not read.** PTX ISA §5.4.2 declares
+  one as `.shared .v2 .u16 uv;`. At module scope it is dropped:
+  `--dump-ast` prints no declaration of `uv` and the report has no
+  shared memory line; in a kernel it is an unparsed statement. `ptxas
+  -v` (13.4, sm_90) reports `4 bytes smem` for either.
 - **A `cp.async`'s global sectors are counted as a load's.** Nsight
   Compute counts them otherwise where two lanes' shared destinations
   fall in one bank group or are one, or two lanes read one source
