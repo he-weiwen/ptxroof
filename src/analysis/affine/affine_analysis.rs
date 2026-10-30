@@ -69,8 +69,9 @@ use std::collections::{HashMap, HashSet};
 mod loop_trip_count;
 mod transfer;
 
-/// How many definitions deep a trace follows a value before giving up.
-const DEPTH_LIMIT: u32 = 256;
+/// How many definitions deep a trace follows a value before it is cut,
+/// for a debug build's 2 MB thread stack.
+const DEPTH_LIMIT: u32 = 32;
 
 type Traced = (AffineProperties, Option<UnknownReason>);
 type Memo<K, T> = RefCell<HashMap<K, Slot<T>>>;
@@ -98,6 +99,9 @@ pub(crate) struct AffineAnalysis<'a> {
     /// trace cut at `DEPTH_LIMIT`: no result is cached that read one
     /// outside its own computation.
     provisional: Cell<usize>,
+    /// The value a trace was last cut at, for the query outside every
+    /// trace to trace on its own.
+    cut: Cell<Option<Value>>,
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
     uniformity: &'a UniformityInfo<'a>,
@@ -147,6 +151,7 @@ impl<'a> AffineAnalysis<'a> {
             values: RefCell::new(HashMap::new()),
             frames: Cell::new(0),
             provisional: Cell::new(usize::MAX),
+            cut: Cell::new(None),
             bindings,
             uniformity,
             unread: RefCell::new(None),
@@ -506,7 +511,7 @@ impl<'a> AffineAnalysis<'a> {
             (Ok(_), Ok(_)) => Err("the trip count changes once it is known".into()),
         };
         let count = || self.counted_trips(id);
-        self.memoized(&self.trips, id, unfinished, count, settle)
+        self.uncut(|| self.memoized(&self.trips, id, unfinished, count, settle))
     }
 
     /// The address `offset` bytes past `base` at `pos` under the bindings,
@@ -615,6 +620,45 @@ impl<'a> AffineAnalysis<'a> {
 
     /// What value `v` is at its definition.
     fn properties(&self, v: Value, depth: u32) -> AffineProperties {
+        self.uncut(|| self.properties_once(v, depth))
+    }
+
+    /// `query`, outside every trace, with each value a trace of it was
+    /// cut at traced first on its own, the deepest first, so that its
+    /// result does not depend on what earlier queries cached.
+    fn uncut<T>(&self, query: impl Fn() -> T) -> T {
+        if self.frames.get() > 0 {
+            return query();
+        }
+        let unread = self.unread.borrow().is_some();
+        let mut tried = HashSet::new();
+        loop {
+            let t = query();
+            let first = match self.cut.take() {
+                Some(c) if tried.insert(c) => c,
+                _ => return t,
+            };
+            let mut cuts = vec![first];
+            while let Some(&c) = cuts.last() {
+                let _ = self.properties_once(c, 0);
+                match self.cut.take() {
+                    Some(d) if tried.insert(d) => cuts.push(d),
+                    _ => _ = cuts.pop(),
+                }
+            }
+            if !unread {
+                self.unread.take();
+            }
+        }
+    }
+
+    /// Cuts the trace in progress at `v`: nothing that read it is cached.
+    pub(super) fn cut_at(&self, v: Value) {
+        self.provisional.set(0);
+        self.cut.set(Some(v));
+    }
+
+    fn properties_once(&self, v: Value, depth: u32) -> AffineProperties {
         let unknown = |reason| AffineProperties::Unknown {
             reason,
             min_trailing_zeros: self.min_trailing_zeros(v),
@@ -645,7 +689,7 @@ impl<'a> AffineAnalysis<'a> {
     fn trace_uncached(&self, v: Value, depth: u32) -> Result<AffineExpr, UnknownReason> {
         let module = self.data.module;
         if depth > DEPTH_LIMIT {
-            self.provisional.set(0);
+            self.cut_at(v);
             return Err("value trace exceeds depth limit".into());
         }
         let (def, reg) = match v {
@@ -905,6 +949,38 @@ mod tests {
         );
         let wraps = Err("`add.u32` leaves 32 bits".to_owned());
         assert_eq!(trips_of(&src)[0], ("$L__O".to_owned(), wraps));
+    }
+
+    #[test]
+    fn a_chain_longer_than_one_trace_reads_alike_whatever_was_read_before() {
+        let src = include_str!("../../../tests/fixtures/micro/long_chain.ptx");
+        let m = parse(src).expect("long_chain parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &f);
+        let uniformity = UniformityInfo::new(&data);
+        let reads = |mnemonic: Opcode| {
+            (k.stmts.iter().enumerate())
+                .filter_map(move |(i, s)| match s {
+                    Stmt::Instr(instr) if instr.mnemonic == mnemonic => Some((i, instr)),
+                    _ => None,
+                })
+                .map(|(i, instr)| (m.operand_ids(instr.operands)[1], i))
+        };
+        let (last, at) = reads(Opcode::Mul).next().expect("a mul.wide");
+        let (middle, middle_at) = reads(Opcode::Add).nth(150).expect("150 adds");
+        let read = |first: bool| {
+            let affine = AffineAnalysis::new(&data, &uniformity, None);
+            if first {
+                let _ = affine.operand_at(middle, middle_at, 0);
+            }
+            let a = affine.operand_at(last, at, 0);
+            a.map(|a| a.to_string())
+                .map_err(|r| r.render(&data, None, false))
+        };
+        assert_eq!(read(false), Ok("%tid.x + 300".to_owned()));
+        assert_eq!(read(true), read(false));
     }
 
     #[test]

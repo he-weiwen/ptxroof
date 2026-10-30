@@ -1,0 +1,10 @@
+# Values through more definitions than one trace follows (DEPTH_LIMIT):
+# a query traces each value its trace was cut at on its own first, so
+# the address through 300 additions reads, and the loop whose bound is
+# reached through 40 counts 40 trips.
+RUN: %ptxroof analyze %fixtures/micro/long_chain.ptx | FileCheck "%s"
+CHECK-LABEL: kernel micro_long_chain
+CHECK: st.global.u32  global store 4 B  warp: 4–5 sectors (ideal 4)    [4 * %tid.x + param_0 + 1200]
+CHECK-LABEL: kernel micro_long_chain_bound
+CHECK: loop $L__BB1_1 ($L__BB1_1)
+CHECK-NEXT: trips = 40
