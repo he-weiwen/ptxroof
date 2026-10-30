@@ -337,14 +337,22 @@ pub struct RegDecl {
     pub count: Option<u32>,
 }
 
-/// In-body `.shared .align A .b8 name[N];` (or `.extern` dynamic form
-/// with empty brackets — `size` is `None` there).
+/// `.shared .align A .b8 name[N];`, a scalar `.shared .b64 name;`, or
+/// the `.extern` dynamic form with empty brackets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharedDecl {
     pub name: Symbol,
     pub align: Option<u32>,
     pub ty: FundamentalType,
-    pub size: Option<u64>,
+    pub size: SharedSize,
+}
+
+/// A variable declaration's "optional array size" (PTX ISA §5.4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedSize {
+    Scalar,
+    Array(u64),
+    Dynamic,
 }
 
 #[derive(Debug, Clone)]

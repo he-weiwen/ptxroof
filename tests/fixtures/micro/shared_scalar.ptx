@@ -1,0 +1,32 @@
+//
+// HAND-WRITTEN: `.shared` variables declared without an array size
+// (PTX ISA §5.4.1), as CUDA `__shared__` scalars compile, one at module
+// scope and one in the kernel: each reserves its type's size, 8 + 8 =
+// 16 B (ptxas 13.4 -v: `16 bytes smem`).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.shared .align 8 .b64 total;
+
+.visible .entry micro_shared_scalar(
+	.param .u64 micro_shared_scalar_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<5>;
+	.shared .align 8 .b64 count;
+
+	ld.param.u64 	%rd1, [micro_shared_scalar_param_0];
+	cvta.to.global.u64 	%rd2, %rd1;
+	mov.u32 	%r1, %tid.x;
+	cvt.u64.u32 	%rd3, %r1;
+	st.shared.u64 	[count], %rd3;
+	st.shared.u64 	[total], %rd3;
+	bar.sync 	0;
+	ld.shared.u64 	%rd4, [count];
+	st.global.u64 	[%rd2], %rd4;
+	ret;
+}

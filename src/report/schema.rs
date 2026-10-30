@@ -66,7 +66,7 @@ pub struct KernelReport {
     /// and where control goes next.
     pub blocks: Vec<BlockInfo>,
     /// Shared memory reserved per CTA. `static_bytes` is the sum of the
-    /// kernel's `.shared` array declarations — a `[static]` demand
+    /// kernel's `.shared` declarations — a `[static]` demand
     /// figure that matches ptxas's `bytes smem` and Nsight Compute's
     /// `launch__shared_mem_per_block_static`; driver-reserved shared
     /// memory (NCU's `_driver`) is not included. `dynamic` is set when

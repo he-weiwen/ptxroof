@@ -1,0 +1,10 @@
+# A `.shared` variable without an array size, at module scope and in
+# the kernel, prints back as a scalar and reserves its type's size,
+# 8 + 8 = 16 B (ptxas 13.4 -v: `16 bytes smem`); it was read as an
+# `.extern .shared` array sized at launch.
+RUN: %ptxroof analyze --dump-ast %fixtures/micro/shared_scalar.ptx | FileCheck --check-prefix=AST "%s"
+RUN: %ptxroof analyze %fixtures/micro/shared_scalar.ptx | FileCheck "%s"
+AST-NOT: .extern
+AST: .shared .align 8 .b64 total;
+AST: .shared .align 8 .b64 count;
+CHECK: shared memory [static]: 16 B per CTA{{$}}
