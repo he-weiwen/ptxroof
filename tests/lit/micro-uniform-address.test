@@ -11,6 +11,7 @@ CHECK: warp: 4–5 sectors (ideal 4)
 CHECK-SAME: [4 * %tid.x + 256 * uniform(%r3@38) + param_0]
 CHECK-LABEL: kernel micro_uniform_div_lanes
 CHECK: unknown: div by a non-constant divisor
+CHECK: unknowns: none
 CHECK-LABEL: kernel micro_uniform_in_loop
 CHECK: [4 * %tid.x + 256 * uniform(%r4@81) + param_0]
 CHECK-SAME: k[$L__BB2_1]: varies
@@ -22,6 +23,6 @@ CHECK: unknown: div by a non-constant divisor
 CHECK-LABEL: kernel micro_uniform_copied_after_divergent_exit
 CHECK: unknown: uniform(%r4@138) differs between lanes: depends on %tid.x
 CHECK-LABEL: kernel micro_uniform_shfl_after_divergent_exit
-CHECK: unknown: div by a non-constant divisor
+CHECK: unknown: uniform(%r4@165) differs between lanes: depends on %tid.x
 CHECK-LABEL: kernel micro_uniform_guarded_copy
 CHECK: unknown: div by a non-constant divisor

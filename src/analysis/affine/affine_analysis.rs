@@ -54,7 +54,7 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::register_effects::{registers, split_operands};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
-use crate::analysis::uniformity_info::{Uniform, UniformityInfo, cta_uniform};
+use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
     Element, Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialScalar, SpecialVector,
@@ -322,7 +322,7 @@ impl<'a> AffineAnalysis<'a> {
                 reason,
                 min_trailing_zeros,
             } if !matches!(v, Value::Undef(_))
-                && self.uniformity().register_uniformity(reg, pos) == Ok(Uniform::Cta) =>
+                && self.uniformity().register_uniformity(reg, pos).is_ok() =>
             {
                 self.unread.borrow_mut().get_or_insert(reason);
                 let u = Var::Unknown(v);
@@ -515,11 +515,11 @@ impl<'a> AffineAnalysis<'a> {
     }
 
     /// The address `offset` bytes past `base` at `pos` under the bindings,
-    /// one form for every lane unless it counts the iterations of a loop
-    /// that does not hold `pos` and that lanes leave at different
-    /// iterations, or holds a uniform value the lanes executing `pos` do
-    /// not see alike: then each lane reads its own, and the reason prints
-    /// that variable by `name`.
+    /// one form for the lanes of a warp unless it counts the iterations of
+    /// a loop that does not hold `pos` and that they leave at different
+    /// iterations, or holds an unknown value they do not see alike: then
+    /// each lane reads its own, and the reason prints that variable by
+    /// `name`.
     pub(crate) fn address(
         &self,
         base: OperandId,
@@ -532,7 +532,7 @@ impl<'a> AffineAnalysis<'a> {
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
         for v in a.terms.keys() {
             if let Some(l) = v.counter().filter(|&l| !self.data.in_loop(l, pos))
-                && let Err(why) = cta_uniform(self.uniformity().exit_uniformity(l))
+                && let Err(why) = self.uniformity().exit_uniformity(l)
             {
                 let k = name(&Var::Iteration(l));
                 return Err(
@@ -540,7 +540,7 @@ impl<'a> AffineAnalysis<'a> {
                 );
             }
             if let Some(u) = v.unknown()
-                && let Err(why) = cta_uniform(self.uniformity().value_uniformity(u, pos))
+                && let Err(why) = self.uniformity().value_uniformity(u, pos)
             {
                 let u = name(&Var::Unknown(u));
                 return Err(format!("{u} differs between lanes: {why}").into());

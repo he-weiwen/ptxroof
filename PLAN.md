@@ -210,11 +210,12 @@ contract (Codex's review of 2b2731b).
   read only in a block of one row.
 - **`shfl.sync.idx` reads one floor or mod of `%tid.x`**: a thread
   index under more, `⌊%tid.x/8⌋ mod 16` from a `bfe.u32` or
-  `⌊(%tid.x mod 32)/4⌋` from `%laneid`, is unknown, even where it is
+  `⌊(%tid.x mod 32)/4⌋` from `%laneid`, is no form, only the
+  shuffle's value, one for a warp (`uniform(%r6@57)`), even where it is
   the same across a warp (`⌊⌊%tid.x/8⌋/4⌋`, whose shuffle ptxas drops);
-  so is a fourth operand other than 31, which splits the warp into
-  sub-segments or clamps the lane (PTX ISA §9.7.9.6):
-  `micro/shfl_idx.ptx`.
+  a fourth operand other than 31, which splits the warp into
+  sub-segments or clamps the lane (PTX ISA §9.7.9.6), leaves it
+  unknown: `micro/shfl_idx.ptx`.
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
@@ -341,10 +342,12 @@ contract (Codex's review of 2b2731b).
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
   (`micro/offsets_wide.ptx`: `warp: ? (lane offsets reach 2^62
   bytes)`; `requested 32 B, unique unknown` for 8 distinct stores).
-- **A loop footprint takes an address holding a uniform variable the
-  loop computes as unread**: requested bytes only, unique and sector
-  bytes unknown (`micro/uniform_address.ptx`, `micro_uniform_in_loop`:
-  requested 2048 B, unique unknown).
+- **A loop footprint takes an address holding an unknown value the
+  loop computes, or one that is one value per warp only, as unread**:
+  requested bytes only, unique and sector bytes unknown
+  (`micro/uniform_address.ptx`, `micro_uniform_in_loop`: requested
+  2048 B, unique unknown; `micro/footprint_unknown.ptx`, a pointer the
+  loop loads: requested 64 B, unique unknown).
 - **A global load is taken to read one value for every thread of the
   CTA** where its address is the same for them and no store of the
   kernel writes through its pointer parameter; PTX ISA §8.5 makes no
@@ -388,8 +391,9 @@ contract (Codex's review of 2b2731b).
   16–32 B, 16 B with `--bind 1:n=0`; `micro/uniform_bases.ptx`), count
   the loop's own blocks only, and need a numeric trip count, the block
   shape, constant lane and counter coefficients, every global access's
-  bytes (else no footprint, `micro/tensor_copies.ptx`) and address
-  (else `unique unknown`, `micro/footprint_unknown.ptx`), and
+  bytes (else no footprint, `micro/tensor_copies.ptx`) and address,
+  its unknown values one for the CTA (else `unique unknown`,
+  `micro/footprint_unknown.ptx`), and
   are bounds where which threads run the loop is not known. k5's K loop at
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
   k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B, a bound until M and
@@ -645,9 +649,9 @@ contract (Codex's review of 2b2731b).
 - A kernel's `unknowns:` line lists what leaves a count incomplete
   (unparsed statements, unclassified instructions, unknown trip
   counts, calls), not unknown addresses, which are only on their access
-  rows: `micro/footprint_unknown.ptx` reads `unknowns: none` beside a
-  store whose address is `unknown`
-  (`tests/lit/micro-footprint-unknown.test`).
+  rows: `micro/uniform_address.ptx`'s `micro_uniform_div_lanes` reads
+  `unknowns: none` beside a store whose address is `unknown`
+  (`tests/lit/micro-uniform-address.test`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
@@ -805,9 +809,10 @@ contract (Codex's review of 2b2731b).
 
 ## Missing features
 
-- A value affine analysis cannot read but every thread of the CTA shares as
+- A value affine analysis cannot read but the lanes of a warp share as
   an affine variable, `uniform(v)`, keyed by its register SSA value:
-  addresses and loop footprints read it (`micro/uniform_address.ptx`,
+  addresses read it, and loop footprints where every thread of the CTA
+  shares it (`micro/uniform_address.ptx`,
   `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`); trip counts
   and thread selectors do not. Register SSA
   itself

@@ -195,14 +195,6 @@ impl<'a> UniformityInfo<'a> {
     }
 }
 
-/// `Ok` where the CTA reads one value; the reason where it does not.
-pub(crate) fn cta_uniform(r: Result<Uniform, String>) -> Result<(), String> {
-    match r? {
-        Uniform::Cta => Ok(()),
-        Uniform::Warp => Err("is one value per warp only".to_owned()),
-    }
-}
-
 /// What the registers statement `d` writes depend on, or with
 /// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
 /// guard and the value it keeps where the guard is false.
@@ -627,6 +619,14 @@ mod tests {
     use crate::analysis::control_flow::loop_forest;
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
+
+    /// `Ok` where the CTA reads one value; the reason where it does not.
+    fn cta_uniform(r: Result<Uniform, String>) -> Result<(), String> {
+        match r? {
+            Uniform::Cta => Ok(()),
+            Uniform::Warp => Err("is one value per warp only".to_owned()),
+        }
+    }
 
     /// How alike the lanes read `reg` where the first `st.global.u32`
     /// reads it, one after `body` if it has none; `%r0` holds a parameter

@@ -40,7 +40,7 @@ use crate::analysis::memory_footprint::{
     AccessForm, CountRange, SharedRequest, Wavefronts, loop_bytes, warp_footprint, warp_wavefronts,
 };
 use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets, thread_sets};
-use crate::analysis::uniformity_info::UniformityInfo;
+use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{
@@ -432,9 +432,14 @@ impl KernelReportBuilder<'_> {
                         per_request.insert(pos, r);
                     }
                     if !self.unused[pos] {
+                        let cta = |u: Result<Uniform, String>| u == Ok(Uniform::Cta);
                         let unknown_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
                             v.unknown().is_some_and(|u| {
                                 scope.is_some_and(|l| affine.data.defined_in(u, l))
+                                    || !cta(affine.uniformity().value_uniformity(u, pos))
+                            }) || v.counter().is_some_and(|l| {
+                                !affine.data.in_loop(l, pos)
+                                    && !cta(affine.uniformity().exit_uniformity(l))
                             })
                         });
                         forms.entry(scope).or_default().push(AccessForm {

@@ -419,7 +419,9 @@ pub struct AccessForm {
     /// The block may not run on every iteration of its loop, and no
     /// thread-index selection explains that.
     pub conditional: bool,
-    /// The address holds an unknown value defined in its loop.
+    /// The address holds an unknown value defined in its loop or not one
+    /// for the CTA, or the count of a loop the CTA's threads leave at
+    /// different iterations.
     pub unknown_varies: bool,
 }
 
