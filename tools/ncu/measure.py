@@ -19,7 +19,8 @@ sectors its global loads and stores request.
 Lines of a loop that branches back on an mbarrier test_wait or try_wait
 result are marked timing_dependent. With --check the record is measured
 again on the GPU it names, if this is that GPU, and must not change but
-for those lines' executions and shared memory counts; on another GPU it
+for those lines' executions and shared memory counts and the driver
+version past its first two components; on another GPU it
 is skipped, or with PTXROOF_REQUIRE_GPU=1 fails. Either way it prints
 one line.
 
@@ -155,6 +156,8 @@ def main(path, check):
     record = json.loads(Path(path).read_text())
     ptx = REPO / record["ptx"]
     driver = run("nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader").splitlines()[0]
+    if check and record.get("driver", "").split(".")[:2] == driver.split(".")[:2]:
+        driver = record["driver"]
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         include = Path(shutil.which("ptxas")).resolve().parents[1] / "include"
