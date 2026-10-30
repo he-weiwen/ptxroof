@@ -326,7 +326,7 @@ impl KernelReportBuilder<'_> {
                                 Err(reason) => (
                                     None,
                                     Some({
-                                        let reason = reason.render();
+                                        let reason = reason.render(affine.data, scope, false);
                                         reason
                                             .strip_prefix("latch condition ")
                                             .unwrap_or(&reason)

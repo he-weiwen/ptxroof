@@ -100,11 +100,7 @@ impl AffineAnalysis<'_> {
                         SymbolicConstant::KernelParam(idx),
                     )));
                 }
-                if id.is_some_and(|l| self.data.in_loop(l, def)) {
-                    Err("latch condition depends on a value loaded inside the loop".into())
-                } else {
-                    Err("latch condition depends on a value loaded from memory".into())
-                }
+                Err(UnknownReason::Load { def })
             }
             Opcode::Add if ops.len() == 3 => Ok(arg(1)? + arg(2)?),
             Opcode::Sub if ops.len() == 3 => Ok(arg(1)? - arg(2)?),
@@ -136,7 +132,7 @@ impl AffineAnalysis<'_> {
                     .unwrap_or(32);
                 let modulo = |x: AffineExpr, k: u32| -> Result<AffineExpr, UnknownReason> {
                     (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.var_bounds(v))))
-                        .ok_or_else(|| refuse(&x, id, "mod"))
+                        .ok_or_else(|| refuse(&x, "mod"))
                 };
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
                 let range = bound.range(&|v| self.var_bounds(v));
@@ -175,7 +171,7 @@ impl AffineAnalysis<'_> {
                             _ => (self.reduced(&hi, |x| {
                                 x.align_down(1i64 << low, &|v| self.var_bounds(v))
                             }))
-                            .ok_or_else(|| refuse(&hi, id, "mod"))?,
+                            .ok_or_else(|| refuse(&hi, "mod"))?,
                         };
                     bits &= u64::MAX.checked_shl(top).unwrap_or(0);
                 }
@@ -203,7 +199,7 @@ impl AffineAnalysis<'_> {
                     |x: AffineExpr| self.bindings.map_or(x.clone(), |m| x.bind(m)).xor_swizzle();
                 match (arg(1).map(bits), arg(2).map(bits)) {
                     (Ok(Some(x)), Ok(Some(y))) => Ok(x.xor(&y).affine()),
-                    _ => Err(self.unread(instr, def, id)),
+                    _ => Err(self.unread(instr, def)),
                 }
             }
             Opcode::Bfe if ops.len() == 4 => {
@@ -228,11 +224,11 @@ impl AffineAnalysis<'_> {
                 }
                 let shifted = (self
                     .reduced(&a, |x| x.div_const(1i64 << pos, &|v| self.var_bounds(v))))
-                .ok_or_else(|| refuse(&a, id, "bit field"))?;
+                .ok_or_else(|| refuse(&a, "bit field"))?;
                 (self.reduced(&shifted, |x| {
                     x.modulo_const(1i64 << len, &|v| self.var_bounds(v))
                 }))
-                .ok_or_else(|| refuse(&shifted, id, "bit field"))
+                .ok_or_else(|| refuse(&shifted, "bit field"))
             }
             Opcode::Shl if ops.len() == 3 => {
                 let v = arg(1)?;
@@ -274,7 +270,7 @@ impl AffineAnalysis<'_> {
                         return Err(format!("shift by {c} is out of range").into());
                     }
                     return (self.reduced(&v, |x| x.div_const(1i64 << c, &|v| self.var_bounds(v))))
-                        .ok_or_else(|| refuse(&v, id, "shift"));
+                        .ok_or_else(|| refuse(&v, "shift"));
                 }
                 let signed_width = mods.iter().find_map(|m| match *m {
                     "s16" => Some(16),
@@ -313,7 +309,7 @@ impl AffineAnalysis<'_> {
                 } else {
                     self.reduced(&a, |x| x.modulo_const(d, &|v| self.var_bounds(v)))
                 };
-                result.ok_or_else(|| refuse(&a, id, "division"))
+                result.ok_or_else(|| refuse(&a, "division"))
             }
             Opcode::Shfl if mods.contains(&"idx") && ops.len() == 5 => {
                 // shfl.sync.idx d, a, c, 31, mask: a's value in lane c of the
@@ -401,7 +397,7 @@ impl AffineAnalysis<'_> {
             {
                 let (a, b) = (per_cta(arg(1)?), per_cta(arg(2)?));
                 if !(a.is_symbolic_or_constant() && b.is_symbolic_or_constant()) {
-                    return Err(refuse(&(a + b), id, mnemonic.name()));
+                    return Err(refuse(&(a + b), mnemonic.name()));
                 }
                 if let Some(ty) = IntType::of(&mods)
                     && !(self.within(&a, ty.values()) && self.within(&b, ty.values()))
@@ -427,7 +423,7 @@ impl AffineAnalysis<'_> {
                 } else if b.is_symbolic_or_constant() {
                     Ok(a.scale(b.base))
                 } else {
-                    Err(refuse(&(a + b), id, "product"))
+                    Err(refuse(&(a + b), "product"))
                 }
             }
             Opcode::Mad if ops.len() == 4 => {
@@ -438,26 +434,27 @@ impl AffineAnalysis<'_> {
                 } else if b.is_symbolic_or_constant() {
                     a.scale(b.base)
                 } else {
-                    return Err(refuse(&(a + b), id, "product"));
+                    return Err(refuse(&(a + b), "product"));
                 };
                 Ok(self.fits(prod, instr, &mods)? + c)
             }
-            _ => Err(self.unread(instr, def, id)),
+            _ => Err(self.unread(instr, def)),
         }?;
         self.fits(value, instr, &mods)
     }
 
     /// Why statement `def`'s instruction gives no value: the obstacle on
     /// an operand chain behind it, else the instruction.
-    fn unread(&self, instr: &Instr, def: usize, id: Option<LoopId>) -> UnknownReason {
+    fn unread(&self, instr: &Instr, def: usize) -> UnknownReason {
         let module = self.data.module;
         let mut seen = HashSet::new();
         let fundamental = (split_operands(module, instr).1.iter())
-            .find_map(|&op| self.operand_obstacle(op, def, id, &mut seen));
+            .find_map(|&op| self.operand_obstacle(op, def, &mut seen));
         match fundamental {
-            Some(reason) => {
-                format!("{}, behind `{}`", reason.render(), module.opcode(instr)).into()
-            }
+            Some(reason) => UnknownReason::Behind {
+                reason: Box::new(reason),
+                opcode: module.opcode(instr).to_string(),
+            },
             None => format!(
                 "value defined by unsupported instruction `{}`",
                 instr.mnemonic.name()
@@ -585,20 +582,10 @@ impl AffineAnalysis<'_> {
     }
 }
 
-/// Why an arithmetic form is refused: a special register or an enclosing
-/// loop's counter among its variables outranks the generic reason.
-fn refuse(a: &AffineExpr, id: Option<LoopId>, what: &str) -> UnknownReason {
-    for v in a.terms.keys() {
-        match v {
-            Var::Iteration(l) if Some(*l) == id => {}
-            Var::Iteration(_) => {
-                return "latch condition depends on an enclosing loop's counter".into();
-            }
-            other => {
-                return format!("latch condition depends on special register {other}, in a {what}")
-                    .into();
-            }
-        }
+/// Operation `what` of `a`, whose variables it does not take.
+fn refuse(a: &AffineExpr, what: &'static str) -> UnknownReason {
+    UnknownReason::NotAffine {
+        what,
+        vars: a.terms.keys().cloned().collect(),
     }
-    format!("{what} of an induction variable").into()
 }

@@ -208,22 +208,13 @@ impl<'a> AffineAnalysis<'a> {
     }
 
     /// A merged value: the obstacle on any of its definitions' chains.
-    pub(crate) fn obstacle_of_any_def(
-        &self,
-        reg: Symbol,
-        id: Option<LoopId>,
-    ) -> Option<UnknownReason> {
-        self.defs_obstacle(reg, id, &mut HashSet::from([reg]))
+    pub(crate) fn obstacle_of_any_def(&self, reg: Symbol) -> Option<UnknownReason> {
+        self.defs_obstacle(reg, &mut HashSet::from([reg]))
     }
 
     /// The obstacle on any of `reg`'s definitions' chains, through
     /// registers not yet `seen`.
-    fn defs_obstacle(
-        &self,
-        reg: Symbol,
-        id: Option<LoopId>,
-        seen: &mut HashSet<Symbol>,
-    ) -> Option<UnknownReason> {
+    fn defs_obstacle(&self, reg: Symbol, seen: &mut HashSet<Symbol>) -> Option<UnknownReason> {
         self.data
             .writes
             .get(&Register::Named(reg))?
@@ -233,7 +224,7 @@ impl<'a> AffineAnalysis<'a> {
                     return None;
                 };
                 (split_operands(self.data.module, instr).1.iter())
-                    .find_map(|&op| self.operand_obstacle(op, d, id, seen))
+                    .find_map(|&op| self.operand_obstacle(op, d, seen))
             })
     }
 
@@ -312,7 +303,7 @@ impl<'a> AffineAnalysis<'a> {
             _ if special_register(reg) == Some(SpecialRegister::PerCta) => Ok(
                 AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::SpecialReg(reg))),
             ),
-            _ => Err(format!("latch condition depends on special register {}", reg.name()).into()),
+            _ => Err(UnknownReason::SpecialRegister(reg)),
         }
     }
 
@@ -408,7 +399,7 @@ impl<'a> AffineAnalysis<'a> {
         let name = self.data.module.interner.resolve(reg);
         let header = (self.data.forest.loops.iter()).any(|l| l.header == block);
         let refused = || {
-            self.obstacle_of_any_def(reg, id)
+            self.obstacle_of_any_def(reg)
                 .unwrap_or_else(|| match header {
                     true => format!(
                         "latch condition depends on {name}, carried around an enclosing loop"
@@ -434,9 +425,7 @@ impl<'a> AffineAnalysis<'a> {
                 },
                 _ => format!("{name} is unwritten on some path"),
             };
-            return Err(self
-                .obstacle_of_any_def(reg, id)
-                .unwrap_or_else(|| why.into()));
+            return Err(self.obstacle_of_any_def(reg).unwrap_or_else(|| why.into()));
         }
         let common = match header {
             true => (self.same_immediate(&defs)).map(|c| AffineExpr::from_base(SymExpr::Const(c))),
@@ -718,7 +707,6 @@ impl<'a> AffineAnalysis<'a> {
         &self,
         reg: Symbol,
         pos: usize,
-        id: Option<LoopId>,
         seen: &mut HashSet<Symbol>,
     ) -> Option<UnknownReason> {
         let module = self.data.module;
@@ -727,7 +715,7 @@ impl<'a> AffineAnalysis<'a> {
         }
         let def = match self.data.ssa.value_before(pos, Register::Named(reg)) {
             Some(Value::Result { op, .. }) => op,
-            Some(Value::Argument { .. }) => return self.defs_obstacle(reg, id, seen),
+            Some(Value::Argument { .. }) => return self.defs_obstacle(reg, seen),
             Some(Value::Undef(_)) | None => return None,
         };
         let Stmt::Instr(instr) = &self.data.kernel.stmts[def] else {
@@ -740,17 +728,10 @@ impl<'a> AffineAnalysis<'a> {
             .iter()
             .any(|&m| module.interner.resolve(m) == "param");
         match instr.mnemonic {
-            Opcode::Ld if !is_param_load => Some(
-                if id.is_some_and(|l| self.data.in_loop(l, def)) {
-                    "latch condition depends on a value loaded inside the loop"
-                } else {
-                    "latch condition depends on a value loaded from memory"
-                }
-                .into(),
-            ),
-            Opcode::Atom => Some("latch condition depends on an atomic operation".into()),
+            Opcode::Ld if !is_param_load => Some(UnknownReason::Load { def }),
+            Opcode::Atom => Some(UnknownReason::Atomic),
             _ => (split_operands(module, instr).1.iter())
-                .find_map(|&op| self.operand_obstacle(op, def, id, seen)),
+                .find_map(|&op| self.operand_obstacle(op, def, seen)),
         }
     }
 
@@ -758,11 +739,10 @@ impl<'a> AffineAnalysis<'a> {
         &self,
         op: OperandId,
         pos: usize,
-        id: Option<LoopId>,
         seen: &mut HashSet<Symbol>,
     ) -> Option<UnknownReason> {
         match self.data.module.operand(op) {
-            Operand::Register(r) => self.obstacle(*r, pos, id, seen),
+            Operand::Register(r) => self.obstacle(*r, pos, seen),
             Operand::Special(reg) => special_obstacle(*reg),
             _ => None,
         }
@@ -771,7 +751,7 @@ impl<'a> AffineAnalysis<'a> {
 
 fn special_obstacle(reg: SpecialReg) -> Option<UnknownReason> {
     (special_register(reg) != Some(SpecialRegister::Zero))
-        .then(|| format!("latch condition depends on special register {}", reg.name()).into())
+        .then_some(UnknownReason::SpecialRegister(reg))
 }
 
 /// The count, the block it is per execution of, and a `!=` latch's
@@ -909,7 +889,8 @@ mod tests {
             if read_first {
                 let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, None, 0);
             }
-            affine.loop_trip_count(LoopId(0)).err().map(|r| r.render())
+            (affine.loop_trip_count(LoopId(0)).err())
+                .map(|r| r.render(&data, Some(LoopId(0)), true))
         };
         let wraps = Some("`add.u32` leaves 32 bits".to_owned());
         assert_eq!(counted(false), wraps);
@@ -947,7 +928,8 @@ mod tests {
             .find(|&l| f.get(l).parent.is_none())
             .expect("an outer loop");
         assert_eq!(affine.constant_trips(outer), None);
-        let count = affine.loop_trip_count(outer).err().map(|r| r.render());
+        let count =
+            (affine.loop_trip_count(outer).err()).map(|r| r.render(&data, Some(outer), true));
         assert_eq!(count.as_deref(), Some("`add.s32` leaves 32 bits"));
     }
 
