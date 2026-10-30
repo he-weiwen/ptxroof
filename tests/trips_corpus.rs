@@ -139,11 +139,11 @@ fn micro_trip_counts_and_honest_unknowns() {
     let (trips, _) = info_of("micro/no_loc.ptx");
     assert_eq!(trips, ["ok: param_1"]);
 
-    // The honesty case: a pointer-chase latch has no static trip count
-    // and the reason is named, never guessed (S9.1).
+    // The honesty case: a latch on loaded floats has no static trip
+    // count and the reason is named, never guessed (S9.1).
     let (trips, _) = info_of("micro/data_dep.ptx");
     assert_eq!(
         trips,
-        ["unknown: latch condition depends on a value loaded inside the loop"]
+        ["unknown: latch condition compares floating-point values"]
     );
 }

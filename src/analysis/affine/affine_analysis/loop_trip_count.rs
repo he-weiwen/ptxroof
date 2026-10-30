@@ -91,8 +91,6 @@ impl AffineAnalysis<'_> {
             4 => return Err("latch condition combines a comparison with a predicate".into()),
             _ => return Err("setp with unexpected operand count".into()),
         }
-        let a = self.operand_at(ops[1], setp_idx, 0)?;
-        let b = self.operand_at(ops[2], setp_idx, 0)?;
         // PTX ISA §9.7.6.2: a floating-point `setp` compares floats, not the traced integers.
         if (module.modifiers(setp).last()).is_some_and(|&m| {
             let ty = module.interner.resolve(m);
@@ -100,6 +98,8 @@ impl AffineAnalysis<'_> {
         }) {
             return Err("latch condition compares floating-point values".into());
         }
+        let a = self.operand_at(ops[1], setp_idx, 0)?;
+        let b = self.operand_at(ops[2], setp_idx, 0)?;
         let d = self
             .cta_uniform_symbols(id, setp_idx, a - b)
             .ok_or_else(|| {

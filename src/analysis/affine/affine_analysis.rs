@@ -1822,8 +1822,8 @@ mod tests {
         let src = kernel_with(
             ".param .u64 k_param_0",
             "ld.param.u64 %rd1, [k_param_0];\n\
-             $L__L:\nld.global.f32 %f1, [%rd1];\nadd.s64 %rd1, %rd1, 4;\n\
-             setp.gt.f32 %p1, %f1, 0f00000000;\n@%p1 bra $L__L;\nret;",
+             $L__L:\nld.global.u32 %r1, [%rd1];\nadd.s64 %rd1, %rd1, 4;\n\
+             setp.gt.s32 %p1, %r1, 0;\n@%p1 bra $L__L;\nret;",
         );
         let trips = trips_of(&src);
         assert_eq!(
