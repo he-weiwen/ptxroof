@@ -10,7 +10,7 @@ CHECK: trips = unknown: loop exit is not at the latch
 CHECK: loop gluon_attn_fwd.py:131 (waitLoop$scope1)
 CHECK: trips = unknown: latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison
 CHECK: loop gluon_attn_fwd.py:143 ($L__BB0_43)
-CHECK: trips = unknown: latch condition depends on special register %ctaid.x
+CHECK: trips = unknown: latch condition depends on %r1979, carried around an enclosing loop
 CHECK: mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32                                                              <= 128
 CHECK: tensor flops = <= 16384  (bf16 <= 16384)
 CHECK: global bytes: load <= 128 B, store 0 B

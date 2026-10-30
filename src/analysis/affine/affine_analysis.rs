@@ -791,8 +791,11 @@ impl<'a> AffineAnalysis<'a> {
 }
 
 fn special_obstacle(reg: SpecialReg) -> Option<UnknownReason> {
-    (special_register(reg) != Some(SpecialRegister::Zero))
-        .then_some(UnknownReason::SpecialRegister(reg))
+    let alike = matches!(
+        special_register(reg),
+        Some(SpecialRegister::Zero | SpecialRegister::PerCta)
+    );
+    (!alike).then_some(UnknownReason::SpecialRegister(reg))
 }
 
 /// The count, the block it is per execution of, and a `!=` latch's
