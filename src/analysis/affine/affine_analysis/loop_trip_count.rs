@@ -281,7 +281,8 @@ impl AffineAnalysis<'_> {
     fn cta_uniform_symbols(&self, id: LoopId, pos: usize, a: AffineExpr) -> Option<AffineExpr> {
         let top = std::iter::successors(Some(id), |&l| self.data.forest.get(l).parent).last()?;
         let alike = |u: Value| {
-            !self.data.defined_in(u, top) && self.uniformity().value_uniform_at(u, pos).is_ok()
+            !self.data.defined_in(u, top)
+                && self.uniformity().value_uniformity(u, pos) == Ok(Uniform::Cta)
         };
         if !a.terms.keys().filter_map(Var::unknown).all(alike) {
             return None;

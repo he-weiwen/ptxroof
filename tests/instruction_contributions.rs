@@ -486,7 +486,7 @@ fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
 /// over the launch are a bound, `<= 34 (ideal <= 32)`, within which a
 /// record's 0 falls.
 #[test]
-fn a_uniform_ignore_src_predicts_a_bound_of_sectors() {
+fn a_cta_uniform_ignore_src_predicts_a_bound_of_sectors() {
     let setup = "mul.wide.u32 %rd2, %r1, 16;\nadd.s64 %rd3, %rd1, %rd2;\nsetp.lt.u32 %p1, %r9, 5;";
     let copy = "cp.async.cg.shared.global [%r4], [%rd3], 16, %p1;";
     let src = ignore_src_kernel("k", setup, copy);

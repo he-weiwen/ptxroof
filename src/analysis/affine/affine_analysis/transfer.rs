@@ -368,7 +368,7 @@ impl AffineAnalysis<'_> {
                 // loop together.
                 for l in (a.terms.keys()).filter_map(Var::counter) {
                     if !self.data.in_loop(l, def)
-                        && let Err(why) = self.uniformity().exits_uniform(l)
+                        && let Err(why) = cta_uniform(self.uniformity().exit_uniformity(l))
                     {
                         return Err(format!(
                             "shfl.idx of a counter that differs between lanes after its loop, whose exit {why}"
@@ -376,7 +376,7 @@ impl AffineAnalysis<'_> {
                     }
                 }
                 for u in (a.terms.keys()).filter_map(Var::unknown) {
-                    if let Err(why) = self.uniformity().value_uniform_at(u, def) {
+                    if let Err(why) = cta_uniform(self.uniformity().value_uniformity(u, def)) {
                         return Err(format!(
                             "shfl.idx of a value that differs between lanes: {why}"
                         )
