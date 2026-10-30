@@ -1865,6 +1865,37 @@ mod tests {
     const N_PARAM: &str = ".param .u32 k_param_0";
 
     #[test]
+    fn a_counter_that_wraps_before_its_loop_exits_has_no_count_in_either_order() {
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u32 %r1, 4294967294;\n$L__L:\nadd.u32 %r1, %r1, 1;\n\
+             setp.le.u32 %p1, %r1, 4294967295;\n@%p1 bra $L__L;\nret;",
+        );
+        let m = parse(&src).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &f);
+        let uniformity = UniformityInfo::new(&data);
+        let (pos, setp) = (k.stmts.iter().enumerate())
+            .find_map(|(i, s)| match s {
+                Stmt::Instr(instr) if instr.mnemonic == Opcode::Setp => Some((i, instr)),
+                _ => None,
+            })
+            .expect("a setp");
+        let counted = |read_first: bool| {
+            let affine = AffineAnalysis::new(&data, &uniformity);
+            if read_first {
+                let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, None, 0);
+            }
+            affine.loop_trip_count(LoopId(0)).err()
+        };
+        let wraps = Some("`add.u32` leaves 32 bits".to_owned());
+        assert_eq!(counted(false), wraps);
+        assert_eq!(counted(true), wraps);
+    }
+
+    #[test]
     fn a_signed_counter_that_wraps_before_its_count_has_no_count() {
         let src = kernel_with(
             N_PARAM,
