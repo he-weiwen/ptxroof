@@ -1,8 +1,8 @@
 # cp.async.bulk.tensor (PTX ISA §9.7.9.26.5.2): one row for its shared
 # side, its address traced, and one for its global side, whose address
 # the tensor map holds; the bytes of both are the tensor map's, so they
-# are unknown in every total. Each form runs on the threads its guard
-# selects.
+# are unknown in every total and no loop footprint counts them. Each
+# form runs on the threads its guard selects.
 RUN: %ptxroof analyze %fixtures/micro/tensor_copies.ptx | FileCheck "%s"
 CHECK-LABEL: kernel micro_tensor_copy_forms
 CHECK: cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes.tile{{ +}}shared store{{ +}}[smem]
@@ -33,3 +33,8 @@ CHECK-LABEL: kernel micro_tensor_copy_to_shared
 CHECK: st.global.u32{{ +}}global store 4 B{{ +}}warp: 4–5 sectors (ideal 4){{ +}}[4 * %tid.x + 512 * uniform(%r4@{{[0-9]+}}) + param_0]
 CHECK-LABEL: kernel micro_tensor_copy_to_global
 CHECK: st.global.u32{{ +}}global store 4 B{{ +}}unknown: depends on a value loaded from memory
+# The loop's copy reads global bytes its tensor map gives: no footprint.
+CHECK-LABEL: kernel micro_tensor_copy_in_loop
+CHECK: st.global.u32{{ +}}global store 4 B{{ +}}warp: 4–5 sectors (ideal 4){{ +}}[4 * %tid.x + 512 * k[$L__BB3_1] + param_0 - 512]
+CHECK-NOT: global bytes per CTA over the loop's own blocks
+CHECK: totals [static]:

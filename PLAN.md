@@ -314,8 +314,9 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   (`micro/one_pointer_two_bases.ptx`: a[k] and a[k + n] count
   16–32 B, 16 B with `--bind 1:n=0`; `micro/uniform_bases.ptx`), count
   the loop's own blocks only, and need a numeric trip count, the block
-  shape, constant lane and counter coefficients, and every access's
-  address (else `unique unknown`, `micro/footprint_unknown.ptx`), and
+  shape, constant lane and counter coefficients, every global access's
+  bytes (else no footprint, `micro/tensor_copies.ptx`) and address
+  (else `unique unknown`, `micro/footprint_unknown.ptx`), and
   are bounds where which threads run the loop is not known. k5's K loop at
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
   k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B, a bound until M and
@@ -415,8 +416,9 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 - **A tensor copy's bytes are unknown.** `cp.async.bulk.tensor` moves
   the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8),
   not the PTX: both its sides count as ops with unknown bytes in every
-  total, and its global row reads `unknown: the tensor map holds the
-  address` (`micro/tensor_copies.ptx`, `micro-tensor-copies.test`).
+  total, its global row reads `unknown: the tensor map holds the
+  address`, and a loop holding one in its own blocks has no footprint
+  (`micro/tensor_copies.ptx`, `micro-tensor-copies.test`).
 - **Special registers PTX ISA §10 does not describe** — `%pm*`
   ("behavior is currently undefined"), `%envreg*` (driver-defined),
   `%globaltimer*` (target-specific), `%reserved_smem_offset_*` — read

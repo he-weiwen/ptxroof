@@ -387,15 +387,15 @@ impl KernelReportBuilder<'_> {
                         };
                         per_request.insert(pos, r);
                     }
-                    if let Some(b) = bytes.filter(|_| !self.unused[pos]) {
+                    if !self.unused[pos] {
                         let uniform_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
                             v.uniform()
                                 .is_some_and(|u| scope.is_some_and(|l| se.data.defined_in(u, l)))
                         });
                         forms.entry(scope).or_default().push(AccessForm {
                             form: form.clone(),
-                            bytes: b,
-                            align: align.unwrap_or(b),
+                            bytes,
+                            align: align.or(bytes).unwrap_or(1),
                             space,
                             set: set.clone(),
                             guard_exact,
