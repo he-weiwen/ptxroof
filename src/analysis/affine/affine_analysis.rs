@@ -49,6 +49,7 @@ use crate::analysis::affine::induction_variables::{InductionVariable, Step, indu
 use crate::analysis::affine::int_type::{IntKind, IntType};
 use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
+use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::register_effects::{registers, split_operands};
@@ -71,7 +72,7 @@ mod transfer;
 /// How many definitions deep a trace follows a value before giving up.
 const DEPTH_LIMIT: u32 = 256;
 
-type Traced = (AffineProperties, Option<String>);
+type Traced = (AffineProperties, Option<UnknownReason>);
 type Memo<K, T> = RefCell<HashMap<K, Slot<T>>>;
 
 /// A cached result, the frame computing it, or the count a loop's
@@ -87,7 +88,7 @@ pub(crate) struct AffineAnalysis<'a> {
     /// Each loop counter by its header φ, with its loop.
     pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
     /// Each loop's trip count.
-    trips: Memo<LoopId, Result<LoopTripCount, String>>,
+    trips: Memo<LoopId, Result<LoopTripCount, UnknownReason>>,
     /// Each value's trace for the loop whose latch reads it, with the
     /// first reason it read a uniform value as a variable.
     values: Memo<(Value, Option<LoopId>), Traced>,
@@ -102,7 +103,7 @@ pub(crate) struct AffineAnalysis<'a> {
     uniformity: &'a UniformityInfo<'a>,
     /// Why the trace in progress first read a uniform value it cannot
     /// interpret as a `Var::Unknown`.
-    unread: RefCell<Option<String>>,
+    unread: RefCell<Option<UnknownReason>>,
 }
 
 impl<'a> AffineAnalysis<'a> {
@@ -207,7 +208,11 @@ impl<'a> AffineAnalysis<'a> {
     }
 
     /// A merged value: the obstacle on any of its definitions' chains.
-    pub(crate) fn obstacle_of_any_def(&self, reg: Symbol, id: Option<LoopId>) -> Option<String> {
+    pub(crate) fn obstacle_of_any_def(
+        &self,
+        reg: Symbol,
+        id: Option<LoopId>,
+    ) -> Option<UnknownReason> {
         self.defs_obstacle(reg, id, &mut HashSet::from([reg]))
     }
 
@@ -218,7 +223,7 @@ impl<'a> AffineAnalysis<'a> {
         reg: Symbol,
         id: Option<LoopId>,
         seen: &mut HashSet<Symbol>,
-    ) -> Option<String> {
+    ) -> Option<UnknownReason> {
         self.data
             .writes
             .get(&Register::Named(reg))?
@@ -265,7 +270,7 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<AffineExpr, String> {
+    ) -> Result<AffineExpr, UnknownReason> {
         let module = self.data.module;
         match module.operand(op) {
             Operand::Register(reg) => self.at_use(*reg, pos, id, depth),
@@ -274,7 +279,7 @@ impl<'a> AffineAnalysis<'a> {
                 let text = module.interner.resolve(*text);
                 parse_int(text)
                     .map(|c| AffineExpr::from_base(SymExpr::Const(c)))
-                    .ok_or_else(|| format!("non-integer immediate {text}"))
+                    .ok_or_else(|| format!("non-integer immediate {text}").into())
             }
             // A named location (a shared array, the dynamic shared base):
             // its address is a symbol.
@@ -283,13 +288,11 @@ impl<'a> AffineAnalysis<'a> {
             ))),
             Operand::Offset { base, offset } => Ok(self.operand_at(*base, pos, id, depth)?
                 + AffineExpr::from_base(SymExpr::Const(*offset))),
-            other => Err(format!(
-                "unsupported operand form in latch trace: {other:?}"
-            )),
+            other => Err(format!("unsupported operand form in latch trace: {other:?}").into()),
         }
     }
 
-    fn trace_special(&self, reg: SpecialReg) -> Result<AffineExpr, String> {
+    fn trace_special(&self, reg: SpecialReg) -> Result<AffineExpr, UnknownReason> {
         if let Some(v) = Var::special(reg) {
             return Ok(AffineExpr::var(v));
         }
@@ -309,10 +312,7 @@ impl<'a> AffineAnalysis<'a> {
             _ if special_register(reg) == Some(SpecialRegister::PerCta) => Ok(
                 AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::SpecialReg(reg))),
             ),
-            _ => Err(format!(
-                "latch condition depends on special register {}",
-                reg.name()
-            )),
+            _ => Err(format!("latch condition depends on special register {}", reg.name()).into()),
         }
     }
 
@@ -322,10 +322,10 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<AffineExpr, String> {
+    ) -> Result<AffineExpr, UnknownReason> {
         let Some(v) = self.data.ssa.value_before(pos, Register::Named(reg)) else {
             let name = self.data.module.interner.resolve(reg);
-            return Err(format!("{name} is read in a block no path reaches"));
+            return Err(format!("{name} is read in a block no path reaches").into());
         };
         match self.properties(v, id, depth) {
             AffineProperties::Expr(a) => Ok(self.after_exits(a, pos)),
@@ -404,7 +404,7 @@ impl<'a> AffineAnalysis<'a> {
         reg: Symbol,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<AffineExpr, String> {
+    ) -> Result<AffineExpr, UnknownReason> {
         let name = self.data.module.interner.resolve(reg);
         let header = (self.data.forest.loops.iter()).any(|l| l.header == block);
         let refused = || {
@@ -412,8 +412,9 @@ impl<'a> AffineAnalysis<'a> {
                 .unwrap_or_else(|| match header {
                     true => format!(
                         "latch condition depends on {name}, carried around an enclosing loop"
-                    ),
-                    false => format!("{name} has more than one reaching definition"),
+                    )
+                    .into(),
+                    false => format!("{name} has more than one reaching definition").into(),
                 })
         };
         if let Some((l, r)) = self.induction_variables.get(&v) {
@@ -433,7 +434,9 @@ impl<'a> AffineAnalysis<'a> {
                 },
                 _ => format!("{name} is unwritten on some path"),
             };
-            return Err(self.obstacle_of_any_def(reg, id).unwrap_or(why));
+            return Err(self
+                .obstacle_of_any_def(reg, id)
+                .unwrap_or_else(|| why.into()));
         }
         let common = match header {
             true => (self.same_immediate(&defs)).map(|c| AffineExpr::from_base(SymExpr::Const(c))),
@@ -451,7 +454,7 @@ impl<'a> AffineAnalysis<'a> {
         r: &InductionVariable,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<AffineExpr, Option<String>> {
+    ) -> Result<AffineExpr, Option<UnknownReason>> {
         let module = self.data.module;
         let start = self.properties(r.start, id, depth + 1).expr()?;
         let step = self.step(l, &r.step, depth)?;
@@ -483,7 +486,7 @@ impl<'a> AffineAnalysis<'a> {
     /// A counter's step in loop `l`: its constant, its registers, each
     /// free of every variable, and each nested loop's step times that
     /// loop's constant trip count of at least 1; `None` otherwise.
-    fn step(&self, l: LoopId, step: &Step, depth: u32) -> Result<SymExpr, Option<String>> {
+    fn step(&self, l: LoopId, step: &Step, depth: u32) -> Result<SymExpr, Option<UnknownReason>> {
         let mut sum = SymExpr::Const(step.constant);
         for &(reg, at, sign) in &step.registers {
             let s = self.first_reason(|| self.at_use(reg, at, Some(l), depth + 1));
@@ -516,8 +519,8 @@ impl<'a> AffineAnalysis<'a> {
     /// last trip's `add.s32` yields 2^28 · 8 = 2^31, past `int`, where
     /// the hardware wraps to −2^31 and the loop goes on, so the count is
     /// refused (`a_signed_counter_that_wraps_before_its_count_has_no_count`).
-    pub(crate) fn loop_trip_count(&self, id: LoopId) -> Result<LoopTripCount, String> {
-        let unfinished = || Err("the trip count is being counted".to_owned());
+    pub(crate) fn loop_trip_count(&self, id: LoopId) -> Result<LoopTripCount, UnknownReason> {
+        let unfinished = || Err("the trip count is being counted".into());
         self.memoized(&self.trips, id, unfinished, |frame| {
             let first = self.counted_trips(id);
             if self.provisional.get() != frame || first.is_err() {
@@ -527,7 +530,7 @@ impl<'a> AffineAnalysis<'a> {
             match self.counted_trips(id) {
                 again if again == first => again,
                 Err(why) => Err(why),
-                Ok(_) => Err("the trip count changes once it is known".to_owned()),
+                Ok(_) => Err("the trip count changes once it is known".into()),
             }
         })
     }
@@ -545,7 +548,7 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
         id: Option<LoopId>,
         name: &dyn Fn(&Var) -> String,
-    ) -> Result<AffineExpr, String> {
+    ) -> Result<AffineExpr, UnknownReason> {
         let a = self.first_reason(|| self.operand_at(base, pos, id, 0))?
             + AffineExpr::from_base(SymExpr::Const(offset));
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
@@ -554,15 +557,15 @@ impl<'a> AffineAnalysis<'a> {
                 && let Err(why) = self.uniformity().exits_uniform(l)
             {
                 let k = name(&Var::Iteration(l));
-                return Err(format!(
-                    "{k} differs between lanes after its loop, whose exit {why}"
-                ));
+                return Err(
+                    format!("{k} differs between lanes after its loop, whose exit {why}").into(),
+                );
             }
             if let Some(u) = v.uniform()
                 && let Err(why) = self.uniformity().value_uniform_at(u, pos)
             {
                 let u = name(&Var::Unknown(u));
-                return Err(format!("{u} differs between lanes: {why}"));
+                return Err(format!("{u} differs between lanes: {why}").into());
             }
         }
         Ok(a)
@@ -572,8 +575,8 @@ impl<'a> AffineAnalysis<'a> {
     /// variable, if it did.
     pub(crate) fn first_reason<T>(
         &self,
-        f: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
+        f: impl FnOnce() -> Result<T, UnknownReason>,
+    ) -> Result<T, UnknownReason> {
         let outer = self.unread.take();
         let t = f();
         let first = self.unread.replace(outer);
@@ -634,7 +637,7 @@ impl<'a> AffineAnalysis<'a> {
             reason,
             min_trailing_zeros: self.min_trailing_zeros(v),
         };
-        let unfinished = || (unknown("value depends on itself".to_owned()), None);
+        let unfinished = || (unknown("value depends on itself".into()), None);
         let (p, why) = self.memoized(&self.values, (v, id), unfinished, |_| {
             let outer = self.unread.take();
             let p = self
@@ -653,11 +656,11 @@ impl<'a> AffineAnalysis<'a> {
         v: Value,
         id: Option<LoopId>,
         depth: u32,
-    ) -> Result<AffineExpr, String> {
+    ) -> Result<AffineExpr, UnknownReason> {
         let module = self.data.module;
         if depth > DEPTH_LIMIT {
             self.provisional.set(0);
-            return Err("value trace exceeds depth limit".to_owned());
+            return Err("value trace exceeds depth limit".into());
         }
         let (def, reg) = match v {
             Value::Result {
@@ -670,16 +673,16 @@ impl<'a> AffineAnalysis<'a> {
             } => return self.transfer_phi(v, block, reg, id, depth),
             Value::Undef(Register::Named(reg)) => {
                 let name = module.interner.resolve(reg);
-                return Err(format!("no definition found for {name}"));
+                return Err(format!("no definition found for {name}").into());
             }
-            _ => return Err("value is the carry flag".to_owned()),
+            _ => return Err("value is the carry flag".into()),
         };
         let value = self.transfer(def, reg, id, depth)?;
         if let Stmt::Instr(instr) = &self.data.kernel.stmts[def]
             && instr.predicate.is_some()
         {
             let name = module.interner.resolve(reg);
-            return Err(format!("{name} is written under a guard"));
+            return Err(format!("{name} is written under a guard").into());
         }
         Ok(value)
     }
@@ -717,7 +720,7 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
         id: Option<LoopId>,
         seen: &mut HashSet<Symbol>,
-    ) -> Option<String> {
+    ) -> Option<UnknownReason> {
         let module = self.data.module;
         if !seen.insert(reg) || seen.len() > 64 {
             return None;
@@ -743,9 +746,9 @@ impl<'a> AffineAnalysis<'a> {
                 } else {
                     "latch condition depends on a value loaded from memory"
                 }
-                .to_owned(),
+                .into(),
             ),
-            Opcode::Atom => Some("latch condition depends on an atomic operation".to_owned()),
+            Opcode::Atom => Some("latch condition depends on an atomic operation".into()),
             _ => (split_operands(module, instr).1.iter())
                 .find_map(|&op| self.operand_obstacle(op, def, id, seen)),
         }
@@ -757,7 +760,7 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
         id: Option<LoopId>,
         seen: &mut HashSet<Symbol>,
-    ) -> Option<String> {
+    ) -> Option<UnknownReason> {
         match self.data.module.operand(op) {
             Operand::Register(r) => self.obstacle(*r, pos, id, seen),
             Operand::Special(reg) => special_obstacle(*reg),
@@ -766,9 +769,9 @@ impl<'a> AffineAnalysis<'a> {
     }
 }
 
-fn special_obstacle(reg: SpecialReg) -> Option<String> {
+fn special_obstacle(reg: SpecialReg) -> Option<UnknownReason> {
     (special_register(reg) != Some(SpecialRegister::Zero))
-        .then(|| format!("latch condition depends on special register {}", reg.name()))
+        .then(|| format!("latch condition depends on special register {}", reg.name()).into())
 }
 
 /// The count, the block it is per execution of, and a `!=` latch's
@@ -906,7 +909,7 @@ mod tests {
             if read_first {
                 let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, None, 0);
             }
-            affine.loop_trip_count(LoopId(0)).err()
+            affine.loop_trip_count(LoopId(0)).err().map(|r| r.render())
         };
         let wraps = Some("`add.u32` leaves 32 bits".to_owned());
         assert_eq!(counted(false), wraps);
@@ -944,7 +947,7 @@ mod tests {
             .find(|&l| f.get(l).parent.is_none())
             .expect("an outer loop");
         assert_eq!(affine.constant_trips(outer), None);
-        let count = affine.loop_trip_count(outer).err();
+        let count = affine.loop_trip_count(outer).err().map(|r| r.render());
         assert_eq!(count.as_deref(), Some("`add.s32` leaves 32 bits"));
     }
 

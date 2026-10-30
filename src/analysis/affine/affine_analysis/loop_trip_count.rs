@@ -7,17 +7,17 @@ use super::*;
 impl AffineAnalysis<'_> {
     /// The latch read with each uniform value it cannot interpret a
     /// variable.
-    pub(super) fn counted_trips(&self, id: LoopId) -> Result<LoopTripCount, String> {
+    pub(super) fn counted_trips(&self, id: LoopId) -> Result<LoopTripCount, UnknownReason> {
         self.first_reason(|| self.latch_trips(id))
     }
 
-    fn latch_trips(&self, id: LoopId) -> Result<LoopTripCount, String> {
+    fn latch_trips(&self, id: LoopId) -> Result<LoopTripCount, UnknownReason> {
         let (module, cfg) = (self.data.module, self.data.cfg);
         let l = self.data.forest.get(id);
 
         // Structural requirements: one latch, one exit edge, at the latch.
         if l.latches.len() != 1 {
-            return Err("loop has multiple latches".to_owned());
+            return Err("loop has multiple latches".into());
         }
         let latch = l.latches[0];
         let in_loop = |b: BlockId| l.blocks.binary_search(&b).is_ok();
@@ -30,10 +30,10 @@ impl AffineAnalysis<'_> {
             }
         }
         if exit_edges.len() != 1 {
-            return Err(format!("loop has {} exit edges", exit_edges.len()));
+            return Err(format!("loop has {} exit edges", exit_edges.len()).into());
         }
         if exit_edges[0].0 != latch {
-            return Err("loop exit is not at the latch".to_owned());
+            return Err("loop exit is not at the latch".into());
         }
 
         // The latch terminator: `@%p bra HEADER` (or inverted).
@@ -66,7 +66,7 @@ impl AffineAnalysis<'_> {
         };
         if setp.predicate.is_some() {
             let name = module.interner.resolve(pred.reg);
-            return Err(format!("{name} is written under a guard"));
+            return Err(format!("{name} is written under a guard").into());
         }
         let cmp = self
             .data
@@ -79,7 +79,7 @@ impl AffineAnalysis<'_> {
         if (module.modifiers(setp).iter())
             .any(|&m| matches!(module.interner.resolve(m), "f16x2" | "bf16x2"))
         {
-            return Err("latch condition compares packed halves".to_owned());
+            return Err("latch condition compares packed halves".into());
         }
 
         // Trace both operands at the setp.
@@ -88,8 +88,8 @@ impl AffineAnalysis<'_> {
             3 => {}
             // PTX ISA §9.7.6.2: `setp.CmpOp.BoolOp.type p, a, b, c` sets
             // `p = BoolOp(a CmpOp b, c)`.
-            4 => return Err("latch condition combines a comparison with a predicate".to_owned()),
-            _ => return Err("setp with unexpected operand count".to_owned()),
+            4 => return Err("latch condition combines a comparison with a predicate".into()),
+            _ => return Err("setp with unexpected operand count".into()),
         }
         let a = self.operand_at(ops[1], setp_idx, Some(id), 0)?;
         let b = self.operand_at(ops[2], setp_idx, Some(id), 0)?;
@@ -98,7 +98,7 @@ impl AffineAnalysis<'_> {
             let ty = module.interner.resolve(m);
             ty.starts_with('f') || ty.starts_with("bf")
         }) {
-            return Err("latch condition compares floating-point values".to_owned());
+            return Err("latch condition compares floating-point values".into());
         }
         let d = self.uniform_symbols(id, setp_idx, a - b).ok_or_else(|| {
             "latch condition depends on a value an enclosing loop defines".to_owned()
@@ -110,26 +110,26 @@ impl AffineAnalysis<'_> {
         if let Some(v) = d.terms.keys().find(|v| **v != k) {
             return Err(match v {
                 Var::Iteration(_) => {
-                    "latch condition depends on an enclosing loop's counter".to_owned()
+                    "latch condition depends on an enclosing loop's counter".into()
                 }
-                other => format!("latch condition depends on special register {other}"),
+                other => format!("latch condition depends on special register {other}").into(),
             });
         }
         let Some(coeff) = d.terms.get(&k) else {
-            return Err("latch condition does not involve an induction variable".to_owned());
+            return Err("latch condition does not involve an induction variable".into());
         };
         let a1 = (self.constant(&AffineExpr::from_base(coeff.clone())))
             .ok_or_else(|| "induction step is not a constant".to_owned())?;
         if a1 == i64::MIN {
-            return Err("induction step is −2^63, which has no negation".to_owned());
+            return Err("induction step is −2^63, which has no negation".into());
         }
         let Some(cmp) = Cmp::from_name(&cmp) else {
-            return Err(format!("unsupported latch comparison `{cmp}`"));
+            return Err(format!("unsupported latch comparison `{cmp}`").into());
         };
         let cond = if continue_if_true { cmp } else { cmp.inverse() };
         let bound = self.bindings.and_then(|b| d.base.bind(b).as_const());
         if cond == Cmp::Ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
-            return Err("latch condition never meets its `!=` bound".to_owned());
+            return Err("latch condition never meets its `!=` bound".into());
         }
         let trips = exit_limit(cond, a1, d.base.clone())?;
         let distance =
@@ -291,24 +291,24 @@ impl AffineAnalysis<'_> {
 
     /// No setp defines the latch predicate: say what does, if anything
     /// in the latch block does (`mbarrier.test_wait` in a spin-wait).
-    fn predicate_reason(&self, latch: BlockId, before: usize, pred: Symbol) -> String {
+    fn predicate_reason(&self, latch: BlockId, before: usize, pred: Symbol) -> UnknownReason {
         let module = self.data.module;
         let definer = self
             .data
             .last_write_in(latch, before, pred)
             .map(|d| &self.data.kernel.stmts[d]);
         match definer {
-            Some(Stmt::Instr(i)) if i.mnemonic == Opcode::Setp => {
-                format!(
-                    "latch predicate is not `{}`'s first output",
-                    module.opcode(i)
-                )
-            }
+            Some(Stmt::Instr(i)) if i.mnemonic == Opcode::Setp => format!(
+                "latch predicate is not `{}`'s first output",
+                module.opcode(i)
+            )
+            .into(),
             Some(Stmt::Instr(i)) => format!(
                 "latch predicate is defined by `{}`, not a comparison",
                 module.opcode(i)
-            ),
-            _ => "latch predicate is not defined in the latch block".to_owned(),
+            )
+            .into(),
+            _ => "latch predicate is not defined in the latch block".into(),
         }
     }
 
@@ -323,7 +323,7 @@ impl AffineAnalysis<'_> {
         branch_idx: usize,
         pred: Symbol,
         continue_if_true: bool,
-    ) -> Option<Result<SymExpr, String>> {
+    ) -> Option<Result<SymExpr, UnknownReason>> {
         let (module, kernel, cfg, ssa) = (
             self.data.module,
             self.data.kernel,
@@ -386,7 +386,7 @@ impl AffineAnalysis<'_> {
                 && instr.predicate.is_some()
             {
                 let name = module.interner.resolve(reg);
-                return Some(Err(format!("{name} is written under a guard")));
+                return Some(Err(format!("{name} is written under a guard").into()));
             }
         }
         let (Operand::Immediate(latch_val), Operand::Immediate(init_val)) =

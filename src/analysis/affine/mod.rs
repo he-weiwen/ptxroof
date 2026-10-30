@@ -9,3 +9,4 @@ pub(crate) mod int_type;
 pub mod lane_eval;
 pub mod sym_expr;
 pub mod trip_counts;
+pub(crate) mod unknown_reason;

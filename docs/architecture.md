@@ -34,6 +34,7 @@ only declare modules and selected public entry points.
 | `analysis/affine/induction_variables` | Recognize loop counter induction variables on SSA values |
 | `analysis/affine/exit_limit` | Loop-exit inequalities solved for a trip count |
 | `analysis/affine/affine_properties` | What the affine analysis keeps of an SSA value: its expression, or why it has none |
+| `analysis/affine/unknown_reason` | Why a value has no affine expression, and its sentence where it is read |
 | `analysis/affine/affine_analysis` | Register values as affine forms and one loop's trip count; their mutual recursion and the cache of both |
 | `analysis/affine/affine_analysis/loop_trip_count` | A loop's trip count from its latch, guard and predicate φ, as methods of the analysis |
 | `analysis/affine/affine_analysis/transfer` | The value each instruction writes, from the values it reads, as methods of the analysis |

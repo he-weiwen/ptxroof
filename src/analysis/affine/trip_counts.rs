@@ -63,7 +63,7 @@ pub(crate) fn trip_counts_from(affine: &AffineAnalysis, names: &[LoopName]) -> T
     for i in 0..forest.loops.len() as u32 {
         let (t, entry, distance) = match affine.loop_trip_count(LoopId(i)) {
             Ok(t) => (Ok(t.count), t.entry, t.distance),
-            Err(e) => (Err(e), forest.get(LoopId(i)).header, None),
+            Err(e) => (Err(e.render()), forest.get(LoopId(i)).header, None),
         };
         trips.push(t);
         entries.push(entry);
