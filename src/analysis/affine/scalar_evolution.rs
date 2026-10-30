@@ -27,7 +27,10 @@
 //! The two queries recurse into each other: a value after a loop, a
 //! counter stepped by an inner loop's exit and an integer range check
 //! need a constant trip count, and a latch reads values.
-//! `constant_trips` caches each count, `None` while it is being solved.
+//! Each value's trace and each constant count is cached, except one
+//! that read a trace or count still being computed outside it, as
+//! Tarjan's lowlink tells which results of a strongly connected
+//! component are final; a count read while it is being solved is `None`.
 //!
 //! Anything else — multiple exits, exits not at the latch, latch values
 //! loaded in the loop, dependence on a special register that is not one
@@ -56,19 +59,37 @@ use crate::ptx::ir::{
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 /// How many definitions deep a trace follows a value before giving up.
 const DEPTH_LIMIT: u32 = 256;
+
+type Traced = (Result<AffineExpr, String>, Option<String>);
+type Memo<K, T> = RefCell<HashMap<K, Slot<T>>>;
+
+/// A cached result, or the frame computing it.
+enum Slot<T> {
+    InProgress(usize),
+    Done(T),
+}
 
 pub(crate) struct ScalarEvolution<'a> {
     pub(crate) data: &'a KernelAnalyses<'a>,
     /// Each loop counter by its header φ, with its loop.
     pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
     /// Nested loops' constant trip counts, for counters stepped by their
-    /// exits; `None` while one is being solved, or when it is not one.
-    trips: RefCell<HashMap<LoopId, Option<i64>>>,
+    /// exits; `None` when one is not a constant.
+    trips: Memo<LoopId, Option<i64>>,
+    /// Each value's trace for the loop whose latch reads it, with the
+    /// first reason it read a uniform value as a variable.
+    values: Memo<(Value, Option<LoopId>), Traced>,
+    /// How many traces and counts are being computed.
+    frames: Cell<usize>,
+    /// The outermost of them the result being computed read, or 0 after a
+    /// trace cut at `DEPTH_LIMIT`: no result is cached that read one
+    /// outside its own computation.
+    provisional: Cell<usize>,
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
     uniformity: OnceCell<UniformityInfo<'a>>,
@@ -107,6 +128,9 @@ impl<'a> ScalarEvolution<'a> {
             data,
             induction_variables: recurrences_by_phi,
             trips: RefCell::new(HashMap::new()),
+            values: RefCell::new(HashMap::new()),
+            frames: Cell::new(0),
+            provisional: Cell::new(usize::MAX),
             bindings: None,
             uniformity: OnceCell::new(),
             unread: RefCell::new(None),
@@ -526,20 +550,75 @@ impl<'a> ScalarEvolution<'a> {
     /// bindings, which makes its latch, and so its exit, the same for
     /// every lane.
     fn constant_trips(&self, l: LoopId) -> Option<i64> {
-        if let Some(&n) = self.trips.borrow().get(&l) {
-            return n;
+        self.memoized(
+            &self.trips,
+            l,
+            || None,
+            || {
+                (self.loop_trip_count(l).ok().map(|t| t.count))
+                    .and_then(|t| self.constant(&AffineExpr::from_base(t)))
+                    .filter(|&n| n >= 1)
+            },
+        )
+    }
+
+    /// `f`'s result for `key`, from `memo` or cached there unless it read
+    /// a frame still in progress outside its own; `unfinished` where `key`
+    /// is itself in progress.
+    fn memoized<K: Copy + Eq + std::hash::Hash, T: Clone>(
+        &self,
+        memo: &Memo<K, T>,
+        key: K,
+        unfinished: impl FnOnce() -> T,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        match memo.borrow().get(&key) {
+            Some(Slot::Done(t)) => return t.clone(),
+            Some(&Slot::InProgress(frame)) => {
+                self.provisional.set(self.provisional.get().min(frame));
+                return unfinished();
+            }
+            None => {}
         }
-        self.trips.borrow_mut().insert(l, None);
-        let n = (self.loop_trip_count(l).ok().map(|t| t.count))
-            .and_then(|t| self.constant(&AffineExpr::from_base(t)))
-            .filter(|&n| n >= 1);
-        self.trips.borrow_mut().insert(l, n);
-        n
+        let frame = self.frames.get() + 1;
+        self.frames.set(frame);
+        memo.borrow_mut().insert(key, Slot::InProgress(frame));
+        let outer = self.provisional.replace(usize::MAX);
+        let t = f();
+        let read = self.provisional.get();
+        self.frames.set(frame - 1);
+        if read >= frame {
+            memo.borrow_mut().insert(key, Slot::Done(t.clone()));
+        } else {
+            memo.borrow_mut().remove(&key);
+        }
+        self.provisional
+            .set(outer.min(if read < frame { read } else { usize::MAX }));
+        t
     }
 
     fn trace_value(&self, v: Value, id: Option<LoopId>, depth: u32) -> Result<AffineExpr, String> {
+        let unfinished = || (Err("value depends on itself".to_owned()), None);
+        let (t, why) = self.memoized(&self.values, (v, id), unfinished, || {
+            let outer = self.unread.take();
+            let t = self.trace_uncached(v, id, depth);
+            (t, self.unread.replace(outer))
+        });
+        if let Some(why) = why {
+            self.unread.borrow_mut().get_or_insert(why);
+        }
+        t
+    }
+
+    fn trace_uncached(
+        &self,
+        v: Value,
+        id: Option<LoopId>,
+        depth: u32,
+    ) -> Result<AffineExpr, String> {
         let module = self.data.module;
         if depth > DEPTH_LIMIT {
+            self.provisional.set(0);
             return Err("value trace exceeds depth limit".to_owned());
         }
         let (def, reg) = match v {
@@ -1041,6 +1120,9 @@ impl<'a> ScalarEvolution<'a> {
         let Stmt::Instr(instr) = &self.data.kernel.stmts[op] else {
             return None;
         };
+        if depth > DEPTH_LIMIT {
+            self.provisional.set(0);
+        }
         if instr.mnemonic != Opcode::Mov || depth > DEPTH_LIMIT {
             return None;
         }
