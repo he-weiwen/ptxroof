@@ -1,12 +1,16 @@
 //
-// HAND-WRITTEN: both kernels compare n + %tid.x with n + 32 for a
-// parameter n of unknown range. Under the input contract (PLAN.md)
+// HAND-WRITTEN: the first two kernels compare n + %tid.x with n + 32 for
+// a parameter n of unknown range. Under the input contract (PLAN.md)
 // n + %tid.x does not wrap, so the signed comparison is %tid.x < 32.
 // The unsigned one also needs both operands nonnegative, which a
 // negative n breaks, as C's `(unsigned)i < n` relies on. ptxas 13.4
 // keeps both sums (`IADD3 R0, R5, c[0x0][0x168]`, `ISETP.GE.AND` and
 // `ISETP.GE.U32.AND` against n + 32), which differ from %tid.x < 32
-// only where n + %tid.x wraps or, unsigned, where n is negative.
+// only where n + %tid.x wraps or, unsigned, where n is negative. The
+// last two are read wrong (PLAN.md, wrong output): the third sums in
+// `.u32` and compares `.s32`, so n = 0x7fffffe0 makes n + 32 the signed
+// minimum and the store run on no thread; the fourth compares n with
+// n & 0x7fffffff, true where n is negative.
 //
 .version 8.7
 .target sm_89
@@ -50,6 +54,49 @@
 	add.s32 	%r3, %r1, %r2;
 	add.s32 	%r4, %r1, 32;
 	setp.lt.u32 	%p1, %r3, %r4;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_setp_unknown_range_mixed(
+	.param .u64 micro_setp_unknown_range_mixed_param_0,
+	.param .u32 micro_setp_unknown_range_mixed_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_setp_unknown_range_mixed_param_0];
+	ld.param.u32 	%r1, [micro_setp_unknown_range_mixed_param_1];
+	mov.u32 	%r2, %tid.x;
+	add.u32 	%r3, %r1, %r2;
+	add.u32 	%r4, %r1, 32;
+	setp.lt.s32 	%p1, %r3, %r4;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_setp_unknown_range_mask(
+	.param .u64 micro_setp_unknown_range_mask_param_0,
+	.param .u32 micro_setp_unknown_range_mask_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<5>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_setp_unknown_range_mask_param_0];
+	ld.param.u32 	%r1, [micro_setp_unknown_range_mask_param_1];
+	mov.u32 	%r2, %tid.x;
+	and.b32 	%r3, %r1, 2147483647;
+	setp.lt.s32 	%p1, %r1, %r3;
 	mul.wide.u32 	%rd2, %r2, 4;
 	add.s64 	%rd3, %rd1, %rd2;
 	@%p1 st.global.u32 	[%rd3], %r2;

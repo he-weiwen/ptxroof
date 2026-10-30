@@ -161,18 +161,30 @@ a comparison or a widening.
   through a parameter, `%ctaid` with no grid given or a symbolic trip
   count is read under the input contract above. A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
+- **A signed comparison reads a value an unsigned sum leaves past
+  2^31 − 1 as nonnegative.** The input contract keeps a value in the
+  type it is computed in, not in the one a comparison reads it as, and
+  C++ converts such a value to `int` without undefined behavior:
+  `micro/setp_unknown_range.ptx`'s third kernel, `add.u32` of n and
+  `%tid.x` compared `setp.lt.s32` with n + 32, reads `%tid.x < 32` (32
+  threads), where n = 0x7fffffe0 makes n + 32 the signed minimum and
+  the store run on no thread (Codex's review of 2b2731b; constructed).
 - **An and-mask that clears the sign bit keeps a value of unknown range
   as itself.** Up to the bit below the sign bit (nvcc's
   `& 0x7fffffc0`) the and is read as the value itself where its range
   lies in [0, 2^(width−1)), and refused where the range reaches outside
   it (`micro/and_sign_bit.ptx`: `(%tid.x − 256) & 0x7fffff00`, "clears
   bit 31 of a value that may set it"). A value through a parameter or
-  `%ctaid` with no grid given has no range and keeps scalar
-  evolution's documented assumption: `micro_and_sign_param`'s `(n − 256) &
+  `%ctaid` with no grid given has no range and is read under the input
+  contract: `micro_and_sign_param`'s `(n − 256) &
   0x7fffff00` reads `[param_0 + 4 * param_1 - 4 * ((param_1 - 256) mod
   256) - 1024]`, where for n below 256 the and is 0x7fffff00 and the
   store 2^33 bytes higher; with `--bind 1:n=100` it is refused, and the
-  address a uniform variable. A 16-bit and, and a 32-bit mask of more
+  address a uniform variable. A comparison of such a value with its
+  mask then cancels: `micro/setp_unknown_range.ptx`'s fourth kernel
+  reads `n < n & 0x7fffffff` as false, the store on no thread, where a
+  negative n makes it true (Codex's review of 2b2731b; constructed). A
+  16-bit and, and a 32-bit mask of more
   runs, take the remainder mod 2^(width−1) instead
   (`micro/and_sign_remainder.ptx`'s `n & 0x7fff`: `param_1 mod 32768`;
   `micro/and_runs.ptx`'s `micro_and_sign_runs`); a 64-bit mask of more
@@ -428,8 +440,8 @@ a comparison or a widening.
   `--bind 2:d=4`), taken as one value per CTA, so the totals per launch
   under it are unknown (`micro-trip-div-param.test`), and unknown where
   a loop holding the latch defines it or threads leave the loop defining
-  it at different trips (`micro/trip_uniform.ptx`). Bounds scalar
-  evolution does not read, by the loop's source line: a float immediate and an
+  it at different trips (`micro/trip_uniform.ptx`). Bounds the affine
+  analysis does not read, by the loop's source line: a float immediate and an
   `and.pred` latch predicate (sol-study census
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`). In `gluon/attn_fwd_ws_kernel.sm_89.ptx` the
