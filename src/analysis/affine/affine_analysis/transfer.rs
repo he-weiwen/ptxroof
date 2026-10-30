@@ -375,7 +375,7 @@ impl AffineAnalysis<'_> {
                         ).into());
                     }
                 }
-                for u in (a.terms.keys()).filter_map(Var::uniform) {
+                for u in (a.terms.keys()).filter_map(Var::unknown) {
                     if let Err(why) = self.uniformity().value_uniform_at(u, def) {
                         return Err(format!(
                             "shfl.idx of a value that differs between lanes: {why}"

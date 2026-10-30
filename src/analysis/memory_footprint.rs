@@ -419,8 +419,8 @@ pub struct AccessForm {
     /// The block may not run on every iteration of its loop, and no
     /// thread-index selection explains that.
     pub conditional: bool,
-    /// The address holds a uniform variable defined in its loop.
-    pub uniform_varies: bool,
+    /// The address holds an unknown value defined in its loop.
+    pub unknown_varies: bool,
 }
 
 /// Global bytes one CTA requests over one execution of loop `id`'s
@@ -490,7 +490,7 @@ pub fn loop_bytes(
             Var::Iteration(l) if *l == id => Some((0, trips)),
             _ => in_block(shape)(v),
         };
-        let read = |a: &&AffineExpr| offsets_fit(a, varies, &bound) && !f.uniform_varies;
+        let read = |a: &&AffineExpr| offsets_fit(a, varies, &bound) && !f.unknown_varies;
         let Some(form) = (f.form.as_ref()).filter(read) else {
             complete &= bytes == 0 || lanes == 0;
             continue;
@@ -805,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn the_uniform_part_keeps_the_lanes_aligned() {
+    fn the_cta_uniform_part_keeps_the_lanes_aligned() {
         let c = |n: i64| SymExpr::Const(n);
         // A 4 B word at 2·tid on lane 1 only sits at 2 mod 4, so the
         // uniform part is 2 mod 4 and the word never straddles a sector.
@@ -894,7 +894,7 @@ mod tests {
             set: Pred::True,
             guard_exact: true,
             conditional: false,
-            uniform_varies: false,
+            unknown_varies: false,
         };
         let on_param = |_: &AffineExpr| Some(0);
         let one = loop_bytes(id, 4, [128, 1, 1], &[access(&form)], on_param).unwrap();

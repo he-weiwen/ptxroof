@@ -100,9 +100,11 @@ impl AffineAnalysis<'_> {
         }) {
             return Err("latch condition compares floating-point values".into());
         }
-        let d = self.uniform_symbols(id, setp_idx, a - b).ok_or_else(|| {
-            "latch condition depends on a value an enclosing loop defines".to_owned()
-        })?;
+        let d = self
+            .cta_uniform_symbols(id, setp_idx, a - b)
+            .ok_or_else(|| {
+                "latch condition depends on a value an enclosing loop defines".to_owned()
+            })?;
         let d = per_cta(d); // D = A − B; condition is `D cmp 0`
 
         // D(k) = A1·k + A0 in this loop's iteration number alone.
@@ -213,7 +215,7 @@ impl AffineAnalysis<'_> {
         {
             return None;
         }
-        let form = per_cta(self.uniform_symbols(
+        let form = per_cta(self.cta_uniform_symbols(
             id,
             def,
             self.operand_at(a, def, 0).ok()? - self.operand_at(b, def, 0).ok()?,
@@ -272,15 +274,16 @@ impl AffineAnalysis<'_> {
             .is_some_and(|(_, i)| matches!(i.mnemonic, Opcode::Ret | Opcode::Exit))
     }
 
-    /// `a`, read at `pos`, with each uniform value as a symbol: one value at
+    /// `a`, read at `pos`, with each unknown value as a symbol: one value at
     /// every trip of every entry of loop `id` where it is defined outside
-    /// the loops holding `id` and every lane executing `pos` sees it alike.
-    fn uniform_symbols(&self, id: LoopId, pos: usize, a: AffineExpr) -> Option<AffineExpr> {
+    /// the loops holding `id` and every thread of the CTA executing `pos`
+    /// sees it alike.
+    fn cta_uniform_symbols(&self, id: LoopId, pos: usize, a: AffineExpr) -> Option<AffineExpr> {
         let top = std::iter::successors(Some(id), |&l| self.data.forest.get(l).parent).last()?;
         let alike = |u: Value| {
             !self.data.defined_in(u, top) && self.uniformity().value_uniform_at(u, pos).is_ok()
         };
-        if !a.terms.keys().filter_map(Var::uniform).all(alike) {
+        if !a.terms.keys().filter_map(Var::unknown).all(alike) {
             return None;
         }
         Some(a.as_symbols(&|v| match v {

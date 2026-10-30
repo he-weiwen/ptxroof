@@ -718,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn a_counter_is_uniform_in_its_loop_unless_a_divergent_branch_skips_its_step() {
+    fn a_counter_is_cta_uniform_in_its_loop_unless_a_divergent_branch_skips_its_step() {
         let looped = |skip: &str| {
             format!(
                 "mov.u32 %r2, 0;\n$L__L:\nst.global.u32 [%rd9], %r2;\n\

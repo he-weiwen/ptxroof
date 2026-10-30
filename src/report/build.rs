@@ -432,8 +432,8 @@ impl KernelReportBuilder<'_> {
                         per_request.insert(pos, r);
                     }
                     if !self.unused[pos] {
-                        let uniform_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
-                            v.uniform().is_some_and(|u| {
+                        let unknown_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
+                            v.unknown().is_some_and(|u| {
                                 scope.is_some_and(|l| affine.data.defined_in(u, l))
                             })
                         });
@@ -445,7 +445,7 @@ impl KernelReportBuilder<'_> {
                             set: set.clone(),
                             guard_exact,
                             conditional,
-                            uniform_varies,
+                            unknown_varies,
                         });
                     }
                     let mut reuse = Vec::new();
@@ -454,7 +454,7 @@ impl KernelReportBuilder<'_> {
                         while let Some(l) = cur {
                             let stepped = (a.terms.keys()).any(|v| {
                                 (*v != Var::Iteration(l) && v.counter() == Some(l))
-                                    || v.uniform().is_some_and(|u| affine.data.defined_in(u, l))
+                                    || v.unknown().is_some_and(|u| affine.data.defined_in(u, l))
                             });
                             reuse.push(Reuse {
                                 r#loop: display[l.0 as usize].clone(),
@@ -1131,7 +1131,7 @@ impl<'a> KernelReportBuilder<'a> {
         };
         let mut coefficients = Vec::new();
         for (v, c) in &key.terms {
-            let wide = v.uniform().is_some_and(|u| {
+            let wide = v.unknown().is_some_and(|u| {
                 let (Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg)) =
                     u;
                 !matches!(self.register_bytes(reg), Some(1 | 2 | 4))
@@ -2562,7 +2562,7 @@ mod tests {
     /// `%r10` is a 64-bit `selp` of 0 and `q − p`, declared after a
     /// 32-bit `%r<2>` that does not hold it: `p + %r10` may be `q`.
     #[test]
-    fn a_wide_uniform_offset_names_no_pointer() {
+    fn a_wide_cta_uniform_offset_names_no_pointer() {
         let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
                    .visible .entry k(\n.param .u64 k_param_0,\n.param .u64 k_param_1\n)\n\
                    .reqntid 32, 1, 1\n{\n.reg .pred %p<3>;\n.reg .b32 %r<2>;\n\
@@ -2904,7 +2904,7 @@ mod tests {
     }
 
     #[test]
-    fn a_uniform_half_of_an_and_keeps_the_lanes_exact() {
+    fn a_cta_uniform_half_of_an_and_keeps_the_lanes_exact() {
         let opts = AnalyzeOptions::default();
         let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
                    .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\

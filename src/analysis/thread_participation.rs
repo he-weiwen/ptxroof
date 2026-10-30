@@ -1858,7 +1858,7 @@ mod tests {
     }
 
     #[test]
-    fn a_uniform_unknown_is_lane_exact_but_not_exact() {
+    fn a_cta_uniform_unknown_is_lane_exact_but_not_exact() {
         let uniform = Pred::Cmp(warps_below_4()).and(Pred::Uniform);
         assert!(!uniform.exact() && uniform.lane_exact());
         assert_eq!(uniform.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));

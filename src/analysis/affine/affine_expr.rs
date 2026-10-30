@@ -158,11 +158,11 @@ impl Var {
         }
     }
 
-    /// The uniform value this is, or a floor or mod of.
-    pub fn uniform(&self) -> Option<Value> {
+    /// The unknown value this is, or a floor or mod of.
+    pub fn unknown(&self) -> Option<Value> {
         match self {
             Var::Unknown(v) => Some(*v),
-            Var::FloorDiv(inner, _) | Var::Mod(inner, _) => inner.uniform(),
+            Var::FloorDiv(inner, _) | Var::Mod(inner, _) => inner.unknown(),
             Var::Tid(_) | Var::Ctaid(_) | Var::Iteration(_) | Var::Swizzle(_) => None,
         }
     }

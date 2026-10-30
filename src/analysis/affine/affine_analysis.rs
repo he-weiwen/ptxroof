@@ -539,7 +539,7 @@ impl<'a> AffineAnalysis<'a> {
                     format!("{k} differs between lanes after its loop, whose exit {why}").into(),
                 );
             }
-            if let Some(u) = v.uniform()
+            if let Some(u) = v.unknown()
                 && let Err(why) = self.uniformity().value_uniform_at(u, pos)
             {
                 let u = name(&Var::Unknown(u));
@@ -1111,7 +1111,7 @@ mod tests {
     /// leaves 0 (PTX ISA §9.7.8.8), a product past 2^32 is not read and
     /// stays the value it computes, the same for every thread.
     #[test]
-    fn a_bound_past_its_register_width_wraps_or_is_a_uniform_value() {
+    fn a_bound_past_its_register_width_wraps_or_is_a_cta_uniform_value() {
         let bound = |compute: &str| {
             let src = kernel_with(
                 N_PARAM,
@@ -1925,7 +1925,7 @@ mod tests {
     /// parameter selects it alike for every thread, one on the thread
     /// index does not.
     #[test]
-    fn a_value_merged_from_two_paths_is_a_uniform_value() {
+    fn a_value_merged_from_two_paths_is_a_cta_uniform_value() {
         let merged = |on: &str| {
             let src = kernel_with(
                 N_PARAM,
