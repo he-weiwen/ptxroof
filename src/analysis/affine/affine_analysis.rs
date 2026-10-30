@@ -62,7 +62,7 @@ use crate::ptx::ir::{
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
-use std::cell::{Cell, OnceCell, RefCell};
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 /// How many definitions deep a trace follows a value before giving up.
@@ -96,14 +96,14 @@ pub(crate) struct AffineAnalysis<'a> {
     provisional: Cell<usize>,
     /// `--bind` values, applied where a trace needs a constant.
     pub(crate) bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
-    uniformity: OnceCell<UniformityInfo<'a>>,
+    uniformity: &'a UniformityInfo<'a>,
     /// Why the trace in progress first read a uniform value it cannot
     /// interpret as a `Var::Unknown`.
     unread: RefCell<Option<String>>,
 }
 
 impl<'a> AffineAnalysis<'a> {
-    pub(crate) fn new(data: &'a KernelAnalyses<'a>) -> Self {
+    pub(crate) fn new(data: &'a KernelAnalyses<'a>, uniformity: &'a UniformityInfo<'a>) -> Self {
         let (forest, ssa) = (data.forest, &data.ssa);
         // Inner loops first: an outer counter may step by an inner exit.
         let mut order: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
@@ -136,7 +136,7 @@ impl<'a> AffineAnalysis<'a> {
             frames: Cell::new(0),
             provisional: Cell::new(usize::MAX),
             bindings: None,
-            uniformity: OnceCell::new(),
+            uniformity,
             unread: RefCell::new(None),
         }
     }
@@ -492,11 +492,9 @@ impl<'a> AffineAnalysis<'a> {
         Ok(sum)
     }
 
-    /// Which reads every lane executing them sees alike, built on first
-    /// use.
+    /// Which reads every lane executing them sees alike.
     pub(crate) fn uniformity(&self) -> &UniformityInfo<'a> {
         self.uniformity
-            .get_or_init(|| UniformityInfo::new(self.data))
     }
 
     /// Loop `id`'s trip count. Counting a loop reads its counter, which
@@ -1890,7 +1888,8 @@ mod tests {
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
         let k_max = HashMap::from([(SymbolicConstant::KernelParam(2), i64::from(i32::MAX))]);
-        let affine = AffineAnalysis::new(&data).with_bindings(&k_max);
+        let uniformity = UniformityInfo::new(&data);
+        let affine = AffineAnalysis::new(&data, &uniformity).with_bindings(&k_max);
         let mut loops = (0..f.loops.len() as u32).map(LoopId);
         let outer = loops
             .find(|&l| f.get(l).parent.is_none())

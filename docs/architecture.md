@@ -76,8 +76,8 @@ reads bindings from `report/bindings`, not from the report builder.
 
 `KernelAnalyses` holds one kernel's structure and no scalar interpretation.
 `UniformityInfo` borrows it and reads instruction semantics; it does not use
-`AffineAnalysis`. An `AffineAnalysis` borrows a `KernelAnalyses`, reads
-uniformity, and holds the recursion between value and trip-count queries with
+`AffineAnalysis`. An `AffineAnalysis` borrows a `KernelAnalyses` and its
+`UniformityInfo`, and holds the recursion between value and trip-count queries with
 a cache of both that keeps no result read from one still being computed
 outside it. `trip_counts` reads its per-loop results; nothing in
 `affine_analysis` calls back into it.
@@ -89,7 +89,8 @@ record against it, and for each kernel resolves the bindings and launch shape
 and builds the CFG, the loop forest and one `KernelAnalyses`. `KernelReportBuilder`
 then:
 
-1. creates one `AffineAnalysis` under those bindings;
+1. builds the kernel's `UniformityInfo` and one `AffineAnalysis` under those
+   bindings;
 2. names loops, collects every loop's trip count from that instance, and pairs
    unrolled loops;
 3. collects instruction contributions per block;
@@ -97,7 +98,7 @@ then:
    and count qualifiers with its dead edges;
 5. takes compile-time thread sets: the same sets when the bindings are exactly
    the `.reqntid` block shape, otherwise from a second `AffineAnalysis` over the
-   same `KernelAnalyses` under that shape, so runtime parameter bindings never make
+   same `KernelAnalyses` and `UniformityInfo` under that shape, so runtime parameter bindings never make
    a conditionally executed instruction look removable;
 6. marks dead code, then traces addresses and computes memory footprints.
 

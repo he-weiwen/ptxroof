@@ -782,12 +782,12 @@ impl Pred {
 /// Reads predicate registers back to the thread-index conditions that
 /// define them, once per definition, and block selections once per
 /// block.
-struct PredicateReader<'a, 's> {
+struct PredicateReader<'a> {
     module: &'a Module,
     kernel: &'a Kernel,
     cfg: &'a ControlFlowGraph,
     forest: &'a LoopForest,
-    affine: &'a AffineAnalysis<'s>,
+    affine: &'a AffineAnalysis<'a>,
     /// Per scope, the top level and then each loop: post-dominance over
     /// one trip, its edges [`kept`], and the branches each block is
     /// control dependent on there.
@@ -833,7 +833,7 @@ fn scope(forest: &LoopForest, b: BlockId) -> Option<LoopId> {
 /// per rung.
 const REACH_BUDGET: u32 = 32;
 
-impl PredicateReader<'_, '_> {
+impl PredicateReader<'_> {
     fn block(&mut self, b: BlockId) -> Pred {
         if let Some(p) = &self.blocks[b.0 as usize] {
             return p.clone();
@@ -1361,6 +1361,7 @@ mod tests {
     use super::*;
     use crate::analysis::affine::affine_expr::Axis;
     use crate::analysis::affine::sym_expr::SymExpr;
+    use crate::analysis::uniformity_info::UniformityInfo;
 
     fn exact(n: u32) -> Counted {
         Counted {
@@ -1895,7 +1896,8 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &forest);
-        let sets = thread_sets(&AffineAnalysis::new(&data));
+        let uniformity = UniformityInfo::new(&data);
+        let sets = thread_sets(&AffineAnalysis::new(&data, &uniformity));
         (m, sets)
     }
 

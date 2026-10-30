@@ -40,6 +40,7 @@ use crate::analysis::memory_footprint::{
     AccessForm, CountRange, SharedRequest, Wavefronts, loop_bytes, warp_footprint, warp_wavefronts,
 };
 use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets, thread_sets};
+use crate::analysis::uniformity_info::UniformityInfo;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SpecialReg, SpecialVector, Stmt};
@@ -912,7 +913,8 @@ impl<'a> KernelReportBuilder<'a> {
             forest,
             ..
         } = *data;
-        let affine = AffineAnalysis::new(data).with_bindings(bind_map);
+        let uniformity = UniformityInfo::new(data);
+        let affine = AffineAnalysis::new(data, &uniformity).with_bindings(bind_map);
         let names = loop_names(module, kernel, cfg, forest);
         let trip_info = trip_counts_from(&affine, &names);
         let blocks = collect(module, kernel, cfg, forest);
@@ -1032,7 +1034,9 @@ impl<'a> KernelReportBuilder<'a> {
         let sets = match compile_time == *bind_map {
             true => &b.sets,
             false => {
-                static_sets = thread_sets(&AffineAnalysis::new(data).with_bindings(&compile_time));
+                static_sets = thread_sets(
+                    &AffineAnalysis::new(data, &uniformity).with_bindings(&compile_time),
+                );
                 &static_sets
             }
         };

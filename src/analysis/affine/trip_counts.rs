@@ -8,6 +8,7 @@ use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::LoopName;
+use crate::analysis::uniformity_info::UniformityInfo;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module};
 use std::collections::HashMap;
@@ -48,7 +49,11 @@ pub fn trip_counts(
     bindings: &HashMap<SymbolicConstant, i64>,
 ) -> TripCountResults {
     let data = KernelAnalyses::new(module, kernel, cfg, forest);
-    trip_counts_from(&AffineAnalysis::new(&data).with_bindings(bindings), names)
+    let uniformity = UniformityInfo::new(&data);
+    trip_counts_from(
+        &AffineAnalysis::new(&data, &uniformity).with_bindings(bindings),
+        names,
+    )
 }
 
 /// Every loop's trip count under `affine`'s bindings.
