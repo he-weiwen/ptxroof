@@ -30,9 +30,9 @@
 //! Each value's trace and each trip count is cached, except one that
 //! read a trace or count still being computed outside it, as Tarjan's
 //! lowlink tells which results of a strongly connected component are
-//! final. A count read while it is being counted is unknown; one that
-//! read itself so is counted again with itself and kept where both
-//! agree.
+//! final. A trace or count read while it is being computed is unknown;
+//! one that read itself so is computed again with itself as a candidate
+//! and kept where both agree.
 //!
 //! Anything else — multiple exits, exits not at the latch, latch values
 //! loaded in the loop, dependence on a special register that is not one
@@ -510,18 +510,12 @@ impl<'a> AffineAnalysis<'a> {
     /// refused (`a_signed_counter_that_wraps_before_its_count_has_no_count`).
     pub(crate) fn loop_trip_count(&self, id: LoopId) -> Result<LoopTripCount, UnknownReason> {
         let unfinished = || Err("the trip count is being counted".into());
-        self.memoized(&self.trips, id, unfinished, |frame| {
-            let first = self.counted_trips(id);
-            if self.provisional.get() != frame || first.is_err() {
-                return first;
-            }
-            (self.trips.borrow_mut()).insert(id, Slot::Candidate(frame, first.clone()));
-            match self.counted_trips(id) {
-                again if again == first => again,
-                Err(why) => Err(why),
-                Ok(_) => Err("the trip count changes once it is known".into()),
-            }
-        })
+        let settle = |first, again| match (first, again) {
+            (Err(why), _) | (Ok(_), Err(why)) => Err(why),
+            (Ok(_), Ok(_)) => Err("the trip count changes once it is known".into()),
+        };
+        let count = || self.counted_trips(id);
+        self.memoized(&self.trips, id, unfinished, count, settle)
     }
 
     /// The address `offset` bytes past `base` at `pos` under the bindings,
@@ -582,13 +576,16 @@ impl<'a> AffineAnalysis<'a> {
 
     /// `f`'s result for `key`, from `memo` or cached there unless it read
     /// a frame still in progress outside its own; `unfinished` where `key`
-    /// is itself in progress.
-    fn memoized<K: Copy + Eq + std::hash::Hash, T: Clone>(
+    /// is itself in progress. A result that read only `key` itself in
+    /// progress is computed again with itself as a candidate, and `settle`
+    /// decides between the two where they differ.
+    fn memoized<K: Copy + Eq + std::hash::Hash, T: Clone + PartialEq>(
         &self,
         memo: &Memo<K, T>,
         key: K,
         unfinished: impl FnOnce() -> T,
-        f: impl FnOnce(usize) -> T,
+        f: impl Fn() -> T,
+        settle: impl FnOnce(T, T) -> T,
     ) -> T {
         match memo.borrow().get(&key) {
             Some(Slot::Done(t)) => return t.clone(),
@@ -606,7 +603,13 @@ impl<'a> AffineAnalysis<'a> {
         self.frames.set(frame);
         memo.borrow_mut().insert(key, Slot::InProgress(frame));
         let outer = self.provisional.replace(usize::MAX);
-        let t = f(frame);
+        let mut t = f();
+        if self.provisional.get() == frame {
+            memo.borrow_mut()
+                .insert(key, Slot::Candidate(frame, t.clone()));
+            let again = f();
+            t = if again == t { t } else { settle(t, again) };
+        }
         let read = self.provisional.get();
         self.frames.set(frame - 1);
         if read >= frame {
@@ -626,13 +629,22 @@ impl<'a> AffineAnalysis<'a> {
             min_trailing_zeros: self.min_trailing_zeros(v),
         };
         let unfinished = || (unknown("value depends on itself".into()), None);
-        let (p, why) = self.memoized(&self.values, v, unfinished, |_| {
+        let trace = || {
             let outer = self.unread.take();
             let p = self
                 .trace_uncached(v, depth)
                 .map_or_else(unknown, AffineProperties::Expr);
             (p, self.unread.replace(outer))
-        });
+        };
+        let settle = |first: Traced, again: Traced| match (&first.0, &again.0) {
+            (AffineProperties::Unknown { .. }, _) => first,
+            (_, AffineProperties::Unknown { .. }) => again,
+            _ => (
+                unknown("the value changes once its loop's count is known".into()),
+                again.1,
+            ),
+        };
+        let (p, why) = self.memoized(&self.values, v, unfinished, trace, settle);
         if let Some(why) = why {
             self.unread.borrow_mut().get_or_insert(why);
         }
@@ -889,6 +901,19 @@ mod tests {
         let wraps = Some("`add.u32` leaves 32 bits".to_owned());
         assert_eq!(counted(false), wraps);
         assert_eq!(counted(true), wraps);
+    }
+
+    #[test]
+    fn an_outer_counter_an_inner_latch_reads_is_checked_with_its_count() {
+        let src = kernel_with(
+            N_PARAM,
+            "mov.u32 %r1, 4294967294;\n$L__O:\nmov.u32 %r2, 0;\n$L__I:\n\
+             add.u32 %r2, %r2, 1;\nsetp.lt.u32 %p2, %r2, %r1;\n@%p2 bra $L__I;\n\
+             setp.le.u32 %p1, %r1, 4294967295;\nadd.u32 %r1, %r1, 1;\n\
+             @%p1 bra $L__O;\nret;",
+        );
+        let wraps = Err("`add.u32` leaves 32 bits".to_owned());
+        assert_eq!(trips_of(&src)[0], ("$L__O".to_owned(), wraps));
     }
 
     #[test]

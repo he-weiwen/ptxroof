@@ -6,7 +6,7 @@ use crate::analysis::affine::unknown_reason::UnknownReason;
 /// An SSA value's affine expression, or why it has none and how many
 /// low bits every definition of it leaves 0 (LLVM's
 /// `getMinTrailingZeros`).
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) enum AffineProperties {
     Expr(AffineExpr),
     Unknown {
