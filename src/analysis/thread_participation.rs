@@ -917,15 +917,27 @@ impl PredicateReader<'_> {
     }
 
     /// Which threads at `x` take its branch toward `c` in one trip of
-    /// scope `s`, read for block `b`.
+    /// scope `s`, read for block `b`; at a `brx.idx`, all or none of the
+    /// threads its index is one value for.
     fn toward(&mut self, s: Option<LoopId>, x: BlockId, c: BlockId, b: BlockId) -> Pred {
         let affine = self.affine;
-        let (Some((pos, instr)), &[taken, _]) =
-            (affine.data.last_instr(x), &self.cfg.block(x).succs[..])
-        else {
+        let Some((pos, instr)) = affine.data.last_instr(x) else {
             return Pred::Unknown;
         };
-        let Some(guard) = instr.predicate.filter(|_| instr.mnemonic == Opcode::Bra) else {
+        // PTX ISA §9.7.13.4: `brx.idx` continues at the label its index selects.
+        if let (Opcode::Brx, None, Some(&index)) = (
+            instr.mnemonic,
+            instr.predicate,
+            self.module.operand_ids(instr.operands).first(),
+        ) && let Operand::Register(r) = self.module.operand(index)
+        {
+            let index = affine.uniformity().register_uniformity(*r, pos);
+            return index.map_or(Pred::Unknown, Pred::Uniform);
+        }
+        let (&[taken, _], Some(guard)) = (
+            &self.cfg.block(x).succs[..],
+            instr.predicate.filter(|_| instr.mnemonic == Opcode::Bra),
+        ) else {
             return Pred::Unknown;
         };
         let forest = self.forest;
@@ -1933,6 +1945,28 @@ mod tests {
         );
         assert!(after.blocks[4].exact());
         assert_eq!(after.blocks[4].count([64, 1, 1]), Some(exact(32)));
+    }
+
+    /// A `brx.idx` on a value each warp loads from one address, at the
+    /// warp index its lane 0 shuffles to the others, sends all of a warp's
+    /// threads to one target: each target runs on whole warps, which ones
+    /// unknown. Without the shuffle `⌊%tid.x/32⌋` reads as divergent, and
+    /// so do the targets.
+    #[test]
+    fn a_jump_table_on_a_warp_s_index_selects_whole_warps() {
+        let table = |warp: &str| {
+            format!(
+                "shr.u32 %r2, %r1, 5;\n{warp}\n\
+                 mul.wide.u32 %rd2, %r3, 4;\nadd.s64 %rd3, %rd1, %rd2;\nld.global.u32 %r4, [%rd3];\n\
+                 $L__T: .branchtargets $L__A, $L__B;\nbrx.idx %r4, $L__T;\n\
+                 $L__A:\nadd.s32 %r5, %r1, 1;\nbra.uni $L__E;\n$L__B:\nadd.s32 %r6, %r1, 2;\n$L__E:"
+            )
+        };
+        let (_, shuffled) = sets_of(&table("shfl.sync.idx.b32 %r3, %r2, 0, 31, -1;"));
+        assert_eq!(shuffled.blocks[2], Pred::Uniform(Uniform::Warp));
+        assert_eq!(shuffled.blocks[3], Pred::Uniform(Uniform::Warp));
+        let (_, divided) = sets_of(&table("mov.u32 %r3, %r2;"));
+        assert_eq!(divided.blocks[2], Pred::Unknown);
     }
 
     /// Three-valued logic does not see that an unknown and its negation

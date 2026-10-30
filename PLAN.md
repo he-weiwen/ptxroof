@@ -216,6 +216,14 @@ contract (Codex's review of 2b2731b).
   a fourth operand other than 31, which splits the warp into
   sub-segments or clamps the lane (PTX ISA §9.7.9.6), leaves it
   unknown: `micro/shfl_idx.ptx`.
+- **The warp index is one value per warp only through a shuffle.** The
+  uniformity analysis reads `⌊%tid.x/32⌋` as divergent, though in a
+  block of one row, or whose `%ntid.x` is a multiple of 32, every lane
+  of a warp holds the same (PTX ISA §3.1): a `brx.idx` on a load at
+  `param_0 + 4·⌊%tid.x/32⌋` selects its targets' threads as an
+  unknown, where with the index shuffled from lane 0 first, as Triton's
+  warp specialization does, each target runs on whole warps
+  (`a_jump_table_on_a_warp_s_index_selects_whole_warps`).
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
