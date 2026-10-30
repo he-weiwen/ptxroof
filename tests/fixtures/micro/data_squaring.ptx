@@ -1,0 +1,81 @@
+//
+// HAND-WRITTEN: a parameter squared 22 times, in .f32 and in .u32, then
+// stored. Nothing reads the products as an address, a trip count or a
+// guard, so the affine analysis never traces them: a trace would write
+// the 22nd square as a product of 2^22 copies of the parameter.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_data_squaring_f32(
+	.param .u64 micro_data_squaring_f32_param_0,
+	.param .f32 micro_data_squaring_f32_param_1
+)
+{
+	.reg .f32 	%f<24>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_data_squaring_f32_param_0];
+	ld.param.f32 	%f1, [micro_data_squaring_f32_param_1];
+	mul.f32 	%f2, %f1, %f1;
+	mul.f32 	%f3, %f2, %f2;
+	mul.f32 	%f4, %f3, %f3;
+	mul.f32 	%f5, %f4, %f4;
+	mul.f32 	%f6, %f5, %f5;
+	mul.f32 	%f7, %f6, %f6;
+	mul.f32 	%f8, %f7, %f7;
+	mul.f32 	%f9, %f8, %f8;
+	mul.f32 	%f10, %f9, %f9;
+	mul.f32 	%f11, %f10, %f10;
+	mul.f32 	%f12, %f11, %f11;
+	mul.f32 	%f13, %f12, %f12;
+	mul.f32 	%f14, %f13, %f13;
+	mul.f32 	%f15, %f14, %f14;
+	mul.f32 	%f16, %f15, %f15;
+	mul.f32 	%f17, %f16, %f16;
+	mul.f32 	%f18, %f17, %f17;
+	mul.f32 	%f19, %f18, %f18;
+	mul.f32 	%f20, %f19, %f19;
+	mul.f32 	%f21, %f20, %f20;
+	mul.f32 	%f22, %f21, %f21;
+	mul.f32 	%f23, %f22, %f22;
+	st.global.f32 	[%rd1], %f23;
+	ret;
+}
+
+.visible .entry micro_data_squaring_u32(
+	.param .u64 micro_data_squaring_u32_param_0,
+	.param .u32 micro_data_squaring_u32_param_1
+)
+{
+	.reg .b32 	%r<24>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_data_squaring_u32_param_0];
+	ld.param.u32 	%r1, [micro_data_squaring_u32_param_1];
+	mul.lo.u32 	%r2, %r1, %r1;
+	mul.lo.u32 	%r3, %r2, %r2;
+	mul.lo.u32 	%r4, %r3, %r3;
+	mul.lo.u32 	%r5, %r4, %r4;
+	mul.lo.u32 	%r6, %r5, %r5;
+	mul.lo.u32 	%r7, %r6, %r6;
+	mul.lo.u32 	%r8, %r7, %r7;
+	mul.lo.u32 	%r9, %r8, %r8;
+	mul.lo.u32 	%r10, %r9, %r9;
+	mul.lo.u32 	%r11, %r10, %r10;
+	mul.lo.u32 	%r12, %r11, %r11;
+	mul.lo.u32 	%r13, %r12, %r12;
+	mul.lo.u32 	%r14, %r13, %r13;
+	mul.lo.u32 	%r15, %r14, %r14;
+	mul.lo.u32 	%r16, %r15, %r15;
+	mul.lo.u32 	%r17, %r16, %r16;
+	mul.lo.u32 	%r18, %r17, %r17;
+	mul.lo.u32 	%r19, %r18, %r18;
+	mul.lo.u32 	%r20, %r19, %r19;
+	mul.lo.u32 	%r21, %r20, %r20;
+	mul.lo.u32 	%r22, %r21, %r21;
+	mul.lo.u32 	%r23, %r22, %r22;
+	st.global.u32 	[%rd1], %r23;
+	ret;
+}

@@ -1,0 +1,8 @@
+# Arithmetic nothing reads as an address, a trip count or a guard is
+# not traced: a parameter squared 22 times reports its store at once,
+# where tracing the products would build 2^22 factors.
+RUN: %ptxroof analyze %fixtures/micro/data_squaring.ptx | FileCheck "%s"
+CHECK-LABEL: kernel micro_data_squaring_f32
+CHECK: st.global.f32  global store 4 B {{.*}}[param_0]
+CHECK-LABEL: kernel micro_data_squaring_u32
+CHECK: st.global.u32  global store 4 B {{.*}}[param_0]

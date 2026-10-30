@@ -82,8 +82,8 @@ reads bindings from `report/bindings`, not from the report builder.
 `AffineAnalysis`. An `AffineAnalysis` borrows a `KernelAnalyses` and its
 `UniformityInfo`, and holds the recursion between value and trip-count queries with
 a cache of both that keeps no result read from one still being computed
-outside it; it counts every loop when it is built, inner loops first, then
-traces every value a statement writes in reverse postorder. `trip_counts` reads its per-loop results; nothing in
+outside it; it counts every loop when it is built, inner loops first, and
+traces a value when a query reads it. `trip_counts` reads its per-loop results; nothing in
 `affine_analysis` calls back into it.
 
 ## Per-kernel flow
