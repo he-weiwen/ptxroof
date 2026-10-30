@@ -488,6 +488,16 @@ fn any_block(v: &Var) -> Option<(i64, i64)> {
     }
 }
 
+/// The CTA index's values on any grid, PTX ISA §10.6, §10.7: `%ctaid.x`
+/// below 2^31 − 1, `%ctaid.y` and `%ctaid.z` below 65535.
+fn any_grid(v: &Var) -> Option<(i64, i64)> {
+    match v {
+        Var::Ctaid(Axis::X) => Some((0, (1 << 31) - 2)),
+        Var::Ctaid(_) => Some((0, 65534)),
+        _ => None,
+    }
+}
+
 impl Constraint {
     /// The value of the form's `%ctaid` terms at the CTA `c`.
     fn cta_part(&self, c: [i64; 3]) -> i128 {
@@ -1249,8 +1259,15 @@ fn condition(module: &Module, kernel: &Kernel, se: &ScalarEvolution, def: usize)
         Var::Ctaid(_) | Var::Iteration(_) => se.bound(v),
         _ => any_block(v),
     };
+    // The input contract (PLAN.md): an operand of unknown range does not
+    // wrap its type; an unsigned one may still be negative, as in C's
+    // `(unsigned)i < n`.
     let fits = |x: &AffineExpr, (min, end): (i128, i128)| {
-        (x.range(&range)).is_some_and(|(lo, hi)| min <= lo && hi < end)
+        (x.range(&range)).is_none_or(|(lo, hi)| min <= lo && hi < end)
+    };
+    let nonnegative = |x: &AffineExpr| {
+        let any = |v: &Var| range(v).or_else(|| any_grid(v));
+        (x.range(&any)).is_some_and(|(lo, _)| lo >= 0)
     };
     let int = IntType::from_name(ty);
     let comparable = |a: &AffineExpr, b: &AffineExpr| {
@@ -1259,21 +1276,16 @@ fn condition(module: &Module, kernel: &Kernel, se: &ScalarEvolution, def: usize)
                 let w = 1i128 << int.width;
                 fits(&(a.clone() - b.clone()), (1 - w, w))
             }
-            (_, IntKind::Unsigned | IntKind::Signed) => {
-                fits(a, int.values()) && fits(b, int.values())
+            (_, IntKind::Signed) => fits(a, int.values()) && fits(b, int.values()),
+            (_, IntKind::Unsigned) => {
+                nonnegative(a) && nonnegative(b) && fits(a, int.values()) && fits(b, int.values())
             }
             (_, IntKind::Bits) => false,
         })
     };
-    let constant = |op| {
-        (se.trace_operand(op, def, None, 0).ok())
-            .and_then(|x| se.constant(&x))
-            .map(|c| AffineExpr::from_base(SymExpr::Const(c)))
-    };
-    if let (Some(x), Some(y)) = (constant(ops[1]), constant(ops[2]))
-        && comparable(&x, &y)
+    if let Some(d) = form.as_const()
+        && comparable(&a, &b)
     {
-        let d = (x - y).base.as_const()?;
         return Some(if holds(cmp, d.into()) {
             Pred::True
         } else {

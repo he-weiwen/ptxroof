@@ -79,6 +79,19 @@ threads that execute it (`micro/cp_async_ignore_src.ptx`, RTX 4090:
 2176 B over the launch, its four lines' 68 measured L2 sectors). With a
 src-size register it reads at most cp-size: `global load <= 16 B`.
 
+**Input contract.** The PTX is taken to come from a CUDA or Triton
+program run without undefined behavior, whose integer arithmetic on
+addresses, trip counts and thread-index comparisons does not wrap its
+type. A value of unknown range is read in the integers on that
+premise; one whose range under the bindings leaves its type is refused
+(the entries below). An unsigned comparison is read only on operands
+known to be nonnegative, since C's `(unsigned)i < n` wraps a negative
+`i` on purpose (`micro/setp_unknown_range.ptx`: `n + %tid.x <
+n + 32` stores on 32 threads signed, a bound unsigned). C++ defines
+unsigned wrap, so the premise is stronger than the absence of
+undefined behavior where a wrapped unsigned value reaches an address,
+a comparison or a widening.
+
 ## Known limitations
 
 ### Wrong output
@@ -146,8 +159,7 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
   the loop runs 8 trips, `max(uniform(%r3@54), 1)`, unbound
   `max(min(param_1 - 4, 8), 1)`); one
   through a parameter, `%ctaid` with no grid given or a symbolic trip
-  count keeps scalar evolution's documented assumption
-  (`src/analysis/affine/scalar_evolution.rs`, module doc). A conversion to or from
+  count is read under the input contract above. A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
 - **An and-mask that clears the sign bit keeps a value of unknown range
   as itself.** Up to the bit below the sign bit (nvcc's
@@ -185,8 +197,8 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
-  aggregate is `0 == 0` (`micro/param_fields.ptx`: the store `on 64
-  threads in 2 warps`, `store 256 B` per CTA).
+  aggregate is always true (`micro/param_fields.ptx`: the store runs on
+  every thread, `store 256 B` per CTA).
 - **Integer literals are read in decimal and hexadecimal below 2^63
   only**; PTX ISA §4.5.1 also writes them in octal and binary, with the
   suffix `U`, and up to 2^64 − 1 as `.u64`. In `micro/int_literals.ptx`,
@@ -475,15 +487,16 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 - **`setp`s not read as thread selectors.** A floating-point `setp`
   compares floats, not the traced integer forms, and `.f16x2` and
   `.bf16x2` each half on its own (PTX ISA §9.7.6.2, §9.7.7.2); an
-  `lt`, `le`, `gt` or `ge` is read only when both operands lie in the
-  range of its type, [0, 2^width) or [−2^(width−1), 2^(width−1)), for
+  `lt`, `le`, `gt` or `ge` is not read where an operand's range, for
   every `%tid` below 1024 (§10.2) and every `%ctaid` below the grid,
-  so not on a CTA index when no grid is given (b200
-  `tut_sg_prefixdense`'s `128·%ctaid.x + 64 < 128·%ctaid.x + 128`); an
-  `eq` or `ne` only when their difference lies in (−2^width, 2^width).
-  Otherwise what it guards is a bound (`micro/setp_float.ptx`,
-  `micro/setp_f16x2.ptx`, `micro/setp_unsigned.ptx`,
-  `micro/setp_wraps.ptx`: `(predicated)`, `store <= 256 B`).
+  leaves its type, [0, 2^width) or [−2^(width−1), 2^(width−1)), nor,
+  unsigned, where an operand is not nonnegative for every `%ctaid` of
+  any grid (§10.7); an `eq` or `ne` where their difference's range
+  leaves (−2^width, 2^width). What it guards is then a bound
+  (`micro/setp_float.ptx`, `micro/setp_f16x2.ptx`,
+  `micro/setp_unsigned.ptx`, `micro/setp_wraps.ptx`: `(predicated)`,
+  `store <= 256 B`; the unsigned kernel of
+  `micro/setp_unknown_range.ptx`).
 - **A guard comparing the thread index with a CTA index needs the
   grid, and one with an unbound parameter or a loop counter is an
   unknown selector.** A comparison over `%tid` and `%ctaid` with
