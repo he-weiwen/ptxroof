@@ -52,7 +52,7 @@ use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_analyses::KernelAnalyses;
-use crate::analysis::register_effects::{registers, split_operands};
+use crate::analysis::register_effects::{self, registers, split_operands};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::analysis::uniformity_info::UniformityInfo;
 use crate::ptx::cfg::BlockId;
@@ -109,7 +109,9 @@ pub(crate) struct AffineAnalysis<'a> {
 impl<'a> AffineAnalysis<'a> {
     /// The kernel's analysis under `bindings`, with every loop counted
     /// first, inner loops first, so that a count is the outermost
-    /// computation of any cycle through it.
+    /// computation of any cycle through it, and then every value a
+    /// statement writes traced in reverse postorder, so that its
+    /// operands' are mostly traced before it.
     pub(crate) fn new(
         data: &'a KernelAnalyses<'a>,
         uniformity: &'a UniformityInfo<'a>,
@@ -152,6 +154,14 @@ impl<'a> AffineAnalysis<'a> {
         };
         for &l in &order {
             let _ = analysis.loop_trip_count(l);
+        }
+        for &b in &forest.doms.rpo {
+            let block = data.cfg.block(b);
+            for op in block.start..block.end {
+                for reg in register_effects::writes(data.module, &data.kernel.stmts[op]) {
+                    let _ = analysis.properties(Value::Result { op, reg }, 0);
+                }
+            }
         }
         analysis
     }
