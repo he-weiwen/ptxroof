@@ -51,7 +51,7 @@ pub fn trip_counts(
     let data = KernelAnalyses::new(module, kernel, cfg, forest);
     let uniformity = UniformityInfo::new(&data);
     trip_counts_from(
-        &AffineAnalysis::new(&data, &uniformity).with_bindings(bindings),
+        &AffineAnalysis::new(&data, &uniformity, Some(bindings)),
         names,
     )
 }

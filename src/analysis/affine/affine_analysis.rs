@@ -103,13 +103,20 @@ pub(crate) struct AffineAnalysis<'a> {
 }
 
 impl<'a> AffineAnalysis<'a> {
-    pub(crate) fn new(data: &'a KernelAnalyses<'a>, uniformity: &'a UniformityInfo<'a>) -> Self {
+    /// The kernel's analysis under `bindings`, with every loop counted
+    /// first, inner loops first, so that a count is the outermost
+    /// computation of any cycle through it.
+    pub(crate) fn new(
+        data: &'a KernelAnalyses<'a>,
+        uniformity: &'a UniformityInfo<'a>,
+        bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
+    ) -> Self {
         let (forest, ssa) = (data.forest, &data.ssa);
         // Inner loops first: an outer counter may step by an inner exit.
         let mut order: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
         order.sort_by_key(|&l| std::cmp::Reverse(forest.get(l).depth));
         let (mut recurrences_by_phi, mut by_update) = (HashMap::new(), HashMap::new());
-        for l in order {
+        for &l in &order {
             let lp = forest.get(l);
             for r in induction_variables(
                 data.module,
@@ -128,17 +135,21 @@ impl<'a> AffineAnalysis<'a> {
                 recurrences_by_phi.insert(r.phi, (l, r));
             }
         }
-        AffineAnalysis {
+        let analysis = AffineAnalysis {
             data,
             induction_variables: recurrences_by_phi,
             trips: RefCell::new(HashMap::new()),
             values: RefCell::new(HashMap::new()),
             frames: Cell::new(0),
             provisional: Cell::new(usize::MAX),
-            bindings: None,
+            bindings,
             uniformity,
             unread: RefCell::new(None),
+        };
+        for &l in &order {
+            let _ = analysis.loop_trip_count(l);
         }
+        analysis
     }
 
     /// Every one of these definitions is `mov r, imm` with one immediate.
@@ -225,11 +236,6 @@ impl<'a> AffineAnalysis<'a> {
             b.get(&SymbolicConstant::SpecialReg(y)) == Some(&1)
                 && b.get(&SymbolicConstant::SpecialReg(z)) == Some(&1)
         })
-    }
-
-    pub(crate) fn with_bindings(mut self, bindings: &'a HashMap<SymbolicConstant, i64>) -> Self {
-        self.bindings = Some(bindings);
-        self
     }
 
     /// `f` of `a`, or of `a` under the bindings where `f` needs a
@@ -1884,7 +1890,7 @@ mod tests {
             })
             .expect("a setp");
         let counted = |read_first: bool| {
-            let affine = AffineAnalysis::new(&data, &uniformity);
+            let affine = AffineAnalysis::new(&data, &uniformity, None);
             if read_first {
                 let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, None, 0);
             }
@@ -1920,7 +1926,7 @@ mod tests {
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
         let k_max = HashMap::from([(SymbolicConstant::KernelParam(2), i64::from(i32::MAX))]);
         let uniformity = UniformityInfo::new(&data);
-        let affine = AffineAnalysis::new(&data, &uniformity).with_bindings(&k_max);
+        let affine = AffineAnalysis::new(&data, &uniformity, Some(&k_max));
         let mut loops = (0..f.loops.len() as u32).map(LoopId);
         let outer = loops
             .find(|&l| f.get(l).parent.is_none())

@@ -914,7 +914,7 @@ impl<'a> KernelReportBuilder<'a> {
             ..
         } = *data;
         let uniformity = UniformityInfo::new(data);
-        let affine = AffineAnalysis::new(data, &uniformity).with_bindings(bind_map);
+        let affine = AffineAnalysis::new(data, &uniformity, Some(bind_map));
         let names = loop_names(module, kernel, cfg, forest);
         let trip_info = trip_counts_from(&affine, &names);
         let blocks = collect(module, kernel, cfg, forest);
@@ -1034,9 +1034,8 @@ impl<'a> KernelReportBuilder<'a> {
         let sets = match compile_time == *bind_map {
             true => &b.sets,
             false => {
-                static_sets = thread_sets(
-                    &AffineAnalysis::new(data, &uniformity).with_bindings(&compile_time),
-                );
+                static_sets =
+                    thread_sets(&AffineAnalysis::new(data, &uniformity, Some(&compile_time)));
                 &static_sets
             }
         };

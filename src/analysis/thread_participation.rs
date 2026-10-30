@@ -1897,7 +1897,7 @@ mod tests {
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &forest);
         let uniformity = UniformityInfo::new(&data);
-        let sets = thread_sets(&AffineAnalysis::new(&data, &uniformity));
+        let sets = thread_sets(&AffineAnalysis::new(&data, &uniformity, None));
         (m, sets)
     }
 
