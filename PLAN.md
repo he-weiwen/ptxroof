@@ -267,14 +267,32 @@ contract (Codex's review of 2b2731b).
   one bit, and constants: one variable, the xor of its runs of thread
   bits (`micro/xor_swizzle.ptx`, Triton's swizzle as
   `(16 * (⌊%tid.x/8⌋ mod 4) ⊕ 16 * (%tid.x mod 128))`, its offsets read
-  back on the RTX 4090; 22,332 census rows). Not read: an xor with a
+  back on the RTX 4090; 22,336 census rows). Not read: an xor with a
   side that is no such xor, "behind `xor.b32`" (14,081 of the census's
-  36,283 unknown address rows, all but three shared): a sum whose fields
+  36,283 unknown address rows, in 527 kernels, all but three shared, of
+  its 15,825 shared rows with no address): a sum whose fields
   share a bit (`micro_xor_overlap`), one thread bit times a constant
   with more bits than one, as the Gluon GEMM's epilogue stores' 2064
   times bit 2, which comes there from a signed `bfe` past bit 0, itself
-  unread (`bfe at 2 of 1 bits`); divisions of the thread
-  index by a runtime value (`micro/uniform_address.ptx`'s
+  unread (`bfe at 2 of 1 bits`). Run on every `%tid.x` below its
+  `.reqntid`, 1,348 of the 1,436 xors not read in those kernels are an
+  xor of `%tid.x`'s bits, 70 are one only within each warp, its bits
+  differing by warp, and 18 read a register written more than once or a
+  `prmt`, which the evaluation does not follow. The first instruction
+  not read on an xor's operand chains is a one-bit signed `bfe` masked
+  by a constant, bit i times it (728 xors, 389 kernels; census kernel
+  `02431.ptx`'s lines 1768–1769, `bfe.s32 %r2591, %r2069, 3, 1` and `&
+  8208`), a `selp` of 0 or a constant by a thread bit (162, 77;
+  `03874.ptx`'s line 2057, `selp.b32 %r829, 0, 2112, %p61`), an `or`
+  whose sides may both set a bit (301, 118; of its 148 `or`s 91 set no
+  bit both on any thread, as `02284.ptx`'s line 1906 of `132·(%tid.x mod
+  2)` and bits 3–6 of `4·%tid.x`, 56 do, as `00196.ptx`'s line 934 a
+  warp bit or'd onto a lane bit, `%tid.x | (⌊%tid.x/4⌋ & 8)` in 64
+  threads, and one has a side the evaluation does not read), or the xor
+  itself, of a side with a thread field times a constant with more bits
+  than one (279, 158; `192·(%tid.x mod 2)`, `544·(%tid.x mod 4)`); an
+  xor may stop at more than one. Not read either: divisions of the
+  thread index by a runtime value (`micro/uniform_address.ptx`'s
   `micro_uniform_div_lanes`; 1,622 census rows "div by a non-constant
   divisor" and 3,525 "rem by a non-constant divisor": of 40 sampled,
   binding the kernel's 32-bit parameters reads 24 past the division,
