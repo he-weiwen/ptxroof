@@ -267,11 +267,10 @@ impl AffineAnalysis<'_> {
             .is_some_and(|(_, i)| matches!(i.mnemonic, Opcode::Ret | Opcode::Exit))
     }
 
-    /// `a`, read at `pos`, with each unknown value as a symbol: one value at
-    /// every trip of every entry of loop `id` where it is defined outside
-    /// the loops holding `id` and every thread of the CTA executing `pos`
-    /// sees it alike; else the first that is not, with why its trace has
-    /// no form for it, read now, while the count is being computed.
+    /// `a`, read at `pos`, with each unknown value as a symbol, where it is
+    /// one value at every trip of every entry of loop `id`: every thread
+    /// of the CTA sees it alike and the loops holding `id` do not define
+    /// it (`alike`).
     fn cta_uniform_symbols(
         &self,
         id: LoopId,
@@ -280,23 +279,7 @@ impl AffineAnalysis<'_> {
     ) -> Result<AffineExpr, UnknownReason> {
         let top = (std::iter::successors(Some(id), |&l| self.data.forest.get(l).parent).last())
             .unwrap_or(id);
-        for var in a.terms.keys() {
-            let Some(u) = var.unknown() else { continue };
-            let (why, own) = match self.uniformity().value_uniformity(u, pos) {
-                _ if self.data.defined_in(u, top) => {
-                    ("is defined in an enclosing loop".into(), true)
-                }
-                Ok(Uniform::Cta) => continue,
-                Ok(Uniform::Warp) => ("is one value per warp only".into(), true),
-                Err(why) => (format!("differs between lanes: {why}"), false),
-            };
-            let own = match self.properties(u, 0) {
-                AffineProperties::Unknown { reason, .. } if own => Some(Box::new(reason)),
-                _ => None,
-            };
-            let var = Box::new(var.clone());
-            return Err(UnknownReason::NotOneValue { var, why, own });
-        }
+        self.alike(&a, pos, Uniform::Cta, Some(top))?;
         Ok(a.as_symbols(&|v| match v {
             Var::Unknown(u) => Some(SymExpr::Sym(SymbolicConstant::Unknown(*u))),
             _ => None,

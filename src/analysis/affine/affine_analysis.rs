@@ -495,37 +495,68 @@ impl<'a> AffineAnalysis<'a> {
     }
 
     /// The address `offset` bytes past `base` at `pos` under the bindings,
-    /// one form for the lanes of a warp unless it counts the iterations of
-    /// a loop that does not hold `pos` and that they leave at different
-    /// iterations, or holds an unknown value they do not see alike: then
-    /// each lane reads its own, and the reason prints that variable by
-    /// `name`.
+    /// one form for the lanes of a warp unless a variable of it is not
+    /// one value for them (`alike`): then each lane reads its own.
     pub(crate) fn address(
         &self,
         base: OperandId,
         offset: i64,
         pos: usize,
-        name: &dyn Fn(&Var) -> String,
     ) -> Result<AffineExpr, UnknownReason> {
         let a = self.operand_at(base, pos, 0)? + AffineExpr::from_base(SymExpr::Const(offset));
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
-        for v in a.terms.keys() {
-            if let Some(l) = v.counter().filter(|&l| !self.data.in_loop(l, pos))
-                && let Err(why) = self.uniformity().exit_uniformity(l)
-            {
-                let k = name(&Var::Iteration(l));
-                return Err(
-                    format!("{k} differs between lanes after its loop, whose exit {why}").into(),
-                );
-            }
-            if let Some(u) = v.unknown()
-                && let Err(why) = self.uniformity().value_uniformity(u, pos)
-            {
-                let u = name(&Var::Unknown(u));
-                return Err(format!("{u} differs between lanes: {why}").into());
-            }
-        }
+        self.alike(&a, pos, Uniform::Warp, None)?;
         Ok(a)
+    }
+
+    /// Whether `a`, read at `pos`, is one value for the threads `level`
+    /// names: each counter of a loop not holding `pos` that they leave
+    /// together, and each unknown value they see alike, defined outside
+    /// loop `scope`. Else the first variable that is not, why, and, for
+    /// an unknown value they may share, why affine analysis has no form
+    /// for it, read now (a counter's wrap is known only while its count
+    /// is computed).
+    pub(crate) fn alike(
+        &self,
+        a: &AffineExpr,
+        pos: usize,
+        level: Uniform,
+        scope: Option<LoopId>,
+    ) -> Result<(), UnknownReason> {
+        let uniformity = self.uniformity();
+        for v in a.terms.keys() {
+            let (var, why, own) = match (v.counter(), v.unknown()) {
+                (Some(l), _) if !self.data.in_loop(l, pos) => {
+                    let why = match uniformity.exit_uniformity(l) {
+                        Ok(u) if u <= level => continue,
+                        Ok(_) => "is one value per warp only after its loop".into(),
+                        Err(why) => {
+                            format!("differs between lanes after its loop, whose exit {why}")
+                        }
+                    };
+                    (Var::Iteration(l), why, None)
+                }
+                (_, Some(u)) => {
+                    let (why, own) = match uniformity.value_uniformity(u, pos) {
+                        _ if scope.is_some_and(|l| self.data.defined_in(u, l)) => {
+                            ("is defined in an enclosing loop".into(), true)
+                        }
+                        Ok(x) if x <= level => continue,
+                        Ok(_) => ("is one value per warp only".into(), true),
+                        Err(why) => (format!("differs between lanes: {why}"), false),
+                    };
+                    let own = match own.then(|| self.properties(u, 0)) {
+                        Some(AffineProperties::Unknown { reason, .. }) => Some(Box::new(reason)),
+                        _ => None,
+                    };
+                    (Var::Unknown(u), why, own)
+                }
+                _ => continue,
+            };
+            let var = Box::new(var);
+            return Err(UnknownReason::NotOneValue { var, why, own });
+        }
+        Ok(())
     }
 
     /// Loop `l`'s trip count when it is a constant of at least 1 under the

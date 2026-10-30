@@ -364,25 +364,9 @@ impl AffineAnalysis<'_> {
                         other => Some(AffineExpr::var(other.clone())),
                     }
                 };
-                // Lane c's counter is this lane's only where lanes leave its
-                // loop together.
-                for l in (a.terms.keys()).filter_map(Var::counter) {
-                    if !self.data.in_loop(l, def)
-                        && let Err(why) = self.uniformity().exit_uniformity(l)
-                    {
-                        return Err(format!(
-                            "shfl.idx of a counter that differs between lanes after its loop, whose exit {why}"
-                        ).into());
-                    }
-                }
-                for u in (a.terms.keys()).filter_map(Var::unknown) {
-                    if let Err(why) = self.uniformity().value_uniformity(u, def) {
-                        return Err(format!(
-                            "shfl.idx of a value that differs between lanes: {why}"
-                        )
-                        .into());
-                    }
-                }
+                // Lane c's counter and unknown values are this lane's only
+                // where the warp's lanes share them.
+                self.alike(&a, def, Uniform::Warp, None)?;
                 a.map_vars(lane).ok_or_else(|| {
                     "shfl.idx of a value the tracer does not read in another lane".into()
                 })

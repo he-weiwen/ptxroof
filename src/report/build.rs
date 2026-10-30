@@ -331,7 +331,7 @@ impl KernelReportBuilder<'_> {
                             };
                             (Some(addr), None, None)
                         }
-                        Operand::Register(_) => match affine.address(*base, *offset, pos, &name) {
+                        Operand::Register(_) => match affine.address(*base, *offset, pos) {
                             Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
                             Err(reason) => (
                                 None,
@@ -426,16 +426,8 @@ impl KernelReportBuilder<'_> {
                         per_request.insert(pos, r);
                     }
                     if !self.unused[pos] {
-                        let cta = |u: Result<Uniform, String>| u == Ok(Uniform::Cta);
-                        let unknown_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
-                            v.unknown().is_some_and(|u| {
-                                scope.is_some_and(|l| affine.data.defined_in(u, l))
-                                    || !cta(affine.uniformity().value_uniformity(u, pos))
-                            }) || v.counter().is_some_and(|l| {
-                                !affine.data.in_loop(l, pos)
-                                    && !cta(affine.uniformity().exit_uniformity(l))
-                            })
-                        });
+                        let unknown_varies = (form.as_ref())
+                            .is_some_and(|a| affine.alike(a, pos, Uniform::Cta, scope).is_err());
                         forms.entry(scope).or_default().push(AccessForm {
                             form: form.clone(),
                             bytes,
