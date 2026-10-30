@@ -1,0 +1,139 @@
+//
+// HAND-WRITTEN: every form of `cp.async.bulk.tensor` in PTX ISA
+// §9.7.9.26.5.2 — global to shared::cta and to shared::cluster (with
+// .multicast::cluster), shared::cta to global; .1d to .5d; .tile,
+// .tile::gather4, .tile::scatter4, .im2col, .im2col::w, .im2col::w::128
+// and .im2col_no_offs; .cta_group; .L2::cache_hint — with a tensor map
+// in .param space addressed as Triton does. ptxas 13.4 -arch=sm_100a
+// assembles micro_tensor_copy_forms to one UTMALDG or UTMASTG each:
+// UTMALDG.1D, .2D, .3D.IM2COL, .4D.W, .5D.W128.2CTA, .2D.GATHER4,
+// .2D.MULTICAST, .5D.IM2COL.MULTICAST; UTMASTG.1D, .2D.SCATTER4,
+// .3D.IM2COL. A copy to shared writes no global memory, so the index
+// micro_tensor_copy_to_shared loads through param_1 is one value per
+// CTA; a copy to global writes where its tensor map points, and
+// micro_tensor_copy_to_global's is not. micro_tensor_copy_in_loop's
+// loop holds a copy whose global bytes are in the tensor map.
+//
+.version 8.8
+.target sm_100a
+.address_size 64
+
+.visible .entry micro_tensor_copy_forms(
+	.param .align 64 .b8 micro_tensor_copy_forms_param_0[128]
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b16 	%rs<4>;
+	.reg .b32 	%r<8>;
+	.reg .b64 	%rd<4>;
+	.shared .align 128 .b8 smem[16384];
+	.shared .align 8 .b8 bar[8];
+
+	mov.b32 	%r5, micro_tensor_copy_forms_param_0;
+	cvt.u64.u32 	%rd2, %r5;
+	cvta.param.u64 	%rd1, %rd2;
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, %ctaid.x;
+	mov.u32 	%r3, smem;
+	mov.u32 	%r4, bar;
+	setp.eq.u32 	%p1, %r1, 0;
+	createpolicy.fractional.L2::evict_last.b64 	%rd3, 1.0;
+	mov.b16 	%rs1, 3;
+	mov.b16 	%rs2, 1;
+	mov.b16 	%rs3, 2;
+	cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes.tile [%r3], [%rd1, {%r2}], [%r4];
+	@%p1 cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes [%r3+1024], [%rd1, {%r2, %r1}], [%r4];
+	@%p1 cp.async.bulk.tensor.3d.shared::cta.global.im2col.mbarrier::complete_tx::bytes [smem], [%rd1, {%r2, %r2, %r2}], [bar], {%rs2};
+	@%p1 cp.async.bulk.tensor.4d.shared::cta.global.im2col::w.mbarrier::complete_tx::bytes [%r3], [%rd1, {%r2, %r2, %r2, %r2}], [%r4], {%rs2, %rs3};
+	@%p1 cp.async.bulk.tensor.5d.shared::cta.global.im2col::w::128.mbarrier::complete_tx::bytes.cta_group::2.L2::cache_hint [%r3], [%rd1, {%r2, %r2, %r2, %r2, %r2}], [%r4], {%rs2, %rs3}, %rd3;
+	@%p1 cp.async.bulk.tensor.2d.tile::gather4.shared::cta.global.mbarrier::complete_tx::bytes [%r3], [%rd1, {%r2, %r1, %r1, %r1, %r1}], [%r4];
+	@%p1 cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster [%r3], [%rd1, {%r2, %r1}], [%r4], %rs1;
+	@%p1 cp.async.bulk.tensor.5d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes.multicast::cluster.cta_group::1.L2::cache_hint [%r3], [%rd1, {%r2, %r2, %r2, %r2, %r2}], [%r4], {%rs1, %rs2, %rs3}, %rs1, %rd3;
+	@%p1 cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd1, {%r2}], [%r3];
+	@%p1 cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group.L2::cache_hint [%rd1, {%r2, %r1, %r1, %r1, %r1}], [%r3], %rd3;
+	@%p1 cp.async.bulk.tensor.3d.global.shared::cta.im2col_no_offs.bulk_group [%rd1, {%r2, %r2, %r2}], [%r3];
+	ret;
+}
+
+.visible .entry micro_tensor_copy_to_shared(
+	.param .u64 micro_tensor_copy_to_shared_param_0,
+	.param .u64 micro_tensor_copy_to_shared_param_1,
+	.param .u64 micro_tensor_copy_to_shared_param_2
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<8>;
+	.reg .b64 	%rd<6>;
+	.shared .align 128 .b8 smem[16384];
+	.shared .align 8 .b8 bar[8];
+
+	ld.param.u64 	%rd1, [micro_tensor_copy_to_shared_param_0];
+	ld.param.u64 	%rd2, [micro_tensor_copy_to_shared_param_1];
+	ld.param.u64 	%rd3, [micro_tensor_copy_to_shared_param_2];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, smem;
+	mov.u32 	%r3, bar;
+	cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes [%r2], [%rd3, {%r1}], [%r3];
+	ld.global.u32 	%r4, [%rd2];
+	mad.lo.s32 	%r5, %r4, 128, %r1;
+	mul.wide.u32 	%rd4, %r5, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r1;
+	ret;
+}
+
+.visible .entry micro_tensor_copy_to_global(
+	.param .u64 micro_tensor_copy_to_global_param_0,
+	.param .u64 micro_tensor_copy_to_global_param_1,
+	.param .u64 micro_tensor_copy_to_global_param_2
+)
+.reqntid 128, 1, 1
+{
+	.reg .b32 	%r<8>;
+	.reg .b64 	%rd<6>;
+	.shared .align 128 .b8 smem[16384];
+
+	ld.param.u64 	%rd1, [micro_tensor_copy_to_global_param_0];
+	ld.param.u64 	%rd2, [micro_tensor_copy_to_global_param_1];
+	ld.param.u64 	%rd3, [micro_tensor_copy_to_global_param_2];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, smem;
+	cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd3, {%r1}], [%r2];
+	ld.global.u32 	%r4, [%rd2];
+	mad.lo.s32 	%r5, %r4, 128, %r1;
+	mul.wide.u32 	%rd4, %r5, 4;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], %r1;
+	ret;
+}
+
+.visible .entry micro_tensor_copy_in_loop(
+	.param .u64 micro_tensor_copy_in_loop_param_0,
+	.param .u64 micro_tensor_copy_in_loop_param_1
+)
+.reqntid 128, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<8>;
+	.reg .b64 	%rd<6>;
+	.shared .align 128 .b8 smem[16384];
+	.shared .align 8 .b8 bar[8];
+
+	ld.param.u64 	%rd1, [micro_tensor_copy_in_loop_param_0];
+	ld.param.u64 	%rd2, [micro_tensor_copy_in_loop_param_1];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, smem;
+	mov.u32 	%r3, bar;
+	mov.u32 	%r4, 0;
+$L__BB3_1:
+	cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes [%r2], [%rd2, {%r1, %r4}], [%r3];
+	mad.lo.s32 	%r5, %r4, 128, %r1;
+	mul.wide.u32 	%rd3, %r5, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	add.s32 	%r4, %r4, 1;
+	setp.lt.u32 	%p1, %r4, 4;
+	@%p1 bra 	$L__BB3_1;
+	ret;
+}

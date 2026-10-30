@@ -180,7 +180,7 @@ fn def_reads(
         ))];
     }
     let (written, inputs) = split_operands(t.module, instr);
-    let mut rs = operand_reads(t, inputs, d);
+    let mut rs = operand_reads(t, data_inputs(t, instr, inputs), d);
     if reads_cc(t.module, instr) {
         rs.push(read(t, Register::Cc, d));
     }
@@ -192,6 +192,19 @@ fn def_reads(
         }
     }
     rs
+}
+
+/// The `inputs` of `instr` its result is computed from: an `ld`'s but
+/// the cache_policy `.L2::cache_hint` adds last, "a performance hint
+/// only" (PTX ISA §9.7.9.8, §9.7.9.9).
+fn data_inputs<'m>(t: &KernelAnalyses, instr: &Instr, inputs: &'m [OperandId]) -> &'m [OperandId] {
+    let module = t.module;
+    let hint =
+        (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "L2::cache_hint");
+    match inputs {
+        [address @ .., _] if instr.mnemonic == Opcode::Ld && hint => address,
+        _ => inputs,
+    }
 }
 
 fn read(t: &KernelAnalyses, reg: Register, pos: usize) -> Read {
@@ -375,14 +388,17 @@ fn kernel_param(t: &KernelAnalyses, instr: &Instr) -> Option<usize> {
 
 /// The kernel parameters the addresses of `instr` may point into, as
 /// LLVM's `getUnderlyingObjects` (llvm/lib/Analysis/ValueTracking.cpp)
-/// collects them; `None` where one is not traced to them.
+/// collects them; `None` where one is not traced to them, or is a
+/// tensor map's coordinates, whose address the map holds.
 fn pointees(t: &KernelAnalyses, instr: &Instr) -> Option<BTreeSet<usize>> {
     let (mut seen, mut out) = (HashSet::new(), BTreeSet::new());
     for &o in t.module.operand_ids(instr.operands) {
         if let Operand::Memory { base, rest, .. } = t.module.operand(o) {
-            for &r in std::iter::once(base).chain(t.module.operand_ids(*rest)) {
-                reach(t, r, &mut seen, &mut out)?;
+            // PTX ISA §9.7.9.26.5.2: `[tensorMap, tensorCoords]`.
+            if !rest.is_empty() {
+                return None;
             }
+            reach(t, *base, &mut seen, &mut out)?;
         }
     }
     (!out.is_empty()).then_some(out)
@@ -438,8 +454,9 @@ fn reach(
 
 /// The kernel parameters a store may write global memory through; `None`
 /// where one may write anywhere: a store `pointees` does not trace, a
-/// `call`, an instruction the classifier does not handle that names
-/// `.global`, or a statement not parsed.
+/// tensor copy to global among them, a `call`, an instruction the
+/// classifier does not handle that names `.global`, or a statement not
+/// parsed.
 fn written(t: &KernelAnalyses) -> Option<BTreeSet<usize>> {
     let module = t.module;
     let mut out = BTreeSet::new();
@@ -638,6 +655,36 @@ mod tests {
         let swapped = "atom.global.exch.b64 %rd3, [%rd9], 0;\n\
                        selp.b64 %rd4, %rd9, %rd3, %p1;\nst.global.u32 [%rd4], 0;";
         assert_eq!(load("ld.global.u32", swapped), from("ld.global.u32"));
+        // A tensor copy to shared writes no global memory; one to global
+        // writes where its tensor map points.
+        let to_shared = "cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes \
+                         [%r6], [%rd9, {%r1}], [%r7];";
+        assert_eq!(load("ld.global.u32", to_shared), Ok(()));
+        let to_global =
+            "cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd9, {%r1}], [%r6];";
+        assert_eq!(load("ld.global.u32", to_global), from("ld.global.u32"));
+    }
+
+    /// The lightllm decode kernels' loads under a `createpolicy` policy,
+    /// whose result is not lane-wise.
+    #[test]
+    fn a_load_does_not_read_its_cache_policy() {
+        let load = |ld: &str, read: &str| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0\n)\n{{\n\
+                 ld.param.u64 %rd0, [k_param_0];\n\
+                 createpolicy.fractional.L2::evict_last.b64 %rd1, 1.0;\n\
+                 {ld} %r2, [%rd0], %rd1;\nadd.s64 %rd2, %rd1, 0;\n\
+                 st.shared.u32 [%r9], {read};\nret;\n}}\n"
+            );
+            uniform_at(&src, read, None, "st.shared.u32")
+        };
+        let cached = "ld.global.L1::evict_last.L2::cache_hint.u32";
+        assert_eq!(load(cached, "%r2"), Ok(()));
+        assert_eq!(load("ld.global.nc.L2::cache_hint.u32", "%r2"), Ok(()));
+        let policy = "createpolicy.fractional.L2::evict_last.b64";
+        assert_eq!(load(cached, "%rd2"), Err(format!("comes from `{policy}`")));
     }
 
     #[test]

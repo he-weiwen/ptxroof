@@ -407,7 +407,8 @@ pub struct ByteRange {
 pub struct AccessForm {
     /// `None` when the address is not read.
     pub form: Option<AffineExpr>,
-    pub bytes: u32,
+    /// `None` when the instruction does not state them.
+    pub bytes: Option<u32>,
     /// The access size the address is aligned to.
     pub align: u32,
     pub space: Space,
@@ -431,8 +432,9 @@ pub struct AccessForm {
 /// Bases on different pointers are assumed disjoint; bases on one
 /// pointer, or on none known, may overlap, so the distinct bytes are
 /// at most their sum and at least the largest on each pointer. Needs
-/// a numeric trip count, the block shape, and every global address's
-/// lane and counter coefficients as constants.
+/// a numeric trip count, the block shape, every global access's bytes,
+/// and every global address's lane and counter coefficients as
+/// constants.
 pub fn loop_bytes(
     id: LoopId,
     trips: i64,
@@ -460,6 +462,7 @@ pub fn loop_bytes(
     // Each warp's pattern, with the trips it is summed over.
     let mut patterns: HashMap<AffineExpr, Vec<(SectorPattern, i64)>> = HashMap::new();
     for f in global {
+        let bytes = f.bytes?;
         let set = &f.set;
         let lanes = (0..threads)
             .filter(|&t| set.contains(thread(t, shape), shape))
@@ -479,7 +482,7 @@ pub fn loop_bytes(
                 lanes.checked_mul(trips as u64)?
             }
         };
-        requested = requested.checked_add(u64::from(f.bytes).checked_mul(runs)?)?;
+        requested = requested.checked_add(u64::from(bytes).checked_mul(runs)?)?;
         let varies = |v: &Var| {
             crate::analysis::affine::lane_eval::depends_on_lane(v) || v.counter() == Some(id)
         };
@@ -489,7 +492,7 @@ pub fn loop_bytes(
         };
         let read = |a: &&AffineExpr| offsets_fit(a, varies, &bound) && !f.uniform_varies;
         let Some(form) = (f.form.as_ref()).filter(read) else {
-            complete &= f.bytes == 0 || lanes == 0;
+            complete &= bytes == 0 || lanes == 0;
             continue;
         };
         let stride = match form.terms.get(&Var::Iteration(id)) {
@@ -520,7 +523,7 @@ pub fn loop_bytes(
         }) {
             return None;
         }
-        let bytes = i64::from(f.bytes);
+        let bytes = i64::from(bytes);
         // Which lane an election picks is unspecified: a lane-dependent
         // address touched by the elected lane is a bound.
         if f.set.elect_active().is_some()
@@ -885,7 +888,7 @@ mod tests {
             + AffineExpr::var(Var::Iteration(id)).scale(c(512));
         let access = |form: &AffineExpr| AccessForm {
             form: Some(form.clone()),
-            bytes: 4,
+            bytes: Some(4),
             align: 4,
             space: Space::Global,
             set: Pred::True,
@@ -932,5 +935,12 @@ mod tests {
             })
         );
         assert_eq!(loop_bytes(id, 4, [0, 1, 1], &forms, on_param), None);
+        // A tensor copy's global side: the tensor map holds its bytes.
+        let unstated = AccessForm {
+            bytes: None,
+            ..access(&shifted)
+        };
+        let forms = [access(&form), unstated];
+        assert_eq!(loop_bytes(id, 4, [128, 1, 1], &forms, on_param), None);
     }
 }

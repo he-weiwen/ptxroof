@@ -1,0 +1,40 @@
+# cp.async.bulk.tensor (PTX ISA §9.7.9.26.5.2): one row for its shared
+# side, its address traced, and one for its global side, whose address
+# the tensor map holds; the bytes of both are the tensor map's, so they
+# are unknown in every total and no loop footprint counts them. Each
+# form runs on the threads its guard selects.
+RUN: %ptxroof analyze %fixtures/micro/tensor_copies.ptx | FileCheck "%s"
+CHECK-LABEL: kernel micro_tensor_copy_forms
+CHECK: cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes.tile{{ +}}shared store{{ +}}[smem]
+CHECK-NEXT: cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes.tile{{ +}}global load{{ +}}unknown: the tensor map holds the address
+CHECK-NEXT: cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes{{ +}}shared store on 1 thread in 1 warp (%tid.x == 0){{ +}}[smem + 1024]
+CHECK-NEXT: cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes{{ +}}global load on 1 thread in 1 warp (%tid.x == 0){{ +}}unknown: the tensor map holds the address
+CHECK: cp.async.bulk.tensor.2d.tile::gather4.shared::cta.global.mbarrier::complete_tx::bytes{{ +}}shared store on 1 thread
+CHECK: cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster{{ +}}shared::cluster store on 1 thread in 1 warp (%tid.x == 0){{ +}}[smem]
+CHECK-NEXT: cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster{{ +}}global load on 1 thread in 1 warp (%tid.x == 0){{ +}}unknown: the tensor map holds the address
+CHECK: cp.async.bulk.tensor.1d.global.shared::cta.bulk_group{{ +}}global store on 1 thread in 1 warp (%tid.x == 0){{ +}}unknown: the tensor map holds the address
+CHECK-NEXT: cp.async.bulk.tensor.1d.global.shared::cta.bulk_group{{ +}}shared load on 1 thread in 1 warp (%tid.x == 0){{ +}}[smem]
+CHECK-NEXT: cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group.L2::cache_hint{{ +}}global store on 1 thread
+CHECK: global -> shared copy ? B{{ +}}6
+CHECK: shared -> global copy ? B{{ +}}3
+CHECK: global -> shared::cluster copy ? B{{ +}}2
+CHECK: global bytes: load 0 B + unknown, store 0 B + unknown
+CHECK-NEXT: shared bytes: load 0 B + unknown, store 0 B + unknown
+CHECK-NEXT: shared::cluster bytes: load 0 B, store 0 B + unknown
+CHECK: unknowns:
+CHECK-NEXT: global load with statically unknown byte count x8
+CHECK-NEXT: global store with statically unknown byte count x3
+CHECK-NEXT: shared load with statically unknown byte count x3
+CHECK-NEXT: shared store with statically unknown byte count x6
+CHECK-NEXT: shared::cluster store with statically unknown byte count x2
+# A copy to shared writes no global memory: the index loaded through
+# param_1 is one value per CTA. A copy to global may write it.
+CHECK-LABEL: kernel micro_tensor_copy_to_shared
+CHECK: st.global.u32{{ +}}global store 4 B{{ +}}warp: 4–5 sectors (ideal 4){{ +}}[4 * %tid.x + 512 * uniform(%r4@{{[0-9]+}}) + param_0]
+CHECK-LABEL: kernel micro_tensor_copy_to_global
+CHECK: st.global.u32{{ +}}global store 4 B{{ +}}unknown: depends on a value loaded from memory
+# The loop's copy reads global bytes its tensor map gives: no footprint.
+CHECK-LABEL: kernel micro_tensor_copy_in_loop
+CHECK: st.global.u32{{ +}}global store 4 B{{ +}}warp: 4–5 sectors (ideal 4){{ +}}[4 * %tid.x + 512 * k[$L__BB3_1] + param_0 - 512]
+CHECK-NOT: global bytes per CTA over the loop's own blocks
+CHECK: totals [static]:

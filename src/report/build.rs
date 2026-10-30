@@ -307,10 +307,19 @@ impl KernelReportBuilder<'_> {
                         || !set.lane_exact())
                         && set.count(shape).is_none_or(|c| c.certain != c.possible);
                     let threads = guard.is_some().then(|| self.threads_info(&set)).flatten();
-                    let Operand::Memory { base, offset, .. } = module.operand(mem_ops[i]) else {
+                    let Operand::Memory {
+                        base, offset, rest, ..
+                    } = module.operand(mem_ops[i])
+                    else {
                         continue;
                     };
                     let (address, unknown, form) = match module.operand(*base) {
+                        // PTX ISA §9.7.9.26.5.2: `[tensorMap, tensorCoords]`.
+                        _ if !rest.is_empty() => (
+                            None,
+                            Some("the tensor map holds the address".to_owned()),
+                            None,
+                        ),
                         Operand::SymbolRef(s) => {
                             let sym = shorten(module.interner.resolve(*s).to_owned());
                             let addr = if *offset == 0 {
@@ -420,7 +429,7 @@ impl KernelReportBuilder<'_> {
                         };
                         per_request.insert(pos, r);
                     }
-                    if let Some(b) = bytes.filter(|_| !self.unused[pos]) {
+                    if !self.unused[pos] {
                         let uniform_varies = (form.iter()).flat_map(|a| a.terms.keys()).any(|v| {
                             v.uniform().is_some_and(|u| {
                                 scope.is_some_and(|l| affine.data.defined_in(u, l))
@@ -428,8 +437,8 @@ impl KernelReportBuilder<'_> {
                         });
                         forms.entry(scope).or_default().push(AccessForm {
                             form: form.clone(),
-                            bytes: b,
-                            align: align.unwrap_or(b),
+                            bytes,
+                            align: align.or(bytes).unwrap_or(1),
                             space,
                             set: set.clone(),
                             guard_exact,

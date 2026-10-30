@@ -342,7 +342,8 @@ contract (Codex's review of 2b2731b).
   the host, another stream, or a grid before `griddepcontrol.wait`. A
   store whose pointer is not traced to parameters (loaded, from an
   atomic or another operation the trace does not follow, a symbol, a
-  vector), a `call` and an unclassified instruction naming `.global`
+  vector), a tensor copy to global, whose tensor map holds the
+  address, a `call` and an unclassified instruction naming `.global`
   count as writing everything; a `.volatile`, `.relaxed`, `.acquire`,
   `.mmio` or generic load is never one value
   (`a_global_load_through_a_pointer_nothing_writes_is_lane_wise`). The
@@ -358,8 +359,9 @@ contract (Codex's review of 2b2731b).
   (`micro/one_pointer_two_bases.ptx`: a[k] and a[k + n] count
   16–32 B, 16 B with `--bind 1:n=0`; `micro/uniform_bases.ptx`), count
   the loop's own blocks only, and need a numeric trip count, the block
-  shape, constant lane and counter coefficients, and every access's
-  address (else `unique unknown`, `micro/footprint_unknown.ptx`), and
+  shape, constant lane and counter coefficients, every global access's
+  bytes (else no footprint, `micro/tensor_copies.ptx`) and address
+  (else `unique unknown`, `micro/footprint_unknown.ptx`), and
   are bounds where which threads run the loop is not known. k5's K loop at
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
   k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B, a bound until M and
@@ -467,12 +469,19 @@ contract (Codex's review of 2b2731b).
   "depends on special register %tid.x", and census kernel `00376.ptx`'s
   four `st.global.v4.b32` of its source line 74 "div by a non-constant
   divisor".
-- **Instruction families.** 77 of the 232 rows in
+- **Instruction families.** 75 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
-  and block-scaled `mma`; `wgmma`; `tcgen05`; bulk/TMA copies;
+  and block-scaled `mma`; `wgmma`; `tcgen05`; bulk copies, their
+  completion and the tensor copies but `cp.async.bulk.tensor`;
   textures and surfaces; `multimem`; video instructions. `tcgen05`
-  is in 12 of the B200 fixtures (`tests/fixtures/b200`), bulk tensor
-  copies (`cp.async.bulk*`) in five.
+  is in 12 of the B200 fixtures (`tests/fixtures/b200`),
+  `cp.async.bulk.commit_group` and `cp.async.bulk.wait_group` in four.
+- **A tensor copy's bytes are unknown.** `cp.async.bulk.tensor` moves
+  the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8),
+  not the PTX: both its sides count as ops with unknown bytes in every
+  total, its global row reads `unknown: the tensor map holds the
+  address`, and a loop holding one in its own blocks has no footprint
+  (`micro/tensor_copies.ptx`, `micro-tensor-copies.test`).
 - **Special registers PTX ISA §10 does not describe** — `%pm*`
   ("behavior is currently undefined"), `%envreg*` (driver-defined),
   `%globaltimer*` (target-specific), `%reserved_smem_offset_*` — read

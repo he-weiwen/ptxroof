@@ -158,6 +158,14 @@ mod tests {
     }
 
     #[test]
+    fn a_tensor_copy_keeps_what_it_reads_live() {
+        let body = "add.s32 %r2, %r1, 64;\n\
+                    cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes \
+                    [%r2], [%rd1, {%r1}], [%r1];";
+        assert_eq!(unused_in(body, &[]), Vec::<String>::new());
+    }
+
+    #[test]
     fn a_guarded_write_keeps_its_old_value_and_guard_live() {
         let body = "setp.lt.u32 %p1, %r1, 16;\nmov.u32 %r2, 7;\n@%p1 mov.u32 %r2, %r1;\n\
                     st.global.u32 [%rd1], %r2;";
