@@ -362,6 +362,22 @@ contract (Codex's review of 2b2731b).
   cross-entropy's target column, its index loaded through param_1, reads
   `[65536 * %ctaid.x + 2 * uniform(%rd14@86) + param_0]`, 1 sector, as
   its record measures (`gluon-ce-chunk.test`).
+- **A load is taken to give the lanes of a warp one value where its
+  address is the same for them**: a weak `.global`, `.shared` or
+  `.const` load, as LLVM's NVPTX and AMDGPU targets take it
+  (`isSourceOfDivergence`, AMDGPU: "if threads issue loads with the same
+  arguments, they will always get the same result"). PTX ISA §8.5 does
+  not give it ("the warp is not a scope; the CTA is the smallest
+  collection of threads that qualifies as a scope"): this assumes the
+  hardware executes the load once for the lanes executing it together.
+  A warp-specialized dispatch reads its state byte so
+  (`micro/warp_dispatch.ptx`: the dispatched store's sectors read
+  `warp: 4–5 sectors (ideal 4)`, `micro-warp-dispatch.test`); over the
+  65 records the access rows whose warp sectors or wavefronts are a
+  bound go from 333 to 201, all in `gluon/attn_fwd_ws_kernel`'s two
+  shapes. The records keep thread instructions only
+  (`tools/ncu/measure.py`), not the warp instructions per line that
+  would check it.
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B
@@ -555,8 +571,9 @@ contract (Codex's review of 2b2731b).
   (`a_launch_sums_each_cta_s_threads_and_warps`). Without a grid the masks
   Triton builds from `pid·BLOCK + arange` leave what they guard a bound
   (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
-  is an unknown selector too (`micro/guards.ptx`: the store total stays
-  a bound). A comparison with a loop counter is counted trip by trip
+  is an unknown selector too, one for a warp's lanes where the load's
+  address is (`micro/guards.ptx`: the store total stays a bound, a
+  request's sectors are exact). A comparison with a loop counter is counted trip by trip
   (`micro/counter_guard.ptx`: 384 barriers and 300 stores per CTA, as
   measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `k < 511`,
   confirmed at 12,533,760, `gluon-counter-guard.test`) only where the

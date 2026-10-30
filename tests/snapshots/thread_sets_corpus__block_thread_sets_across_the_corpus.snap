@@ -850,3 +850,6 @@ tests/fixtures/micro/tensor_copies.ptx	micro_tensor_copy_forms	<block 0>	cp.asyn
 tests/fixtures/micro/tensor_copies.ptx	micro_tensor_copy_forms	<block 0>	cp.async.bulk.tensor.3d.global.shared::cta.im2col_no_offs.bulk_group	1 in 1 warp (%tid.x == 0)
 tests/fixtures/micro/tensor_copies.ptx	micro_tensor_copy_forms	<block 0>	cp.async.bulk.tensor.3d.global.shared::cta.im2col_no_offs.bulk_group	1 in 1 warp (%tid.x == 0)
 tests/fixtures/micro/unpack.ptx	micro_unpack_join	<block 1>	32 in 1 warp (%tid.x >= 32)
+tests/fixtures/micro/warp_dispatch.ptx	warp_dispatch	<block 1>	128 in 4 warps (⌊%tid.x/32⌋ >= 4)
+tests/fixtures/micro/warp_dispatch.ptx	warp_dispatch	<block 2>	<= 128 in <= 4 warps (⌊%tid.x/32⌋ >= 4)
+tests/fixtures/micro/warp_dispatch.ptx	warp_dispatch	$L__BB0_2	128 in 4 warps (⌊%tid.x/32⌋ < 4)

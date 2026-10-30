@@ -1,0 +1,48 @@
+//
+// HAND-WRITTEN: a warp-specialized dispatch as Triton lowers one
+// (gluon/attn_fwd_ws_kernel.sm_89.ptx lines 2615-2619). Warps 4 to 7
+// read a state byte at an address of their own warp, the warp index
+// shfl.sync.idx broadcasts from lane 0, and store where it is 0; warps
+// 0 to 3 write the state. ptxas 13.4 -arch=sm_80 assembles it.
+//
+
+.version 8.7
+.target sm_80
+.address_size 64
+
+.shared .align 4 .b8 state[8];
+
+.visible .entry warp_dispatch(
+	.param .u64 warp_dispatch_param_0
+)
+.reqntid 256, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b16 	%rs<2>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [warp_dispatch_param_0];
+	cvta.to.global.u64 	%rd2, %rd1;
+	mov.u32 	%r1, %tid.x;
+	shr.u32 	%r2, %r1, 5;
+	shfl.sync.idx.b32 	%r3, %r2, 0, 31, -1;
+	mov.u32 	%r4, state;
+	setp.lt.u32 	%p1, %r3, 4;
+	@%p1 bra 	$L__BB0_2;
+	bar.sync 	0;
+	add.s32 	%r5, %r4, %r3;
+	ld.shared.u8 	%rs1, [%r5];
+	setp.ne.s16 	%p2, %rs1, 0;
+	@%p2 bra 	$L__BB0_3;
+	mul.wide.u32 	%rd3, %r1, 4;
+	add.s64 	%rd4, %rd2, %rd3;
+	st.global.u32 	[%rd4], %r1;
+	bra.uni 	$L__BB0_3;
+$L__BB0_2:
+	mov.b32 	%r6, 0;
+	st.shared.u32 	[%r4+4], %r6;
+	bar.sync 	0;
+$L__BB0_3:
+	ret;
+}
