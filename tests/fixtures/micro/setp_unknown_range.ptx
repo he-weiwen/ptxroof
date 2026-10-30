@@ -7,10 +7,11 @@
 // keeps both sums (`IADD3 R0, R5, c[0x0][0x168]`, `ISETP.GE.AND` and
 // `ISETP.GE.U32.AND` against n + 32), which differ from %tid.x < 32
 // only where n + %tid.x wraps or, unsigned, where n is negative. The
-// last two are read wrong (PLAN.md, wrong output): the third sums in
-// `.u32` and compares `.s32`, so n = 0x7fffffe0 makes n + 32 the signed
-// minimum and the store run on no thread; the fourth compares n with
-// n & 0x7fffffff, true where n is negative.
+// third sums in `.u32` and compares `.s32`, read as %tid.x < 32: the
+// contract excludes n = 0x7fffffe0, which makes n + 32 the signed
+// minimum and the store run on no thread. The fourth is read wrong
+// (PLAN.md, wrong output): it compares n with n & 0x7fffffff, true
+// where n is negative.
 //
 .version 8.7
 .target sm_89

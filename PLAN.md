@@ -82,15 +82,20 @@ src-size register it reads at most cp-size: `global load <= 16 B`.
 **Input contract.** The PTX is taken to come from a CUDA or Triton
 program run without undefined behavior, whose integer arithmetic on
 addresses, trip counts and thread-index comparisons does not wrap its
-type. A value of unknown range is read in the integers on that
-premise; one whose range under the bindings leaves its type is refused
-(the entries below). An unsigned comparison is read only on operands
-known to be nonnegative, since C's `(unsigned)i < n` wraps a negative
-`i` on purpose (`micro/setp_unknown_range.ptx`: `n + %tid.x <
-n + 32` stores on 32 threads signed, a bound unsigned). C++ defines
-unsigned wrap, so the premise is stronger than the absence of
-undefined behavior where a wrapped unsigned value reaches an address,
-a comparison or a widening.
+type, and whose signed comparisons read values in their signed range.
+A value of unknown range is read in the integers on that premise; one
+whose range under the bindings leaves its type is refused (the entries
+below). An unsigned comparison is read only on operands known to be
+nonnegative, since C's `(unsigned)i < n` wraps a negative `i` on
+purpose (`micro/setp_unknown_range.ptx`: `n + %tid.x < n + 32` stores
+on 32 threads signed, a bound unsigned). C++ defines unsigned wrap and
+the conversion of an unsigned value past 2^31 − 1 to `int`, so the
+premise is stronger than the absence of undefined behavior where such
+a value reaches an address, a comparison or a widening: that file's
+third kernel, `add.u32` of n and `%tid.x` compared `setp.lt.s32` with
+n + 32, reads `%tid.x < 32`, and n = 0x7fffffe0, which makes n + 32
+the signed minimum and the store run on no thread, is outside the
+contract (Codex's review of 2b2731b).
 
 ## Known limitations
 
@@ -161,14 +166,6 @@ a comparison or a widening.
   through a parameter, `%ctaid` with no grid given or a symbolic trip
   count is read under the input contract above. A conversion to or from
   floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
-- **A signed comparison reads a value an unsigned sum leaves past
-  2^31 − 1 as nonnegative.** The input contract keeps a value in the
-  type it is computed in, not in the one a comparison reads it as, and
-  C++ converts such a value to `int` without undefined behavior:
-  `micro/setp_unknown_range.ptx`'s third kernel, `add.u32` of n and
-  `%tid.x` compared `setp.lt.s32` with n + 32, reads `%tid.x < 32` (32
-  threads), where n = 0x7fffffe0 makes n + 32 the signed minimum and
-  the store run on no thread (Codex's review of 2b2731b; constructed).
 - **An and-mask that clears the sign bit keeps a value of unknown range
   as itself.** Up to the bit below the sign bit (nvcc's
   `& 0x7fffffc0`) the and is read as the value itself where its range

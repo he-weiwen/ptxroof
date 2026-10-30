@@ -11,10 +11,10 @@ CHECK-LABEL: kernel micro_setp_unknown_range_unsigned
 CHECK: st.global.u32  global store 4 B (predicated)
 CHECK: totals per CTA [static]:
 CHECK: global bytes: load 0 B, store <= 256 B
-# Wrong output (PLAN.md): the third kernel sums in .u32 and compares
-# .s32, read as %tid.x < 32 where n = 0x7fffffe0 runs the store on no
-# thread; the fourth compares n with n & 0x7fffffff, read as false where
-# a negative n makes it true.
+# The third kernel sums in .u32 and compares .s32, read as %tid.x < 32
+# under the input contract (PLAN.md), which excludes n = 0x7fffffe0.
+# Wrong output (PLAN.md): the fourth compares n with n & 0x7fffffff,
+# read as false where a negative n makes it true.
 CHECK-LABEL: kernel micro_setp_unknown_range_mixed
 CHECK: st.global.u32  global store 4 B on 32 threads in 1 warp (%tid.x < 32)
 CHECK-LABEL: kernel micro_setp_unknown_range_mask
