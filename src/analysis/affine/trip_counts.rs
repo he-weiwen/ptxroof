@@ -4,6 +4,7 @@
 //! loop with factor c.
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
+use crate::analysis::affine::affine_expr::Var;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::kernel_analyses::KernelAnalyses;
@@ -53,18 +54,24 @@ pub fn trip_counts(
     trip_counts_from(
         &AffineAnalysis::new(&data, &uniformity, Some(bindings)),
         names,
+        &|v| v.to_string(),
     )
 }
 
-/// Every loop's trip count under `affine`'s bindings.
-pub(crate) fn trip_counts_from(affine: &AffineAnalysis, names: &[LoopName]) -> TripCountResults {
+/// Every loop's trip count under `affine`'s bindings, a reason's unknown
+/// values as `name` prints them.
+pub(crate) fn trip_counts_from(
+    affine: &AffineAnalysis,
+    names: &[LoopName],
+    name: &dyn Fn(&Var) -> String,
+) -> TripCountResults {
     let forest = affine.data.forest;
     let (mut trips, mut entries, mut distances) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..forest.loops.len() as u32 {
         let (t, entry, distance) = match affine.loop_trip_count(LoopId(i)) {
             Ok(t) => (Ok(t.count), t.entry, t.distance),
             Err(e) => (
-                Err(e.render(affine.data, Some(LoopId(i)), true)),
+                Err(e.render(affine.data, Some(LoopId(i)), true, name)),
                 forest.get(LoopId(i)).header,
                 None,
             ),

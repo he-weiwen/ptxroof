@@ -336,7 +336,7 @@ impl KernelReportBuilder<'_> {
                             Err(reason) => (
                                 None,
                                 Some({
-                                    let reason = reason.render(affine.data, scope, false);
+                                    let reason = reason.render(affine.data, scope, false, &name);
                                     reason
                                         .strip_prefix("latch condition ")
                                         .unwrap_or(&reason)
@@ -931,7 +931,14 @@ impl<'a> KernelReportBuilder<'a> {
         let uniformity = UniformityInfo::new(data);
         let affine = AffineAnalysis::new(data, &uniformity, Some(bind_map));
         let names = loop_names(module, kernel, cfg, forest);
-        let trip_info = trip_counts_from(&affine, &names);
+        let name = |v: &Var| match v {
+            Var::Unknown(u) => format!(
+                "uniform({})",
+                Self::value_name(module, kernel, cfg, lines, *u)
+            ),
+            other => other.to_string(),
+        };
+        let trip_info = trip_counts_from(&affine, &names, &name);
         let blocks = collect(module, kernel, cfg, forest);
 
         let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();

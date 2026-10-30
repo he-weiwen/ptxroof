@@ -29,12 +29,14 @@ pub(crate) enum UnknownReason {
 impl UnknownReason {
     /// The reason as a sentence for a read in loop `scope`, a latch's
     /// condition where `latch`: a load inside or outside that loop, a
-    /// variable other than its counter.
+    /// variable other than its counter, an unknown value as `name`
+    /// prints it.
     pub(crate) fn render(
         &self,
         data: &KernelAnalyses,
         scope: Option<LoopId>,
         latch: bool,
+        name: &dyn Fn(&Var) -> String,
     ) -> String {
         let prefix = if latch { "latch condition " } else { "" };
         match self {
@@ -50,7 +52,10 @@ impl UnknownReason {
                 format!("{prefix}depends on special register {}", reg.name())
             }
             UnknownReason::Behind { reason, opcode } => {
-                format!("{}, behind `{opcode}`", reason.render(data, scope, latch))
+                format!(
+                    "{}, behind `{opcode}`",
+                    reason.render(data, scope, latch, name)
+                )
             }
             UnknownReason::NotAffine { what, vars } => {
                 for v in vars {
@@ -58,6 +63,12 @@ impl UnknownReason {
                         Var::Iteration(l) if Some(*l) == scope => {}
                         Var::Iteration(_) => {
                             return format!("{prefix}depends on an enclosing loop's counter");
+                        }
+                        other if other.unknown().is_some() => {
+                            return format!(
+                                "{prefix}depends on {}, in a {what}",
+                                other.render(&name)
+                            );
                         }
                         other => {
                             return format!(

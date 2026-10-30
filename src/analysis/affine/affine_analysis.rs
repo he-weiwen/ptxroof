@@ -934,7 +934,7 @@ mod tests {
                 let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, 0);
             }
             (affine.loop_trip_count(LoopId(0)).err())
-                .map(|r| r.render(&data, Some(LoopId(0)), true))
+                .map(|r| r.render(&data, Some(LoopId(0)), true, &|v| v.to_string()))
         };
         let wraps = Some("`add.u32` leaves 32 bits".to_owned());
         assert_eq!(counted(false), wraps);
@@ -980,7 +980,7 @@ mod tests {
             }
             let a = affine.operand_at(last, at, 0);
             a.map(|a| a.to_string())
-                .map_err(|r| r.render(&data, None, false))
+                .map_err(|r| r.render(&data, None, false, &|v| v.to_string()))
         };
         assert_eq!(read(false), Ok("%tid.x + 300".to_owned()));
         assert_eq!(read(true), read(false));
@@ -1017,8 +1017,8 @@ mod tests {
             .find(|&l| f.get(l).parent.is_none())
             .expect("an outer loop");
         assert_eq!(affine.constant_trips(outer), None);
-        let count =
-            (affine.loop_trip_count(outer).err()).map(|r| r.render(&data, Some(outer), true));
+        let count = (affine.loop_trip_count(outer).err())
+            .map(|r| r.render(&data, Some(outer), true, &|v| v.to_string()));
         assert_eq!(count.as_deref(), Some("`add.s32` leaves 32 bits"));
     }
 
