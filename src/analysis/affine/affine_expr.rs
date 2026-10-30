@@ -30,8 +30,11 @@ pub enum Var {
     FloorDiv(Box<Var>, i64),
     /// `v mod m`, m > 0: its thread column, `tid.x % 8`.
     Mod(Box<Var>, i64),
-    /// A register value affine analysis cannot interpret that every lane
-    /// executing its read sees alike.
+    /// A register value affine analysis cannot interpret, as each lane
+    /// reads it. It is read so only where every lane executing the read
+    /// sees it alike; a use that takes it as one value for several
+    /// lanes, an address's warp footprint, a shuffle or a trip count,
+    /// checks that again where it reads it.
     Unknown(Value),
     /// An xor of fields of `%tid.x`.
     Swizzle(XorSwizzle),

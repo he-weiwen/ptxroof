@@ -43,6 +43,7 @@
 //! and unsigned/signed comparison width is not modeled.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Cmp, Var};
+use crate::analysis::affine::affine_properties::AffineProperties;
 use crate::analysis::affine::exit_limit::{below_zero, exit_limit};
 use crate::analysis::affine::induction_variables::{InductionVariable, Step, induction_variables};
 use crate::analysis::affine::int_type::{IntKind, IntType};
@@ -67,7 +68,7 @@ use std::collections::{HashMap, HashSet};
 /// How many definitions deep a trace follows a value before giving up.
 const DEPTH_LIMIT: u32 = 256;
 
-type Traced = (Result<AffineExpr, String>, Option<String>);
+type Traced = (AffineProperties, Option<String>);
 type Memo<K, T> = RefCell<HashMap<K, Slot<T>>>;
 
 /// A cached result, the frame computing it, or the count a loop's
@@ -317,22 +318,24 @@ impl<'a> AffineAnalysis<'a> {
             let name = self.data.module.interner.resolve(reg);
             return Err(format!("{name} is read in a block no path reaches"));
         };
-        match self.trace_value(v, id, depth) {
-            Ok(a) => Ok(self.after_exits(a, pos)),
-            Err(why)
-                if !matches!(v, Value::Undef(_))
-                    && self.uniformity().is_uniform(reg, pos).is_ok() =>
+        match self.properties(v, id, depth) {
+            AffineProperties::Expr(a) => Ok(self.after_exits(a, pos)),
+            AffineProperties::Unknown {
+                reason,
+                min_trailing_zeros,
+            } if !matches!(v, Value::Undef(_))
+                && self.uniformity().is_uniform(reg, pos).is_ok() =>
             {
-                self.unread.borrow_mut().get_or_insert(why);
+                self.unread.borrow_mut().get_or_insert(reason);
                 let u = Var::Unknown(v);
-                Ok(match self.min_trailing_zeros(v) {
+                Ok(match min_trailing_zeros {
                     0 => AffineExpr::var(u),
                     k => {
                         AffineExpr::term(Var::FloorDiv(Box::new(u), 1 << k), SymExpr::Const(1 << k))
                     }
                 })
             }
-            Err(why) => Err(why),
+            AffineProperties::Unknown { reason, .. } => Err(reason),
         }
     }
 
@@ -441,7 +444,7 @@ impl<'a> AffineAnalysis<'a> {
         depth: u32,
     ) -> Result<AffineExpr, Option<String>> {
         let module = self.data.module;
-        let start = self.trace_value(r.start, id, depth + 1)?;
+        let start = self.properties(r.start, id, depth + 1).expr()?;
         let step = self.step(l, &r.step, depth)?;
         // The values the back edges feed, start + k·step for k in [1, n]
         // when the loop runs a constant n trips, stay in their type.
@@ -618,17 +621,24 @@ impl<'a> AffineAnalysis<'a> {
         t
     }
 
-    fn trace_value(&self, v: Value, id: Option<LoopId>, depth: u32) -> Result<AffineExpr, String> {
-        let unfinished = || (Err("value depends on itself".to_owned()), None);
-        let (t, why) = self.memoized(&self.values, (v, id), unfinished, |_| {
+    /// What value `v` is at its definition, read for the latch of loop `id`.
+    fn properties(&self, v: Value, id: Option<LoopId>, depth: u32) -> AffineProperties {
+        let unknown = |reason| AffineProperties::Unknown {
+            reason,
+            min_trailing_zeros: self.min_trailing_zeros(v),
+        };
+        let unfinished = || (unknown("value depends on itself".to_owned()), None);
+        let (p, why) = self.memoized(&self.values, (v, id), unfinished, |_| {
             let outer = self.unread.take();
-            let t = self.trace_uncached(v, id, depth);
-            (t, self.unread.replace(outer))
+            let p = self
+                .trace_uncached(v, id, depth)
+                .map_or_else(unknown, AffineProperties::Expr);
+            (p, self.unread.replace(outer))
         });
         if let Some(why) = why {
             self.unread.borrow_mut().get_or_insert(why);
         }
-        t
+        p
     }
 
     fn trace_uncached(

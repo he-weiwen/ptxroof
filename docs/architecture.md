@@ -33,6 +33,7 @@ only declare modules and selected public entry points.
 | `analysis/affine/lane_eval` | Evaluate affine forms for lanes and warp layouts |
 | `analysis/affine/induction_variables` | Recognize loop counter induction variables on SSA values |
 | `analysis/affine/exit_limit` | Loop-exit inequalities solved for a trip count |
+| `analysis/affine/affine_properties` | What the affine analysis keeps of an SSA value: its expression, or why it has none |
 | `analysis/affine/affine_analysis` | Register values as affine forms and one loop's trip count; their mutual recursion and the cache of both |
 | `analysis/affine/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
 | `analysis/loop_names` | Source-derived loop identities used by unroll pairing and display |
