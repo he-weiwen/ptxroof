@@ -33,7 +33,7 @@ only declare modules and selected public entry points.
 | `analysis/affine/lane_eval` | Evaluate affine forms for lanes and warp layouts |
 | `analysis/affine/induction_variables` | Recognize loop counter induction variables on SSA values |
 | `analysis/affine/exit_limit` | Loop-exit inequalities solved for a trip count |
-| `analysis/affine/scalar_evolution` | Register values as affine forms and one loop's trip count; their mutual recursion and trip cache |
+| `analysis/affine/scalar_evolution` | Register values as affine forms and one loop's trip count; their mutual recursion and the cache of both |
 | `analysis/affine/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
 | `analysis/loop_names` | Source-derived loop identities used by unroll pairing and display |
 | `analysis/thread_participation` | Predicates and sets of threads executing blocks and accesses |
@@ -77,7 +77,8 @@ reads bindings from `report/bindings`, not from the report builder.
 `UniformityInfo` borrows it and reads instruction semantics; it does not use
 `ScalarEvolution`. A `ScalarEvolution` borrows a `KernelAnalyses`, reads
 uniformity, and holds the recursion between value and trip-count queries with
-its trip cache. `trip_counts` reads its per-loop results; nothing in
+a cache of both that keeps no result read from one still being computed
+outside it. `trip_counts` reads its per-loop results; nothing in
 `scalar_evolution` calls back into it.
 
 ## Per-kernel flow

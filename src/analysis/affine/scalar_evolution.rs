@@ -27,10 +27,12 @@
 //! The two queries recurse into each other: a value after a loop, a
 //! counter stepped by an inner loop's exit and an integer range check
 //! need a constant trip count, and a latch reads values.
-//! Each value's trace and each constant count is cached, except one
-//! that read a trace or count still being computed outside it, as
-//! Tarjan's lowlink tells which results of a strongly connected
-//! component are final; a count read while it is being solved is `None`.
+//! Each value's trace and each trip count is cached, except one that
+//! read a trace or count still being computed outside it, as Tarjan's
+//! lowlink tells which results of a strongly connected component are
+//! final. A count read while it is being counted is unknown; one that
+//! read itself so is counted again with itself and kept where both
+//! agree.
 //!
 //! Anything else — multiple exits, exits not at the latch, latch values
 //! loaded in the loop, dependence on a special register that is not one
@@ -68,9 +70,11 @@ const DEPTH_LIMIT: u32 = 256;
 type Traced = (Result<AffineExpr, String>, Option<String>);
 type Memo<K, T> = RefCell<HashMap<K, Slot<T>>>;
 
-/// A cached result, or the frame computing it.
+/// A cached result, the frame computing it, or the count a loop's
+/// frame is checking its count with.
 enum Slot<T> {
     InProgress(usize),
+    Candidate(usize, T),
     Done(T),
 }
 
@@ -78,9 +82,8 @@ pub(crate) struct ScalarEvolution<'a> {
     pub(crate) data: &'a KernelAnalyses<'a>,
     /// Each loop counter by its header φ, with its loop.
     pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
-    /// Nested loops' constant trip counts, for counters stepped by their
-    /// exits; `None` when one is not a constant.
-    trips: Memo<LoopId, Option<i64>>,
+    /// Each loop's trip count.
+    trips: Memo<LoopId, Result<LoopTripCount, String>>,
     /// Each value's trace for the loop whose latch reads it, with the
     /// first reason it read a uniform value as a variable.
     values: Memo<(Value, Option<LoopId>), Traced>,
@@ -493,9 +496,23 @@ impl<'a> ScalarEvolution<'a> {
             .get_or_init(|| UniformityInfo::new(self.data))
     }
 
-    /// Loop `id`'s trip count.
+    /// Loop `id`'s trip count. One that read itself, through a counter
+    /// that needs it, is counted again with that count and kept only
+    /// where both agree.
     pub(crate) fn loop_trip_count(&self, id: LoopId) -> Result<LoopTripCount, String> {
-        counted_trips(self, id)
+        let unfinished = || Err("the trip count is being counted".to_owned());
+        self.memoized(&self.trips, id, unfinished, |frame| {
+            let first = counted_trips(self, id);
+            if self.provisional.get() != frame || first.is_err() {
+                return first;
+            }
+            (self.trips.borrow_mut()).insert(id, Slot::Candidate(frame, first.clone()));
+            match counted_trips(self, id) {
+                again if again == first => again,
+                Err(why) => Err(why),
+                Ok(_) => Err("the trip count changes once it is known".to_owned()),
+            }
+        })
     }
 
     /// The address `offset` bytes past `base` at `pos` under the bindings,
@@ -550,16 +567,9 @@ impl<'a> ScalarEvolution<'a> {
     /// bindings, which makes its latch, and so its exit, the same for
     /// every lane.
     fn constant_trips(&self, l: LoopId) -> Option<i64> {
-        self.memoized(
-            &self.trips,
-            l,
-            || None,
-            || {
-                (self.loop_trip_count(l).ok().map(|t| t.count))
-                    .and_then(|t| self.constant(&AffineExpr::from_base(t)))
-                    .filter(|&n| n >= 1)
-            },
-        )
+        (self.loop_trip_count(l).ok().map(|t| t.count))
+            .and_then(|t| self.constant(&AffineExpr::from_base(t)))
+            .filter(|&n| n >= 1)
     }
 
     /// `f`'s result for `key`, from `memo` or cached there unless it read
@@ -570,7 +580,7 @@ impl<'a> ScalarEvolution<'a> {
         memo: &Memo<K, T>,
         key: K,
         unfinished: impl FnOnce() -> T,
-        f: impl FnOnce() -> T,
+        f: impl FnOnce(usize) -> T,
     ) -> T {
         match memo.borrow().get(&key) {
             Some(Slot::Done(t)) => return t.clone(),
@@ -578,13 +588,17 @@ impl<'a> ScalarEvolution<'a> {
                 self.provisional.set(self.provisional.get().min(frame));
                 return unfinished();
             }
+            Some(Slot::Candidate(frame, t)) => {
+                self.provisional.set(self.provisional.get().min(*frame));
+                return t.clone();
+            }
             None => {}
         }
         let frame = self.frames.get() + 1;
         self.frames.set(frame);
         memo.borrow_mut().insert(key, Slot::InProgress(frame));
         let outer = self.provisional.replace(usize::MAX);
-        let t = f();
+        let t = f(frame);
         let read = self.provisional.get();
         self.frames.set(frame - 1);
         if read >= frame {
@@ -599,7 +613,7 @@ impl<'a> ScalarEvolution<'a> {
 
     fn trace_value(&self, v: Value, id: Option<LoopId>, depth: u32) -> Result<AffineExpr, String> {
         let unfinished = || (Err("value depends on itself".to_owned()), None);
-        let (t, why) = self.memoized(&self.values, (v, id), unfinished, || {
+        let (t, why) = self.memoized(&self.values, (v, id), unfinished, |_| {
             let outer = self.unread.take();
             let t = self.trace_uncached(v, id, depth);
             (t, self.unread.replace(outer))
@@ -1316,6 +1330,7 @@ fn refuse(a: &AffineExpr, id: Option<LoopId>, what: &str) -> String {
 
 /// The count, the block it is per execution of, and a `!=` latch's
 /// distance and step.
+#[derive(Clone, PartialEq)]
 pub(crate) struct LoopTripCount {
     pub(crate) count: SymExpr,
     pub(crate) entry: BlockId,
@@ -1820,6 +1835,25 @@ mod tests {
     }
 
     const N_PARAM: &str = ".param .u32 k_param_0";
+
+    #[test]
+    fn a_count_its_counter_refuses_once_known_is_unknown_to_every_reader() {
+        let src = include_str!("../../../tests/fixtures/k5/k5.sm_80.ptx");
+        let m = parse(src).expect("k5 parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &f);
+        let k_max = HashMap::from([(SymbolicConstant::KernelParam(2), i64::from(i32::MAX))]);
+        let se = ScalarEvolution::new(&data).with_bindings(&k_max);
+        let mut loops = (0..f.loops.len() as u32).map(LoopId);
+        let outer = loops
+            .find(|&l| f.get(l).parent.is_none())
+            .expect("an outer loop");
+        assert_eq!(se.constant_trips(outer), None);
+        let count = se.loop_trip_count(outer).err();
+        assert_eq!(count.as_deref(), Some("`add.s32` leaves 32 bits"));
+    }
 
     #[test]
     fn up_counting_lt_stride_1() {
