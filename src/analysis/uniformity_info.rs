@@ -13,7 +13,7 @@
 
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
-use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Space};
+use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::register_effects::{reads_cc, split_operands};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
@@ -59,21 +59,20 @@ pub(crate) struct UniformityInfo<'a> {
 impl<'a> UniformityInfo<'a> {
     pub(crate) fn new(t: &'a KernelAnalyses<'a>) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
-        let written = written(t);
         let defs: BTreeSet<usize> = (t.writes.iter())
             .filter(|(r, _)| matches!(r, Register::Named(_)))
             .flat_map(|(_, ds)| ds.iter().copied())
             .collect();
         for d in defs {
             reads.extend(
-                def_reads(t, d, false, written.as_ref())
+                def_reads(t, d, false)
                     .into_iter()
                     .map(|r| (Node::Def(d), r)),
             );
         }
         for &d in t.writes.get(&Register::Cc).into_iter().flatten() {
             reads.extend(
-                def_reads(t, d, true, written.as_ref())
+                def_reads(t, d, true)
                     .into_iter()
                     .map(|r| (Node::Carry(d), r)),
             );
@@ -198,18 +197,13 @@ impl<'a> UniformityInfo<'a> {
 /// What the registers statement `d` writes depend on, or with
 /// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
 /// guard and the value it keeps where the guard is false.
-fn def_reads(
-    t: &KernelAnalyses,
-    d: usize,
-    carry_out: bool,
-    written: Option<&BTreeSet<usize>>,
-) -> Vec<Read> {
+fn def_reads(t: &KernelAnalyses, d: usize, carry_out: bool) -> Vec<Read> {
     let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
         return vec![Read::Divergent(
             "comes from a statement not parsed".to_owned(),
         )];
     };
-    let lane_wise = lane_wise(t, instr, written);
+    let lane_wise = lane_wise(t, instr);
     let (written, inputs) = split_operands(t.module, instr);
     let mut rs = match lane_wise {
         true => operand_reads(t, data_inputs(t, instr, inputs), d),
@@ -426,21 +420,9 @@ fn exits<'a>(t: &'a KernelAnalyses, id: LoopId) -> impl Iterator<Item = Node> + 
 /// Each lane's result is a function of its own operands: a kernel
 /// parameter is read-only and one per grid, a function's `.param`, a
 /// call's return value among them, one per thread (PTX ISA §5.1.6,
-/// Table 7). A weak global load reads one value at an address where
-/// nothing writes it during the launch (PTX ISA §8, §9.7.9.8): its
-/// address points into kernel parameters `written` does not hold.
-fn lane_wise(t: &KernelAnalyses, instr: &Instr, written: Option<&BTreeSet<usize>>) -> bool {
-    let module = t.module;
-    let mods: Vec<&str> = (module.modifiers(instr).iter())
-        .map(|&m| module.interner.resolve(m))
-        .collect();
-    if instr.mnemonic == Opcode::Ld
-        && mods.contains(&"global")
-        && !(mods.iter()).any(|m| matches!(*m, "volatile" | "relaxed" | "acquire" | "mmio"))
-    {
-        return pointees(t, instr).is_some_and(|p| written.is_some_and(|w| w.is_disjoint(&p)));
-    }
-    let c = classify(module, instr);
+/// Table 7).
+fn lane_wise(t: &KernelAnalyses, instr: &Instr) -> bool {
+    let c = classify(t.module, instr);
     match c.category {
         InstructionCategory::NonFlopArith { .. } => true,
         InstructionCategory::Flop => c.contributions.iter().all(|k| {
@@ -472,110 +454,6 @@ fn kernel_param(t: &KernelAnalyses, instr: &Instr) -> Option<usize> {
             _ => None,
         }
     })
-}
-
-/// The kernel parameters the addresses of `instr` may point into, as
-/// LLVM's `getUnderlyingObjects` (llvm/lib/Analysis/ValueTracking.cpp)
-/// collects them; `None` where one is not traced to them, or is a
-/// tensor map's coordinates, whose address the map holds.
-fn pointees(t: &KernelAnalyses, instr: &Instr) -> Option<BTreeSet<usize>> {
-    let (mut seen, mut out) = (HashSet::new(), BTreeSet::new());
-    for &o in t.module.operand_ids(instr.operands) {
-        if let Operand::Memory { base, rest, .. } = t.module.operand(o) {
-            // PTX ISA §9.7.9.26.5.2: `[tensorMap, tensorCoords]`.
-            if !rest.is_empty() {
-                return None;
-            }
-            reach(t, *base, &mut seen, &mut out)?;
-        }
-    }
-    (!out.is_empty()).then_some(out)
-}
-
-/// Through every write of a register, the operands of `mov`, `cvta`,
-/// `add`, `sub`, `and`, `or`, `xor`, `min`, `max` and a 64-bit `cvt`,
-/// `selp`'s values and a `mad`'s addend, to the kernel parameters
-/// `ld.param` reads; `mul`, `shl`, `shr`, `div`, `rem`, `neg`, `not`,
-/// `bfe` and a narrower `cvt` make offsets. `None` at anything else, a
-/// symbol, a vector or a statement not parsed.
-fn reach(
-    t: &KernelAnalyses,
-    op: OperandId,
-    seen: &mut HashSet<Symbol>,
-    out: &mut BTreeSet<usize>,
-) -> Option<()> {
-    let reg = match t.module.operand(op) {
-        Operand::Register(r) => *r,
-        Operand::SymbolRef(_) | Operand::VectorList { .. } => return None,
-        _ => return Some(()),
-    };
-    if !seen.insert(reg) {
-        return Some(());
-    }
-    for &d in t.writes.get(&Register::Named(reg)).into_iter().flatten() {
-        let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
-            return None;
-        };
-        let ops = t.module.operand_ids(instr.operands);
-        let wide = (t.module.modifiers(instr).last())
-            .is_some_and(|&m| t.module.interner.resolve(m).ends_with("64"));
-        let from = match instr.mnemonic {
-            Opcode::Mov | Opcode::Cvta | Opcode::Add | Opcode::Sub => &ops[1..],
-            Opcode::And | Opcode::Or | Opcode::Xor | Opcode::Min | Opcode::Max => &ops[1..],
-            Opcode::Cvt if wide => &ops[1..],
-            Opcode::Selp => ops.get(1..3)?,
-            Opcode::Mad => &ops[ops.len() - 1..],
-            Opcode::Ld => {
-                out.insert(kernel_param(t, instr)?);
-                &[]
-            }
-            Opcode::Mul | Opcode::Shl | Opcode::Shr | Opcode::Div | Opcode::Rem => &[],
-            Opcode::Neg | Opcode::Not | Opcode::Bfe | Opcode::Cvt => &[],
-            _ => return None,
-        };
-        for &o in from {
-            reach(t, o, seen, out)?;
-        }
-    }
-    Some(())
-}
-
-/// The kernel parameters a store may write global memory through; `None`
-/// where one may write anywhere: a store `pointees` does not trace, a
-/// tensor copy to global among them, a `call`, an instruction the
-/// classifier does not handle that names `.global`, or a statement not
-/// parsed.
-fn written(t: &KernelAnalyses) -> Option<BTreeSet<usize>> {
-    let module = t.module;
-    let mut out = BTreeSet::new();
-    for (_, b) in t.cfg.blocks.iter_enumerated() {
-        for stmt in &t.kernel.stmts[b.start..b.end] {
-            let instr = match stmt {
-                Stmt::Instr(instr) => instr,
-                Stmt::Unparsed { .. } => return None,
-                _ => continue,
-            };
-            let c = classify(module, instr);
-            let global =
-                (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "global");
-            if instr.mnemonic == Opcode::Call
-                || c.category == InstructionCategory::Unknown && global
-            {
-                return None;
-            }
-            let stores = c.contributions.iter().any(|k| match k.kind {
-                MeasureKind::Bytes { space, direction }
-                | MeasureKind::UnquantifiedBytes { space, direction } => {
-                    matches!(space, Space::Global | Space::Generic) && direction == Direction::Store
-                }
-                _ => false,
-            });
-            if stores {
-                out.extend(pointees(t, instr)?);
-            }
-        }
-    }
-    Some(out)
 }
 
 fn read_special(reg: SpecialReg) -> Read {
@@ -726,12 +604,11 @@ mod tests {
         assert_eq!(cta_uniform_at(src, "%r1", Some("L"), "ret"), Ok(()));
     }
 
-    /// A weak global load is one value for the CTA where its address is
-    /// and no store of the kernel may write through its pointer
-    /// parameter, and one per warp where only its address is; `%rd1` is
-    /// param_0 + 4·%ctaid.x.
+    /// A weak global load is one value for a warp's lanes where its
+    /// address is, whatever the kernel stores; `%rd1` is param_0 +
+    /// 4·%ctaid.x.
     #[test]
-    fn a_global_load_through_a_pointer_nothing_writes_is_lane_wise() {
+    fn a_global_load_at_one_address_is_one_value_per_warp() {
         let load = |ld: &str, rest: &str| {
             let src = format!(
                 ".version 8.7\n.target sm_80\n.address_size 64\n\
@@ -740,44 +617,19 @@ mod tests {
                  mov.u32 %r1, %ctaid.x;\nmul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd1, %rd0, %rd2;\n\
                  {ld} %r2, [%rd1];\n{rest}\nst.shared.u32 [%r9], %r2;\nret;\n}}\n"
             );
-            cta_uniform_at(&src, "%r2", None, "st.shared.u32")
+            uniformity_at(&src, "%r2", None, "st.shared.u32")
         };
         let from = |op: &str| Err(format!("comes from `{op}`"));
-        let per_warp = || Err("is one value per warp only".to_owned());
-        assert_eq!(load("ld.global.u32", ""), Ok(()));
-        assert_eq!(load("ld.global.nc.L1::evict_last.u32", ""), Ok(()));
-        let elsewhere = "st.global.u32 [%rd9], 0;";
-        assert_eq!(load("ld.global.u32", elsewhere), Ok(()));
+        assert_eq!(load("ld.global.u32", ""), Ok(Uniform::Warp));
+        assert_eq!(
+            load("ld.global.nc.L1::evict_last.u32", ""),
+            Ok(Uniform::Warp)
+        );
         let written = "st.global.u32 [%rd1], 0;";
-        assert_eq!(load("ld.global.u32", written), per_warp());
+        assert_eq!(load("ld.global.u32", written), Ok(Uniform::Warp));
         let volatile = "ld.volatile.global.u32";
         assert_eq!(load(volatile, ""), from(volatile));
         assert_eq!(load("ld.u32", ""), from("ld.u32"));
-        // A store through a pointer loaded from memory may write anywhere;
-        // an index loaded from memory is an offset from its pointer.
-        let scatter = "ld.global.u64 %rd5, [%rd9];\nst.global.u32 [%rd5], 0;";
-        assert_eq!(load("ld.global.u32", scatter), per_warp());
-        let gather = "ld.global.u32 %r5, [%rd9];\nmul.wide.u32 %rd6, %r5, 4;\n\
-                      add.s64 %rd7, %rd9, %rd6;\nst.global.u32 [%rd7], 0;";
-        assert_eq!(load("ld.global.u32", gather), Ok(()));
-        let masked = "and.b64 %rd8, %rd0, -16;\nst.global.u32 [%rd8], 0;";
-        assert_eq!(load("ld.global.u32", masked), per_warp());
-        // A pointer through `cvt.u64.s64` keeps its parameter, and one
-        // from an atomic may point anywhere.
-        let selected = "cvt.u64.s64 %rd3, %rd0;\nselp.b64 %rd4, %rd9, %rd3, %p1;\n\
-                        st.global.u32 [%rd4], 0;";
-        assert_eq!(load("ld.global.u32", selected), per_warp());
-        let swapped = "atom.global.exch.b64 %rd3, [%rd9], 0;\n\
-                       selp.b64 %rd4, %rd9, %rd3, %p1;\nst.global.u32 [%rd4], 0;";
-        assert_eq!(load("ld.global.u32", swapped), per_warp());
-        // A tensor copy to shared writes no global memory; one to global
-        // writes where its tensor map points.
-        let to_shared = "cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes \
-                         [%r6], [%rd9, {%r1}], [%r7];";
-        assert_eq!(load("ld.global.u32", to_shared), Ok(()));
-        let to_global =
-            "cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd9, {%r1}], [%r6];";
-        assert_eq!(load("ld.global.u32", to_global), per_warp());
     }
 
     /// `%r1` is %tid.x; `%r4` its warp's index, from lane 0.
@@ -822,11 +674,12 @@ mod tests {
                  {ld} %r2, [%rd0], %rd1;\nadd.s64 %rd2, %rd1, 0;\n\
                  st.shared.u32 [%r9], {read};\nret;\n}}\n"
             );
-            cta_uniform_at(&src, read, None, "st.shared.u32")
+            uniformity_at(&src, read, None, "st.shared.u32")
         };
         let cached = "ld.global.L1::evict_last.L2::cache_hint.u32";
-        assert_eq!(load(cached, "%r2"), Ok(()));
-        assert_eq!(load("ld.global.nc.L2::cache_hint.u32", "%r2"), Ok(()));
+        assert_eq!(load(cached, "%r2"), Ok(Uniform::Warp));
+        let nc = "ld.global.nc.L2::cache_hint.u32";
+        assert_eq!(load(nc, "%r2"), Ok(Uniform::Warp));
         let policy = "createpolicy.fractional.L2::evict_last.b64";
         assert_eq!(load(cached, "%rd2"), Err(format!("comes from `{policy}`")));
     }

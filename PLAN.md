@@ -250,8 +250,8 @@ contract (Codex's review of 2b2731b).
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
 - **Addresses affine analysis cannot read are unknown rows**, with the
-  reason, unless every thread of the CTA computes the part it cannot
-  read alike: that part is then a variable, `uniform(%r54@90)`, or,
+  reason, unless the lanes of a warp compute the part it cannot read
+  alike: that part is then a variable, `uniform(%r54@90)`, or,
   where each of its definitions is an unguarded `shl` or `and` by a
   constant that leaves its k low bits 0, 2^k times its floor over 2^k,
   so an `or` with bits below 2^k adds (`micro/uniform_aligned.ptx`),
@@ -348,23 +348,6 @@ contract (Codex's review of 2b2731b).
   (`micro/uniform_address.ptx`, `micro_uniform_in_loop`: requested
   2048 B, unique unknown; `micro/footprint_unknown.ptx`, a pointer the
   loop loads: requested 64 B, unique unknown).
-- **A global load is taken to read one value for every thread of the
-  CTA** where its address is the same for them and no store of the
-  kernel writes through its pointer parameter; PTX ISA §8.5 makes no
-  warp or CTA one observer ("the warp is not a scope"), so this assumes
-  nothing else writes it during the launch: a store through another
-  pointer parameter aliasing it (as the loop footprint assumes, below),
-  the host, another stream, or a grid before `griddepcontrol.wait`. A
-  store whose pointer is not traced to parameters (loaded, from an
-  atomic or another operation the trace does not follow, a symbol, a
-  vector), a tensor copy to global, whose tensor map holds the
-  address, a `call` and an unclassified instruction naming `.global`
-  count as writing everything; a `.volatile`, `.relaxed`, `.acquire`,
-  `.mmio` or generic load is never one value
-  (`a_global_load_through_a_pointer_nothing_writes_is_lane_wise`). The
-  cross-entropy's target column, its index loaded through param_1, reads
-  `[65536 * %ctaid.x + 2 * uniform(%rd14@86) + param_0]`, 1 sector, as
-  its record measures (`gluon-ce-chunk.test`).
 - **A load is taken to give the lanes of a warp one value where its
   address is the same for them**: a weak `.global`, `.shared` or
   `.const` load, as LLVM's NVPTX and AMDGPU targets take it
@@ -380,7 +363,16 @@ contract (Codex's review of 2b2731b).
   bound go from 333 to 201, all in `gluon/attn_fwd_ws_kernel`'s two
   shapes. The records keep thread instructions only
   (`tools/ncu/measure.py`), not the warp instructions per line that
-  would check it.
+  would check it. The cross-entropy's target column, its index loaded
+  through param_1, reads `[65536 * %ctaid.x + 2 * uniform(%rd14@86) +
+  param_0]`, 1 sector, as its record measures (`gluon-ce-chunk.test`).
+  A `.volatile`, `.relaxed`, `.acquire`, `.mmio` or generic load is
+  never one value (`a_global_load_at_one_address_is_one_value_per_warp`).
+  No load is one value for the CTA, so a loop bounded by a loaded value
+  has no trip count: 9 counts over the 65 records
+  (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`'s
+  `$L__BB0_2`: "latch condition depends on a value loaded from
+  memory"), 240 of the census's 1,230.
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B
@@ -953,11 +945,12 @@ One line each, with the trigger that would start it.
   shape, strides, box and swizzle: the B200 records keep `tensormap:128`
   only (`record_launches.py`), and the reports give TMA instructions no
   access size and 0 sectors.
-- Values loaded from memory as inputs: a loop bounded by one counts in
-  a symbol `--bind` cannot set
-  (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
-  `uniform(%r4@79)` from the sequence length its `ld.global` at line 64
-  reads). Trigger: wanting such a kernel's count for given lengths.
+- Values loaded from memory as inputs: a loop bounded by one has no
+  count (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
+  the sequence length its `ld.global` at line 64 reads); a count in a
+  symbol `--bind` sets needs the loaded value one for the CTA, which
+  PTX ISA §8.5 does not give. Trigger: wanting such a kernel's count
+  for given lengths.
 - A coverage summary per metric over a corpus: how many trip counts,
   FLOPs, byte totals, addresses and sector lines are exact, bounds or
   unknown. Trigger: comparing coverage between commits, so far done by

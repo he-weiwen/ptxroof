@@ -8,11 +8,8 @@
 // assembles micro_tensor_copy_forms to one UTMALDG or UTMASTG each:
 // UTMALDG.1D, .2D, .3D.IM2COL, .4D.W, .5D.W128.2CTA, .2D.GATHER4,
 // .2D.MULTICAST, .5D.IM2COL.MULTICAST; UTMASTG.1D, .2D.SCATTER4,
-// .3D.IM2COL. A copy to shared writes no global memory, so the index
-// micro_tensor_copy_to_shared loads through param_1 is one value per
-// CTA; a copy to global writes where its tensor map points, and
-// micro_tensor_copy_to_global's is not. micro_tensor_copy_in_loop's
-// loop holds a copy whose global bytes are in the tensor map.
+// .3D.IM2COL. micro_tensor_copy_in_loop's loop holds a copy whose
+// global bytes are in the tensor map.
 //
 .version 8.8
 .target sm_100a
@@ -53,58 +50,6 @@
 	@%p1 cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd1, {%r2}], [%r3];
 	@%p1 cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group.L2::cache_hint [%rd1, {%r2, %r1, %r1, %r1, %r1}], [%r3], %rd3;
 	@%p1 cp.async.bulk.tensor.3d.global.shared::cta.im2col_no_offs.bulk_group [%rd1, {%r2, %r2, %r2}], [%r3];
-	ret;
-}
-
-.visible .entry micro_tensor_copy_to_shared(
-	.param .u64 micro_tensor_copy_to_shared_param_0,
-	.param .u64 micro_tensor_copy_to_shared_param_1,
-	.param .u64 micro_tensor_copy_to_shared_param_2
-)
-.reqntid 128, 1, 1
-{
-	.reg .b32 	%r<8>;
-	.reg .b64 	%rd<6>;
-	.shared .align 128 .b8 smem[16384];
-	.shared .align 8 .b8 bar[8];
-
-	ld.param.u64 	%rd1, [micro_tensor_copy_to_shared_param_0];
-	ld.param.u64 	%rd2, [micro_tensor_copy_to_shared_param_1];
-	ld.param.u64 	%rd3, [micro_tensor_copy_to_shared_param_2];
-	mov.u32 	%r1, %tid.x;
-	mov.u32 	%r2, smem;
-	mov.u32 	%r3, bar;
-	cp.async.bulk.tensor.1d.shared::cta.global.mbarrier::complete_tx::bytes [%r2], [%rd3, {%r1}], [%r3];
-	ld.global.u32 	%r4, [%rd2];
-	mad.lo.s32 	%r5, %r4, 128, %r1;
-	mul.wide.u32 	%rd4, %r5, 4;
-	add.s64 	%rd5, %rd1, %rd4;
-	st.global.u32 	[%rd5], %r1;
-	ret;
-}
-
-.visible .entry micro_tensor_copy_to_global(
-	.param .u64 micro_tensor_copy_to_global_param_0,
-	.param .u64 micro_tensor_copy_to_global_param_1,
-	.param .u64 micro_tensor_copy_to_global_param_2
-)
-.reqntid 128, 1, 1
-{
-	.reg .b32 	%r<8>;
-	.reg .b64 	%rd<6>;
-	.shared .align 128 .b8 smem[16384];
-
-	ld.param.u64 	%rd1, [micro_tensor_copy_to_global_param_0];
-	ld.param.u64 	%rd2, [micro_tensor_copy_to_global_param_1];
-	ld.param.u64 	%rd3, [micro_tensor_copy_to_global_param_2];
-	mov.u32 	%r1, %tid.x;
-	mov.u32 	%r2, smem;
-	cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd3, {%r1}], [%r2];
-	ld.global.u32 	%r4, [%rd2];
-	mad.lo.s32 	%r5, %r4, 128, %r1;
-	mul.wide.u32 	%rd4, %r5, 4;
-	add.s64 	%rd5, %rd1, %rd4;
-	st.global.u32 	[%rd5], %r1;
 	ret;
 }
 
