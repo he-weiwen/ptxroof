@@ -320,22 +320,20 @@ impl KernelReportBuilder<'_> {
                             };
                             (Some(addr), None, None)
                         }
-                        Operand::Register(_) => {
-                            match affine.address(*base, *offset, pos, scope, &name) {
-                                Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
-                                Err(reason) => (
-                                    None,
-                                    Some({
-                                        let reason = reason.render(affine.data, scope, false);
-                                        reason
-                                            .strip_prefix("latch condition ")
-                                            .unwrap_or(&reason)
-                                            .to_owned()
-                                    }),
-                                    None,
-                                ),
-                            }
-                        }
+                        Operand::Register(_) => match affine.address(*base, *offset, pos, &name) {
+                            Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
+                            Err(reason) => (
+                                None,
+                                Some({
+                                    let reason = reason.render(affine.data, scope, false);
+                                    reason
+                                        .strip_prefix("latch condition ")
+                                        .unwrap_or(&reason)
+                                        .to_owned()
+                                }),
+                                None,
+                            ),
+                        },
                         _ => (
                             None,
                             Some("address operand form not traced".to_owned()),

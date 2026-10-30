@@ -89,9 +89,9 @@ pub(crate) struct AffineAnalysis<'a> {
     pub(crate) induction_variables: HashMap<Value, (LoopId, InductionVariable)>,
     /// Each loop's trip count.
     trips: Memo<LoopId, Result<LoopTripCount, UnknownReason>>,
-    /// Each value's trace for the loop whose latch reads it, with the
-    /// first reason it read a uniform value as a variable.
-    values: Memo<(Value, Option<LoopId>), Traced>,
+    /// Each value's trace, with the first reason it read a uniform value
+    /// as a variable.
+    values: Memo<Value, Traced>,
     /// How many traces and counts are being computed.
     frames: Cell<usize>,
     /// The outermost of them the result being computed read, or 0 after a
@@ -186,15 +186,9 @@ impl<'a> AffineAnalysis<'a> {
 
     /// The one value every one of these definitions writes to `reg`, with
     /// no loop counter, which each definition reads in its own loops.
-    fn same_value(
-        &self,
-        defs: &[usize],
-        reg: Symbol,
-        id: Option<LoopId>,
-        depth: u32,
-    ) -> Option<AffineExpr> {
+    fn same_value(&self, defs: &[usize], reg: Symbol, depth: u32) -> Option<AffineExpr> {
         let outer = self.unread.take();
-        let mut values = defs.iter().map(|&d| self.transfer(d, reg, id, depth).ok());
+        let mut values = defs.iter().map(|&d| self.transfer(d, reg, depth).ok());
         let value = (values.next().flatten())
             .filter(|a| a.terms.keys().all(|v| v.counter().is_none()))
             .filter(|a| values.all(|b| b.as_ref() == Some(a)));
@@ -259,12 +253,11 @@ impl<'a> AffineAnalysis<'a> {
         &self,
         op: OperandId,
         pos: usize,
-        id: Option<LoopId>,
         depth: u32,
     ) -> Result<AffineExpr, UnknownReason> {
         let module = self.data.module;
         match module.operand(op) {
-            Operand::Register(reg) => self.at_use(*reg, pos, id, depth),
+            Operand::Register(reg) => self.at_use(*reg, pos, depth),
             Operand::Special(reg) => self.trace_special(*reg),
             Operand::Immediate(text) => {
                 let text = module.interner.resolve(*text);
@@ -277,7 +270,7 @@ impl<'a> AffineAnalysis<'a> {
             Operand::SymbolRef(s) => Ok(AffineExpr::from_base(SymExpr::sym(
                 module.interner.resolve(*s),
             ))),
-            Operand::Offset { base, offset } => Ok(self.operand_at(*base, pos, id, depth)?
+            Operand::Offset { base, offset } => Ok(self.operand_at(*base, pos, depth)?
                 + AffineExpr::from_base(SymExpr::Const(*offset))),
             other => Err(format!("unsupported operand form in latch trace: {other:?}").into()),
         }
@@ -311,14 +304,13 @@ impl<'a> AffineAnalysis<'a> {
         &self,
         reg: Symbol,
         pos: usize,
-        id: Option<LoopId>,
         depth: u32,
     ) -> Result<AffineExpr, UnknownReason> {
         let Some(v) = self.data.ssa.value_before(pos, Register::Named(reg)) else {
             let name = self.data.module.interner.resolve(reg);
             return Err(format!("{name} is read in a block no path reaches").into());
         };
-        match self.properties(v, id, depth) {
+        match self.properties(v, depth) {
             AffineProperties::Expr(a) => Ok(self.after_exits(a, pos)),
             AffineProperties::Unknown {
                 reason,
@@ -393,7 +385,6 @@ impl<'a> AffineAnalysis<'a> {
         v: Value,
         block: BlockId,
         reg: Symbol,
-        id: Option<LoopId>,
         depth: u32,
     ) -> Result<AffineExpr, UnknownReason> {
         let name = self.data.module.interner.resolve(reg);
@@ -409,7 +400,7 @@ impl<'a> AffineAnalysis<'a> {
                 })
         };
         if let Some((l, r)) = self.induction_variables.get(&v) {
-            return (self.counter(*l, r, id, depth)).map_err(|why| why.unwrap_or_else(refused));
+            return (self.counter(*l, r, depth)).map_err(|why| why.unwrap_or_else(refused));
         }
         let mut defs = Vec::new();
         for s in self.data.ssa.sources(v) {
@@ -429,7 +420,7 @@ impl<'a> AffineAnalysis<'a> {
         }
         let common = match header {
             true => (self.same_immediate(&defs)).map(|c| AffineExpr::from_base(SymExpr::Const(c))),
-            false => self.same_value(&defs, reg, id, depth),
+            false => self.same_value(&defs, reg, depth),
         };
         common.ok_or_else(refused)
     }
@@ -441,12 +432,11 @@ impl<'a> AffineAnalysis<'a> {
         &self,
         l: LoopId,
         r: &InductionVariable,
-        id: Option<LoopId>,
         depth: u32,
     ) -> Result<AffineExpr, Option<UnknownReason>> {
         let module = self.data.module;
-        let start = self.properties(r.start, id, depth + 1).expr()?;
-        let step = self.step(l, &r.step, depth)?;
+        let start = self.properties(r.start, depth + 1).expr()?;
+        let step = self.step(&r.step, depth)?;
         // The values the back edges feed, start + k·step for k in [1, n]
         // when the loop runs a constant n trips, stay in their type.
         if self.constant_trips(l).is_some() {
@@ -472,13 +462,13 @@ impl<'a> AffineAnalysis<'a> {
         Ok(AffineExpr::term(Var::Iteration(l), step) + start + AffineExpr::from_base(back))
     }
 
-    /// A counter's step in loop `l`: its constant, its registers, each
+    /// A counter's step: its constant, its registers, each
     /// free of every variable, and each nested loop's step times that
     /// loop's constant trip count of at least 1; `None` otherwise.
-    fn step(&self, l: LoopId, step: &Step, depth: u32) -> Result<SymExpr, Option<UnknownReason>> {
+    fn step(&self, step: &Step, depth: u32) -> Result<SymExpr, Option<UnknownReason>> {
         let mut sum = SymExpr::Const(step.constant);
         for &(reg, at, sign) in &step.registers {
-            let s = self.first_reason(|| self.at_use(reg, at, Some(l), depth + 1));
+            let s = self.first_reason(|| self.at_use(reg, at, depth + 1));
             let s = s.map_err(|_| None)?;
             if !s.is_symbolic_or_constant() {
                 return Err(None);
@@ -487,7 +477,7 @@ impl<'a> AffineAnalysis<'a> {
         }
         for (c, inner) in &step.exits {
             let n = self.constant_trips(*c).ok_or(None)?;
-            let s = self.step(*c, inner, depth)?;
+            let s = self.step(inner, depth)?;
             sum = SymExpr::add(sum, SymExpr::mul(SymExpr::Const(n), s));
         }
         Ok(sum)
@@ -535,10 +525,9 @@ impl<'a> AffineAnalysis<'a> {
         base: OperandId,
         offset: i64,
         pos: usize,
-        id: Option<LoopId>,
         name: &dyn Fn(&Var) -> String,
     ) -> Result<AffineExpr, UnknownReason> {
-        let a = self.first_reason(|| self.operand_at(base, pos, id, 0))?
+        let a = self.first_reason(|| self.operand_at(base, pos, 0))?
             + AffineExpr::from_base(SymExpr::Const(offset));
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
         for v in a.terms.keys() {
@@ -620,17 +609,17 @@ impl<'a> AffineAnalysis<'a> {
         t
     }
 
-    /// What value `v` is at its definition, read for the latch of loop `id`.
-    fn properties(&self, v: Value, id: Option<LoopId>, depth: u32) -> AffineProperties {
+    /// What value `v` is at its definition.
+    fn properties(&self, v: Value, depth: u32) -> AffineProperties {
         let unknown = |reason| AffineProperties::Unknown {
             reason,
             min_trailing_zeros: self.min_trailing_zeros(v),
         };
         let unfinished = || (unknown("value depends on itself".into()), None);
-        let (p, why) = self.memoized(&self.values, (v, id), unfinished, |_| {
+        let (p, why) = self.memoized(&self.values, v, unfinished, |_| {
             let outer = self.unread.take();
             let p = self
-                .trace_uncached(v, id, depth)
+                .trace_uncached(v, depth)
                 .map_or_else(unknown, AffineProperties::Expr);
             (p, self.unread.replace(outer))
         });
@@ -640,12 +629,7 @@ impl<'a> AffineAnalysis<'a> {
         p
     }
 
-    fn trace_uncached(
-        &self,
-        v: Value,
-        id: Option<LoopId>,
-        depth: u32,
-    ) -> Result<AffineExpr, UnknownReason> {
+    fn trace_uncached(&self, v: Value, depth: u32) -> Result<AffineExpr, UnknownReason> {
         let module = self.data.module;
         if depth > DEPTH_LIMIT {
             self.provisional.set(0);
@@ -659,14 +643,14 @@ impl<'a> AffineAnalysis<'a> {
             Value::Argument {
                 block,
                 reg: Register::Named(reg),
-            } => return self.transfer_phi(v, block, reg, id, depth),
+            } => return self.transfer_phi(v, block, reg, depth),
             Value::Undef(Register::Named(reg)) => {
                 let name = module.interner.resolve(reg);
                 return Err(format!("no definition found for {name}").into());
             }
             _ => return Err("value is the carry flag".into()),
         };
-        let value = self.transfer(def, reg, id, depth)?;
+        let value = self.transfer(def, reg, depth)?;
         if let Stmt::Instr(instr) = &self.data.kernel.stmts[def]
             && instr.predicate.is_some()
         {
@@ -887,7 +871,7 @@ mod tests {
         let counted = |read_first: bool| {
             let affine = AffineAnalysis::new(&data, &uniformity, None);
             if read_first {
-                let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, None, 0);
+                let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, 0);
             }
             (affine.loop_trip_count(LoopId(0)).err())
                 .map(|r| r.render(&data, Some(LoopId(0)), true))

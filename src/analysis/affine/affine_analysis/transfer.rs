@@ -10,7 +10,6 @@ impl AffineAnalysis<'_> {
         &self,
         def: usize,
         reg: Symbol,
-        id: Option<LoopId>,
         depth: u32,
     ) -> Result<AffineExpr, UnknownReason> {
         let module = self.data.module;
@@ -28,7 +27,7 @@ impl AffineAnalysis<'_> {
             .collect();
         let ops = module.operand_ids(instr.operands).to_vec();
         let arg = |i: usize| -> Result<AffineExpr, UnknownReason> {
-            self.operand_at(ops[i], def, id, depth + 1)
+            self.operand_at(ops[i], def, depth + 1)
         };
         // A brace-enclosed destination's registers are the value's elements in
         // order (PTX ISA 6.4.3, "Vectors as Operands"): each is a parameter's
@@ -52,7 +51,7 @@ impl AffineAnalysis<'_> {
             && let elements = module.operand_ids(*children)
             && let Some(place) = (elements.iter())
                 .position(|&c| matches!(module.operand(c), Operand::Register(r) if *r == reg))
-            && let Some(value) = self.unpacked(src, def, place, elements.len(), id, depth)
+            && let Some(value) = self.unpacked(src, def, place, elements.len(), depth)
         {
             return value;
         }
@@ -67,7 +66,7 @@ impl AffineAnalysis<'_> {
         let value = match mnemonic {
             Opcode::Mov => arg(1),
             Opcode::Cvta => {
-                self.operand_at(*ops.last().expect("cvta has operands"), def, id, depth + 1)
+                self.operand_at(*ops.last().expect("cvta has operands"), def, depth + 1)
             }
             // PTX ISA §9.7.9.22: an integer `cvt` keeps a value its source
             // type reads that its destination type holds; any other
@@ -80,8 +79,7 @@ impl AffineAnalysis<'_> {
                 let (&[to, from], 2) = (&types[..], numeric) else {
                     return Err(format!("`{opcode}` is not an integer conversion").into());
                 };
-                let a =
-                    self.operand_at(*ops.last().expect("cvt has operands"), def, id, depth + 1)?;
+                let a = self.operand_at(*ops.last().expect("cvt has operands"), def, depth + 1)?;
                 for ty in [from, to] {
                     if !self.within(&a, ty.values()) {
                         return Err(format!("`{opcode}` leaves {} bits", ty.width).into());
@@ -474,7 +472,6 @@ impl AffineAnalysis<'_> {
         pos: usize,
         place: usize,
         count: usize,
-        id: Option<LoopId>,
         depth: u32,
     ) -> Option<Result<AffineExpr, UnknownReason>> {
         let module = self.data.module;
@@ -509,10 +506,10 @@ impl AffineAnalysis<'_> {
                 {
                     return None;
                 }
-                Some(self.operand_at(element, op, id, depth + 1))
+                Some(self.operand_at(element, op, depth + 1))
             }
             &Operand::Register(copied) if matches!(module.operand(dest), Operand::Register(_)) => {
-                self.unpacked(copied, op, place, count, id, depth + 1)
+                self.unpacked(copied, op, place, count, depth + 1)
             }
             _ => None,
         }?;

@@ -1254,7 +1254,7 @@ fn condition(
         return None;
     }
     let bound = |op| {
-        let x = affine.operand_at(op, def, None, 0).ok()?;
+        let x = affine.operand_at(op, def, 0).ok()?;
         Some(affine.bindings.map_or(x.clone(), |m| x.bind(m)))
     };
     let (a, b) = (bound(ops[1])?, bound(ops[2])?);
