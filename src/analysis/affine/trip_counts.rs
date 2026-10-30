@@ -11,7 +11,8 @@ use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::LoopName;
 use crate::analysis::uniformity_info::UniformityInfo;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module};
+use crate::ptx::ir::{Kernel, Module, Register};
+use crate::ssa::Value;
 use std::collections::HashMap;
 
 /// Trip count of one loop: an expression, or a named reason there
@@ -54,8 +55,22 @@ pub fn trip_counts(
     trip_counts_from(
         &AffineAnalysis::new(&data, &uniformity, Some(bindings)),
         names,
-        &|v| v.to_string(),
+        &|v| unknown_by_register(module, v),
     )
+}
+
+/// Variable `v` as a reason prints it outside a report, its unknown
+/// value by register: `uniform(%r3)`.
+pub(crate) fn unknown_by_register(module: &Module, v: &Var) -> String {
+    match v {
+        Var::Unknown(
+            Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg),
+        ) => match reg {
+            Register::Named(s) => format!("uniform({})", module.interner.resolve(*s)),
+            Register::Cc => "uniform(CC.CF)".to_owned(),
+        },
+        other => other.to_string(),
+    }
 }
 
 /// Every loop's trip count under `affine`'s bindings, a reason's unknown

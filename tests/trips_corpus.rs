@@ -100,11 +100,11 @@ fn attention_trip_reasons_are_pinned() {
     assert_eq!(
         reasons,
         [
-            "unknown: latch condition depends on %r1773, carried around an enclosing loop",
-            "unknown: latch condition depends on %r1884, carried around an enclosing loop",
             "unknown: latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison",
             "unknown: loop exit is not at the latch",
             "unknown: loop has multiple latches",
+            "unknown: uniform(%r1773) is defined in an enclosing loop: depends on %r1773, carried around an enclosing loop",
+            "unknown: uniform(%r1884) is defined in an enclosing loop: depends on %r1884, carried around an enclosing loop",
         ]
     );
 }

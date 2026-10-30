@@ -371,8 +371,9 @@ contract (Codex's review of 2b2731b).
   No load is one value for the CTA, so a loop bounded by a loaded value
   has no trip count: 9 counts over the 65 records
   (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`'s
-  `$L__BB0_2`: "latch condition depends on a value loaded from
-  memory"), 240 of the census's 1,230.
+  `$L__BB0_2`: "uniform(%r4@79) is one value per warp only: depends on
+  uniform(%r19@75), in a min", its sequence length), 240 of the
+  census's 1,230.
 - **Unique bytes per loop assume different pointer parameters are
   disjoint** (the cross-entropy's second pass, `tests/lit/
   gluon-ce-chunk.test`: the load and the store count 131,072 B
@@ -453,8 +454,8 @@ contract (Codex's review of 2b2731b).
   that combines its comparison with a predicate
   (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
   compares floats (`micro/latch_float.ptx`: "latch condition compares
-  floating-point values"), a bound through a `selp` or shift of the
-  CTA index, the mbarrier spin-waits
+  floating-point values"), a bound one value per warp only (a load, or
+  arithmetic on one), the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. A bound
   affine analysis does not read, the same for every thread, is the value of the
@@ -469,16 +470,16 @@ contract (Codex's review of 2b2731b).
   `00511.ptx` `:121`, `00908.ptx` `:155`), and an `atom` result
   (`01542.ptx` `:223`). In `gluon/attn_fwd_ws_kernel.sm_89.ptx` the
   persistent loops (`gluon_attn_fwd.py:126`, exit not at the latch;
-  `:213`, several latches) and the causal loop (`:143`, latch reads
-  `%ctaid.x`) are unknown, so under its record the tensor FLOPs over
+  `:213`, several latches) and the causal loop (`:143`, its bound
+  carried around the tile loop) are unknown, so under its record the tensor FLOPs over
   the launch read `0` as a lower bound, where the record's
   `mma.m16n8k16` lines run 3,244,032 warp instructions, 13,287,555,072
   FLOPs.
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
-  inferred arguments), 1,229 have a trip count: 1,445 are mbarrier
-  waits and 177 read loaded values, 12 depend on `%ctaid` (1 through a
-  `selp`), 95 are grid-stride loops, 1 unpack, 20 atomics, 2
-  divisions, 17 multi-exit.
+  inferred arguments), 990 have a trip count: 1,445 are mbarrier
+  waits, 315 read a value one per warp only (205 name a load), 95 a
+  value an enclosing loop defines, 30 a loaded value lanes may see
+  differently, 95 are grid-stride loops, 20 atomics, 18 multi-exit.
 - **Counters the induction variable search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
@@ -805,8 +806,11 @@ contract (Codex's review of 2b2731b).
   an affine variable, `uniform(v)`, keyed by its register SSA value:
   addresses read it, and loop footprints where every thread of the CTA
   shares it (`micro/uniform_address.ptx`,
-  `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`); trip counts
-  and thread selectors do not. Register SSA
+  `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`), and trip
+  counts where every thread of the CTA shares it and no enclosing loop
+  defines it (`micro/trip_max.ptx`: `max(uniform(%r3@54), 1)`), else
+  their reason names it (`micro-trip-uniform.test`); thread selectors
+  do not. Register SSA
   itself
   (`src/ssa.rs`) is what affine analysis, the uniformity analysis
   and the predicate reader read.

@@ -100,12 +100,7 @@ impl AffineAnalysis<'_> {
         }
         let a = self.operand_at(ops[1], setp_idx, 0)?;
         let b = self.operand_at(ops[2], setp_idx, 0)?;
-        let d = self
-            .cta_uniform_symbols(id, setp_idx, a - b)
-            .ok_or_else(|| {
-                "latch condition depends on a value an enclosing loop defines".to_owned()
-            })?;
-        let d = per_cta(d); // D = A − B; condition is `D cmp 0`
+        let d = per_cta(self.cta_uniform_symbols(id, setp_idx, a - b)?); // D = A − B; condition is `D cmp 0`
 
         // D(k) = A1·k + A0 in this loop's iteration number alone.
         let k = Var::Iteration(id);
@@ -215,11 +210,14 @@ impl AffineAnalysis<'_> {
         {
             return None;
         }
-        let form = per_cta(self.cta_uniform_symbols(
-            id,
-            def,
-            self.operand_at(a, def, 0).ok()? - self.operand_at(b, def, 0).ok()?,
-        )?);
+        let form = per_cta(
+            self.cta_uniform_symbols(
+                id,
+                def,
+                self.operand_at(a, def, 0).ok()? - self.operand_at(b, def, 0).ok()?,
+            )
+            .ok()?,
+        );
         let cmp = Cmp::from_name(mods.first()?)?;
         let cmp = if (taken == into) != pred.negated {
             cmp
@@ -277,17 +275,34 @@ impl AffineAnalysis<'_> {
     /// `a`, read at `pos`, with each unknown value as a symbol: one value at
     /// every trip of every entry of loop `id` where it is defined outside
     /// the loops holding `id` and every thread of the CTA executing `pos`
-    /// sees it alike.
-    fn cta_uniform_symbols(&self, id: LoopId, pos: usize, a: AffineExpr) -> Option<AffineExpr> {
-        let top = std::iter::successors(Some(id), |&l| self.data.forest.get(l).parent).last()?;
-        let alike = |u: Value| {
-            !self.data.defined_in(u, top)
-                && self.uniformity().value_uniformity(u, pos) == Ok(Uniform::Cta)
-        };
-        if !a.terms.keys().filter_map(Var::unknown).all(alike) {
-            return None;
+    /// sees it alike; else the first that is not, with why its trace has
+    /// no form for it, read now, while the count is being computed.
+    fn cta_uniform_symbols(
+        &self,
+        id: LoopId,
+        pos: usize,
+        a: AffineExpr,
+    ) -> Result<AffineExpr, UnknownReason> {
+        let top = (std::iter::successors(Some(id), |&l| self.data.forest.get(l).parent).last())
+            .unwrap_or(id);
+        for var in a.terms.keys() {
+            let Some(u) = var.unknown() else { continue };
+            let (why, own) = match self.uniformity().value_uniformity(u, pos) {
+                _ if self.data.defined_in(u, top) => {
+                    ("is defined in an enclosing loop".into(), true)
+                }
+                Ok(Uniform::Cta) => continue,
+                Ok(Uniform::Warp) => ("is one value per warp only".into(), true),
+                Err(why) => (format!("differs between lanes: {why}"), false),
+            };
+            let own = match self.properties(u, 0) {
+                AffineProperties::Unknown { reason, .. } if own => Some(Box::new(reason)),
+                _ => None,
+            };
+            let var = Box::new(var.clone());
+            return Err(UnknownReason::NotOneValue { var, why, own });
         }
-        Some(a.as_symbols(&|v| match v {
+        Ok(a.as_symbols(&|v| match v {
             Var::Unknown(u) => Some(SymExpr::Sym(SymbolicConstant::Unknown(*u))),
             _ => None,
         }))

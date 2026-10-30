@@ -398,10 +398,7 @@ impl<'a> AffineAnalysis<'a> {
         let refused = || {
             self.obstacle_of_any_def(reg)
                 .unwrap_or_else(|| match header {
-                    true => format!(
-                        "latch condition depends on {name}, carried around an enclosing loop"
-                    )
-                    .into(),
+                    true => UnknownReason::LoopCarried(name.to_owned()),
                     false => format!("{name} has more than one reaching definition").into(),
                 })
         };
@@ -558,7 +555,10 @@ impl<'a> AffineAnalysis<'a> {
         let outer = self.unread.take();
         let t = f();
         let first = self.unread.replace(outer);
-        t.map_err(|why| first.unwrap_or(why))
+        t.map_err(|why| match why {
+            UnknownReason::NotOneValue { .. } => why,
+            _ => first.unwrap_or(why),
+        })
     }
 
     /// Loop `l`'s trip count when it is a constant of at least 1 under the
@@ -821,7 +821,7 @@ fn per_cta(a: AffineExpr) -> AffineExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::affine::trip_counts::{TripCount, trip_counts};
+    use crate::analysis::affine::trip_counts::{TripCount, trip_counts, unknown_by_register};
     use crate::analysis::control_flow::loop_forest;
     use crate::analysis::loop_names::loop_names;
     use crate::ptx::cfg::build_cfg;
@@ -859,7 +859,7 @@ mod tests {
         };
         match e {
             SymExpr::Sym(SymbolicConstant::Unknown(v)) => {
-                SymExpr::sym(format!("uniform({})", register(m)(v)))
+                SymExpr::sym(unknown_by_register(m, &Var::Unknown(v)))
             }
             SymExpr::Sum(ts) => all(ts, SymExpr::add),
             SymExpr::Prod(fs) => all(fs, SymExpr::mul),
@@ -869,18 +869,6 @@ mod tests {
             SymExpr::Min(a, b) => SymExpr::min(by_register(m, *a), by_register(m, *b)),
             SymExpr::Max(a, b) => SymExpr::max(by_register(m, *a), by_register(m, *b)),
             other => other,
-        }
-    }
-
-    /// A value by its register's name.
-    fn register(m: &Module) -> impl Fn(Value) -> String + '_ {
-        |v| match v {
-            Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg) => {
-                match reg {
-                    Register::Named(r) => m.interner.resolve(r).to_owned(),
-                    Register::Cc => "CC.CF".to_owned(),
-                }
-            }
         }
     }
 
@@ -933,10 +921,15 @@ mod tests {
             if read_first {
                 let _ = affine.operand_at(m.operand_ids(setp.operands)[1], pos, 0);
             }
-            (affine.loop_trip_count(LoopId(0)).err())
-                .map(|r| r.render(&data, Some(LoopId(0)), true, &|v| v.to_string()))
+            (affine.loop_trip_count(LoopId(0)).err()).map(|r| {
+                r.render(&data, Some(LoopId(0)), true, &|v| {
+                    unknown_by_register(&m, v)
+                })
+            })
         };
-        let wraps = Some("`add.u32` leaves 32 bits".to_owned());
+        let wraps = Some(
+            "uniform(%r1) is defined in an enclosing loop: `add.u32` leaves 32 bits".to_owned(),
+        );
         assert_eq!(counted(false), wraps);
         assert_eq!(counted(true), wraps);
     }
@@ -950,7 +943,9 @@ mod tests {
              setp.le.u32 %p1, %r1, 4294967295;\nadd.u32 %r1, %r1, 1;\n\
              @%p1 bra $L__O;\nret;",
         );
-        let wraps = Err("`add.u32` leaves 32 bits".to_owned());
+        let wraps = Err(
+            "uniform(%r1) is defined in an enclosing loop: `add.u32` leaves 32 bits".to_owned(),
+        );
         assert_eq!(trips_of(&src)[0], ("$L__O".to_owned(), wraps));
     }
 
@@ -980,7 +975,7 @@ mod tests {
             }
             let a = affine.operand_at(last, at, 0);
             a.map(|a| a.to_string())
-                .map_err(|r| r.render(&data, None, false, &|v| v.to_string()))
+                .map_err(|r| r.render(&data, None, false, &|v| unknown_by_register(&m, v)))
         };
         assert_eq!(read(false), Ok("%tid.x + 300".to_owned()));
         assert_eq!(read(true), read(false));
@@ -997,7 +992,9 @@ mod tests {
         let k = |n: i64| HashMap::from([(SymbolicConstant::KernelParam(0), n)]);
         let trips = |n| trips_under(&src, &k(n))[0].1.clone().map(|t| t.to_string());
         assert_eq!(trips(4096), Ok("max(⌈param_0/8⌉, 1)".to_owned()));
-        let wraps = Err("`add.s32` leaves 32 bits".to_owned());
+        let wraps = Err(
+            "uniform(%r2) is defined in an enclosing loop: `add.s32` leaves 32 bits".to_owned(),
+        );
         assert_eq!(trips(i64::from(i32::MAX)), wraps);
     }
 
@@ -1018,8 +1015,9 @@ mod tests {
             .expect("an outer loop");
         assert_eq!(affine.constant_trips(outer), None);
         let count = (affine.loop_trip_count(outer).err())
-            .map(|r| r.render(&data, Some(outer), true, &|v| v.to_string()));
-        assert_eq!(count.as_deref(), Some("`add.s32` leaves 32 bits"));
+            .map(|r| r.render(&data, Some(outer), true, &|v| unknown_by_register(&m, v)));
+        let wraps = "uniform(%r134) is defined in an enclosing loop: `add.s32` leaves 32 bits";
+        assert_eq!(count.as_deref(), Some(wraps));
     }
 
     #[test]
@@ -1106,7 +1104,7 @@ mod tests {
              $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p1, %r2, %r3;\n\
              @%p2 mov.u32 %r3, 0;\n@%p1 bra $L__L;\nret;",
         );
-        let why = "%r3 is written under a guard on some path";
+        let why = "uniform(%r3) is defined in an enclosing loop: %r3 is written under a guard on some path";
         assert_eq!(trips_of(&src)[0].1.as_ref().unwrap_err(), why);
     }
 
@@ -1194,7 +1192,7 @@ mod tests {
             .iter()
             .find(|(n, _)| n == "$L__L")
             .expect("inner loop");
-        let why = "%r3 has more than one reaching definition";
+        let why = "uniform(%r3) is defined in an enclosing loop: %r3 has more than one reaching definition";
         assert_eq!(inner.1.as_ref().unwrap_err(), why);
     }
 
@@ -1831,7 +1829,7 @@ mod tests {
         let trips = trips_of(&src);
         assert_eq!(
             trips[0].1.as_ref().unwrap_err(),
-            "latch condition depends on a value loaded inside the loop"
+            "uniform(%r1) is defined in an enclosing loop: depends on a value loaded inside the loop"
         );
     }
 
@@ -1847,16 +1845,17 @@ mod tests {
         );
         let trips = trips_of(&src)[0].1.clone().map(|t| t.to_string());
         assert_eq!(trips, Ok("128 * %ctaid.x + 127".to_owned()));
-        // A loaded bound behind `bfe` is a loaded bound, one that may
-        // differ between threads where the kernel writes its pointer.
+        // A loaded bound behind `bfe` is a loaded bound, one value per
+        // warp only.
         let src = kernel_with(
             ".param .u64 k_param_0",
             "ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r1, [%rd1];\n\
              bfe.s32 %r3, %r1, 0, 26;\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
-             st.global.u32 [%rd1], %r4;\nsetp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
+             setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;",
         );
         let err = trips_of(&src)[0].1.clone().unwrap_err();
-        assert_eq!(err, "latch condition depends on a value loaded from memory");
+        let why = "uniform(%r1) is one value per warp only: depends on a value loaded from memory";
+        assert_eq!(err, why);
         // Nothing fundamental behind it, the same for every thread: the
         // value, unread.
         let src = kernel_with(

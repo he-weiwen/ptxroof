@@ -8,7 +8,7 @@
 RUN: %ptxroof analyze %fixtures/micro/trip_uniform.ptx | FileCheck "%s"
 CHECK-LABEL: kernel micro_trip_uniform_outer
 CHECK: trips = 4
-CHECK: trips = unknown: div by a non-constant divisor
+CHECK: trips = unknown: uniform(%r5@31) is defined in an enclosing loop: div by a non-constant divisor
 CHECK-LABEL: kernel micro_trip_uniform_after_exit
 CHECK: trips = unknown: latch condition depends on special register %tid.x
-CHECK: trips = unknown: div by a non-constant divisor
+CHECK: trips = unknown: uniform(%r5@61) differs between lanes: depends on %tid.x

@@ -15,6 +15,9 @@ pub(crate) enum UnknownReason {
     Atomic,
     /// A special register that is not one value for the CTA.
     SpecialRegister(SpecialReg),
+    /// Register `0`, which a loop header's φ carries from one trip of an
+    /// enclosing loop to the next.
+    LoopCarried(String),
     /// `reason`, behind an instruction the analysis does not read.
     Behind {
         reason: Box<UnknownReason>,
@@ -22,6 +25,14 @@ pub(crate) enum UnknownReason {
     },
     /// Operation `what` of a form with the variables `vars`, in order.
     NotAffine { what: &'static str, vars: Vec<Var> },
+    /// Variable `var`, holding an unknown value, read as one value for
+    /// threads that `why` says may not share it; `own` is why affine
+    /// analysis has no form for the value.
+    NotOneValue {
+        var: Box<Var>,
+        why: String,
+        own: Option<Box<UnknownReason>>,
+    },
     /// A sentence that reads the same wherever the value is read.
     Other(String),
 }
@@ -51,6 +62,9 @@ impl UnknownReason {
             UnknownReason::SpecialRegister(reg) => {
                 format!("{prefix}depends on special register {}", reg.name())
             }
+            UnknownReason::LoopCarried(reg) => {
+                format!("{prefix}depends on {reg}, carried around an enclosing loop")
+            }
             UnknownReason::Behind { reason, opcode } => {
                 format!(
                     "{}, behind `{opcode}`",
@@ -79,6 +93,14 @@ impl UnknownReason {
                 }
                 format!("{what} of an induction variable")
             }
+            UnknownReason::NotOneValue { var, why, own } => match own {
+                Some(own) => format!(
+                    "{} {why}: {}",
+                    var.render(&name),
+                    own.render(data, scope, false, name)
+                ),
+                None => format!("{} {why}", var.render(&name)),
+            },
             UnknownReason::Other(s) => s.clone(),
         }
     }

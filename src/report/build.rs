@@ -335,13 +335,7 @@ impl KernelReportBuilder<'_> {
                             Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
                             Err(reason) => (
                                 None,
-                                Some({
-                                    let reason = reason.render(affine.data, scope, false, &name);
-                                    reason
-                                        .strip_prefix("latch condition ")
-                                        .unwrap_or(&reason)
-                                        .to_owned()
-                                }),
+                                Some(reason.render(affine.data, scope, false, &name)),
                                 None,
                             ),
                         },
