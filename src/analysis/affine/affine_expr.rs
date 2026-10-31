@@ -247,6 +247,18 @@ impl Cmp {
             Cmp::Gt => Cmp::Le,
         }
     }
+
+    /// The comparison with its operands swapped (LLVM's
+    /// `CmpInst::getSwappedPredicate`).
+    pub fn swapped(self) -> Cmp {
+        match self {
+            Cmp::Lt => Cmp::Gt,
+            Cmp::Gt => Cmp::Lt,
+            Cmp::Le => Cmp::Ge,
+            Cmp::Ge => Cmp::Le,
+            eq_or_ne => eq_or_ne,
+        }
+    }
 }
 
 /// `Σ coeff·var + base`; a missing variable has coefficient 0.

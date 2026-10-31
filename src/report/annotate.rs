@@ -1,14 +1,15 @@
 //! The input PTX with what the analysis says of each line appended to
 //! it as a ` // ` comment.
 
-use crate::analysis::affine::affine_expr::{AffineExpr, Var};
+use crate::analysis::affine::affine_expr::{AffineExpr, Cmp, Var};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::execution_counts::{CtaSize, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
 use crate::analysis::memory_footprint::CountRange;
-use crate::analysis::thread_participation::Pred;
+use crate::analysis::thread_participation::{Atom, AtomKey, Pred};
+use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Opcode, Stmt};
 use crate::report::build::{AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel};
@@ -74,6 +75,7 @@ impl KernelReportBuilder<'_> {
             let mut own: Vec<String> = header
                 .into_iter()
                 .chain(self.threads(b))
+                .chain(self.runs_when(b))
                 .chain(exec)
                 .collect();
             own.extend(parts.remove(&start).unwrap_or_default());
@@ -298,6 +300,92 @@ impl KernelReportBuilder<'_> {
         })
     }
 
+    /// `runs when` and the unknowns, each the same for the CTA or a warp,
+    /// that block `b`'s threads meet past its immediate dominator's, unless
+    /// no thread runs it.
+    fn runs_when(&self, b: BlockId) -> Option<String> {
+        let sets = &self.counts.sets;
+        let runs = sets.blocks[b.0 as usize] != Pred::False;
+        let when = self.when(b, runs.then_some(&sets.relative[b.0 as usize])?)?;
+        Some(format!("runs when {when}"))
+    }
+
+    /// The uniform unknowns of a conjunction `p`, block `b`'s set on its
+    /// immediate dominator, by `atom`, joined by ` and `, a conjunct
+    /// without one left to the threads shown.
+    fn when(&self, b: BlockId, p: &Pred) -> Option<String> {
+        match p {
+            Pred::Uniform(u, a) => self.atom(b, *u, a),
+            Pred::And(x, y) => {
+                let parts: Vec<String> =
+                    [x, y].into_iter().filter_map(|q| self.when(b, q)).collect();
+                (!parts.is_empty()).then(|| parts.join(" and "))
+            }
+            _ => None,
+        }
+    }
+
+    /// Atom `a` of block `b`'s set, the same for the threads `u` names,
+    /// where it compares: the comparison, negated where `a` is, then the
+    /// branch deciding it and for whom it is the same.
+    fn atom(&self, b: BlockId, u: Uniform, a: &Atom) -> Option<String> {
+        let sets = &self.counts.sets;
+        let (form, cmp) = match (&a.key, sets.forms.get(&a.key)) {
+            (_, Some((form, cmp))) => (form, *cmp),
+            (AtomKey::OutOfLoop(k), _) => (&k.form, k.cmp),
+            _ => return None,
+        };
+        let what = self.formula(form, if a.negated { cmp.inverse() } else { cmp });
+        let scope = if u == Uniform::Cta { "CTA" } else { "warp" };
+        let branch = (sets.deciders.get(&(b, a.key.clone())))
+            .and_then(|&s| Some(format!("branch at line {}, ", self.line(s)?)));
+        let branch = branch.unwrap_or_default();
+        Some(format!("{what} ({branch}same for the whole {scope})"))
+    }
+
+    /// `form cmp 0` as `lhs cmp rhs`, a loop's iteration as `shifted`
+    /// gives it: the terms and symbols of negative coefficient and the
+    /// constant moved right, the comparison swapped where nothing would
+    /// stay left.
+    fn formula(&self, form: &AffineExpr, cmp: Cmp) -> String {
+        let (form, nested) = shifted(form);
+        let negative = |c: &SymExpr| SymExpr::split_const(c.clone()).0 < 0;
+        let zero = || AffineExpr::from_base(SymExpr::Const(0));
+        let split = |f: &AffineExpr| {
+            let summands = match &f.base {
+                SymExpr::Sum(ts) => ts.clone(),
+                base => vec![base.clone()],
+            };
+            let right = |t: &SymExpr| negative(t) || matches!(t, SymExpr::Const(_));
+            (f.terms.iter())
+                .map(|(v, c)| (negative(c), AffineExpr::term(v.clone(), c.clone())))
+                .chain(
+                    summands
+                        .into_iter()
+                        .map(|t| (right(&t), AffineExpr::from_base(t))),
+                )
+                .fold((zero(), zero()), |(l, r), (right, x)| match right {
+                    true => (l, r + x),
+                    false => (l + x, r),
+                })
+        };
+        let ((lhs, rhs), cmp) = match split(&form) {
+            (lhs, _) if lhs == zero() => (split(&form.scale(SymExpr::Const(-1))), cmp.swapped()),
+            sides => (sides, cmp),
+        };
+        let op = match cmp {
+            Cmp::Lt => "<",
+            Cmp::Le => "≤",
+            Cmp::Gt => ">",
+            Cmp::Ge => "≥",
+            Cmp::Eq => "=",
+            Cmp::Ne => "≠",
+        };
+        let side = |s: AffineExpr| s.render(|v| self.var(v, nested)).replace(" * ", "·");
+        let rhs = side(rhs.scale(SymExpr::Const(-1)));
+        self.shorten(format!("{} {op} {rhs}", side(lhs)))
+    }
+
     /// The condition on the thread and CTA indices that selects `set`, a
     /// loop's iteration k as `iv + 1`.
     fn condition(&self, set: &Pred) -> Option<String> {
@@ -485,6 +573,62 @@ $L__BB0_5:
                 "[<block 5>] %tid.x <= 31 | exec <= 1/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
                 "exec 1/thread",
+            ]
+        );
+    }
+
+    /// A block under uniform conditions names them past its immediate
+    /// dominator's: each as its comparison with the branch's polarity,
+    /// the sides swapped where every term would move right, two in a
+    /// conjunction joined by `and`.
+    #[test]
+    fn a_block_names_the_uniform_conditions_it_runs_under() {
+        let src = "\
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 p, .param .u32 n, .param .u32 m)
+.reqntid 64, 1, 1
+{
+	.reg .pred %p<8>;
+	.reg .b32 %r<4>;
+	.reg .b64 %rd<2>;
+	ld.param.u64 %rd1, [p];
+	ld.param.u32 %r1, [n];
+	ld.param.u32 %r2, [m];
+	mov.u32 %r3, %tid.x;
+	setp.lt.s32 %p1, %r1, 1;
+	setp.ne.s32 %p2, %r3, 0;
+	or.pred %p3, %p1, %p2;
+	@%p3 bra $L__BB0_2;
+	st.global.u32 [%rd1], %r3;
+$L__BB0_2:
+	setp.gt.s32 %p4, %r2, 3;
+	and.pred %p5, %p4, %p1;
+	@!%p5 bra $L__BB0_4;
+	st.global.u32 [%rd1], %r1;
+$L__BB0_4:
+	@%p1 bra $L__BB0_6;
+	st.global.u32 [%rd1], %r2;
+$L__BB0_6:
+	setp.lt.s32 %p6, 5, %r2;
+	@%p6 bra $L__BB0_8;
+	st.global.u32 [%rd1], %r3;
+$L__BB0_8:
+	ret;
+}
+";
+        let out = annotate(src, &AnalyzeOptions::default()).expect("annotates");
+        let when: Vec<&str> = (out.lines())
+            .filter_map(|l| l.split_once("runs when ")?.1.split(" | ").next())
+            .collect();
+        assert_eq!(
+            when,
+            [
+                "param_2 > 3 (branch at line 22, same for the whole CTA) and \
+                 param_1 < 1 (branch at line 22, same for the whole CTA)",
+                "param_1 ≥ 1 (branch at line 25, same for the whole CTA)",
+                "param_2 ≤ 5 (branch at line 29, same for the whole CTA)",
             ]
         );
     }
