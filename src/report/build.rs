@@ -234,27 +234,6 @@ impl KernelReportBuilder<'_> {
             ),
             other => other.to_string(),
         };
-        // A shared array's mangled name reads as its source name.
-        let arrays: Vec<(String, String)> = kernel
-            .shared_decls
-            .iter()
-            .chain(&module.shared_decls)
-            .map(|d| {
-                let raw = module.interner.resolve(d.name).to_owned();
-                let short = demangle(&raw)
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(&raw)
-                    .to_owned();
-                (raw, short)
-            })
-            .collect();
-        let shorten = |mut text: String| {
-            for (raw, short) in &arrays {
-                text = text.replace(raw, short);
-            }
-            text
-        };
         let shape = self.counts.shape;
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
         for (bid, block) in cfg.blocks.iter_enumerated() {
@@ -333,7 +312,7 @@ impl KernelReportBuilder<'_> {
                             None,
                         ),
                         Operand::SymbolRef(s) => {
-                            let sym = shorten(module.interner.resolve(*s).to_owned());
+                            let sym = self.shorten(module.interner.resolve(*s).to_owned());
                             let addr = if *offset == 0 {
                                 sym
                             } else {
@@ -342,7 +321,7 @@ impl KernelReportBuilder<'_> {
                             (Some(addr), None, None)
                         }
                         Operand::Register(_) => match affine.address(*base, *offset, pos) {
-                            Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
+                            Ok(a) => (Some(self.shorten(a.render(name))), None, Some(a)),
                             Err(reason) => (
                                 None,
                                 Some(reason.render(affine.data, scope, false, &name)),
@@ -501,6 +480,16 @@ impl KernelReportBuilder<'_> {
             }
         }
         (out, forms, per_request, per_wavefronts)
+    }
+
+    /// `text` with each shared array's mangled name as its source name.
+    fn shorten(&self, mut text: String) -> String {
+        let decls = (self.kernel.shared_decls.iter()).chain(&self.module.shared_decls);
+        for raw in decls.map(|d| self.module.interner.resolve(d.name)) {
+            let demangled = demangle(raw);
+            text = text.replace(raw, demangled.rsplit("::").next().unwrap_or(raw));
+        }
+        text
     }
 }
 
