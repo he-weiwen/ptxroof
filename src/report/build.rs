@@ -24,11 +24,11 @@
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
-use crate::analysis::affine::trip_counts::{TripCountResults, trip_counts_from};
+use crate::analysis::affine::trip_counts::trip_counts_from;
+use crate::analysis::control_flow::loop_forest;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::control_flow::{dominators, loop_forest};
 use crate::analysis::dead_code::unused;
-use crate::analysis::execution_counts::{CtaSize, Multiplier, Participation, Per, Resolution};
+use crate::analysis::execution_counts::{CtaSize, ExecutionCounts, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::classify::{ClassifiedInstruction, InstructionCategory};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::analysis::instruction_counts::count_constraint::count_constraint;
@@ -40,13 +40,11 @@ use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{
     AccessForm, CountRange, SharedRequest, Wavefronts, loop_bytes, warp_footprint, warp_wavefronts,
 };
-use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets, thread_sets};
+use crate::analysis::thread_participation::{Pred, thread_sets};
 use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
-use crate::ptx::ir::{
-    Instr, Kernel, Module, Opcode, Register, SharedSize, SpecialReg, SpecialVector, Stmt,
-};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SharedSize, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::bindings::BindingSpec;
@@ -246,7 +244,7 @@ impl KernelReportBuilder<'_> {
             }
             text
         };
-        let shape = self.shape;
+        let shape = self.counts.shape;
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
         for (bid, block) in cfg.blocks.iter_enumerated() {
             let scope = forest.block_loop[bid.0 as usize];
@@ -299,8 +297,8 @@ impl KernelReportBuilder<'_> {
                     if space == Space::Param {
                         continue;
                     }
-                    let set = self.sets.of_access(bid, pos, i);
-                    let guard = self.sets.guard(pos, i);
+                    let set = self.counts.sets.of_access(bid, pos, i);
+                    let guard = self.counts.sets.guard(pos, i);
                     let guard_exact = guard.as_ref().is_none_or(|g| {
                         g.count(shape)
                             .map_or(g.exact(), |c| c.certain == c.possible)
@@ -426,7 +424,7 @@ impl KernelReportBuilder<'_> {
                         };
                         per_request.insert(pos, r);
                     }
-                    if !self.unused[pos] {
+                    if !self.counts.unused[pos] {
                         let unknown_varies = (form.as_ref())
                             .is_some_and(|a| affine.alike(a, pos, Uniform::Cta, scope).is_err());
                         forms.entry(scope).or_default().push(AccessForm {
@@ -800,14 +798,8 @@ struct KernelReportBuilder<'a> {
     cfg: &'a ControlFlowGraph,
     forest: &'a LoopForest,
     names: Vec<LoopName>,
-    trip_info: TripCountResults,
     blocks: Vec<BlockMeasurements>,
     bind_map: &'a HashMap<SymbolicConstant, i64>,
-    /// Trip expression per loop for aggregation (an opaque symbol when
-    /// unresolved, one per loop name), already bound.
-    trip_exprs: Vec<SymExpr>,
-    /// Loop is conditionally entered within its parent scope.
-    cond_entry: Vec<bool>,
     /// Display names with the remainder suffix applied.
     display: Vec<String>,
     /// Memory operands per scope: the innermost loop of their block, or
@@ -817,18 +809,7 @@ struct KernelReportBuilder<'a> {
     access_forms: ByScope<AccessForm>,
     per_request: PerRequests,
     per_wavefronts: PerWavefronts,
-    /// Which threads run each block and each guarded instruction.
-    sets: ThreadSets,
-    /// Per statement: it runs, but nothing with an effect reads its results.
-    unused: Vec<bool>,
-    /// The block shape when known (`--launch` or `.reqntid`), else zeros.
-    shape: [u32; 3],
-    /// With the grid bound, the threads and warps over the launch of each
-    /// block's set (`None`) and of each guarded statement's, where
-    /// `Pred::launch` counts them.
-    launches: HashMap<(BlockId, Option<usize>), (u64, u64)>,
-    /// The same for each `cp.async`'s source read, by statement.
-    source_launches: HashMap<usize, (u64, u64)>,
+    counts: ExecutionCounts<'a>,
     /// The PTX file's lines, naming a uniform value by its statement's.
     lines: &'a LineIndex,
 }
@@ -857,7 +838,7 @@ impl<'a> KernelReportBuilder<'a> {
             other => other.to_string(),
         };
         let trip_info = trip_counts_from(&affine, &names, &name);
-        let blocks = collect(module, kernel, cfg, forest);
+        let mut blocks = collect(module, kernel, cfg, forest);
 
         let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
         for pair in &trip_info.unroll_pairs {
@@ -865,126 +846,44 @@ impl<'a> KernelReportBuilder<'a> {
             display[r] = format!("{} (remainder)", display[r]);
         }
 
-        let trip_exprs: Vec<SymExpr> = trip_info
-            .trips
-            .iter()
-            .enumerate()
-            .map(|(i, t)| match t {
-                Ok(e) => e.bind(bind_map),
-                Err(_) => SymExpr::Sym(SymbolicConstant::TripCount(LoopId(i as u32))),
-            })
-            .collect();
-
-        let exit_blocks: Vec<BlockId> = (0..cfg.blocks.len() as u32)
-            .map(BlockId)
-            .filter(|&b| cfg.block(b).succs.is_empty())
-            .collect();
-        let cond_entry: Vec<bool> = (0..forest.loops.len())
-            .map(|i| {
-                let l = &forest.loops[i];
-                let targets: &[BlockId] = match l.parent {
-                    Some(p) => &forest.get(p).latches,
-                    None => &exit_blocks,
-                };
-                let entry = trip_info.entries[i];
-                targets.is_empty() || !targets.iter().all(|&t| forest.doms.dominates(entry, t))
-            })
-            .collect();
-
-        let shape = SpecialVector::Ntid.components().map(|reg| {
-            bind_map
-                .get(&SymbolicConstant::SpecialReg(reg))
-                .map(|&v| v as u32)
-                .unwrap_or(0)
-        });
-        let mut b = KernelReportBuilder {
-            module,
-            kernel,
-            cfg,
-            forest,
-            names,
-            trip_info,
-            blocks,
-            bind_map,
-            trip_exprs,
-            cond_entry,
-            display,
-            accesses: HashMap::new(),
-            access_forms: HashMap::new(),
-            per_request: HashMap::new(),
-            per_wavefronts: HashMap::new(),
-            sets: ThreadSets::default(),
-            unused: Vec::new(),
-            shape,
-            launches: HashMap::new(),
-            source_launches: HashMap::new(),
-            lines,
-        };
-        b.sets = thread_sets(&affine);
-        if let Some(grid) = b.grid() {
-            for (block, blk) in b.cfg.blocks.iter_enumerated() {
-                let guarded = (blk.start..blk.end).filter(|s| b.sets.guards.contains_key(s));
-                for stmt in [None].into_iter().chain(guarded.map(Some)) {
-                    let set = match stmt {
-                        Some(s) => b.sets.of(block, s),
-                        None => b.sets.blocks[block.0 as usize].clone(),
-                    };
-                    if let Some(n) = set.launch(shape, grid) {
-                        b.launches.insert((block, stmt), n);
-                    }
-                }
-            }
-            for &s in b.sets.sources.keys() {
-                let set = b.sets.of_access(data.block_of(s), s, 1);
-                if let Some(n) = set.launch(shape, grid) {
-                    b.source_launches.insert(s, n);
-                }
-            }
-        }
-        let doms = dominators(&b.cfg.without(&b.sets.dead_edges));
-        let always = |x: BlockId, targets: &[BlockId]| {
-            let mut live = (targets.iter())
-                .filter(|&&t| doms.is_reachable(t))
-                .peekable();
-            live.peek().is_some() && live.all(|&t| doms.dominates(x, t))
-        };
-        for bm in &mut b.blocks {
-            let x = bm.block;
-            let targets = match b.forest.block_loop[x.0 as usize] {
-                Some(l) => &b.forest.get(l).latches,
-                None => &exit_blocks,
-            };
-            if always(x, targets) {
-                bm.qualifier = CountQualifier::Exact;
-            }
-        }
-        for (i, l) in b.forest.loops.iter().enumerate() {
-            let targets = match l.parent {
-                Some(p) => &b.forest.get(p).latches,
-                None => &exit_blocks,
-            };
-            b.cond_entry[i] &= !always(b.trip_info.entries[i], targets);
-        }
+        let sets = thread_sets(&affine);
         let compile_time: HashMap<SymbolicConstant, i64> =
             (SpecialVector::Ntid.components().into_iter())
                 .zip(kernel.reqntid.into_iter().flatten())
                 .map(|(reg, n)| (SymbolicConstant::SpecialReg(reg), i64::from(n)))
                 .collect();
         let static_sets;
-        let sets = match compile_time == *bind_map {
-            true => &b.sets,
+        let compile_time_sets = match compile_time == *bind_map {
+            true => &sets,
             false => {
                 static_sets =
                     thread_sets(&AffineAnalysis::new(data, &uniformity, Some(&compile_time)));
                 &static_sets
             }
         };
-        b.unused = unused(module, kernel, &data.ssa, |s| {
-            match sets.never(data.block_of(s), s) {
+        let unused = unused(module, kernel, &data.ssa, |s| {
+            match compile_time_sets.never(data.block_of(s), s) {
                 true => Some(false),
-                false => (sets.guards.get(&s) == Some(&Pred::True)).then_some(true),
+                false => (compile_time_sets.guards.get(&s) == Some(&Pred::True)).then_some(true),
             }
         });
+        let counts = ExecutionCounts::new(data, bind_map, trip_info, sets, unused, &mut blocks);
+        let mut b = KernelReportBuilder {
+            module,
+            kernel,
+            cfg,
+            forest,
+            names,
+            blocks,
+            bind_map,
+            display,
+            accesses: HashMap::new(),
+            access_forms: HashMap::new(),
+            per_request: HashMap::new(),
+            per_wavefronts: HashMap::new(),
+            counts,
+            lines,
+        };
         let (accesses, access_forms, per_request, per_wavefronts) = b.accesses_by_scope(&affine);
         b.accesses = accesses;
         b.access_forms = access_forms;
@@ -1033,11 +932,11 @@ impl<'a> KernelReportBuilder<'a> {
     }
 
     fn loop_bytes(&self, id: LoopId) -> Option<LoopBytes> {
-        let trips = self.trip_exprs[id.0 as usize]
+        let trips = self.counts.trip_exprs[id.0 as usize]
             .as_const()
             .filter(|&t| t > 0)?;
         let forms = self.access_forms.get(&Some(id))?;
-        loop_bytes(id, trips, self.shape, forms, |key| self.pointer(key))
+        loop_bytes(id, trips, self.counts.shape, forms, |key| self.pointer(key))
     }
 
     /// The pointer a loop footprint's base sits on: the one 64-bit
@@ -1127,8 +1026,8 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// The threads a set selects, when a thread-index condition does.
     fn threads_info(&self, set: &Pred) -> Option<ThreadsInfo> {
-        let counted = set.count(self.shape);
-        let warps = set.warps(self.shape);
+        let counted = set.count(self.counts.shape);
+        let warps = set.warps(self.counts.shape);
         Some(ThreadsInfo {
             condition: set.render_named(&|v| match v {
                 Var::Iteration(l) => format!("k[{}]", self.loop_ref(*l)),
@@ -1156,7 +1055,7 @@ impl<'a> KernelReportBuilder<'a> {
                     name: name(b),
                     lines: self.line_span(&instrs),
                     instructions: instrs.len() as u64,
-                    threads: self.threads_info(&self.sets.blocks[b.0 as usize]),
+                    threads: self.threads_info(&self.counts.sets.blocks[b.0 as usize]),
                     successors: self.cfg.block(b).succs.iter().map(|&s| name(s)).collect(),
                     r#loop: in_loop,
                 }
@@ -1182,328 +1081,6 @@ impl<'a> KernelReportBuilder<'a> {
         } else {
             format!("{file}:{lo}-{hi}")
         })
-    }
-
-    /// Loop chain of a block, innermost first.
-    /// Whether statement `stmt` of block `b` counts: some thread runs it,
-    /// and something with an effect reads its results.
-    fn counted(&self, b: BlockId, stmt: usize) -> bool {
-        !self.sets.never(b, stmt) && !self.unused[stmt]
-    }
-
-    fn chain(&self, b: BlockId) -> Vec<LoopId> {
-        let mut out = Vec::new();
-        let mut cur = self.forest.block_loop[b.0 as usize];
-        while let Some(l) = cur {
-            out.push(l);
-            cur = self.forest.get(l).parent;
-        }
-        out
-    }
-
-    /// Where comparisons with the counter of loop `l`, one of `b`'s loops
-    /// up to `below` with a constant trip count, select the set's
-    /// threads, which do not vary by CTA, and the loops inside `l` are
-    /// read: its threads and warps per CTA summed over `l`'s trips, and
-    /// the product of the other loops' counts.
-    fn per_trip(
-        &self,
-        b: BlockId,
-        set: &Pred,
-        below: Option<LoopId>,
-    ) -> Option<(u64, u64, SymExpr)> {
-        let l = set.trip_loop()?;
-        let chain = self.chain(b);
-        let cut = match below {
-            Some(m) => chain.iter().position(|&x| x == m)?,
-            None => chain.len(),
-        };
-        let inner = chain[..cut].iter().position(|&x| x == l)?;
-        let n = u64::try_from(self.trip_exprs[l.0 as usize].as_const()?).ok()?;
-        if set.varies_by_cta()
-            || chain[..inner]
-                .iter()
-                .any(|i| self.trip_info.trips[i.0 as usize].is_err())
-        {
-            return None;
-        }
-        let [(t, t_most), (w, w_most)] = set.over_trips(self.shape, l, n)?;
-        if t != t_most || w != w_most {
-            return None;
-        }
-        let rest = (chain[..cut].iter())
-            .filter(|&&x| x != l)
-            .fold(SymExpr::Const(1), |p, x| {
-                SymExpr::mul(p, self.trip_exprs[x.0 as usize].clone())
-            });
-        Some((t, w, rest))
-    }
-
-    /// A loop around `b` counts trips that read the CTA index.
-    fn per_cta_trips(&self, b: BlockId) -> bool {
-        (self.chain(b).iter()).any(|l| self.trips_per_cta(*l))
-    }
-
-    /// Loop `l`'s count reads the CTA index, or a uniform value, one per
-    /// CTA.
-    fn trips_per_cta(&self, l: LoopId) -> bool {
-        (self.trip_exprs[l.0 as usize].symbols().iter()).any(|s| {
-            matches!(
-                s,
-                SymbolicConstant::SpecialReg(SpecialReg::Vector(SpecialVector::Ctaid, _))
-                    | SymbolicConstant::Unknown(_)
-            )
-        })
-    }
-
-    /// `b`'s loops whose trip counts read the CTA index, and the product
-    /// of the others.
-    fn cta_split(&self, b: BlockId) -> (Vec<LoopId>, SymExpr) {
-        let (cta, rest): (Vec<LoopId>, Vec<LoopId>) =
-            (self.chain(b).into_iter()).partition(|&l| self.trips_per_cta(l));
-        let rest = (rest.iter()).fold(SymExpr::Const(1), |p, l| {
-            SymExpr::mul(p, self.trip_exprs[l.0 as usize].clone())
-        });
-        (cta, rest)
-    }
-
-    /// The product of the loops' counts as the axes they read and its
-    /// value at each CTA: each count evaluated and never negative, and a
-    /// `!=` latch's step dividing its distance into a positive count.
-    fn cta_weight(&self, loops: Vec<LoopId>) -> ([bool; 3], impl Fn([i64; 3]) -> Option<u64> + '_) {
-        let regs = SpecialVector::Ctaid.components();
-        let read = regs.map(|reg| {
-            let leaf = SymbolicConstant::SpecialReg(reg);
-            (loops.iter()).any(|l| self.trip_exprs[l.0 as usize].symbols().contains(&leaf))
-        });
-        let weight = move |c: [i64; 3]| {
-            let at: HashMap<SymbolicConstant, i64> = regs
-                .map(SymbolicConstant::SpecialReg)
-                .into_iter()
-                .zip(c)
-                .collect();
-            loops.iter().try_fold(1u64, |w, l| {
-                let n = self.trip_exprs[l.0 as usize].bind(&at).as_const()?;
-                if let Some((x, step)) = &self.trip_info.distances[l.0 as usize] {
-                    let x = x.bind(self.bind_map).bind(&at).as_const()?;
-                    if x.checked_rem(*step)? != 0 || x.checked_div(*step)? < 1 {
-                        return None;
-                    }
-                }
-                w.checked_mul(u64::try_from(n).ok()?)
-            })
-        };
-        (read, weight)
-    }
-
-    /// The weight summed over the grid; `None` without the grid or past
-    /// `CTA_BUDGET` CTAs on the axes it reads.
-    fn cta_sum(&self, loops: &[LoopId]) -> Option<u64> {
-        let grid = self.grid()?;
-        let (read, weight) = self.cta_weight(loops.to_vec());
-        let n = |i: usize| if read[i] { grid[i] } else { 1 };
-        if (0..3).map(|i| u64::from(n(i))).product::<u64>() > CTA_BUDGET {
-            return None;
-        }
-        let mut sum = 0u64;
-        for c in
-            (0..n(2)).flat_map(|z| (0..n(1)).flat_map(move |y| (0..n(0)).map(move |x| [x, y, z])))
-        {
-            sum = sum.checked_add(weight(c.map(i64::from))?)?;
-        }
-        let other = (0..3).filter(|&i| !read[i]).map(|i| u64::from(grid[i]));
-        { other }.try_fold(sum, u64::checked_mul)
-    }
-
-    /// The set's threads and warps over the launch, CTA `c` counted the
-    /// weight's value there times.
-    fn weighted_launch(&self, set: &Pred, loops: &[LoopId]) -> Option<(u64, u64)> {
-        let (read, weight) = self.cta_weight(loops.to_vec());
-        set.weighted_launch(self.shape, self.grid()?, read, &weight)
-    }
-
-    /// The product of `b`'s loops' trip counts up to `below`, and whether
-    /// a loop among them may not be entered: one entered conditionally,
-    /// unless its header's threads are counted, per CTA or at every CTA
-    /// of the launch. Over the launch, the loops whose counts read the
-    /// CTA index are `split` out and summed over the grid as `ctas`.
-    fn multiplier<'c>(
-        &self,
-        b: BlockId,
-        below: Option<LoopId>,
-        per: Per<'c>,
-    ) -> Option<Multiplier<'c>> {
-        let chain = self.chain(b);
-        let cut = match below {
-            Some(l) => chain.iter().position(|&x| x == l)?,
-            None => chain.len(),
-        };
-        let mut mult = SymExpr::Const(1);
-        let mut at_most = false;
-        for &l in &chain[..cut] {
-            mult = SymExpr::mul(mult, self.trip_exprs[l.0 as usize].clone());
-            let header = self.forest.get(l).header;
-            let counted = (self.sets.blocks[header.0 as usize].count(self.shape))
-                .is_some_and(|c| c.certain == c.possible);
-            let entered = (per.cta().is_some() && counted)
-                || (matches!(per, Per::Launch(..)) && self.launches.contains_key(&(header, None)));
-            at_most |= self.cond_entry[l.0 as usize] && !entered;
-        }
-        let launch = matches!(per, Per::Launch(..));
-        let unread = launch && (chain.iter()).any(|l| self.trip_info.trips[l.0 as usize].is_err());
-        let split = (launch && self.per_cta_trips(b)).then(|| self.cta_split(b));
-        let ctas = split.as_ref().map_or(per.ctas(), |(p, _)| self.cta_sum(p));
-        let (split, trips) = split.map_or((None, mult), |(p, rest)| (Some(p), rest));
-        Some(Multiplier {
-            per,
-            below,
-            at_most,
-            unread,
-            split,
-            trips: Some(trips),
-            ctas,
-        })
-    }
-
-    /// The threads and warps that run `set` in block `bm` as `m` sums
-    /// them: trip by trip where a loop counter selects them, weighted by
-    /// the CTA index where `m`'s loop counts read it, at the launch's own
-    /// count (`launch`), else per CTA times the CTAs; with the trips they
-    /// run, `m`'s unless they are summed trip by trip. `None` when a
-    /// count is unknown or does not fit in u64.
-    fn running(
-        &self,
-        bm: &BlockMeasurements,
-        m: &Multiplier,
-        set: &Pred,
-        launch: Option<(u64, u64)>,
-    ) -> Option<Participation> {
-        let bound = m.at_most || m.per.cta().is_some_and(|c| !c.exact);
-        let counted = |threads, warps, trips| Participation {
-            threads,
-            warps: Some((warps, bound)),
-            at_most: bound,
-            explained: true,
-            trips,
-        };
-        if m.per.cta().is_some()
-            && m.split.is_none()
-            && m.trips.is_some()
-            && let Some((t, w, rest)) = self.per_trip(bm.block, set, m.below)
-        {
-            let n = match m.per {
-                Per::Launch(_, n) => n?,
-                _ => 1,
-            };
-            return Some(counted(t.checked_mul(n)?, w.checked_mul(n)?, Some(rest)));
-        }
-        let (t, w, at_most, explained) = self.executing(bm, set, m.at_most, m.per.cta());
-        let scaled = |n: u64| {
-            let warps = match w {
-                Some((w, bound)) => Some((u64::try_from(w).ok()?.checked_mul(n)?, bound)),
-                None => None,
-            };
-            let threads = u64::try_from(t).ok()?.checked_mul(n)?;
-            let trips = m.trips.clone();
-            Some(Participation {
-                threads,
-                warps,
-                at_most,
-                explained,
-                trips,
-            })
-        };
-        let Per::Launch(..) = m.per else {
-            return scaled(1);
-        };
-        let launch = match &m.split {
-            Some(p) if set.varies_by_cta() => Some(self.weighted_launch(set, p)?),
-            Some(_) => None,
-            None => launch,
-        };
-        match launch {
-            Some((t, w)) => Some(counted(t, w, m.trips.clone())),
-            None => scaled(m.ctas?),
-        }
-    }
-
-    /// Memory operand `operand` of statement `stmt` of block `bm`, or the
-    /// statement with operand 0, under its guard: none or one every
-    /// thread reads as true runs as `block`, a bound if the statement is
-    /// predicated (a branch); one every thread reads as false skips it;
-    /// another runs its own set, a cp.async source operand the threads
-    /// that read it, a bound unless the count explains the set. `cache`
-    /// keeps each guarded set's count per block.
-    fn statement(
-        &self,
-        bm: &BlockMeasurements,
-        m: &Multiplier,
-        stmt: usize,
-        operand: usize,
-        block: Option<&Participation>,
-        cache: &mut HashMap<(usize, bool), Option<Participation>>,
-    ) -> Resolution {
-        let counted = |p: Option<Participation>| p.map_or(Resolution::Unknown, Resolution::Counted);
-        let source = operand == 1 && self.sets.sources.contains_key(&stmt);
-        match self.sets.guard(stmt, operand) {
-            Some(Pred::False) => Resolution::Skipped,
-            Some(Pred::True) => counted(block.cloned()),
-            Some(_) => counted(
-                (cache.entry((stmt, source)))
-                    .or_insert_with(|| {
-                        let (set, launch) = match source {
-                            true => (
-                                self.sets.of_access(bm.block, stmt, 1),
-                                self.source_launches.get(&stmt).copied(),
-                            ),
-                            false => (
-                                self.sets.of(bm.block, stmt),
-                                self.launches.get(&(bm.block, Some(stmt))).copied(),
-                            ),
-                        };
-                        let p = self.running(bm, m, &set, launch)?;
-                        Some(Participation {
-                            at_most: p.at_most || !p.explained,
-                            ..p
-                        })
-                    })
-                    .clone(),
-            ),
-            None => {
-                let predicated =
-                    matches!(&self.kernel.stmts[stmt], Stmt::Instr(i) if i.predicate.is_some());
-                counted(block.map(|p| Participation {
-                    at_most: p.at_most || predicated,
-                    ..p.clone()
-                }))
-            }
-        }
-    }
-
-    // A block selected by thread-index branches runs on exactly
-    // its threads: per CTA that count, and not a bound.
-    fn executing(
-        &self,
-        bm: &BlockMeasurements,
-        set: &Pred,
-        chain_at_most: bool,
-        cta: Option<&CtaSize>,
-    ) -> (i64, Option<(i64, bool)>, bool, bool) {
-        let counted = set.count(self.shape);
-        let selected = cta.and(counted.map(|c| c.possible));
-        let explained = selected.is_some() && counted.is_some_and(|c| c.certain == c.possible);
-        let conditional = bm.qualifier == CountQualifier::AtMost && !explained;
-        let at_most = conditional || chain_at_most || cta.is_some_and(|c| !c.exact);
-        let threads = match (cta, selected) {
-            (Some(_), Some(n)) => i64::from(n),
-            (Some(c), None) => c.threads as i64,
-            (None, _) => 1,
-        };
-        let warps = cta.map(|c| match set.warps(self.shape) {
-            Some(w) => (i64::from(w.possible), at_most || w.certain != w.possible),
-            None => (c.warps as i64, at_most),
-        });
-        (threads, warps, at_most, explained)
     }
 
     /// Aggregate over blocks; `below` = aggregate within this loop
@@ -1533,20 +1110,20 @@ impl<'a> KernelReportBuilder<'a> {
         }
 
         for bm in &self.blocks {
-            let Some(mut multiplier) = self.multiplier(bm.block, below, per) else {
+            let Some(mut multiplier) = self.counts.multiplier(bm.block, below, per) else {
                 continue;
             };
-            if self.sets.blocks[bm.block.0 as usize] == Pred::False {
+            if self.counts.sets.blocks[bm.block.0 as usize] == Pred::False {
                 continue;
             }
             if multiplier.unread {
                 multiplier.trips = None;
             }
             // A block whose count does not fit in i64 is unknown, its warps too.
-            let set = &self.sets.blocks[bm.block.0 as usize];
-            let launch = self.launches.get(&(bm.block, None)).copied();
-            let block =
-                (self.running(bm, &multiplier, set, launch)).filter(|p| p.narrow().is_some());
+            let set = &self.counts.sets.blocks[bm.block.0 as usize];
+            let launch = self.counts.launches.get(&(bm.block, None)).copied();
+            let block = (self.counts.running(bm, &multiplier, set, launch))
+                .filter(|p| p.narrow().is_some());
             let mult = (block.as_ref()).and_then(|p| p.trips.clone());
             let mult = mult.as_ref();
             let ((threads, warps), block_at_most) = (block.as_ref())
@@ -1554,7 +1131,7 @@ impl<'a> KernelReportBuilder<'a> {
                 .unwrap_or(((0, Some((0, false))), false));
             for instruction in &bm.instructions {
                 instruction_all.add(threads, warps, mult, block_at_most);
-                if !self.counted(bm.block, instruction.provenance) {
+                if !self.counts.counted(bm.block, instruction.provenance) {
                     continue;
                 }
                 let kind = instructions
@@ -1577,12 +1154,15 @@ impl<'a> KernelReportBuilder<'a> {
             let block = block.as_ref();
             let mut guarded = HashMap::new();
             for m in &bm.measurements {
-                if !self.counted(bm.block, m.provenance) {
+                if !self.counts.counted(bm.block, m.provenance) {
                     continue;
                 }
                 let (stmt, operand) = (m.provenance, m.memory_operand.unwrap_or(0));
                 let (threads, at_most, mult) =
-                    match self.statement(bm, &multiplier, stmt, operand, block, &mut guarded) {
+                    match self
+                        .counts
+                        .statement(bm, &multiplier, stmt, operand, block, &mut guarded)
+                    {
                         Resolution::Skipped => continue,
                         Resolution::Unknown => (0, false, None),
                         Resolution::Counted(p) => match p.narrow() {
@@ -1769,7 +1349,7 @@ impl<'a> KernelReportBuilder<'a> {
 
     fn loop_node(&self, id: LoopId) -> LoopNode {
         let name = &self.names[id.0 as usize];
-        let trips = match &self.trip_info.trips[id.0 as usize] {
+        let trips = match &self.counts.trip_info.trips[id.0 as usize] {
             Ok(e) => {
                 let bound = e.bind(self.bind_map);
                 Trips {
@@ -1783,6 +1363,7 @@ impl<'a> KernelReportBuilder<'a> {
             },
         };
         let unroll = self
+            .counts
             .trip_info
             .unroll_pairs
             .iter()
@@ -1821,11 +1402,11 @@ impl<'a> KernelReportBuilder<'a> {
                 let mut weight = CountAccumulator::default();
                 for &b in &l.blocks {
                     let instrs = (self.blocks[b.0 as usize].instructions.iter())
-                        .filter(|i| self.counted(b, i.provenance))
+                        .filter(|i| self.counts.counted(b, i.provenance))
                         .count() as i64;
                     let mut mult = SymExpr::Const(1);
-                    for &cl in &self.chain(b) {
-                        mult = SymExpr::mul(mult, self.trip_exprs[cl.0 as usize].clone());
+                    for &cl in &self.counts.chain(b) {
+                        mult = SymExpr::mul(mult, self.counts.trip_exprs[cl.0 as usize].clone());
                     }
                     weight.add(instrs, Some(&mult), false);
                 }
@@ -1860,7 +1441,9 @@ impl<'a> KernelReportBuilder<'a> {
         let mut unknown_ops: BTreeMap<String, u64> = BTreeMap::new();
         let mut unquantified: BTreeMap<String, u64> = BTreeMap::new();
         for bm in &self.blocks {
-            for m in (bm.measurements.iter()).filter(|m| self.counted(bm.block, m.provenance)) {
+            for m in
+                (bm.measurements.iter()).filter(|m| self.counts.counted(bm.block, m.provenance))
+            {
                 match m.kind {
                     MeasureKind::UnknownOps { mnemonic } => {
                         *unknown_ops.entry(mnemonic.name().to_owned()).or_default() += m.count;
@@ -1881,7 +1464,7 @@ impl<'a> KernelReportBuilder<'a> {
         let unparsed: u64 = self
             .blocks
             .iter()
-            .filter(|b| self.sets.blocks[b.block.0 as usize] != Pred::False)
+            .filter(|b| self.counts.sets.blocks[b.block.0 as usize] != Pred::False)
             .map(|b| b.class_counts.unparsed as u64)
             .sum();
         if unparsed > 0 {
@@ -1905,10 +1488,10 @@ impl<'a> KernelReportBuilder<'a> {
                 reason: "counted as an op; bytes missing from every byte total".to_owned(),
             });
         }
-        for (i, t) in self.trip_info.trips.iter().enumerate() {
+        for (i, t) in self.counts.trip_info.trips.iter().enumerate() {
             let header = self.forest.loops[i].header;
             if let Err(reason) = t
-                && self.sets.blocks[header.0 as usize] != Pred::False
+                && self.counts.sets.blocks[header.0 as usize] != Pred::False
             {
                 out.push(UnknownEntry {
                     what: format!("loop {}", self.display[i]),
@@ -1991,16 +1574,6 @@ impl<'a> KernelReportBuilder<'a> {
         }
     }
 
-    /// The grid, when bound.
-    fn grid(&self) -> Option<[u32; 3]> {
-        let [x, y, z] = (SpecialVector::Nctaid.components()).map(|reg| {
-            self.bind_map
-                .get(&SymbolicConstant::SpecialReg(reg))
-                .and_then(|&n| u32::try_from(n).ok())
-        });
-        Some([x?, y?, z?])
-    }
-
     fn measured(
         &self,
         record: &NcuRecord,
@@ -2017,11 +1590,19 @@ impl<'a> KernelReportBuilder<'a> {
         let reducible = self.forest.irreducible_edges.is_empty();
         let (mut blocks, mut all) = (Vec::new(), Vec::new());
         for bm in &self.blocks {
-            let Some(m) = self.multiplier(bm.block, None, Per::Launch(cta, grid)) else {
+            let Some(m) = self
+                .counts
+                .multiplier(bm.block, None, Per::Launch(cta, grid))
+            else {
                 continue;
             };
-            let set = &self.sets.blocks[bm.block.0 as usize];
-            let block = self.running(bm, &m, set, self.launches.get(&(bm.block, None)).copied());
+            let set = &self.counts.sets.blocks[bm.block.0 as usize];
+            let block = self.counts.running(
+                bm,
+                &m,
+                set,
+                self.counts.launches.get(&(bm.block, None)).copied(),
+            );
             let mut guarded = HashMap::new();
             let mut predictions = Vec::new();
             for i in &bm.instructions {
@@ -2030,9 +1611,16 @@ impl<'a> KernelReportBuilder<'a> {
                 };
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
-                let never = !self.counted(bm.block, i.provenance);
+                let never = !self.counts.counted(bm.block, i.provenance);
                 let mut resolve = |operand| {
-                    self.statement(bm, &m, i.provenance, operand, block.as_ref(), &mut guarded)
+                    self.counts.statement(
+                        bm,
+                        &m,
+                        i.provenance,
+                        operand,
+                        block.as_ref(),
+                        &mut guarded,
+                    )
                 };
                 let run = match resolve(0) {
                     Resolution::Counted(p) if !never => Some(p),
@@ -2042,7 +1630,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let at_most = run.as_ref().is_some_and(|p| p.at_most);
                 // Warps with a lane that reads its global operand: each
                 // requests its sectors; a source no thread reads, none.
-                let reads = match self.sets.sources.contains_key(&i.provenance) {
+                let reads = match self.counts.sets.sources.contains_key(&i.provenance) {
                     true => match resolve(1) {
                         Resolution::Skipped => Some(None),
                         Resolution::Unknown => None,
@@ -2144,6 +1732,7 @@ impl<'a> KernelReportBuilder<'a> {
         });
         let totals_per_cta = cta.as_ref().map(|l| self.aggregates(None, Per::Cta(l)));
         let ctas = self
+            .counts
             .grid()
             .and_then(|g| g.iter().try_fold(1u64, |n, &d| n.checked_mul(d.into())));
         let totals_per_launch =
@@ -2187,7 +1776,7 @@ impl<'a> KernelReportBuilder<'a> {
             unknowns,
             unused: (self.kernel.stmts.iter().enumerate())
                 .filter_map(|(s, stmt)| match stmt {
-                    Stmt::Instr(i) if self.unused[s] => Some(UnusedInstruction {
+                    Stmt::Instr(i) if self.counts.unused[s] => Some(UnusedInstruction {
                         line: self.lines.line(i.offset),
                         opcode: self.module.opcode(i),
                     }),
