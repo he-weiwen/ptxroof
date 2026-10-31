@@ -994,7 +994,12 @@ One line each, with the trigger that would start it.
   the most CTAs' lanes, `in 3844/3969 CTAs, other 125 CTAs differ`
   (`k1-annotate.test`); and without the block shape the condition
   that selects them, a loop's iteration k printed as `iv[<header>] + 1`
-  (`without_a_block_shape_a_block_names_its_condition`).
+  (`without_a_block_shape_a_block_names_its_condition`). Then how many
+  times its unguarded statements run, over the launch given the grid
+  and the block shape, else per CTA, else per thread: `exec
+  32,768/launch`, `<=` for a bound, and under a loop whose trips are
+  not known `exec ? (trips of <header>)` (`k5-annotate.test`,
+  `gluon-attn-fwd-ws-annotate.test`).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures

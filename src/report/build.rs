@@ -809,7 +809,7 @@ pub(super) struct KernelReportBuilder<'a> {
     pub(super) cfg: &'a ControlFlowGraph,
     pub(super) forest: &'a LoopForest,
     names: Vec<LoopName>,
-    blocks: Vec<BlockMeasurements>,
+    pub(super) blocks: Vec<BlockMeasurements>,
     pub(super) bind_map: &'a HashMap<SymbolicConstant, i64>,
     /// Display names with the remainder suffix applied.
     display: Vec<String>,

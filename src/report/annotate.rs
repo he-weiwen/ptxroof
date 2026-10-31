@@ -2,7 +2,10 @@
 //! it as a ` // ` comment.
 
 use crate::analysis::affine::affine_expr::Var;
+use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::loops::LoopId;
+use crate::analysis::execution_counts::{CtaSize, Per};
+use crate::analysis::instruction_counts::collect::BlockMeasurements;
 use crate::analysis::thread_participation::Pred;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::Stmt;
@@ -30,14 +33,34 @@ pub fn annotate(source: &str, opts: &AnalyzeOptions) -> Result<String, AnalyzeEr
 impl KernelReportBuilder<'_> {
     /// Each block's annotation, a loop header's trip count first, on its
     /// label's line, else on its first statement's after `[<block name>] `.
+    /// Counts are over the launch given the grid and the block shape, else
+    /// per CTA given the shape, else per thread.
     fn annotations(&self, notes: &mut BTreeMap<u32, Vec<String>>) {
-        for (b, block) in self.cfg.blocks.iter_enumerated() {
+        let threads: u64 = self.counts.shape.iter().map(|&n| u64::from(n)).product();
+        let cta = (threads > 0).then(|| CtaSize {
+            threads,
+            warps: threads.div_ceil(32),
+            exact: true,
+        });
+        let ctas = (self.counts.grid())
+            .and_then(|g| g.iter().try_fold(1u64, |n, &d| n.checked_mul(d.into())));
+        let per = match (&cta, ctas) {
+            (Some(c), Some(n)) => Per::Launch(c, Some(n)),
+            (Some(c), None) => Per::Cta(c),
+            (None, _) => Per::Thread,
+        };
+        for bm in &self.blocks {
+            let (b, start) = (bm.block, self.cfg.block(bm.block).start);
             let header = self.forest.block_loop[b.0 as usize]
                 .filter(|&l| self.forest.get(l).header == b)
                 .map(|l| format!("loop: trips {}", self.trips(l)));
-            let parts: Vec<String> = header.into_iter().chain(self.threads(b)).collect();
+            let parts: Vec<String> = header
+                .into_iter()
+                .chain(self.threads(b))
+                .chain(self.exec(bm, per))
+                .collect();
             let name = format!("[{}] ", self.cfg.block_name(self.module, b));
-            let (offset, prefix) = match &self.kernel.stmts[block.start] {
+            let (offset, prefix) = match &self.kernel.stmts[start] {
                 Stmt::Label { offset, .. } => (*offset, String::new()),
                 Stmt::Unparsed { offset, .. } => (*offset, name),
                 Stmt::Instr(i) => (i.offset, name),
@@ -47,6 +70,72 @@ impl KernelReportBuilder<'_> {
                 let note = format!("{prefix}{}", parts.join(" | "));
                 notes.entry(self.lines.line(offset)).or_default().push(note);
             }
+        }
+    }
+
+    /// `exec` and how many times block `bm`'s unguarded statements run at
+    /// the scale `per`, `<=` for a bound, unless no thread runs it. Under a
+    /// loop whose trips are not known, `exec ?` and the innermost such loop.
+    fn exec(&self, bm: &BlockMeasurements, per: Per) -> Option<String> {
+        let b = bm.block;
+        let set = &self.counts.sets.blocks[b.0 as usize];
+        let unknown = (self.counts.chain(b).into_iter())
+            .find(|l| self.counts.trip_info.trips[l.0 as usize].is_err());
+        let (Some(m), None, false) = (
+            self.counts.multiplier(b, None, per),
+            unknown,
+            *set == Pred::False,
+        ) else {
+            let header = unknown
+                .map(|l| self.forest.get(l).header)
+                .filter(|&h| h != b);
+            let exec = header.map_or("exec ?".to_owned(), |h| {
+                format!("exec ? (trips of {})", self.cfg.block_name(self.module, h))
+            });
+            return (*set != Pred::False).then_some(exec);
+        };
+        let unit = match per {
+            Per::Thread => "thread",
+            Per::Cta(_) => "CTA",
+            Per::Launch(..) => "launch",
+        };
+        let launch = self.counts.launches.get(&(b, None)).copied();
+        let p = self.counts.running(bm, &m, set, launch);
+        let n = p.as_ref().and_then(|p| {
+            Some(SymExpr::mul(
+                SymExpr::Const(i64::try_from(p.threads).ok()?),
+                p.trips.clone()?,
+            ))
+        });
+        let bound = if p.is_some_and(|p| p.at_most) {
+            "<= "
+        } else {
+            ""
+        };
+        Some(n.map_or("exec ?".to_owned(), |n| {
+            format!("exec {bound}{}/{unit}", self.count(&n))
+        }))
+    }
+
+    /// A count, a number with its thousands separated by `,`, else an
+    /// expression with a product as `a·b`, parenthesized past one term.
+    fn count(&self, n: &SymExpr) -> String {
+        match n.as_const() {
+            Some(n) => {
+                let digits = n.unsigned_abs().to_string();
+                let mut out = String::from(if n < 0 { "-" } else { "" });
+                for (i, c) in digits.chars().enumerate() {
+                    if i > 0 && (digits.len() - i) % 3 == 0 {
+                        out.push(',');
+                    }
+                    out.push(c);
+                }
+                out
+            }
+            None => match n.render(&|leaf| self.leaf_name(leaf)).replace(" * ", "·") {
+                t if t.contains(' ') => format!("({t})"),
+                t => t,
+            },
         }
     }
 
@@ -220,7 +309,8 @@ mod tests {
     }
 
     /// Without a block shape, a block's annotation is the condition on the
-    /// thread index that selects it, a loop's iteration k = iv + 1.
+    /// thread index that selects it, a loop's iteration k = iv + 1, and
+    /// its count per thread.
     #[test]
     fn without_a_block_shape_a_block_names_its_condition() {
         let src = "\
@@ -259,9 +349,13 @@ $L__BB0_5:
         assert_eq!(
             notes,
             [
-                "loop: trips 4",
-                "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0",
-                "[<block 5>] %tid.x <= 31",
+                "[<block 0>] exec 1/thread",
+                "loop: trips 4 | exec 4/thread",
+                "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0 | exec <= 4/thread",
+                "exec 4/thread",
+                "[<block 4>] exec 1/thread",
+                "[<block 5>] %tid.x <= 31 | exec <= 1/thread",
+                "exec 1/thread",
             ]
         );
     }

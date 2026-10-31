@@ -1,5 +1,5 @@
 # The block a branch on `%tid.x == 0 and %tid.x < 32` falls through to,
 # in the annotated PTX: every lane of the CTA's 64 but lane 0 of warp 0.
 RUN: %ptxroof analyze --annotate %fixtures/micro/guards.ptx | FileCheck "%s"
-CHECK: {{^}}	st.global.b64 	[%rd4+48], %rd5; // [<block 1>] warp 0 × lane 1-31 ∪ warp 1 × lane *{{$}}
-CHECK: {{^}}$L__BB0_2: // warp * × lane *{{$}}
+CHECK: {{^}}	st.global.b64 	[%rd4+48], %rd5; // [<block 1>] warp 0 × lane 1-31 ∪ warp 1 × lane * | exec 63/CTA{{$}}
+CHECK: {{^}}$L__BB0_2: // warp * × lane * | exec 64/CTA{{$}}

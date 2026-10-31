@@ -1,8 +1,12 @@
 # A warp-specialized CTA of 8 warps in the annotated PTX: the blocks of
 # one role run on warps 0-3, those of the other on warps 4-7, every lane;
-# a block under `%ctaid.x < 64` runs so in 64 of the 128 CTAs.
+# a block under `%ctaid.x < 64` runs so in 64 of the 128 CTAs. A block
+# under a loop whose trips are not known runs an unknown number of
+# times, the innermost such loop named; on that loop's header, `exec ?`.
 RUN: %ptxroof analyze --annotate --ncu %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck "%s"
-CHECK: {{^}}	setp.eq.b32 	%p58, %r1753, 0; // [<block 1>] warp 0-3 × lane *{{$}}
-CHECK: {{^}}$L__tmp7: // warp 0-3 × lane * | CTAs %ctaid.x < 64 (64/128){{$}}
-CHECK: {{^}}$L__BB0_2:{{ +}}// %.preheader568 // loop: trips ? (loop has multiple latches) | warp 4-7 × lane *{{$}}
-CHECK: {{^}}	setp.eq.b16 	%p3, %rs5, 1; // [<block 37>] warp 4-7 × lane *{{$}}
+CHECK: {{^}}	setp.eq.b32 	%p58, %r1753, 0; // [<block 1>] warp 0-3 × lane * | exec 16,384/launch{{$}}
+CHECK: {{^}}$L__tmp7: // warp 0-3 × lane * | CTAs %ctaid.x < 64 (64/128) | exec <= 16,384/launch{{$}}
+CHECK: {{^}}	or.b32 	%r100, %r1880, 63; // [<block 11>] warp 0-3 × lane * | exec ? (trips of $L__BB0_39){{$}}
+CHECK: {{^}}$L__BB0_43:{{ +}}// %.lr.ph601 // loop: trips ? (uniform(%r1884@$L__BB0_43) is defined in an enclosing loop: depends on %r1884, carried around an enclosing loop) | warp 0-3 × lane * | exec ?{{$}}
+CHECK: {{^}}$L__BB0_2:{{ +}}// %.preheader568 // loop: trips ? (loop has multiple latches) | warp 4-7 × lane * | exec ?{{$}}
+CHECK: {{^}}	setp.eq.b16 	%p3, %rs5, 1; // [<block 37>] warp 4-7 × lane * | exec ? (trips of $L__BB0_2){{$}}
