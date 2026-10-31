@@ -19,6 +19,8 @@
 //!    AI(global) is flops over global bytes wherever both are numbers;
 //!    the coverage fractions agree with the class counts and the loop
 //!    tree.
+//! 6. The annotated PTX of the same runs is the input, line for line,
+//!    each line followed by nothing or by ` // ` and its annotation.
 
 use ptxroof::analysis::affine::sym_expr::SymbolicConstant;
 use ptxroof::analysis::affine::trip_counts::trip_counts;
@@ -30,6 +32,7 @@ use ptxroof::analysis::loop_names::loop_names;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
+use ptxroof::report::annotate::annotate;
 use ptxroof::report::measured::NcuRecord;
 use ptxroof::report::schema::{Aggregates, Count, LoopNode};
 use ptxroof::report::{AnalyzeOptions, BindingSpec, Report, analyze};
@@ -362,8 +365,9 @@ fn report_violations(report: &Report) -> Vec<String> {
     out
 }
 
-#[test]
-fn json_report_identities_hold() {
+/// Every fixture unbound, the bound cases of 4, and every Nsight Compute
+/// record with its PTX.
+fn every_run() -> Vec<(PathBuf, AnalyzeOptions)> {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut runs: Vec<(PathBuf, AnalyzeOptions)> = Vec::new();
     let mut ptx = Vec::new();
@@ -391,11 +395,35 @@ fn json_report_identities_hold() {
         ));
     }
     assert!(runs.len() > 40, "{} runs", runs.len());
-    for (path, opts) in &runs {
+    runs
+}
+
+#[test]
+fn json_report_identities_hold() {
+    for (path, opts) in &every_run() {
         let src = fs::read_to_string(path).expect("ptx readable");
         let name = path.display().to_string();
         let report = analyze(&src, &name, opts).expect("analyzes");
         assert_eq!(report_violations(&report), Vec::<String>::new(), "{name}");
+    }
+}
+
+#[test]
+fn annotated_ptx_is_the_input_with_a_comment_on_some_lines() {
+    for (path, opts) in &every_run() {
+        let src = fs::read_to_string(path).expect("ptx readable");
+        let out = annotate(&src, opts).expect("annotates");
+        let (input, output): (Vec<&str>, Vec<&str>) =
+            (src.split('\n').collect(), out.split('\n').collect());
+        assert_eq!(input.len(), output.len(), "{}", path.display());
+        for (i, o) in input.iter().zip(&output) {
+            let rest = o.strip_prefix(i).expect("the input line");
+            assert!(
+                rest.is_empty() || rest.starts_with(" // "),
+                "{}: {o}",
+                path.display()
+            );
+        }
     }
 }
 

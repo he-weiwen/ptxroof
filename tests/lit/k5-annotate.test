@@ -1,0 +1,11 @@
+# The annotated PTX (analyze --annotate): every input line, each loop
+# header's label line followed by its trip count, k5's tile loop
+# ⌈param_2/8⌉ unbound and 32 with the record's K = 256, its dot loop 8.
+RUN: %ptxroof analyze --annotate %fixtures/k5/k5.sm_89.ptx | FileCheck "%s"
+RUN: %ptxroof analyze --annotate --ncu %fixtures/k5/k5.sm_89.256.ncu.json %fixtures/k5/k5.sm_89.ptx | FileCheck --check-prefix=NCU "%s"
+RUN: not %ptxroof analyze --annotate --json %fixtures/k5/k5.sm_89.ptx 2>&1 | FileCheck --check-prefix=JSON "%s"
+CHECK: {{^}}$L__BB0_2: // loop: trips ⌈param_2/8⌉{{$}}
+CHECK: {{^}}$L__BB0_3: // loop: trips 8{{$}}
+NCU: {{^}}$L__BB0_2: // loop: trips 32{{$}}
+NCU: {{^}}$L__BB0_3: // loop: trips 8{{$}}
+JSON: error: the argument '--annotate' cannot be used with '--json'

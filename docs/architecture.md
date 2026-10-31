@@ -54,6 +54,7 @@ only declare modules and selected public entry points.
 | `report/build` | Orchestrate kernel analyses and aggregate their results into reports |
 | `report/names` | Kernel demangling for display |
 | `report/text` | Render report structures as text |
+| `report/annotate` | The input PTX with each line's analysis results appended as a comment |
 | `main` | CLI arguments, file I/O, output selection and error handling |
 | `lib` | Library modules and version entry point |
 
@@ -89,7 +90,8 @@ traces a value when a query reads it. `trip_counts` reads its per-loop results; 
 
 ## Per-kernel flow
 
-`main::run` calls `report::analyze`, which parses the module, checks an NCU
+`main::run` calls `report::analyze`, or `report::annotate::annotate` with
+`--annotate`; both read `each_kernel`, which parses the module, checks an NCU
 record against it, and for each kernel resolves the bindings and launch shape
 and builds the CFG, the loop forest and one `KernelAnalyses`. `KernelReportBuilder`
 then:

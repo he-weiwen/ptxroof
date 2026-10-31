@@ -119,7 +119,7 @@ pub fn analyze(
 
 /// Parse `source` and run `each` on every kernel's report builder, under
 /// the options' bindings, block shape and grid; the bindings it applied.
-fn each_kernel(
+pub(super) fn each_kernel(
     source: &str,
     opts: &AnalyzeOptions,
     mut each: impl FnMut(KernelReportBuilder<'_>),
@@ -803,14 +803,14 @@ impl FlopAccumulator {
 }
 
 /// `(constant coefficient, the rest)` of a product.
-struct KernelReportBuilder<'a> {
-    module: &'a Module,
-    kernel: &'a Kernel,
-    cfg: &'a ControlFlowGraph,
-    forest: &'a LoopForest,
+pub(super) struct KernelReportBuilder<'a> {
+    pub(super) module: &'a Module,
+    pub(super) kernel: &'a Kernel,
+    pub(super) cfg: &'a ControlFlowGraph,
+    pub(super) forest: &'a LoopForest,
     names: Vec<LoopName>,
     blocks: Vec<BlockMeasurements>,
-    bind_map: &'a HashMap<SymbolicConstant, i64>,
+    pub(super) bind_map: &'a HashMap<SymbolicConstant, i64>,
     /// Display names with the remainder suffix applied.
     display: Vec<String>,
     /// Memory operands per scope: the innermost loop of their block, or
@@ -820,9 +820,9 @@ struct KernelReportBuilder<'a> {
     access_forms: ByScope<AccessForm>,
     per_request: PerRequests,
     per_wavefronts: PerWavefronts,
-    counts: ExecutionCounts<'a>,
+    pub(super) counts: ExecutionCounts<'a>,
     /// The PTX file's lines, naming a uniform value by its statement's.
-    lines: &'a LineIndex,
+    pub(super) lines: &'a LineIndex,
 }
 
 impl<'a> KernelReportBuilder<'a> {
@@ -1016,7 +1016,7 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// A symbol as the report prints it: a loop's unknown count by the
     /// loop's name, a uniform value by its register and line.
-    fn leaf_name(&self, leaf: &SymbolicConstant) -> String {
+    pub(super) fn leaf_name(&self, leaf: &SymbolicConstant) -> String {
         match leaf {
             SymbolicConstant::TripCount(l) => format!("trips({})", self.loop_ref(*l)),
             SymbolicConstant::Unknown(v) => format!(

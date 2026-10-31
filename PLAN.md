@@ -978,6 +978,12 @@ One line each, with the trigger that would start it.
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.
 - Per-line HTML view. Trigger: wanting it.
+- Annotated PTX, `analyze --annotate`, to replace the text and JSON
+  reports once their lit tests are ported: started 2026-10-31. The
+  input's lines, each followed by nothing or by ` // ` and its
+  annotation (`tests/report_invariants.rs`); so far a loop header's
+  label line carries `loop: trips` and the trip count, or `?` and why
+  (`tests/lit/k5-annotate.test`).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures
