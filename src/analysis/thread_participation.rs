@@ -475,6 +475,10 @@ fn on_lane_only(a: &AffineExpr) -> bool {
         })
 }
 
+/// Per warp of a block, the lanes that may be in a set and those that
+/// are, as bit masks.
+pub(crate) type LaneMasks = Vec<(u32, u32)>;
+
 /// What two CTAs share when every lane has the same truth at both
 /// (`Pred::cta_keys`).
 type CtaKey = Vec<(Tri, i128)>;
@@ -583,7 +587,7 @@ impl Pred {
     /// Per warp of a block of `shape`, the lanes that may be in the set
     /// and those that are, as bit masks, at CTA `cta` or else at any CTA;
     /// an elected lane is the lowest active one.
-    pub(crate) fn lane_masks(&self, shape: [u32; 3], cta: Option<[i64; 3]>) -> Vec<(u32, u32)> {
+    pub(crate) fn lane_masks(&self, shape: [u32; 3], cta: Option<[i64; 3]>) -> LaneMasks {
         let env = Env { cta, trip: None };
         let lane = |(may, must): (u32, u32), t: i64| {
             let bit = 1 << (t % 32);
@@ -651,6 +655,37 @@ impl Pred {
             sum_w = sum_w.checked_add(u64::from(w).checked_mul(k)?)?;
         }
         Some((sum_t.checked_mul(rest)?, sum_w.checked_mul(rest)?))
+    }
+
+    /// The CTAs of `grid` grouped by the lanes of a block of `shape` the
+    /// set holds at each (`lane_masks`), with the CTAs each group holds;
+    /// `None` when no comparison reads the CTA index, past `CTA_BUDGET`
+    /// CTAs on the axes those read, or `LANE_BUDGET` lane evaluations.
+    pub(crate) fn cta_classes(
+        &self,
+        shape: [u32; 3],
+        grid: [u32; 3],
+    ) -> Option<Vec<(LaneMasks, u64)>> {
+        if !self.varies_by_cta() {
+            return None;
+        }
+        let (ctas, rest) = self.cta_keys(shape, grid, [false; 3])?;
+        let threads: u64 = shape.iter().map(|&n| u64::from(n)).product();
+        let (mut keys, mut classes) = (HashMap::new(), Vec::<(LaneMasks, u64)>::new());
+        for (c, key) in ctas {
+            let i = *keys.entry(key).or_insert_with(|| {
+                let masks = self.lane_masks(shape, Some(c));
+                (classes.iter().position(|(m, _)| *m == masks)).unwrap_or_else(|| {
+                    classes.push((masks, 0));
+                    classes.len() - 1
+                })
+            });
+            classes[i].1 += rest;
+            if keys.len() as u64 > LANE_BUDGET / threads {
+                return None;
+            }
+        }
+        Some(classes)
     }
 
     /// Every CTA of `grid` on the axes that `read` or the comparisons

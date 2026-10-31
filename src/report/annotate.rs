@@ -3,6 +3,7 @@
 
 use crate::analysis::affine::affine_expr::Var;
 use crate::analysis::control_flow::loops::LoopId;
+use crate::analysis::thread_participation::Pred;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::Stmt;
 use crate::report::build::{AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel};
@@ -50,23 +51,55 @@ impl KernelReportBuilder<'_> {
     }
 
     /// The threads that run block `b`, by warps and lanes; without a block
-    /// shape, the condition that selects them, if one does, a loop's
-    /// iteration k as `iv + 1`.
+    /// shape, the condition that selects them, if one does. Where they
+    /// read the CTA index and the grid is known: the lanes and the CTAs'
+    /// condition, or where the lanes differ by CTA the most CTAs' lanes.
     fn threads(&self, b: BlockId) -> Option<String> {
         let set = &self.counts.sets.blocks[b.0 as usize];
         let shape = self.counts.shape;
         if shape.contains(&0) {
-            let name = |v: &Var| match v {
-                Var::Iteration(l) => format!("({} + 1)", self.iv(*l)),
-                v => v.to_string(),
-            };
-            return set.render_named(&name).map(|t| t.replace(" * ", "·"));
+            return self.condition(set);
         }
-        Some(warp_lanes(
-            &set.lane_masks(shape, None),
-            shape,
-            set.lane_exact(),
-        ))
+        let exact = set.lane_exact();
+        let classes = (self.counts.grid()).and_then(|g| Some((g, set.cta_classes(shape, g)?)));
+        let Some((grid, classes)) = classes else {
+            return Some(warp_lanes(&set.lane_masks(shape, None), shape, exact));
+        };
+        let total: u64 = grid.iter().map(|&n| u64::from(n)).product();
+        let running: Vec<_> = (classes.iter())
+            .filter(|(m, _)| m.iter().any(|w| w.0 != 0))
+            .collect();
+        let n: u64 = running.iter().map(|(_, n)| n).sum();
+        let most = running
+            .iter()
+            .copied()
+            .reduce(|a, b| if b.1 > a.1 { b } else { a });
+        let Some((masks, most)) = most else {
+            return Some("no thread".to_owned());
+        };
+        let lanes = warp_lanes(masks, shape, exact);
+        Some(match running.len() {
+            1 => {
+                let parts: Vec<String> = (cta_conjuncts(set).into_iter())
+                    .filter_map(|p| self.condition(p))
+                    .collect();
+                format!("{lanes} | CTAs {} ({n}/{total})", parts.join(" and "))
+            }
+            _ => format!(
+                "{lanes} in {most}/{total} CTAs, other {} CTAs differ",
+                n - most
+            ),
+        })
+    }
+
+    /// The condition on the thread and CTA indices that selects `set`, a
+    /// loop's iteration k as `iv + 1`.
+    fn condition(&self, set: &Pred) -> Option<String> {
+        let name = |v: &Var| match v {
+            Var::Iteration(l) => format!("({} + 1)", self.iv(*l)),
+            v => v.to_string(),
+        };
+        set.render_named(&name).map(|t| t.replace(" * ", "·"))
     }
 
     /// Loop `l`'s iteration from 0, `iv[<header label>]`, LLVM's canonical
@@ -121,6 +154,15 @@ fn warp_lanes(masks: &[(u32, u32)], shape: [u32; 3], exact: bool) -> String {
     match groups.is_empty() {
         true => "no thread".to_owned(),
         false => groups.iter().map(group).collect::<Vec<_>>().join(" ∪ "),
+    }
+}
+
+/// The parts of a conjunction that read the CTA index.
+fn cta_conjuncts(set: &Pred) -> Vec<&Pred> {
+    match set {
+        Pred::And(a, b) => [cta_conjuncts(a), cta_conjuncts(b)].concat(),
+        p if p.varies_by_cta() => vec![p],
+        _ => Vec::new(),
     }
 }
 
