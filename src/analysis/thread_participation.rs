@@ -266,6 +266,17 @@ impl Pred {
         out
     }
 
+    /// The atoms of its uniform unknowns, but those of the threads an
+    /// election chose among.
+    fn atoms(&self) -> Vec<&Atom> {
+        match self {
+            Pred::Uniform(_, a) => vec![a],
+            Pred::Not(p) => p.atoms(),
+            Pred::And(a, b) | Pred::Or(a, b) => [a.atoms(), b.atoms()].concat(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The threads an `elect.sync` in this predicate chose among.
     pub fn elect_active(&self) -> Option<&Pred> {
         match self {
@@ -927,6 +938,9 @@ struct PredicateReader<'a> {
     trips: Vec<(DominanceInfo, Vec<Vec<BlockId>>)>,
     memo: HashMap<usize, Pred>,
     blocks: Vec<Option<Pred>>,
+    relative: Vec<Pred>,
+    deciders: HashMap<(BlockId, AtomKey), usize>,
+    forms: HashMap<AtomKey, (AffineExpr, Cmp)>,
 }
 
 /// Whether edge `x → t` lies within one trip of scope `s`: not one into
@@ -979,7 +993,9 @@ impl PredicateReader<'_> {
                 let around = |l: LoopId| forest.get(l).blocks.binary_search(&b).is_ok();
                 let at = self.block(d).in_loops(&around);
                 let mut left = REACH_BUDGET;
-                at.and(self.reach(s, d, b, b, &mut left))
+                let relative = self.reach(s, d, b, b, &mut left);
+                self.relative[b.0 as usize] = relative.clone();
+                at.and(relative)
             }
             None if b == ControlFlowGraph::ENTRY => Pred::True,
             None => Pred::False,
@@ -1070,7 +1086,9 @@ impl PredicateReader<'_> {
                 stmt: pos,
                 target: c,
             };
-            return index.map_or(Pred::Unknown, |u| Pred::uniform(u, key));
+            let p = index.map_or(Pred::Unknown, |u| Pred::uniform(u, key));
+            self.decided(b, &p, pos);
+            return p;
         }
         let (&[taken, _], Some(guard)) = (
             &self.cfg.block(x).succs[..],
@@ -1085,10 +1103,18 @@ impl PredicateReader<'_> {
         };
         let p = self.of(guard.reg, pos, 0).in_loops(&inside);
         let p = if guard.negated { !p } else { p };
-        if kept(forest, s, x, taken) && self.trip(s).0.dominates(c, taken) {
-            p
-        } else {
-            !p
+        let p = match kept(forest, s, x, taken) && self.trip(s).0.dominates(c, taken) {
+            true => p,
+            false => !p,
+        };
+        self.decided(b, &p, pos);
+        p
+    }
+
+    /// Branch `pos` decides the atoms of `p` for block `b`.
+    fn decided(&mut self, b: BlockId, p: &Pred, pos: usize) {
+        for a in p.atoms() {
+            self.deciders.entry((b, a.key.clone())).or_insert(pos);
         }
     }
 
@@ -1188,10 +1214,10 @@ impl PredicateReader<'_> {
             _ => None,
         };
         match (instr.mnemonic, mods.as_slice(), ops) {
-            (Opcode::Setp, _, _) => (
-                condition(self.module, self.kernel, self.affine, def).unwrap_or(Pred::Unknown),
-                false,
-            ),
+            (Opcode::Setp, _, _) => {
+                let p = condition(self.module, self.kernel, self.affine, def, &mut self.forms);
+                (p.unwrap_or(Pred::Unknown), false)
+            }
             (Opcode::And | Opcode::Or, ["pred"], [_, a, b]) => {
                 let (Some(a), Some(b)) = (reg(*a), reg(*b)) else {
                     return (Pred::Unknown, false);
@@ -1251,6 +1277,12 @@ pub struct ThreadSets {
     /// The edges no thread follows: the other way out of a branch
     /// every thread takes the same way.
     pub dead_edges: Vec<(BlockId, BlockId)>,
+    /// Per block, the threads at its immediate dominator that run it.
+    pub relative: Vec<Pred>,
+    /// Per block and atom of its `relative` set, the branch deciding it.
+    pub deciders: HashMap<(BlockId, AtomKey), usize>,
+    /// Per atom of a `setp` comparing no thread index, as `form cmp 0`.
+    pub forms: HashMap<AtomKey, (AffineExpr, Cmp)>,
 }
 
 impl ThreadSets {
@@ -1317,6 +1349,9 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
         trips,
         memo: HashMap::new(),
         blocks: vec![None; cfg.blocks.len()],
+        relative: vec![Pred::True; cfg.blocks.len()],
+        deciders: HashMap::new(),
+        forms: HashMap::new(),
     };
     let blocks: Vec<Pred> = (0..cfg.blocks.len() as u32)
         .map(|b| reader.block(BlockId(b)))
@@ -1381,6 +1416,9 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
         guards,
         sources,
         dead_edges,
+        relative: reader.relative,
+        deciders: reader.deciders,
+        forms: reader.forms,
     }
 }
 
@@ -1394,12 +1432,15 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
 /// exactly when it is zero modulo 2^width. A form free of the thread
 /// index whose comparison the uniformity analysis finds divergent is
 /// none, unless it is a loop counter's compared within its type, one
-/// value at each trip.
+/// value at each trip. Such a comparison free of the thread index and
+/// of loop counters that reads as an unknown for the CTA, or as none,
+/// is kept in `forms` as `form cmp 0`.
 fn condition(
     module: &Module,
     kernel: &Kernel,
     affine: &AffineAnalysis,
     def: usize,
+    forms: &mut HashMap<AtomKey, (AffineExpr, Cmp)>,
 ) -> Option<Pred> {
     let Stmt::Instr(setp) = &kernel.stmts[def] else {
         return None;
@@ -1469,7 +1510,8 @@ fn condition(
     let lanes = form.terms.keys().any(depends_on_lane);
     let trip = per_trip(affine, &form, def).filter(|_| comparable(&a, &b));
     let def_uniform = affine.uniformity().def_uniformity(def);
-    if !lanes && trip.is_none() && def_uniform != Ok(Uniform::Cta) {
+    let kept = (!lanes && trip.is_none() && comparable(&a, &b)).then(|| (form.clone(), cmp));
+    let p = if !lanes && trip.is_none() && def_uniform != Ok(Uniform::Cta) {
         None
     } else if on_lane_only(&form) && comparable(&a, &b) {
         Some(Pred::Cmp(Constraint {
@@ -1496,7 +1538,13 @@ fn condition(
         Some(Pred::uniform(Uniform::Cta, AtomKey::Def(def)))
     } else {
         None
+    };
+    if let Some(kept) = kept
+        && matches!(p, None | Some(Pred::Uniform(..)))
+    {
+        forms.insert(AtomKey::Def(def), kept);
     }
+    p
 }
 
 /// A form of the thread index and one loop's counter, read in that loop
@@ -2110,13 +2158,14 @@ mod tests {
     }
 
     /// The two arms of a branch on a comparison read through its `setp`
-    /// hold that comparison and its negation: one of parameters for the
-    /// CTA, one of a loaded value for a warp.
+    /// hold that comparison and its negation, relative to the block
+    /// before them, which the branch decides: one of parameters for the
+    /// CTA, one of a loaded value for a warp, each kept as traced.
     #[test]
     fn the_arms_of_a_uniform_branch_hold_its_setp_s_comparison() {
-        for (def, level) in [
-            ("cvt.u32.u64 %r2, %rd1;", Uniform::Cta),
-            ("ld.global.u32 %r2, [%rd1];", Uniform::Warp),
+        for (def, level, form) in [
+            ("cvt.u32.u64 %r2, %rd1;", Uniform::Cta, "param_0 - 7"),
+            ("ld.global.u32 %r2, [%rd1];", Uniform::Warp, "%r2 - 7"),
         ] {
             let (m, sets) = sets_of(&format!(
                 "{def}\nsetp.eq.u32 %p1, %r2, 7;\n@%p1 bra $L__Y;\n\
@@ -2127,8 +2176,26 @@ mod tests {
                 .find(|&s| matches!(&k.stmts[s], Stmt::Instr(i) if i.mnemonic == Opcode::Setp))
                 .expect("a setp");
             let taken = Pred::uniform(level, AtomKey::Def(setp));
-            assert_eq!(sets.blocks[2], taken);
-            assert_eq!(sets.blocks[1], !taken);
+            let other = !taken.clone();
+            assert_eq!((&sets.blocks[1], &sets.blocks[2]), (&other, &taken));
+            assert_eq!((&sets.relative[1], &sets.relative[2]), (&other, &taken));
+            assert_eq!(sets.relative[3], Pred::True);
+            let bra = (setp..k.stmts.len())
+                .find(|&s| matches!(&k.stmts[s], Stmt::Instr(i) if i.mnemonic == Opcode::Bra))
+                .expect("a branch");
+            for b in [1, 2] {
+                let decider = sets.deciders.get(&(BlockId(b), AtomKey::Def(setp)));
+                assert_eq!(decider, Some(&bra));
+            }
+            let traced = &sets.forms[&AtomKey::Def(setp)];
+            let name = |v: &Var| match v {
+                Var::Unknown(_) => "%r2".to_owned(),
+                v => v.to_string(),
+            };
+            assert_eq!(
+                (traced.0.render(name), traced.1),
+                (form.to_owned(), Cmp::Eq)
+            );
         }
     }
 
