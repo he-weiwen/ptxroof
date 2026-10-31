@@ -542,7 +542,9 @@ mod tests {
         let start = label.map_or(0, |l| {
             k.stmts
                 .iter()
-                .position(|s| matches!(s, Stmt::Label(s) if m.interner.resolve(*s) == l))
+                .position(
+                    |s| matches!(s, Stmt::Label { name, .. } if m.interner.resolve(*name) == l),
+                )
                 .expect("the label")
         });
         let pos = (start..k.stmts.len())

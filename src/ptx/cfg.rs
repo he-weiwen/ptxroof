@@ -170,7 +170,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
     }
     for (i, stmt) in kernel.stmts.iter().enumerate() {
         match stmt {
-            Stmt::Label(l) if targets.contains(l) => leader[i] = true,
+            Stmt::Label { name, .. } if targets.contains(name) => leader[i] = true,
             Stmt::Instr(instr) if is_branch(instr) => leader[i + 1] = true,
             _ => {}
         }
@@ -190,7 +190,7 @@ pub fn build_cfg(module: &Module, kernel: &Kernel) -> ControlFlowGraph {
                 break;
             }
             let label = match kernel.stmts[start] {
-                Stmt::Label(l) => Some(l),
+                Stmt::Label { name, .. } => Some(name),
                 _ => None,
             };
             blocks.push(Block {

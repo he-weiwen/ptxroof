@@ -305,7 +305,11 @@ pub struct Instr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
     Instr(Instr),
-    Label(Symbol),
+    /// `name:`, at byte `offset` of the source.
+    Label {
+        name: Symbol,
+        offset: u32,
+    },
     /// `LABEL: .branchtargets L0, L1, ...;` — the jump table for a
     /// preceding `brx.idx`.
     BranchTargets(Vec<Symbol>),
