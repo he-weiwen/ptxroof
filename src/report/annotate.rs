@@ -4,13 +4,16 @@
 use crate::analysis::affine::affine_expr::Var;
 use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::execution_counts::{CtaSize, Per};
+use crate::analysis::execution_counts::{CtaSize, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
 use crate::analysis::thread_participation::Pred;
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::Stmt;
+use crate::ptx::ir::{Opcode, Stmt};
 use crate::report::build::{AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+
+/// Per statement, the parts of its annotation.
+type Notes = BTreeMap<usize, Vec<String>>;
 
 /// `source` with ` // ` and the annotation after each line that has one,
 /// the annotations of its statements joined by ` ; `.
@@ -32,9 +35,10 @@ pub fn annotate(source: &str, opts: &AnalyzeOptions) -> Result<String, AnalyzeEr
 
 impl KernelReportBuilder<'_> {
     /// Each block's annotation, a loop header's trip count first, on its
-    /// label's line, else on its first statement's after `[<block name>] `.
-    /// Counts are over the launch given the grid and the block shape, else
-    /// per CTA given the shape, else per thread.
+    /// label's line, else on its first statement's after `[<block name>] `,
+    /// then each statement's on its own line. Counts are over the launch
+    /// given the grid and the block shape, else per CTA given the shape,
+    /// else per thread.
     fn annotations(&self, notes: &mut BTreeMap<u32, Vec<String>>) {
         let threads: u64 = self.counts.shape.iter().map(|&n| u64::from(n)).product();
         let cta = (threads > 0).then(|| CtaSize {
@@ -54,29 +58,38 @@ impl KernelReportBuilder<'_> {
             let header = self.forest.block_loop[b.0 as usize]
                 .filter(|&l| self.forest.get(l).header == b)
                 .map(|l| format!("loop: trips {}", self.trips(l)));
-            let parts: Vec<String> = header
+            let (exec, mut parts) = self.execs(bm, per);
+            let mut own: Vec<String> = header
                 .into_iter()
                 .chain(self.threads(b))
-                .chain(self.exec(bm, per))
+                .chain(exec)
                 .collect();
-            let name = format!("[{}] ", self.cfg.block_name(self.module, b));
-            let (offset, prefix) = match &self.kernel.stmts[start] {
-                Stmt::Label { offset, .. } => (*offset, String::new()),
-                Stmt::Unparsed { offset, .. } => (*offset, name),
-                Stmt::Instr(i) => (i.offset, name),
-                Stmt::BranchTargets(_) => continue,
+            own.extend(parts.remove(&start).unwrap_or_default());
+            let prefix = match self.kernel.stmts[start] {
+                Stmt::Label { .. } => String::new(),
+                _ => format!("[{}] ", self.cfg.block_name(self.module, b)),
             };
-            if !parts.is_empty() {
-                let note = format!("{prefix}{}", parts.join(" | "));
-                notes.entry(self.lines.line(offset)).or_default().push(note);
+            let block =
+                (!own.is_empty()).then(|| (start, vec![format!("{prefix}{}", own.join(" | "))]));
+            for (s, parts) in block.into_iter().chain(parts) {
+                let offset = match &self.kernel.stmts[s] {
+                    Stmt::Label { offset, .. } | Stmt::Unparsed { offset, .. } => *offset,
+                    Stmt::Instr(i) => i.offset,
+                    Stmt::BranchTargets(_) => continue,
+                };
+                notes
+                    .entry(self.lines.line(offset))
+                    .or_default()
+                    .push(parts.join(" | "));
             }
         }
     }
 
     /// `exec` and how many times block `bm`'s unguarded statements run at
-    /// the scale `per`, `<=` for a bound, unless no thread runs it. Under a
+    /// the scale `per`, `<=` for a bound, unless no thread runs it; and
+    /// each statement whose count differs, but a predicated `bra`. Under a
     /// loop whose trips are not known, `exec ?` and the innermost such loop.
-    fn exec(&self, bm: &BlockMeasurements, per: Per) -> Option<String> {
+    fn execs(&self, bm: &BlockMeasurements, per: Per) -> (Option<String>, Notes) {
         let b = bm.block;
         let set = &self.counts.sets.blocks[b.0 as usize];
         let unknown = (self.counts.chain(b).into_iter())
@@ -92,29 +105,52 @@ impl KernelReportBuilder<'_> {
             let exec = header.map_or("exec ?".to_owned(), |h| {
                 format!("exec ? (trips of {})", self.cfg.block_name(self.module, h))
             });
-            return (*set != Pred::False).then_some(exec);
+            return ((*set != Pred::False).then_some(exec), Notes::new());
         };
         let unit = match per {
             Per::Thread => "thread",
             Per::Cta(_) => "CTA",
             Per::Launch(..) => "launch",
         };
-        let launch = self.counts.launches.get(&(b, None)).copied();
-        let p = self.counts.running(bm, &m, set, launch);
-        let n = p.as_ref().and_then(|p| {
-            Some(SymExpr::mul(
-                SymExpr::Const(i64::try_from(p.threads).ok()?),
-                p.trips.clone()?,
-            ))
-        });
-        let bound = if p.is_some_and(|p| p.at_most) {
-            "<= "
-        } else {
-            ""
+        let text = |p: Option<Participation>| {
+            let n = p.as_ref().and_then(|p| {
+                Some(SymExpr::mul(
+                    SymExpr::Const(i64::try_from(p.threads).ok()?),
+                    p.trips.clone()?,
+                ))
+            });
+            let bound = if p.is_some_and(|p| p.at_most) {
+                "<= "
+            } else {
+                ""
+            };
+            n.map_or("exec ?".to_owned(), |n| {
+                format!("exec {bound}{}/{unit}", self.count(&n))
+            })
         };
-        Some(n.map_or("exec ?".to_owned(), |n| {
-            format!("exec {bound}{}/{unit}", self.count(&n))
-        }))
+        let launch = self.counts.launches.get(&(b, None)).copied();
+        let block = self.counts.running(bm, &m, set, launch);
+        let own = text(block.clone());
+        let mut cache = HashMap::new();
+        let mut parts = Notes::new();
+        for i in &bm.instructions {
+            let exec =
+                match self
+                    .counts
+                    .statement(bm, &m, i.provenance, 0, block.as_ref(), &mut cache)
+                {
+                    Resolution::Skipped => format!("exec 0/{unit}"),
+                    Resolution::Unknown => text(None),
+                    Resolution::Counted(p) => text(Some(p)),
+                };
+            let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
+                continue;
+            };
+            if exec != own && !(instr.mnemonic == Opcode::Bra && instr.predicate.is_some()) {
+                parts.insert(i.provenance, vec![exec]);
+            }
+        }
+        (Some(own), parts)
     }
 
     /// A count, a number with its thousands separated by `,`, else an

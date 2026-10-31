@@ -1,5 +1,13 @@
 # The block a branch on `%tid.x == 0 and %tid.x < 32` falls through to,
 # in the annotated PTX: every lane of the CTA's 64 but lane 0 of warp 0.
+# A guarded instruction prints its own count where it differs from its
+# block's; the predicated branch does not.
 RUN: %ptxroof analyze --annotate %fixtures/micro/guards.ptx | FileCheck "%s"
+CHECK: {{^}}	@%p3 st.global.f32 	[%rd4], %f1; // exec 1/CTA{{$}}
+CHECK: {{^}}	@%p4 st.global.v2.f32 	[%rd4+8], {%f1, %f1}; // exec 32/CTA{{$}}
+CHECK: {{^}}	@!%p1 st.global.u16 	[%rd4+32], %rs1; // exec 63/CTA{{$}}
+CHECK: {{^}}	ld.global.u32 	%r2, [%rd4+36];{{$}}
+CHECK: {{^}}	@%p6 st.global.u32 	[%rd4+40], %r2; // exec <= 64/CTA{{$}}
+CHECK: {{^}}	@%p3 bra 	$L__BB0_2;{{$}}
 CHECK: {{^}}	st.global.b64 	[%rd4+48], %rd5; // [<block 1>] warp 0 × lane 1-31 ∪ warp 1 × lane * | exec 63/CTA{{$}}
 CHECK: {{^}}$L__BB0_2: // warp * × lane * | exec 64/CTA{{$}}
