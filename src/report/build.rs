@@ -28,6 +28,7 @@ use crate::analysis::affine::trip_counts::{TripCountResults, trip_counts_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::control_flow::{dominators, loop_forest};
 use crate::analysis::dead_code::unused;
+use crate::analysis::execution_counts::{CtaSize, Multiplier, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::classify::{ClassifiedInstruction, InstructionCategory};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::analysis::instruction_counts::count_constraint::count_constraint;
@@ -531,75 +532,6 @@ type PerWavefronts = HashMap<usize, SharedWaves>;
 
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
-
-/// How far a count is summed: over one thread, over one CTA of the
-/// launch shape, or over the launch, whose CTA count may not fit in u64.
-#[derive(Clone, Copy)]
-enum Per<'a> {
-    Thread,
-    Cta(&'a LaunchInfo),
-    Launch(&'a LaunchInfo, Option<u64>),
-}
-
-impl<'a> Per<'a> {
-    fn cta(self) -> Option<&'a LaunchInfo> {
-        match self {
-            Per::Thread => None,
-            Per::Cta(c) | Per::Launch(c, _) => Some(c),
-        }
-    }
-
-    fn ctas(self) -> Option<u64> {
-        match self {
-            Per::Launch(_, n) => n,
-            _ => None,
-        }
-    }
-}
-
-/// What a count over a block multiplies by (`KernelReportBuilder::multiplier`).
-struct Multiplier<'a> {
-    per: Per<'a>,
-    below: Option<LoopId>,
-    at_most: bool,
-    /// Over the launch, a loop around the block has no trip count.
-    unread: bool,
-    split: Option<Vec<LoopId>>,
-    /// `None` where the caller counts none: aggregates under `unread`.
-    trips: Option<SymExpr>,
-    ctas: Option<u64>,
-}
-
-/// The threads and warps that run a set (`KernelReportBuilder::running`),
-/// whether they are a bound, whether the count explains the set's
-/// threads, and the trips it runs.
-#[derive(Clone)]
-struct Participation {
-    threads: u64,
-    warps: Option<(u64, bool)>,
-    at_most: bool,
-    explained: bool,
-    trips: Option<SymExpr>,
-}
-
-/// What a statement's memory operand, or the statement, contributes
-/// (`KernelReportBuilder::statement`).
-enum Resolution {
-    Skipped,
-    Unknown,
-    Counted(Participation),
-}
-
-impl Participation {
-    /// Its threads and warps as the i64 counts the totals sum, when they fit.
-    fn narrow(&self) -> Option<(i64, Option<(i64, bool)>)> {
-        let warps = match self.warps {
-            Some((w, bound)) => Some((i64::try_from(w).ok()?, bound)),
-            None => None,
-        };
-        Some((i64::try_from(self.threads).ok()?, warps))
-    }
-}
 
 /// The direction a count is known in; `None` when bounded in neither.
 fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
@@ -1555,7 +1487,7 @@ impl<'a> KernelReportBuilder<'a> {
         bm: &BlockMeasurements,
         set: &Pred,
         chain_at_most: bool,
-        cta: Option<&LaunchInfo>,
+        cta: Option<&CtaSize>,
     ) -> (i64, Option<(i64, bool)>, bool, bool) {
         let counted = set.count(self.shape);
         let selected = cta.and(counted.map(|c| c.possible));
@@ -2073,7 +2005,7 @@ impl<'a> KernelReportBuilder<'a> {
         &self,
         record: &NcuRecord,
         lines: &LineIndex,
-        cta: &LaunchInfo,
+        cta: &CtaSize,
     ) -> (Vec<MeasuredBlock>, Option<MeasuredTotals>) {
         let grid = (record.grid.iter()).try_fold(1u64, |n, &d| n.checked_mul(d.into()));
         let mut per_line: HashMap<u32, usize> = HashMap::new();
@@ -2205,18 +2137,22 @@ impl<'a> KernelReportBuilder<'a> {
                 source: source.to_owned(),
                 exact: source != ".maxntid",
             });
-        let totals_per_cta = launch.as_ref().map(|l| self.aggregates(None, Per::Cta(l)));
+        let cta = launch.as_ref().map(|l| CtaSize {
+            threads: l.threads,
+            warps: l.warps,
+            exact: l.exact,
+        });
+        let totals_per_cta = cta.as_ref().map(|l| self.aggregates(None, Per::Cta(l)));
         let ctas = self
             .grid()
             .and_then(|g| g.iter().try_fold(1u64, |n, &d| n.checked_mul(d.into())));
-        let totals_per_launch = (launch.as_ref().zip(ctas))
-            .map(|(l, n)| self.aggregates(None, Per::Launch(l, Some(n))));
+        let totals_per_launch =
+            (cta.as_ref().zip(ctas)).map(|(l, n)| self.aggregates(None, Per::Launch(l, Some(n))));
 
         let unknowns = self.unknowns();
-        let (measured, measured_totals) =
-            (ncu.filter(|(r, _)| r.kernel == name).zip(launch.as_ref()))
-                .map(|((record, lines), cta)| self.measured(record, lines, cta))
-                .unzip();
+        let (measured, measured_totals) = (ncu.filter(|(r, _)| r.kernel == name).zip(cta.as_ref()))
+            .map(|((record, lines), cta)| self.measured(record, lines, cta))
+            .unzip();
 
         KernelReport {
             demangled: demangle(&name),
