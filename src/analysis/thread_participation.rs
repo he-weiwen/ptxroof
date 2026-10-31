@@ -28,7 +28,7 @@ use crate::analysis::instruction_counts::classify::cp_async_size_operand;
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{FundamentalType, Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
@@ -1036,14 +1036,32 @@ impl PredicateReader<'_> {
     /// but the uniformity analysis finds it so, and whether the depth
     /// budget cut the reading short (then it is not memoized).
     fn read(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
-        let affine = self.affine;
         match self.read_definition(reg, pos, depth) {
-            (Pred::Unknown, cut) => {
-                let u = affine.uniformity().register_uniformity(reg, pos);
-                (u.map_or(Pred::Unknown, Pred::Uniform), cut)
-            }
+            (Pred::Unknown, cut) => (self.uniform(reg, pos), cut),
             read => read,
         }
+    }
+
+    /// The value of `reg` at `pos` as a condition the same for the
+    /// threads the uniformity analysis finds it one value for.
+    fn uniform(&self, reg: Symbol, pos: usize) -> Pred {
+        let Some(v) = self.affine.data.ssa.value_before(pos, Register::Named(reg)) else {
+            return Pred::Unknown;
+        };
+        (self.affine.uniformity().value_uniformity(v, pos)).map_or(Pred::Unknown, Pred::Uniform)
+    }
+
+    /// Whether `reg` is the second destination of `instr`, `d|p`.
+    fn second(&self, instr: &Instr, reg: Symbol) -> bool {
+        let ops = self.module.operand_ids(instr.operands);
+        ops.first()
+            .and_then(|&id| match self.module.operand(id) {
+                Operand::MultipleDestinations { children } => {
+                    self.module.operand_ids(*children).get(1)
+                }
+                _ => None,
+            })
+            .is_some_and(|&id| matches!(self.module.operand(id), Operand::Register(r) if *r == reg))
     }
 
     fn read_definition(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
@@ -1074,19 +1092,7 @@ impl PredicateReader<'_> {
         };
         // `d|p`: setp's second output is the negated comparison, elect's
         // second output is the predicate and its first the leader's lane.
-        let ops = self.module.operand_ids(instr.operands);
-        let second = ops
-            .first()
-            .and_then(|&id| match self.module.operand(id) {
-                Operand::MultipleDestinations { children } => {
-                    self.module.operand_ids(*children).get(1)
-                }
-                _ => None,
-            })
-            .is_some_and(
-                |&id| matches!(self.module.operand(id), Operand::Register(r) if *r == reg),
-            );
-        let p = match (instr.mnemonic, second) {
+        let p = match (instr.mnemonic, self.second(instr, reg)) {
             (Opcode::Setp, true) => !p,
             (Opcode::Elect, false) => Pred::Unknown,
             (_, true) if !matches!(p, Pred::Elect(_)) => Pred::Unknown,
