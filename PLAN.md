@@ -216,6 +216,14 @@ contract (Codex's review of 2b2731b).
   a fourth operand other than 31, which splits the warp into
   sub-segments or clamps the lane (PTX ISA §9.7.9.6), leaves it
   unknown: `micro/shfl_idx.ptx`.
+- **The warp index is one value per warp only through a shuffle.** The
+  uniformity analysis reads `⌊%tid.x/32⌋` as divergent, though in a
+  block of one row, or whose `%ntid.x` is a multiple of 32, every lane
+  of a warp holds the same (PTX ISA §3.1): a `brx.idx` on a load at
+  `param_0 + 4·⌊%tid.x/32⌋` selects its targets' threads as an
+  unknown, where with the index shuffled from lane 0 first, as Triton's
+  warp specialization does, each target runs on whole warps
+  (`a_jump_table_on_a_warp_s_index_selects_whole_warps`).
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
@@ -490,15 +498,27 @@ contract (Codex's review of 2b2731b).
   (`01542.ptx` `:223`). In `gluon/attn_fwd_ws_kernel.sm_89.ptx` the
   persistent loops (`gluon_attn_fwd.py:126`, exit not at the latch;
   `:213`, several latches) and the causal loop (`:143`, its bound
-  carried around the tile loop) are unknown, so under its record the tensor FLOPs over
-  the launch read `0` as a lower bound, where the record's
-  `mma.m16n8k16` lines run 3,244,032 warp instructions, 13,287,555,072
-  FLOPs.
+  carried around the tile loop) are unknown. `:126` leaves at
+  `@%p62 bra $L__BB0_62` (PTX 2552), source line 208's test, which
+  reuses line 132's `setp` (502); its latch computes the next tile's
+  parameters (209) and branches back unconditionally. `:213` is
+  Triton's warp-specialize switch loop: the worker warps read their
+  state byte (2617) from the word the default warps store, 0 at 121
+  and `0x01010101`, return, at 5116, and each partition's end is a
+  latch. b200 `tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd` dispatches
+  the same way through `brx.idx`, and `scan_tma_ws_best` too, whose
+  worker k-loops read their bound from shared memory the default warps
+  store (637, loaded at 1820 and 1917). Under the attn_fwd_ws record
+  the tensor FLOPs over the launch read `0` as a lower bound, where the
+  record's `mma.m16n8k16` lines run 3,244,032 warp instructions,
+  13,287,555,072 FLOPs.
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
   inferred arguments), 990 have a trip count: 1,445 are mbarrier
   waits, 315 read a value one per warp only (205 name a load), 95 a
   value an enclosing loop defines, 30 a loaded value lanes may see
   differently, 95 are grid-stride loops, 20 atomics, 18 multi-exit.
+  Of the 96 loops whose step is not a constant (74 kernels), 83 have a
+  count with `--grid 4,4,4`.
 - **Counters the induction variable search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
