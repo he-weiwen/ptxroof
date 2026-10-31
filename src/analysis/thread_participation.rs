@@ -576,6 +576,24 @@ impl Pred {
         Some(self.tally(shape, Env::default())?.1)
     }
 
+    /// Per warp of a block of `shape`, the lanes that may be in the set
+    /// and those that are, as bit masks, at CTA `cta` or else at any CTA;
+    /// an elected lane is the lowest active one.
+    pub(crate) fn lane_masks(&self, shape: [u32; 3], cta: Option<[i64; 3]>) -> Vec<(u32, u32)> {
+        let env = Env { cta, trip: None };
+        let lane = |(may, must): (u32, u32), t: i64| {
+            let bit = 1 << (t % 32);
+            match self.eval_as(thread(t, shape), shape, Leader::Lowest, env) {
+                Tri::Yes => (may | bit, must | bit),
+                Tri::Maybe => (may | bit, must),
+                Tri::No => (may, must),
+            }
+        };
+        (warps_of(shape))
+            .map(|lanes| lanes.fold((0, 0), lane))
+            .collect()
+    }
+
     /// The threads and warps the set holds over a launch of `grid` CTAs
     /// of `shape`, when a thread-index condition selects them and the
     /// count is exact at every CTA. The CTAs are grouped by whether each

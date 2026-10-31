@@ -1,0 +1,6 @@
+# A warp-specialized CTA of 8 warps in the annotated PTX: the blocks of
+# one role run on warps 0-3, those of the other on warps 4-7, every lane.
+RUN: %ptxroof analyze --annotate --ncu %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck "%s"
+CHECK: {{^}}	setp.eq.b32 	%p58, %r1753, 0; // [<block 1>] warp 0-3 × lane *{{$}}
+CHECK: {{^}}$L__BB0_2:{{ +}}// %.preheader568 // loop: trips ? (loop has multiple latches) | warp 4-7 × lane *{{$}}
+CHECK: {{^}}	setp.eq.b16 	%p3, %rs5, 1; // [<block 37>] warp 4-7 × lane *{{$}}

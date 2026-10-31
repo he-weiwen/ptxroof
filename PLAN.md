@@ -981,9 +981,14 @@ One line each, with the trigger that would start it.
 - Annotated PTX, `analyze --annotate`, to replace the text and JSON
   reports once their lit tests are ported: started 2026-10-31. The
   input's lines, each followed by nothing or by ` // ` and its
-  annotation (`tests/report_invariants.rs`); so far a loop header's
-  label line carries `loop: trips` and the trip count, or `?` and why
-  (`tests/lit/k5-annotate.test`).
+  annotation (`tests/report_invariants.rs`). So far each block's
+  annotation, on its label's line or else on its first statement's
+  after `[<block name>]`: a loop header's `loop: trips` and the trip
+  count, or `?` and why (`tests/lit/k5-annotate.test`), then, given
+  the block shape, the threads that run it as `warp <W> × lane <L>`
+  per group of warps with the same lanes, `<=` where the lanes are a
+  bound (`micro-guards-annotate.test`,
+  `gluon-attn-fwd-ws-annotate.test`).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures

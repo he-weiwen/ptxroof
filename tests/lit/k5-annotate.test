@@ -1,11 +1,19 @@
 # The annotated PTX (analyze --annotate): every input line, each loop
 # header's label line followed by its trip count, k5's tile loop
 # ⌈param_2/8⌉ unbound and 32 with the record's K = 256, its dot loop 8.
+# With the record's block shape, 64 threads, each block's annotation
+# names the warps and lanes that run it, on its label's line or else on
+# its first instruction's after its name; the path for K = 0 runs on no
+# thread.
 RUN: %ptxroof analyze --annotate %fixtures/k5/k5.sm_89.ptx | FileCheck "%s"
 RUN: %ptxroof analyze --annotate --ncu %fixtures/k5/k5.sm_89.256.ncu.json %fixtures/k5/k5.sm_89.ptx | FileCheck --check-prefix=NCU "%s"
 RUN: not %ptxroof analyze --annotate --json %fixtures/k5/k5.sm_89.ptx 2>&1 | FileCheck --check-prefix=JSON "%s"
 CHECK: {{^}}$L__BB0_2: // loop: trips ⌈param_2/8⌉{{$}}
 CHECK: {{^}}$L__BB0_3: // loop: trips 8{{$}}
-NCU: {{^}}$L__BB0_2: // loop: trips 32{{$}}
-NCU: {{^}}$L__BB0_3: // loop: trips 8{{$}}
+NCU: {{^}}	ld.param.u32 	%r7, [_Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0__param_1]; // [<block 0>] warp * × lane *{{$}}
+NCU: {{^}}$L__BB0_2: // loop: trips 32 | warp * × lane *{{$}}
+NCU: {{^}}$L__BB0_3: // loop: trips 8 | warp * × lane *{{$}}
+NCU: {{^}}	shl.b32 	%r117, %r7, 3; // [<block 4>] warp * × lane *{{$}}
+NCU: {{^}}$L__BB0_5: // no thread{{$}}
+NCU: {{^}}$L__BB0_6: // warp * × lane *{{$}}
 JSON: error: the argument '--annotate' cannot be used with '--json'
