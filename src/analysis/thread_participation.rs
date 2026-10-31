@@ -268,7 +268,7 @@ impl Pred {
 
     /// The atoms of its uniform unknowns, but those of the threads an
     /// election chose among.
-    fn atoms(&self) -> Vec<&Atom> {
+    pub fn atoms(&self) -> Vec<&Atom> {
         match self {
             Pred::Uniform(_, a) => vec![a],
             Pred::Not(p) => p.atoms(),

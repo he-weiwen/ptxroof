@@ -1002,8 +1002,9 @@ One line each, with the trigger that would start it.
   as `lhs cmp rhs`, the terms of negative coefficient and the constant
   on the right,
   an unknown value's known multiple as the value, with the branch's
-  polarity, its line and for whom it is the same, joined by `and`
-  (`gluon-attn-fwd-ws-annotate.test`,
+  polarity, its line and for whom it is the same, joined by `and`, one
+  under an `or` or a `not` with every part, a thread-index comparison
+  too (`gluon-attn-fwd-ws-annotate.test`,
   `a_block_names_the_uniform_conditions_it_runs_under`); one that is
   not a comparison read within its type as `predicate <register> (line
   <L>) is true|false`: gluon attn_fwd_ws's `setp.lt.u32 %p60, %r1880,
@@ -1029,8 +1030,8 @@ One line each, with the trigger that would start it.
   (`k5-annotate.test`, `micro-vector-def-annotate.test`). An
   instruction whose results nothing with an effect reads is `unused`
   (the same test). Not yet: the kernel's launch on its `.entry` line;
-  the ncu comparisons; uniform conditions under an `or` or a `not`, and
-  the block each block's conditions nest in; FLOPs.
+  the ncu comparisons; the block each block's conditions nest in;
+  FLOPs.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures

@@ -308,21 +308,39 @@ impl KernelReportBuilder<'_> {
     fn runs_when(&self, b: BlockId) -> Option<String> {
         let sets = &self.counts.sets;
         let runs = sets.blocks[b.0 as usize] != Pred::False;
-        let when = self.when(b, runs.then_some(&sets.relative[b.0 as usize])?)?;
+        let when = self.when(
+            b,
+            runs.then_some(&sets.relative[b.0 as usize])?,
+            false,
+            false,
+        )?;
         Some(format!("runs when {when}"))
     }
 
-    /// The uniform unknowns of a conjunction `p`, block `b`'s set on its
-    /// immediate dominator, by `atom`, joined by ` and `, a conjunct
-    /// without one left to the threads shown.
-    fn when(&self, b: BlockId, p: &Pred) -> Option<String> {
+    /// The uniform unknowns of `p`, block `b`'s set on its immediate
+    /// dominator, by `atom`, joined by ` and `, a conjunct without one
+    /// left to the threads shown; an `or` or a `not` holding one with all
+    /// its parts (`whole`), a thread-index comparison by `formula` and any
+    /// other unknown as `?`. A disjunction is parenthesized when `nested`.
+    fn when(&self, b: BlockId, p: &Pred, whole: bool, nested: bool) -> Option<String> {
+        let all = |q: &Pred, nested| self.when(b, q, true, nested);
         match p {
             Pred::Uniform(u, a) => Some(self.atom(b, *u, a)),
             Pred::And(x, y) => {
-                let parts: Vec<String> =
-                    [x, y].into_iter().filter_map(|q| self.when(b, q)).collect();
+                let parts: Vec<String> = ([x, y].into_iter())
+                    .filter_map(|q| self.when(b, q, whole, true))
+                    .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
+            Pred::Or(..) | Pred::Not(_) if !whole && p.atoms().is_empty() => None,
+            Pred::Or(x, y) => {
+                let text = format!("{} or {}", all(x, true)?, all(y, true)?);
+                Some(if nested { format!("({text})") } else { text })
+            }
+            Pred::Not(x) => Some(format!("not ({})", all(x, false)?)),
+            Pred::Cmp(c) if whole => Some(self.formula(&c.form, c.cmp)),
+            Pred::Elect(_) if whole => Some("elected".to_owned()),
+            Pred::Unknown if whole => Some("?".to_owned()),
             _ => None,
         }
     }
@@ -618,7 +636,8 @@ $L__BB0_5:
     /// A block under uniform conditions names them past its immediate
     /// dominator's: each as its comparison with the branch's polarity,
     /// the sides swapped where every term would move right, two in a
-    /// conjunction joined by `and`.
+    /// conjunction joined by `and`, one under an `or` or a `not` with
+    /// every part.
     #[test]
     fn a_block_names_the_uniform_conditions_it_runs_under() {
         let src = "\
@@ -663,6 +682,7 @@ $L__BB0_8:
         assert_eq!(
             when,
             [
+                "not (param_1 < 1 (branch at line 17, same for the whole CTA) or %tid.x ≠ 0)",
                 "param_2 > 3 (branch at line 22, same for the whole CTA) and \
                  param_1 < 1 (branch at line 22, same for the whole CTA)",
                 "param_1 ≥ 1 (branch at line 25, same for the whole CTA)",
