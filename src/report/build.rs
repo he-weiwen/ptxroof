@@ -485,6 +485,7 @@ impl KernelReportBuilder<'_> {
                         footprint_unknown: footprint_unknown.or(wavefronts_unknown),
                         reuse,
                     };
+                    let traced = traced.map(|t| t.map(|a| affine.known_multiples(&a)));
                     operands.entry(pos).or_default().push((row.clone(), traced));
                     out.entry(scope).or_default().push(row);
                 }
@@ -543,7 +544,8 @@ type PerWavefronts = HashMap<usize, SharedWaves>;
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
 
 /// Per statement, its memory operands' rows, each with its address as
-/// traced where a register holds it: the affine form, or why there is none.
+/// traced where a register holds it: the affine form, an unknown value's
+/// known multiple as the value, or why there is none.
 pub(super) type Operands = HashMap<usize, Vec<(Access, Option<Result<AffineExpr, UnknownReason>>)>>;
 
 /// The direction a count is known in; `None` when bounded in neither.

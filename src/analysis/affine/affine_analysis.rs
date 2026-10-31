@@ -532,6 +532,26 @@ impl<'a> AffineAnalysis<'a> {
         self.uncut(|| self.memoized(&self.trips, id, unfinished, count, settle))
     }
 
+    /// `a` with each `c·⌊u/d⌋` of an unknown value u whose low bits every
+    /// definition leaves 0 up to d, a power of two dividing c, as `(c/d)·u`.
+    pub(crate) fn known_multiples(&self, a: &AffineExpr) -> AffineExpr {
+        let multiple = |v: &Var, c: &SymExpr| {
+            let (Var::FloorDiv(u, d), Some(c)) = (v, c.as_const()) else {
+                return None;
+            };
+            let Var::Unknown(value) = **u else {
+                return None;
+            };
+            let zeros = (*d as u64).is_power_of_two()
+                && d.trailing_zeros() <= self.min_trailing_zeros(value);
+            (zeros && c % d == 0)
+                .then(|| AffineExpr::term(Var::Unknown(value), SymExpr::Const(c / d)))
+        };
+        (a.terms.iter()).fold(AffineExpr::from_base(a.base.clone()), |sum, (v, c)| {
+            sum + multiple(v, c).unwrap_or_else(|| AffineExpr::term(v.clone(), c.clone()))
+        })
+    }
+
     /// The address `offset` bytes past `base` at `pos` under the bindings,
     /// one form for the lanes of a warp unless a variable of it is not
     /// one value for them (`alike`): then each lane reads its own.

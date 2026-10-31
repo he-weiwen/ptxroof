@@ -1005,6 +1005,8 @@ One line each, with the trigger that would start it.
   `<space> <direction> [<address>]`, a loop's iteration k printed as
   `iv[<header>]` = k - 1, or `addr ?` and why, a counter there as
   `(iv[<header>] + 1)` (`micro-guarded-exit-bound-annotate.test`),
+  and `c·⌊u/d⌋` of an unknown value u whose low bits every definition
+  leaves 0 up to d as `(c/d)·u` (`micro-uniform-aligned-annotate.test`),
   then a global one's
   `sectors/req` and a shared one's `wavefronts/req` with their ideal,
   `<=` for a bound, or `?` and why (`k5-annotate.test`,
