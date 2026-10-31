@@ -82,19 +82,56 @@ pub fn analyze(
     input_name: &str,
     opts: &AnalyzeOptions,
 ) -> Result<Report, AnalyzeError> {
+    let mut kernels = Vec::new();
+    let mut classified = Fraction { num: 0, den: 0 };
+    let mut trips_resolved = Fraction { num: 0, den: 0 };
+    let bindings = each_kernel(source, opts, |builder| {
+        let ncu = opts.ncu.as_ref().map(|r| (r, builder.lines));
+        let k = builder.build(opts.launch, ncu);
+        classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
+        classified.den += k.instruction_classes.total;
+        let mut count_loops = |nodes: &[LoopNode]| {
+            fn walk(nodes: &[LoopNode], f: &mut Fraction) {
+                for n in nodes {
+                    f.den += 1;
+                    f.num += u64::from(n.trips.expr.is_some());
+                    walk(&n.loops, f);
+                }
+            }
+            walk(nodes, &mut trips_resolved);
+        };
+        count_loops(&k.loops);
+        kernels.push(k);
+    })?;
+
+    let mut coverage = BTreeMap::new();
+    coverage.insert("instructions_classified".to_owned(), classified);
+    coverage.insert("loop_trips_resolved".to_owned(), trips_resolved);
+
+    Ok(Report {
+        input: input_name.to_owned(),
+        bindings,
+        grid: opts.grid,
+        kernels,
+        coverage,
+    })
+}
+
+/// Parse `source` and run `each` on every kernel's report builder, under
+/// the options' bindings, block shape and grid; the bindings it applied.
+fn each_kernel(
+    source: &str,
+    opts: &AnalyzeOptions,
+    mut each: impl FnMut(KernelReportBuilder<'_>),
+) -> Result<Vec<Binding>, AnalyzeError> {
     let module = parse(source)?;
     if let Some(record) = &opts.ncu {
         record.check(&module, source).map_err(AnalyzeError::Ncu)?;
     }
-
     let lines = LineIndex::new(source);
-    let mut kernels = Vec::new();
-    let mut classified = Fraction { num: 0, den: 0 };
-    let mut trips_resolved = Fraction { num: 0, den: 0 };
-    let mut bindings_echo = Vec::new();
-
+    let mut bindings = Vec::new();
     for kernel in &module.kernels {
-        let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings_echo)?;
+        let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings)?;
         // The block shape, when it is the launch's: --launch, else
         // .reqntid; the grid, when given.
         let shapes = [
@@ -110,38 +147,12 @@ pub fn analyze(
                 bind_map.insert(SymbolicConstant::SpecialReg(reg), i64::from(n));
             }
         }
-        let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
         let cfg = build_cfg(&module, kernel);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&module, kernel, &cfg, &forest);
-        let k = KernelReportBuilder::new(&data, &bind_map, &lines).build(opts.launch, ncu);
-        classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
-        classified.den += k.instruction_classes.total;
-        let mut count_loops = |nodes: &[LoopNode]| {
-            fn walk(nodes: &[LoopNode], f: &mut Fraction) {
-                for n in nodes {
-                    f.den += 1;
-                    f.num += u64::from(n.trips.expr.is_some());
-                    walk(&n.loops, f);
-                }
-            }
-            walk(nodes, &mut trips_resolved);
-        };
-        count_loops(&k.loops);
-        kernels.push(k);
+        each(KernelReportBuilder::new(&data, &bind_map, &lines));
     }
-
-    let mut coverage = BTreeMap::new();
-    coverage.insert("instructions_classified".to_owned(), classified);
-    coverage.insert("loop_trips_resolved".to_owned(), trips_resolved);
-
-    Ok(Report {
-        input: input_name.to_owned(),
-        bindings: bindings_echo,
-        grid: opts.grid,
-        kernels,
-        coverage,
-    })
+    Ok(bindings)
 }
 
 fn resolve_bindings(
