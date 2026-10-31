@@ -1,6 +1,7 @@
 //! The input PTX with what the analysis says of each line appended to
 //! it as a ` // ` comment.
 
+use crate::analysis::affine::affine_expr::Var;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::Stmt;
@@ -48,13 +49,31 @@ impl KernelReportBuilder<'_> {
         }
     }
 
-    /// The threads that run block `b`, by warps and lanes, given the block
-    /// shape.
+    /// The threads that run block `b`, by warps and lanes; without a block
+    /// shape, the condition that selects them, if one does, a loop's
+    /// iteration k as `iv + 1`.
     fn threads(&self, b: BlockId) -> Option<String> {
         let set = &self.counts.sets.blocks[b.0 as usize];
         let shape = self.counts.shape;
-        (!shape.contains(&0))
-            .then(|| warp_lanes(&set.lane_masks(shape, None), shape, set.lane_exact()))
+        if shape.contains(&0) {
+            let name = |v: &Var| match v {
+                Var::Iteration(l) => format!("({} + 1)", self.iv(*l)),
+                v => v.to_string(),
+            };
+            return set.render_named(&name).map(|t| t.replace(" * ", "·"));
+        }
+        Some(warp_lanes(
+            &set.lane_masks(shape, None),
+            shape,
+            set.lane_exact(),
+        ))
+    }
+
+    /// Loop `l`'s iteration from 0, `iv[<header label>]`, LLVM's canonical
+    /// induction variable (llvm/include/llvm/Analysis/LoopInfo.h).
+    fn iv(&self, l: LoopId) -> String {
+        let header = self.forest.get(l).header;
+        format!("iv[{}]", self.cfg.block_name(self.module, header))
     }
 
     /// Loop `l`'s trip count, or `?` and why it is not known; a product
@@ -156,5 +175,52 @@ mod tests {
         );
         assert_eq!(warp_lanes(&lane_0, shape, true), "warp * × lane 0");
         assert_eq!(warp_lanes(&[(0, 0); 3], shape, true), "no thread");
+    }
+
+    /// Without a block shape, a block's annotation is the condition on the
+    /// thread index that selects it, a loop's iteration k = iv + 1.
+    #[test]
+    fn without_a_block_shape_a_block_names_its_condition() {
+        let src = "\
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 p)
+{
+	.reg .pred %p<4>;
+	.reg .b32 %r<3>;
+	.reg .b64 %rd<2>;
+	ld.param.u64 %rd1, [p];
+	mov.u32 %r1, %tid.x;
+	mov.u32 %r2, 0;
+$L__BB0_1:
+	add.s32 %r2, %r2, 1;
+	setp.ge.u32 %p2, %r1, %r2;
+	@%p2 bra $L__BB0_3;
+	st.global.u32 [%rd1], %r2;
+$L__BB0_3:
+	setp.lt.u32 %p3, %r2, 4;
+	@%p3 bra $L__BB0_1;
+	setp.gt.u32 %p1, %r1, 31;
+	@%p1 bra $L__BB0_5;
+	st.global.u32 [%rd1], %r1;
+$L__BB0_5:
+	ret;
+}
+";
+        let out = annotate(src, &AnalyzeOptions::default()).expect("annotates");
+        let notes: Vec<&str> = out
+            .lines()
+            .filter_map(|l| l.split_once(" // "))
+            .map(|(_, n)| n)
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                "loop: trips 4",
+                "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0",
+                "[<block 5>] %tid.x <= 31",
+            ]
+        );
     }
 }

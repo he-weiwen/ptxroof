@@ -988,7 +988,9 @@ One line each, with the trigger that would start it.
   the block shape, the threads that run it as `warp <W> × lane <L>`
   per group of warps with the same lanes, `<=` where the lanes are a
   bound (`micro-guards-annotate.test`,
-  `gluon-attn-fwd-ws-annotate.test`).
+  `gluon-attn-fwd-ws-annotate.test`), and without it the condition
+  that selects them, a loop's iteration k printed as `iv[<header>] + 1`
+  (`without_a_block_shape_a_block_names_its_condition`).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures
