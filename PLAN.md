@@ -1008,7 +1008,8 @@ One line each, with the trigger that would start it.
   then a global one's
   `sectors/req` and a shared one's `wavefronts/req` with their ideal,
   `<=` for a bound, or `?` and why (`k5-annotate.test`,
-  `micro-vector-def-annotate.test`).
+  `micro-vector-def-annotate.test`). An instruction whose results
+  nothing with an effect reads is `unused` (the same test).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures

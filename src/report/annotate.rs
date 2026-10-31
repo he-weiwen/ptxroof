@@ -39,9 +39,10 @@ pub fn annotate(source: &str, opts: &AnalyzeOptions) -> Result<String, AnalyzeEr
 impl KernelReportBuilder<'_> {
     /// Each block's annotation, a loop header's trip count first, on its
     /// label's line, else on its first statement's after `[<block name>] `,
-    /// then each statement's on its own line. Counts are over the launch
-    /// given the grid and the block shape, else per CTA given the shape,
-    /// else per thread.
+    /// then each statement's on its own line, `unused` alone where nothing
+    /// with an effect reads its results. Counts are over the launch given
+    /// the grid and the block shape, else per CTA given the shape, else
+    /// per thread.
     fn annotations(&self, notes: &mut BTreeMap<u32, Vec<String>>) {
         let threads: u64 = self.counts.shape.iter().map(|&n| u64::from(n)).product();
         let cta = (threads > 0).then(|| CtaSize {
@@ -63,7 +64,11 @@ impl KernelReportBuilder<'_> {
                 .map(|l| format!("loop: trips {}", self.trips(l)));
             let (exec, mut parts) = self.execs(bm, per);
             for s in bm.instructions.iter().map(|i| i.provenance) {
-                parts.entry(s).or_default().extend(self.operands(s));
+                if self.counts.unused[s] {
+                    parts.insert(s, vec!["unused".to_owned()]);
+                } else {
+                    parts.entry(s).or_default().extend(self.operands(s));
+                }
             }
             parts.retain(|_, p| !p.is_empty());
             let mut own: Vec<String> = header
