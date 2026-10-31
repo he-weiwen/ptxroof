@@ -41,7 +41,7 @@ use std::collections::{BTreeMap, HashMap};
 /// none. `trip` names the loop whose counter, its current trip's, the
 /// form holds instead, and the least and greatest value of its term
 /// over the loop's trips.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Constraint {
     pub form: AffineExpr,
     pub cmp: Cmp,
@@ -61,8 +61,9 @@ pub enum Pred {
     /// A condition that cannot be evaluated but is the same for the
     /// threads `Uniform` names: for every thread of the CTA, a comparison
     /// affine analysis reads of parameters, CTA indices and loop counters
-    /// only; or one the uniformity analysis finds uniform.
-    Uniform(Uniform),
+    /// only; or one the uniformity analysis finds uniform. `Atom` names
+    /// which.
+    Uniform(Uniform, Atom),
     Cmp(Constraint),
     /// `elect.sync`: the lowest lane of each warp among the threads
     /// executing it, which the inner predicate selects.
@@ -70,6 +71,30 @@ pub enum Pred {
     Not(Box<Pred>),
     And(Box<Pred>, Box<Pred>),
     Or(Box<Pred>, Box<Pred>),
+}
+
+/// Which condition a `Pred::Uniform` is, and whether it is negated.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Atom {
+    pub key: AtomKey,
+    pub negated: bool,
+}
+
+/// What a `Pred::Uniform` reads.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AtomKey {
+    /// The comparison of `setp` statement `op`, or the first predicate
+    /// another statement writes.
+    Def(usize),
+    /// A predicate value no statement writes first: a φ, an undefined
+    /// value, or a second output.
+    Value(Value),
+    /// `brx.idx` statement `stmt` sends the threads toward `target`.
+    Jump { stmt: usize, target: BlockId },
+    /// The threads leave the loop headed by `header` toward `target`.
+    Leave { header: BlockId, target: BlockId },
+    /// A comparison with the counter of a loop that does not hold its use.
+    OutOfLoop(Box<Constraint>),
 }
 
 /// Whether a thread satisfies a predicate; `Maybe` when an unknown
@@ -115,7 +140,13 @@ impl std::ops::Not for Pred {
             Pred::True => Pred::False,
             Pred::False => Pred::True,
             Pred::Unknown => Pred::Unknown,
-            Pred::Uniform(u) => Pred::Uniform(u),
+            Pred::Uniform(u, a) => Pred::Uniform(
+                u,
+                Atom {
+                    negated: !a.negated,
+                    ..a
+                },
+            ),
             Pred::Cmp(c) => Pred::Cmp(Constraint {
                 form: c.form,
                 cmp: c.cmp.inverse(),
@@ -129,12 +160,23 @@ impl std::ops::Not for Pred {
 }
 
 impl Pred {
+    /// Condition `key`, unread but the same for the threads `u` names.
+    fn uniform(u: Uniform, key: AtomKey) -> Pred {
+        Pred::Uniform(
+            u,
+            Atom {
+                key,
+                negated: false,
+            },
+        )
+    }
+
     pub fn and(self, other: Pred) -> Pred {
         match (self, other) {
             (Pred::False, _) | (_, Pred::False) => Pred::False,
             (Pred::True, p) | (p, Pred::True) => p,
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
-            (Pred::Uniform(a), Pred::Uniform(b)) => Pred::Uniform(a.max(b)),
+            (Pred::Uniform(u, a), Pred::Uniform(v, b)) if a == b => Pred::Uniform(u.max(v), a),
             (a, b) => Pred::And(Box::new(a), Box::new(b)),
         }
     }
@@ -144,7 +186,7 @@ impl Pred {
             (Pred::True, _) | (_, Pred::True) => Pred::True,
             (Pred::False, p) | (p, Pred::False) => p,
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
-            (Pred::Uniform(a), Pred::Uniform(b)) => Pred::Uniform(a.max(b)),
+            (Pred::Uniform(u, a), Pred::Uniform(v, b)) if a == b => Pred::Uniform(u.max(v), a),
             (a, b) => Pred::Or(Box::new(a), Box::new(b)),
         }
     }
@@ -158,7 +200,7 @@ impl Pred {
         match self {
             Pred::True => Tri::Yes,
             Pred::False => Tri::No,
-            Pred::Unknown | Pred::Uniform(_) => Tri::Maybe,
+            Pred::Unknown | Pred::Uniform(..) => Tri::Maybe,
             Pred::Cmp(c) => {
                 let trip = env
                     .trip
@@ -239,7 +281,7 @@ impl Pred {
         match self {
             Pred::True | Pred::False => true,
             Pred::Cmp(c) => c.cta.is_none() && c.trip.is_none(),
-            Pred::Unknown | Pred::Uniform(_) => false,
+            Pred::Unknown | Pred::Uniform(..) => false,
             Pred::Elect(p) | Pred::Not(p) => p.exact(),
             Pred::And(a, b) | Pred::Or(a, b) => a.exact() && b.exact(),
         }
@@ -253,7 +295,7 @@ impl Pred {
     pub fn lane_exact(&self) -> bool {
         match self {
             _ if self.uniform_only() => true,
-            Pred::True | Pred::False | Pred::Uniform(_) => true,
+            Pred::True | Pred::False | Pred::Uniform(..) => true,
             Pred::Cmp(c) => {
                 (c.cta.is_none() && c.trip.is_none()) || !c.form.terms.keys().any(depends_on_lane)
             }
@@ -274,7 +316,7 @@ impl Pred {
             Pred::Cmp(c) if c.trip.is_some_and(|(l, _)| !inside(l)) => {
                 match c.form.terms.keys().any(depends_on_lane) {
                     true => Pred::Unknown,
-                    false => Pred::Uniform(Uniform::Cta),
+                    false => Pred::uniform(Uniform::Cta, AtomKey::OutOfLoop(Box::new(c))),
                 }
             }
             Pred::Elect(p) => Pred::Elect(at(p)),
@@ -289,7 +331,7 @@ impl Pred {
     /// and `not`.
     fn uniform_only(&self) -> bool {
         match self {
-            Pred::Uniform(_) => true,
+            Pred::Uniform(..) => true,
             Pred::Not(p) => p.uniform_only(),
             Pred::And(a, b) | Pred::Or(a, b) => a.uniform_only() && b.uniform_only(),
             _ => false,
@@ -298,7 +340,7 @@ impl Pred {
 
     fn has_condition(&self) -> bool {
         match self {
-            Pred::True | Pred::Unknown | Pred::Uniform(_) => false,
+            Pred::True | Pred::Unknown | Pred::Uniform(..) => false,
             Pred::False | Pred::Cmp(_) | Pred::Elect(_) => true,
             Pred::Not(p) => p.has_condition(),
             Pred::And(a, b) | Pred::Or(a, b) => a.has_condition() || b.has_condition(),
@@ -314,7 +356,7 @@ impl Pred {
             _ if self.uniform_only() => Some("?".to_owned()),
             Pred::True => None,
             Pred::False => Some("no thread".to_owned()),
-            Pred::Unknown | Pred::Uniform(_) => Some("?".to_owned()),
+            Pred::Unknown | Pred::Uniform(..) => Some("?".to_owned()),
             Pred::Cmp(c) => Some(c.render_named(name)),
             Pred::Elect(_) => Some("elected".to_owned()),
             Pred::Not(p) => Some(format!("not ({})", p.text(false, false, name)?)),
@@ -985,7 +1027,7 @@ impl PredicateReader<'_> {
             if self.forest.doms.dominates(d, x) {
                 let way = match self.forest.block_loop[x.0 as usize] == s {
                     true => self.toward(s, x, c, b),
-                    false => self.leaving(x),
+                    false => self.leaving(x, c),
                 };
                 pred = pred.or(self.reach(s, d, x, b, left).and(way));
             }
@@ -993,14 +1035,17 @@ impl PredicateReader<'_> {
         pred
     }
 
-    /// Which threads at loop header `h` leave its loop by a given exit:
-    /// every thread alike in the CTA or a warp where its exits are.
-    fn leaving(&self, h: BlockId) -> Pred {
+    /// Which threads at loop header `h` leave its loop toward `c`: every
+    /// thread alike in the CTA or a warp where its exits are.
+    fn leaving(&self, h: BlockId, c: BlockId) -> Pred {
         let affine = self.affine;
+        let key = AtomKey::Leave {
+            header: h,
+            target: c,
+        };
         match self.forest.block_loop[h.0 as usize] {
-            Some(l) => {
-                (affine.uniformity().exit_uniformity(l)).map_or(Pred::Unknown, Pred::Uniform)
-            }
+            Some(l) => (affine.uniformity().exit_uniformity(l))
+                .map_or(Pred::Unknown, |u| Pred::uniform(u, key)),
             None => Pred::Unknown,
         }
     }
@@ -1021,7 +1066,11 @@ impl PredicateReader<'_> {
         ) && let Operand::Register(r) = self.module.operand(index)
         {
             let index = affine.uniformity().register_uniformity(*r, pos);
-            return index.map_or(Pred::Unknown, Pred::Uniform);
+            let key = AtomKey::Jump {
+                stmt: pos,
+                target: c,
+            };
+            return index.map_or(Pred::Unknown, |u| Pred::uniform(u, key));
         }
         let (&[taken, _], Some(guard)) = (
             &self.cfg.block(x).succs[..],
@@ -1063,7 +1112,14 @@ impl PredicateReader<'_> {
         let Some(v) = self.affine.data.ssa.value_before(pos, Register::Named(reg)) else {
             return Pred::Unknown;
         };
-        (self.affine.uniformity().value_uniformity(v, pos)).map_or(Pred::Unknown, Pred::Uniform)
+        let second =
+            |op: usize| matches!(&self.kernel.stmts[op], Stmt::Instr(i) if self.second(i, reg));
+        let key = match v {
+            Value::Result { op, .. } if !second(op) => AtomKey::Def(op),
+            v => AtomKey::Value(v),
+        };
+        (self.affine.uniformity().value_uniformity(v, pos))
+            .map_or(Pred::Unknown, |u| Pred::uniform(u, key))
     }
 
     /// Whether `reg` is the second destination of `instr`, `d|p`.
@@ -1437,7 +1493,7 @@ fn condition(
     {
         Some(p)
     } else if !lanes {
-        Some(Pred::Uniform(Uniform::Cta))
+        Some(Pred::uniform(Uniform::Cta, AtomKey::Def(def)))
     } else {
         None
     }
@@ -1484,6 +1540,11 @@ mod tests {
         }
     }
 
+    /// The comparison of statement `def`, the same for every thread.
+    fn cta(def: usize) -> Pred {
+        Pred::uniform(Uniform::Cta, AtomKey::Def(def))
+    }
+
     fn warps_below_4() -> Constraint {
         let warp = AffineExpr::var(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 32));
         Constraint {
@@ -1519,9 +1580,12 @@ mod tests {
         assert_eq!(counter(c(-513)).count([32, 1, 1]), Some(exact(32)));
         let lanes = counter(AffineExpr::var(Var::Tid(Axis::X)) + c(-511));
         assert!(!lanes.lane_exact());
+        let Pred::Cmp(k) = below.clone() else {
+            panic!("a comparison");
+        };
         assert_eq!(
             below.clone().in_loops(&|_| false),
-            Pred::Uniform(Uniform::Cta)
+            Pred::uniform(Uniform::Cta, AtomKey::OutOfLoop(Box::new(k)))
         );
         assert_eq!(below.clone().in_loops(&|_| true), below);
     }
@@ -1748,7 +1812,7 @@ mod tests {
                 possible: 4
             })
         );
-        let maybe = Pred::Elect(Box::new(Pred::Uniform(Uniform::Cta)));
+        let maybe = Pred::Elect(Box::new(cta(0)));
         let range = |certain, possible| Some(Counted { certain, possible });
         assert_eq!(maybe.count([64, 1, 1]), range(0, 2));
         assert_eq!((!maybe).count([64, 1, 1]), range(62, 64));
@@ -1793,10 +1857,7 @@ mod tests {
         assert_eq!(Pred::True.launch([32, 1, 1], [4, 1, 1]), None);
         assert_eq!(below.launch([0, 0, 0], [4, 1, 1]), None);
         assert_eq!(
-            below
-                .clone()
-                .and(Pred::Uniform(Uniform::Cta))
-                .launch([32, 1, 1], [4, 1, 1]),
+            below.clone().and(cta(0)).launch([32, 1, 1], [4, 1, 1]),
             None
         );
         // An election of one lane per warp counts; one among lanes that a
@@ -1976,7 +2037,7 @@ mod tests {
 
     #[test]
     fn a_cta_uniform_unknown_is_lane_exact_but_not_exact() {
-        let uniform = Pred::Cmp(warps_below_4()).and(Pred::Uniform(Uniform::Cta));
+        let uniform = Pred::Cmp(warps_below_4()).and(cta(0));
         assert!(!uniform.exact() && uniform.lane_exact());
         assert_eq!(uniform.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));
         assert_eq!(
@@ -1991,9 +2052,9 @@ mod tests {
         // Under a disjunction or a negation the uniform unknown decides
         // between two lane sets.
         let lanes = || Pred::Cmp(warps_below_4());
-        assert!(!Pred::Uniform(Uniform::Cta).or(lanes()).lane_exact());
-        assert!(!(!(Pred::Uniform(Uniform::Cta).and(lanes()))).lane_exact());
-        assert!(Pred::Elect(Box::new(Pred::Uniform(Uniform::Cta).and(lanes()))).lane_exact());
+        assert!(!cta(0).or(lanes()).lane_exact());
+        assert!(!(!(cta(0).and(lanes()))).lane_exact());
+        assert!(Pred::Elect(Box::new(cta(0).and(lanes()))).lane_exact());
     }
 
     /// Uniform unknowns combined in any way, as comparisons with another
@@ -2027,6 +2088,48 @@ mod tests {
         });
         let hedged = lane0.or(either);
         assert_eq!(hedged.render().as_deref(), Some("%tid.x == 0 or ?"));
+    }
+
+    /// A uniform unknown keeps which condition it is: its negation flips
+    /// it, and only the same condition at the same polarity merges, at the
+    /// larger level; a condition and its negation stay both.
+    #[test]
+    fn a_uniform_unknown_keeps_its_condition_and_polarity() {
+        let (u, v) = (cta(0), cta(1));
+        let not_u = !u.clone();
+        assert!(matches!(&not_u, Pred::Uniform(Uniform::Cta, a) if a.negated));
+        assert_eq!(!not_u.clone(), u);
+        assert_eq!(u.clone().and(u.clone()), u);
+        assert_eq!(u.clone().or(u.clone()), u);
+        let warp = Pred::uniform(Uniform::Warp, AtomKey::Def(0));
+        assert_eq!(u.clone().and(warp.clone()), warp);
+        let neither = u.clone().and(not_u.clone());
+        assert!(matches!(neither, Pred::And(..)));
+        assert_eq!(neither.eval([0, 0, 0], [64, 1, 1]), Tri::Maybe);
+        assert!(matches!(u.and(v), Pred::And(..)));
+    }
+
+    /// The two arms of a branch on a comparison read through its `setp`
+    /// hold that comparison and its negation: one of parameters for the
+    /// CTA, one of a loaded value for a warp.
+    #[test]
+    fn the_arms_of_a_uniform_branch_hold_its_setp_s_comparison() {
+        for (def, level) in [
+            ("cvt.u32.u64 %r2, %rd1;", Uniform::Cta),
+            ("ld.global.u32 %r2, [%rd1];", Uniform::Warp),
+        ] {
+            let (m, sets) = sets_of(&format!(
+                "{def}\nsetp.eq.u32 %p1, %r2, 7;\n@%p1 bra $L__Y;\n\
+                 add.s32 %r4, %r1, 1;\nbra.uni $L__E;\n$L__Y:\nadd.s32 %r5, %r1, 2;\n$L__E:"
+            ));
+            let k = &m.kernels[0];
+            let setp = (0..k.stmts.len())
+                .find(|&s| matches!(&k.stmts[s], Stmt::Instr(i) if i.mnemonic == Opcode::Setp))
+                .expect("a setp");
+            let taken = Pred::uniform(level, AtomKey::Def(setp));
+            assert_eq!(sets.blocks[2], taken);
+            assert_eq!(sets.blocks[1], !taken);
+        }
     }
 
     /// Kernel `body`'s module and thread sets, on 64 threads; `%rd1`
@@ -2091,8 +2194,15 @@ mod tests {
             )
         };
         let (_, shuffled) = sets_of(&table("shfl.sync.idx.b32 %r3, %r2, 0, 31, -1;"));
-        assert_eq!(shuffled.blocks[2], Pred::Uniform(Uniform::Warp));
-        assert_eq!(shuffled.blocks[3], Pred::Uniform(Uniform::Warp));
+        let target = |p: &Pred| match p {
+            Pred::Uniform(Uniform::Warp, a) if !a.negated => match a.key {
+                AtomKey::Jump { target, .. } => Some(target),
+                _ => None,
+            },
+            _ => None,
+        };
+        assert_eq!(target(&shuffled.blocks[2]), Some(BlockId(2)));
+        assert_eq!(target(&shuffled.blocks[3]), Some(BlockId(3)));
         let (_, divided) = sets_of(&table("mov.u32 %r3, %r2;"));
         assert_eq!(divided.blocks[2], Pred::Unknown);
     }
@@ -2237,6 +2347,10 @@ mod tests {
             matches!(inside, Pred::Cmp(c) if c.trip.is_some()),
             "{inside:?}"
         );
-        assert_eq!(after, &Some(Pred::Uniform(Uniform::Cta)));
+        let out_of_loop = |a: &Atom| a.negated && matches!(a.key, AtomKey::OutOfLoop(_));
+        assert!(
+            matches!(after, Some(Pred::Uniform(Uniform::Cta, a)) if out_of_loop(a)),
+            "{after:?}"
+        );
     }
 }
