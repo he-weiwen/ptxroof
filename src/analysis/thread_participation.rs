@@ -475,6 +475,10 @@ fn on_lane_only(a: &AffineExpr) -> bool {
         })
 }
 
+/// What two CTAs share when every lane has the same truth at both
+/// (`Pred::cta_keys`).
+type CtaKey = Vec<(Tri, i128)>;
+
 /// The most CTAs `Pred::launch` enumerates, and the most lanes it
 /// evaluates over its groups of CTAs.
 pub(crate) const CTA_BUDGET: u64 = 1 << 24;
@@ -616,6 +620,51 @@ impl Pred {
         read: [bool; 3],
         weight: &dyn Fn([i64; 3]) -> Option<u64>,
     ) -> Option<(u64, u64)> {
+        let (ctas, rest) = self.cta_keys(shape, grid, read)?;
+        let threads: u64 = shape.iter().map(|&n| u64::from(n)).product();
+        let mut groups = HashMap::new();
+        for (c, key) in ctas {
+            let group = match groups.entry(key) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => {
+                    let env = Env {
+                        cta: Some(c),
+                        trip: None,
+                    };
+                    let (t, w) = self.tally(shape, env)?;
+                    if t.certain != t.possible || w.certain != w.possible {
+                        return None;
+                    }
+                    e.insert((0u64, t.certain, w.certain))
+                }
+            };
+            if group.1 > 0 {
+                group.0 = group.0.checked_add(weight(c)?)?;
+            }
+            if groups.len() as u64 > LANE_BUDGET / threads {
+                return None;
+            }
+        }
+        let (mut sum_t, mut sum_w) = (0u64, 0u64);
+        for (k, t, w) in groups.into_values() {
+            sum_t = sum_t.checked_add(u64::from(t).checked_mul(k)?)?;
+            sum_w = sum_w.checked_add(u64::from(w).checked_mul(k)?)?;
+        }
+        Some((sum_t.checked_mul(rest)?, sum_w.checked_mul(rest)?))
+    }
+
+    /// Every CTA of `grid` on the axes that `read` or the comparisons
+    /// whose `%ctaid` terms vary read, with a key two CTAs share when
+    /// every lane of a block of `shape` has the same truth at both:
+    /// whether each such comparison holds on every lane, on none, or on
+    /// some at the value those terms take; and the CTAs of the other
+    /// axes. None past `CTA_BUDGET` CTAs on those axes.
+    fn cta_keys(
+        &self,
+        shape: [u32; 3],
+        grid: [u32; 3],
+        read: [bool; 3],
+    ) -> Option<(impl Iterator<Item = ([i64; 3], CtaKey)> + '_, u64)> {
         let over = self.constraints(|k| k.cta.is_some());
         let mut used = read;
         for v in over.iter().flat_map(|k| k.form.terms.keys()) {
@@ -644,50 +693,22 @@ impl Pred {
                     })
             })
             .collect::<Option<_>>()?;
-        let n = |i: usize| if used[i] { i64::from(grid[i]) } else { 1 };
-        let mut groups = HashMap::new();
-        for z in 0..n(2) {
-            for y in 0..n(1) {
-                for x in 0..n(0) {
-                    let c = [x, y, z];
-                    let key: Vec<(Tri, i128)> = (over.iter().zip(&lanes))
-                        .map(|(k, &(lo, hi))| {
-                            let u = k.cta_part(c);
-                            match decide(k.cmp, lo + u, hi + u) {
-                                Tri::Maybe => (Tri::Maybe, u),
-                                t => (t, 0),
-                            }
-                        })
-                        .collect();
-                    let group = match groups.entry(key) {
-                        Entry::Occupied(e) => e.into_mut(),
-                        Entry::Vacant(e) => {
-                            let env = Env {
-                                cta: Some(c),
-                                trip: None,
-                            };
-                            let (t, w) = self.tally(shape, env)?;
-                            if t.certain != t.possible || w.certain != w.possible {
-                                return None;
-                            }
-                            e.insert((0u64, t.certain, w.certain))
-                        }
-                    };
-                    if group.1 > 0 {
-                        group.0 = group.0.checked_add(weight(c)?)?;
+        let n = move |i: usize| if used[i] { i64::from(grid[i]) } else { 1 };
+        let all = (0..n(2))
+            .flat_map(move |z| (0..n(1)).flat_map(move |y| (0..n(0)).map(move |x| [x, y, z])));
+        let keys = all.map(move |c| {
+            let key = (over.iter().zip(&lanes))
+                .map(|(k, &(lo, hi))| {
+                    let u = k.cta_part(c);
+                    match decide(k.cmp, lo + u, hi + u) {
+                        Tri::Maybe => (Tri::Maybe, u),
+                        t => (t, 0),
                     }
-                    if groups.len() as u64 > LANE_BUDGET / threads.len() as u64 {
-                        return None;
-                    }
-                }
-            }
-        }
-        let (mut sum_t, mut sum_w) = (0u64, 0u64);
-        for (k, t, w) in groups.into_values() {
-            sum_t = sum_t.checked_add(u64::from(t).checked_mul(k)?)?;
-            sum_w = sum_w.checked_add(u64::from(w).checked_mul(k)?)?;
-        }
-        Some((sum_t.checked_mul(rest)?, sum_w.checked_mul(rest)?))
+                })
+                .collect();
+            (c, key)
+        });
+        Some((keys, rest))
     }
 
     /// The loop whose counter the set's comparisons read, when one does.
