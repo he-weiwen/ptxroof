@@ -246,12 +246,13 @@ impl Pred {
     }
 
     /// Which lanes of a warp are in the set is known whenever any is:
-    /// an unknown uniform in the CTA or a warp, or a comparison of the CTA
-    /// index or a loop
+    /// unknowns uniform in the CTA or a warp, combined in any way, or a
+    /// comparison of the CTA index or a loop
     /// counter alone, only ever empties the set, which a conjunction or
     /// an election keeps and a disjunction or a negation does not.
     pub fn lane_exact(&self) -> bool {
         match self {
+            _ if self.uniform_only() => true,
             Pred::True | Pred::False | Pred::Uniform(_) => true,
             Pred::Cmp(c) => {
                 (c.cta.is_none() && c.trip.is_none()) || !c.form.terms.keys().any(depends_on_lane)
@@ -284,6 +285,17 @@ impl Pred {
         }
     }
 
+    /// Only unknowns uniform in the CTA or a warp, under any `and`, `or`
+    /// and `not`.
+    fn uniform_only(&self) -> bool {
+        match self {
+            Pred::Uniform(_) => true,
+            Pred::Not(p) => p.uniform_only(),
+            Pred::And(a, b) | Pred::Or(a, b) => a.uniform_only() && b.uniform_only(),
+            _ => false,
+        }
+    }
+
     fn has_condition(&self) -> bool {
         match self {
             Pred::True | Pred::Unknown | Pred::Uniform(_) => false,
@@ -295,10 +307,11 @@ impl Pred {
 
     /// The thread-index conditions as text; an unknown selector under
     /// conjunctions alone, `hedged`, is left to the `<=` marker,
-    /// elsewhere it prints as `?`. A disjunction is parenthesized when
-    /// nested.
+    /// elsewhere it prints as `?`, uniform ones combined as one. A
+    /// disjunction is parenthesized when nested.
     fn text(&self, nested: bool, hedged: bool, name: &dyn Fn(&Var) -> String) -> Option<String> {
         match self {
+            _ if self.uniform_only() => Some("?".to_owned()),
             Pred::True => None,
             Pred::False => Some("no thread".to_owned()),
             Pred::Unknown | Pred::Uniform(_) => Some("?".to_owned()),
@@ -308,7 +321,9 @@ impl Pred {
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
-                    .filter(|p| !hedged || !matches!(p.as_ref(), Pred::Unknown | Pred::Uniform(_)))
+                    .filter(|p| {
+                        !hedged || !(matches!(p.as_ref(), Pred::Unknown) || p.uniform_only())
+                    })
                     .filter_map(|p| p.text(true, hedged, name))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
@@ -1979,6 +1994,39 @@ mod tests {
         assert!(!Pred::Uniform(Uniform::Cta).or(lanes()).lane_exact());
         assert!(!(!(Pred::Uniform(Uniform::Cta).and(lanes()))).lane_exact());
         assert!(Pred::Elect(Box::new(Pred::Uniform(Uniform::Cta).and(lanes()))).lane_exact());
+    }
+
+    /// Uniform unknowns combined in any way, as comparisons with another
+    /// loop's counter are where that loop does not hold them, are the same
+    /// for the threads of a warp: lane-exact, and one `?`, which a
+    /// conjunction leaves to the `<=` marker.
+    #[test]
+    fn uniform_unknowns_combined_are_one_unknown() {
+        let counter = |cmp| {
+            Pred::Cmp(Constraint {
+                form: AffineExpr::var(Var::Iteration(LoopId(0)))
+                    + AffineExpr::from_base(SymExpr::Const(-3)),
+                cmp,
+                cta: None,
+                trip: Some((LoopId(0), (1, 8))),
+            })
+        };
+        let either = counter(Cmp::Lt).or(counter(Cmp::Gt)).in_loops(&|_| false);
+        let both = counter(Cmp::Lt).and(counter(Cmp::Gt));
+        let neither = (!both).in_loops(&|_| false);
+        assert!(matches!(either, Pred::Or(..)) && either.lane_exact());
+        assert!(matches!(neither, Pred::Not(_)) && neither.lane_exact());
+        let below = Pred::Cmp(warps_below_4()).and(either.clone());
+        assert!(below.lane_exact());
+        assert_eq!(below.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));
+        let lane0 = Pred::Cmp(Constraint {
+            form: AffineExpr::var(Var::Tid(Axis::X)),
+            cmp: Cmp::Eq,
+            cta: None,
+            trip: None,
+        });
+        let hedged = lane0.or(either);
+        assert_eq!(hedged.render().as_deref(), Some("%tid.x == 0 or ?"));
     }
 
     /// Kernel `body`'s module and thread sets, on 64 threads; `%rd1`
