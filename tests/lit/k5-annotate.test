@@ -6,7 +6,9 @@
 # its first instruction's after its name; the path for K = 0 runs on no
 # thread. A block's statements run 64 threads x 16 CTAs x its loops'
 # trips times over the record's launch, per CTA without the grid, and
-# per thread, symbolic, without the block shape.
+# per thread, symbolic, without the block shape. A memory operand gives
+# its address, a loop's iteration k as iv = k - 1, and a global one's
+# sectors per warp request, a shared one's wavefronts, and the fewest.
 RUN: %ptxroof analyze --annotate %fixtures/k5/k5.sm_89.ptx | FileCheck "%s"
 RUN: %ptxroof analyze --annotate --ncu %fixtures/k5/k5.sm_89.256.ncu.json %fixtures/k5/k5.sm_89.ptx | FileCheck --check-prefix=NCU "%s"
 RUN: %ptxroof analyze --annotate --bind 0:M=256 --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 %fixtures/k5/k5.sm_89.ptx | FileCheck --check-prefix=CTA "%s"
@@ -15,7 +17,10 @@ CHECK: {{^}}$L__BB0_2: // loop: trips ⌈param_2/8⌉ | exec ⌈param_2/8⌉/thr
 CHECK: {{^}}$L__BB0_3: // loop: trips 8 | exec 8·⌈param_2/8⌉/thread{{$}}
 NCU: {{^}}	ld.param.u32 	%r7, [_Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0__param_1]; // [<block 0>] warp * × lane * | exec 1,024/launch{{$}}
 NCU: {{^}}$L__BB0_2: // loop: trips 32 | warp * × lane * | exec 32,768/launch{{$}}
+NCU: {{^}}	ld.global.u16 	%rs1, [%rd15]; // global load [32768·%ctaid.y + 16·iv[$L__BB0_2] + 512·⌊%tid.x/8⌋ + 2·(%tid.x mod 8) + param_4] sectors/req 4–8 (ideal 2){{$}}
+NCU: {{^}}	st.shared.u16 	[%r20], %rs1; // shared store [2·%tid.x + As] wavefronts/req 1 (ideal 1){{$}}
 NCU: {{^}}$L__BB0_3: // loop: trips 8 | warp * × lane * | exec 262,144/launch{{$}}
+NCU: {{^}}	ld.shared.u16 	%rs17, [%r110]; // shared load [2·iv[$L__BB0_3] + 128·⌊%tid.x/8⌋ + As] wavefronts/req 4 (ideal 1){{$}}
 NCU: {{^}}	@%p2 bra 	$L__BB0_3;{{$}}
 NCU: {{^}}	shl.b32 	%r117, %r7, 3; // [<block 4>] warp * × lane * | exec 32,768/launch{{$}}
 NCU: {{^}}$L__BB0_5: // no thread{{$}}

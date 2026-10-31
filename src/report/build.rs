@@ -220,10 +220,12 @@ impl KernelReportBuilder<'_> {
         ByScope<AccessForm>,
         PerRequests,
         PerWavefronts,
+        Operands,
     ) {
         let (module, kernel, cfg, forest) = (self.module, self.kernel, self.cfg, self.forest);
         let display = &self.display;
         let mut forms: ByScope<AccessForm> = HashMap::new();
+        let mut operands = Operands::new();
         let mut per_request = PerRequests::new();
         let mut per_wavefronts = PerWavefronts::new();
         let name = |v: &Var| match v {
@@ -456,7 +458,7 @@ impl KernelReportBuilder<'_> {
                         ),
                         None => cfg.block_name(module, bid),
                     };
-                    out.entry(scope).or_default().push(Access {
+                    let row = Access {
                         site,
                         opcode: module.opcode(instr),
                         space: space.key().to_owned(),
@@ -475,15 +477,17 @@ impl KernelReportBuilder<'_> {
                         ideal_wavefronts_per_request: ideal_wavefronts,
                         footprint_unknown: footprint_unknown.or(wavefronts_unknown),
                         reuse,
-                    });
+                    };
+                    operands.entry(pos).or_default().push((row.clone(), form));
+                    out.entry(scope).or_default().push(row);
                 }
             }
         }
-        (out, forms, per_request, per_wavefronts)
+        (out, forms, per_request, per_wavefronts, operands)
     }
 
     /// `text` with each shared array's mangled name as its source name.
-    fn shorten(&self, mut text: String) -> String {
+    pub(super) fn shorten(&self, mut text: String) -> String {
         let decls = (self.kernel.shared_decls.iter()).chain(&self.module.shared_decls);
         for raw in decls.map(|d| self.module.interner.resolve(d.name)) {
             let demangled = demangle(raw);
@@ -530,6 +534,10 @@ type PerWavefronts = HashMap<usize, SharedWaves>;
 
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
+
+/// Per statement, its memory operands' rows, each with its address's
+/// affine form where it has one.
+pub(super) type Operands = HashMap<usize, Vec<(Access, Option<AffineExpr>)>>;
 
 /// The direction a count is known in; `None` when bounded in neither.
 fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
@@ -809,6 +817,7 @@ pub(super) struct KernelReportBuilder<'a> {
     access_forms: ByScope<AccessForm>,
     per_request: PerRequests,
     per_wavefronts: PerWavefronts,
+    pub(super) operands: Operands,
     pub(super) counts: ExecutionCounts<'a>,
     /// The PTX file's lines, naming a uniform value by its statement's.
     pub(super) lines: &'a LineIndex,
@@ -881,14 +890,17 @@ impl<'a> KernelReportBuilder<'a> {
             access_forms: HashMap::new(),
             per_request: HashMap::new(),
             per_wavefronts: HashMap::new(),
+            operands: HashMap::new(),
             counts,
             lines,
         };
-        let (accesses, access_forms, per_request, per_wavefronts) = b.accesses_by_scope(&affine);
+        let (accesses, access_forms, per_request, per_wavefronts, operands) =
+            b.accesses_by_scope(&affine);
         b.accesses = accesses;
         b.access_forms = access_forms;
         b.per_request = per_request;
         b.per_wavefronts = per_wavefronts;
+        b.operands = operands;
         b
     }
 

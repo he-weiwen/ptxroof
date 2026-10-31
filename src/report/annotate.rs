@@ -1,15 +1,17 @@
 //! The input PTX with what the analysis says of each line appended to
 //! it as a ` // ` comment.
 
-use crate::analysis::affine::affine_expr::Var;
-use crate::analysis::affine::sym_expr::SymExpr;
+use crate::analysis::affine::affine_expr::{AffineExpr, Var};
+use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::execution_counts::{CtaSize, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
+use crate::analysis::memory_footprint::CountRange;
 use crate::analysis::thread_participation::Pred;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Opcode, Stmt};
 use crate::report::build::{AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel};
+use crate::report::schema::Access;
 use std::collections::{BTreeMap, HashMap};
 
 /// Per statement, the parts of its annotation.
@@ -59,6 +61,10 @@ impl KernelReportBuilder<'_> {
                 .filter(|&l| self.forest.get(l).header == b)
                 .map(|l| format!("loop: trips {}", self.trips(l)));
             let (exec, mut parts) = self.execs(bm, per);
+            for s in bm.instructions.iter().map(|i| i.provenance) {
+                parts.entry(s).or_default().extend(self.operands(s));
+            }
+            parts.retain(|_, p| !p.is_empty());
             let mut own: Vec<String> = header
                 .into_iter()
                 .chain(self.threads(b))
@@ -151,6 +157,64 @@ impl KernelReportBuilder<'_> {
             }
         }
         (Some(own), parts)
+    }
+
+    /// Statement `s`'s memory operands but parameters, each `<space>
+    /// <direction> [<address>]`, or `addr ?` and why the address is not
+    /// known, then a global one's sectors per warp request and the fewest
+    /// they need, a shared one's wavefronts, `<= ` for a bound; a product
+    /// as `a·b`.
+    fn operands(&self, s: usize) -> Vec<String> {
+        let range = |r: &CountRange| match r.min == r.max {
+            true => r.min.to_string(),
+            false => format!("{}–{}", r.min, r.max),
+        };
+        let rows = self.operands.get(&s).map_or(&[][..], Vec::as_slice);
+        let row = |(row, form): &(Access, Option<AffineExpr>)| {
+            let address = match (form, &row.address) {
+                (Some(a), _) => format!("[{}]", self.form(a)),
+                (None, Some(a)) => format!("[{a}]"),
+                (None, None) => format!("addr ? ({})", row.unknown.as_deref().unwrap_or_default()),
+            };
+            let (what, per_request) = match (row.space.as_str(), &row.sectors_per_request) {
+                ("shared", _) => ("wavefronts", &row.wavefronts_per_request),
+                (_, n) => ("sectors", n),
+            };
+            let ideal = match what {
+                "wavefronts" => &row.ideal_wavefronts_per_request,
+                _ => &row.ideal_sectors_per_request,
+            };
+            let bound = if row.sectors_at_most { "<= " } else { "" };
+            let request = match (per_request, ideal, &row.footprint_unknown) {
+                (Some(n), Some(ideal), _) => {
+                    format!(" {what}/req {bound}{} (ideal {})", range(n), range(ideal))
+                }
+                (_, _, Some(why)) => format!(" {what}/req ? ({why})"),
+                _ => String::new(),
+            };
+            format!("{} {} {address}{request}", row.space, row.direction).replace(" * ", "·")
+        };
+        rows.iter().map(row).collect()
+    }
+
+    /// An address's form, a loop's iteration k = iv + 1 as `iv` with each
+    /// `c·k`'s c in the constant, or as `(iv + 1)` where a floor or a
+    /// remainder holds it.
+    fn form(&self, a: &AffineExpr) -> String {
+        let nested =
+            (a.terms.keys()).any(|v| v.counter().is_some() && !matches!(v, Var::Iteration(_)));
+        let k = (a.terms.iter()).filter(|(v, _)| matches!(v, Var::Iteration(_)) && !nested);
+        let base = k.fold(a.base.clone(), |base, (_, c)| SymExpr::add(base, c.clone()));
+        let shifted = AffineExpr {
+            terms: a.terms.clone(),
+            base,
+        };
+        self.shorten(shifted.render(|v| match v {
+            Var::Iteration(l) if nested => format!("({} + 1)", self.iv(*l)),
+            Var::Iteration(l) => self.iv(*l),
+            Var::Unknown(u) => self.leaf_name(&SymbolicConstant::Unknown(*u)),
+            v => v.to_string(),
+        }))
     }
 
     /// A count, a number with its thousands separated by `,`, else an
@@ -387,10 +451,12 @@ $L__BB0_5:
             [
                 "[<block 0>] exec 1/thread",
                 "loop: trips 4 | exec 4/thread",
-                "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0 | exec <= 4/thread",
+                "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0 | exec <= 4/thread | \
+                 global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
                 "exec 4/thread",
                 "[<block 4>] exec 1/thread",
-                "[<block 5>] %tid.x <= 31 | exec <= 1/thread",
+                "[<block 5>] %tid.x <= 31 | exec <= 1/thread | \
+                 global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
                 "exec 1/thread",
             ]
         );

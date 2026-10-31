@@ -1001,7 +1001,12 @@ One line each, with the trigger that would start it.
   not known `exec ? (trips of <header>)` (`k5-annotate.test`,
   `gluon-attn-fwd-ws-annotate.test`); a statement whose count differs,
   but a predicated `bra`, has its own on its line
-  (`micro-guards-annotate.test`).
+  (`micro-guards-annotate.test`). A memory operand but a parameter is
+  `<space> <direction> [<address>]`, a loop's iteration k printed as
+  `iv[<header>]` = k - 1, or `addr ?` and why, then a global one's
+  `sectors/req` and a shared one's `wavefronts/req` with their ideal,
+  `<=` for a bound, or `?` and why (`k5-annotate.test`,
+  `micro-vector-def-annotate.test`).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures
