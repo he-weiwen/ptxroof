@@ -13,8 +13,8 @@ RUN: %ptxroof analyze --annotate %fixtures/k5/k5.sm_89.ptx | FileCheck "%s"
 RUN: %ptxroof analyze --annotate --ncu %fixtures/k5/k5.sm_89.256.ncu.json %fixtures/k5/k5.sm_89.ptx | FileCheck --check-prefix=NCU "%s"
 RUN: %ptxroof analyze --annotate --bind 0:M=256 --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 %fixtures/k5/k5.sm_89.ptx | FileCheck --check-prefix=CTA "%s"
 RUN: not %ptxroof analyze --annotate --json %fixtures/k5/k5.sm_89.ptx 2>&1 | FileCheck --check-prefix=JSON "%s"
-CHECK: {{^}}$L__BB0_2: // loop: trips ⌈param_2/8⌉ | exec ⌈param_2/8⌉/thread{{$}}
-CHECK: {{^}}$L__BB0_3: // loop: trips 8 | exec 8·⌈param_2/8⌉/thread{{$}}
+CHECK: {{^}}$L__BB0_2: // loop: trips ⌈param_2/8⌉ | under line 64 | exec ⌈param_2/8⌉/thread{{$}}
+CHECK: {{^}}$L__BB0_3: // loop: trips 8 | under line 64 | exec 8·⌈param_2/8⌉/thread{{$}}
 NCU: {{^}}	ld.param.u32 	%r7, [_Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0__param_1]; // [<block 0>] warp * × lane * | exec 1,024/launch{{$}}
 NCU: {{^}}$L__BB0_2: // loop: trips 32 | warp * × lane * | exec 32,768/launch{{$}}
 NCU: {{^}}	ld.global.u16 	%rs1, [%rd15]; // global load [32768·%ctaid.y + 16·iv[$L__BB0_2] + 512·⌊%tid.x/8⌋ + 2·(%tid.x mod 8) + param_4] sectors/req 4–8 (ideal 2){{$}}

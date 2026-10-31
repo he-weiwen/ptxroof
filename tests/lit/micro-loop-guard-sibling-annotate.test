@@ -2,7 +2,8 @@
 # annotated PTX: the block past the first exit runs when the counter
 # has not met n, the iteration k printed as `iv + 1` = n; the block the
 # latch leaves to runs when the threads leave the loop that way, the
-# same for every thread.
+# same for every thread. Each is nested in the block before it with a
+# condition of its own: the guard's, then the first exit's.
 RUN: %ptxroof analyze --annotate %fixtures/micro/loop_guard_sibling.ptx | FileCheck "%s"
-CHECK: {{^}}	bar.sync 	0; // [<block 3>] warp * × lane * | runs when iv[$L__BB1_2] ≠ param_1 - 1 (branch at line 70, same for the whole CTA) | exec ? (trips of $L__BB1_2){{$}}
-CHECK: {{^}}	mov.u32 	%r2, 10; // [<block 4>] warp * × lane * | runs when leaves loop $L__BB1_2 toward <block 4> (same for the whole CTA) | exec <= 32/CTA{{$}}
+CHECK: {{^}}	bar.sync 	0; // [<block 3>] warp * × lane * | runs when iv[$L__BB1_2] ≠ param_1 - 1 (branch at line 70, same for the whole CTA) | nested in line 66 | exec ? (trips of $L__BB1_2){{$}}
+CHECK: {{^}}	mov.u32 	%r2, 10; // [<block 4>] warp * × lane * | runs when leaves loop $L__BB1_2 toward <block 4> (same for the whole CTA) | nested in line 71 | exec <= 32/CTA{{$}}

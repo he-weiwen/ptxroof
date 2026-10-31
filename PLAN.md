@@ -1012,7 +1012,10 @@ One line each, with the trigger that would start it.
   test); a jump table's target as `jump table at line <L> selects this
   target` (`b200-jump-table-annotate.test`), a loop's exit as `leaves
   loop <header> toward <block>`
-  (`micro-loop-guard-sibling-annotate.test`). Then how many times its
+  (`micro-loop-guard-sibling-annotate.test`). Then, where a block
+  dominating it has such a condition of its own, the nearest's line: after
+  `nested in` where the block has one, else after `under`
+  (`gluon-attn-fwd-ws-annotate.test`). Then how many times its
   unguarded statements run, over the launch given the grid
   and the block shape, else per CTA, else per thread: `exec
   32,768/launch`, `<=` for a bound, and under a loop whose trips are
@@ -1030,8 +1033,7 @@ One line each, with the trigger that would start it.
   (`k5-annotate.test`, `micro-vector-def-annotate.test`). An
   instruction whose results nothing with an effect reads is `unused`
   (the same test). Not yet: the kernel's launch on its `.entry` line;
-  the ncu comparisons; the block each block's conditions nest in;
-  FLOPs.
+  the ncu comparisons and FLOPs.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures

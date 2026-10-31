@@ -74,10 +74,14 @@ impl KernelReportBuilder<'_> {
                 }
             }
             parts.retain(|_, p| !p.is_empty());
+            let when = self.runs_when(b);
+            let runs = self.counts.sets.blocks[b.0 as usize] != Pred::False;
+            let nesting = runs.then(|| self.nesting(b, when.is_some())).flatten();
             let mut own: Vec<String> = header
                 .into_iter()
                 .chain(self.threads(b))
-                .chain(self.runs_when(b))
+                .chain(when)
+                .chain(nesting)
                 .chain(exec)
                 .collect();
             own.extend(parts.remove(&start).unwrap_or_default());
@@ -315,6 +319,26 @@ impl KernelReportBuilder<'_> {
             false,
         )?;
         Some(format!("runs when {when}"))
+    }
+
+    /// The line of the nearest block dominating `b` that runs under a
+    /// uniform condition of its own, after `nested in` where `b` has one,
+    /// `adds`, else after `under`.
+    fn nesting(&self, b: BlockId, adds: bool) -> Option<String> {
+        let sets = &self.counts.sets;
+        let has = |d: BlockId| {
+            let i = d.0 as usize;
+            sets.blocks[i] != Pred::False && !sets.relative[i].atoms().is_empty()
+        };
+        let mut up = self.forest.doms.idom[b.0 as usize];
+        while let Some(d) = up.filter(|&d| !has(d)) {
+            up = self.forest.doms.idom[d.0 as usize];
+        }
+        let line = self.line(self.cfg.block(up?).start)?;
+        Some(match adds {
+            true => format!("nested in line {line}"),
+            false => format!("under line {line}"),
+        })
     }
 
     /// The uniform unknowns of `p`, block `b`'s set on its immediate

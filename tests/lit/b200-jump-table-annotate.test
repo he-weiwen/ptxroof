@@ -1,6 +1,6 @@
 # Triton's causal attention (tut_ll) in the annotated PTX: a block the
 # `brx.idx` at line 1532 sends threads to, on a byte each warp loads
 # from shared memory alike, runs when the jump table selects it, the
-# same for the whole warp.
+# same for the whole warp, nested in the block of the `brx.idx`.
 RUN: %ptxroof analyze --annotate %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx | FileCheck "%s"
-CHECK: {{^}}$L__BB0_22:{{ +}}// %.loopexit920 // warp 4-11 × lane * | runs when jump table at line 1532 selects this target (same for the whole warp) | exec ? (trips of $L__BB0_2){{$}}
+CHECK: {{^}}$L__BB0_22:{{ +}}// %.loopexit920 // warp 4-11 × lane * | runs when jump table at line 1532 selects this target (same for the whole warp) | nested in line 1532 | exec ? (trips of $L__BB0_2){{$}}

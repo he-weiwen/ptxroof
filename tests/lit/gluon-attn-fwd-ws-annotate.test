@@ -12,15 +12,25 @@
 # loads from shared memory alike.
 # `setp.lt.u32 %p60, %r1880, -190` is not read as a comparison within
 # its type, so the block it selects runs when its predicate is false.
+# A block with a condition of its own names the line of the nearest
+# dominating block with one, `nested in`: block 17 in block 16, block 16
+# in block 11, block 38 in block 37; a block with none, `under`:
+# `$L__BB0_46` under block 16, `$L__BB0_47` under block 11. Past block
+# 11's region, `$L__BB0_56` has neither.
 RUN: %ptxroof analyze --annotate --ncu %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck "%s"
 CHECK: {{^}}	setp.eq.b32 	%p58, %r1753, 0; // [<block 1>] warp 0-3 × lane * | exec 16,384/launch{{$}}
 CHECK: {{^}}$L__tmp5: // warp 0-3 × lane * | runs when predicate %p60 (line 350) is false (branch at line 357, same for the whole CTA) | exec <= 16,384/launch{{$}}
-CHECK: {{^}}$L__tmp7: // warp 0-3 × lane * | CTAs %ctaid.x < 64 (64/128) | exec <= 16,384/launch{{$}}
+CHECK: {{^}}$L__tmp7: // warp 0-3 × lane * | CTAs %ctaid.x < 64 (64/128) | under line 359 | exec <= 16,384/launch{{$}}
 CHECK: {{^}}	or.b32 	%r100, %r1880, 63; // [<block 11>] warp 0-3 × lane * | runs when uniform(%r1884@$L__BB0_39) ≥ 1 (branch at line 660, same for the whole CTA) | exec ? (trips of $L__BB0_39){{$}}
-CHECK: {{^}}$L__BB0_43:{{ +}}// %.lr.ph601 // loop: trips ? (uniform(%r1884@$L__BB0_43) is defined in an enclosing loop: depends on %r1884, carried around an enclosing loop) | warp 0-3 × lane * | exec ?{{$}}
-CHECK: {{^}}	shl.b32 	%r1228, %r101, 15; // [<block 16>] warp 0-3 × lane * | runs when 64·iv[$L__BB0_43] ≤ uniform(%r1880@$L__BB0_39) + 63 (branch at line 822, same for the whole CTA) | exec ? (trips of $L__BB0_43){{$}}
+CHECK: {{^}}$L__BB0_55:{{ +}}//   in Loop: Header=BB0_43 Depth=2 // warp 0-3 × lane * | under line 664 | exec ? (trips of $L__BB0_43){{$}}
+CHECK: {{^}}$L__BB0_43:{{ +}}// %.lr.ph601 // loop: trips ? (uniform(%r1884@$L__BB0_43) is defined in an enclosing loop: depends on %r1884, carried around an enclosing loop) | warp 0-3 × lane * | under line 664 | exec ?{{$}}
+CHECK: {{^}}	shl.b32 	%r1228, %r101, 15; // [<block 16>] warp 0-3 × lane * | runs when 64·iv[$L__BB0_43] ≤ uniform(%r1880@$L__BB0_39) + 63 (branch at line 822, same for the whole CTA) | nested in line 664 | exec ? (trips of $L__BB0_43){{$}}
 CHECK: {{^}}	ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1040, %r1041, %r1064, %r1065}, [%r1230]; // shared load addr ? (depends on special register %tid.x, behind `xor.b32`){{$}}
-CHECK: {{^}}	add.s32 	%r1234, %r61, %r1883; // [<block 17>] warp 0-3 × lane * | runs when 64·iv[$L__BB0_43] > uniform(%r1880@$L__BB0_39) - 63 (branch at line 1219, same for the whole CTA) | exec ? (trips of $L__BB0_43){{$}}
+CHECK: {{^}}	add.s32 	%r1234, %r61, %r1883; // [<block 17>] warp 0-3 × lane * | runs when 64·iv[$L__BB0_43] > uniform(%r1880@$L__BB0_39) - 63 (branch at line 1219, same for the whole CTA) | nested in line 825 | exec ? (trips of $L__BB0_43){{$}}
+CHECK: {{^}}$L__BB0_46:{{ +}}// %__nv_exp2f.exit336 // warp 0-3 × lane * | under line 825 | exec ? (trips of $L__BB0_43){{$}}
+CHECK: {{^}}$L__BB0_47:{{ +}}//   in Loop: Header=BB0_43 Depth=2 // warp 0-3 × lane * | under line 664 | exec ? (trips of $L__BB0_43){{$}}
+CHECK: {{^}}$L__BB0_56:{{ +}}// %._crit_edge602 // warp 0-3 × lane * | exec ? (trips of $L__BB0_39){{$}}
 CHECK: {{^}}$L__BB0_2:{{ +}}// %.preheader568 // loop: trips ? (loop has multiple latches) | warp 4-7 × lane * | exec ?{{$}}
 CHECK: {{^}}	setp.eq.b16 	%p3, %rs5, 1; // [<block 37>] warp 4-7 × lane * | runs when uniform(%rs5@2617) ≠ 0 (branch at line 2619, same for the whole warp) | exec ? (trips of $L__BB0_2){{$}}
+CHECK: {{^}}	barrier.sync 	1; // [<block 38>] warp 4-7 × lane * | runs when uniform(%rs5@2617) ≠ 1 (branch at line 2623, same for the whole warp) | nested in line 2622 | exec ? (trips of $L__BB0_2){{$}}
 CHECK: {{^}}$L__BB0_5:{{ +}}//   in Loop: Header=BB0_2 Depth=1 // warp 4-7 × lane * | runs when uniform(%rs5@2617) = 0 (branch at line 2619, same for the whole warp) | exec ? (trips of $L__BB0_2){{$}}
