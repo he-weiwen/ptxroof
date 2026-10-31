@@ -10,8 +10,11 @@
 # block 16 when `%r1883 ≤ %r100`, its loop's iteration as `iv`, `%r1880`
 # a multiple of 128 as itself; the worker's blocks on a byte each warp
 # loads from shared memory alike.
+# `setp.lt.u32 %p60, %r1880, -190` is not read as a comparison within
+# its type, so the block it selects runs when its predicate is false.
 RUN: %ptxroof analyze --annotate --ncu %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck "%s"
 CHECK: {{^}}	setp.eq.b32 	%p58, %r1753, 0; // [<block 1>] warp 0-3 × lane * | exec 16,384/launch{{$}}
+CHECK: {{^}}$L__tmp5: // warp 0-3 × lane * | runs when predicate %p60 (line 350) is false (branch at line 357, same for the whole CTA) | exec <= 16,384/launch{{$}}
 CHECK: {{^}}$L__tmp7: // warp 0-3 × lane * | CTAs %ctaid.x < 64 (64/128) | exec <= 16,384/launch{{$}}
 CHECK: {{^}}	or.b32 	%r100, %r1880, 63; // [<block 11>] warp 0-3 × lane * | runs when uniform(%r1884@$L__BB0_39) ≥ 1 (branch at line 660, same for the whole CTA) | exec ? (trips of $L__BB0_39){{$}}
 CHECK: {{^}}$L__BB0_43:{{ +}}// %.lr.ph601 // loop: trips ? (uniform(%r1884@$L__BB0_43) is defined in an enclosing loop: depends on %r1884, carried around an enclosing loop) | warp 0-3 × lane * | exec ?{{$}}

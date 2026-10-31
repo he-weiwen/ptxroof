@@ -997,14 +997,22 @@ One line each, with the trigger that would start it.
   that selects them, a loop's iteration k printed as
   `(iv[<header>] + 1)`
   (`without_a_block_shape_a_block_names_its_condition`). Then, where
-  past its immediate dominator the block runs under comparisons each the
-  same for the whole CTA or a warp, `runs when` and each as `lhs cmp
-  rhs`, the terms of negative coefficient and the constant on the right,
+  past its immediate dominator the block runs under conditions each the
+  same for the whole CTA or a warp, `runs when` and each, a comparison
+  as `lhs cmp rhs`, the terms of negative coefficient and the constant
+  on the right,
   an unknown value's known multiple as the value, with the branch's
   polarity, its line and for whom it is the same, joined by `and`
   (`gluon-attn-fwd-ws-annotate.test`,
-  `a_block_names_the_uniform_conditions_it_runs_under`). Then how many
-  times its unguarded statements run, over the launch given the grid
+  `a_block_names_the_uniform_conditions_it_runs_under`); one that is
+  not a comparison read within its type as `predicate <register> (line
+  <L>) is true|false`: gluon attn_fwd_ws's `setp.lt.u32 %p60, %r1880,
+  -190`, an unsigned comparison with a value of unknown range (the same
+  test); a jump table's target as `jump table at line <L> selects this
+  target` (`b200-jump-table-annotate.test`), a loop's exit as `leaves
+  loop <header> toward <block>`
+  (`micro-loop-guard-sibling-annotate.test`). Then how many times its
+  unguarded statements run, over the launch given the grid
   and the block shape, else per CTA, else per thread: `exec
   32,768/launch`, `<=` for a bound, and under a loop whose trips are
   not known `exec ? (trips of <header>)` (`k5-annotate.test`,
@@ -1021,9 +1029,8 @@ One line each, with the trigger that would start it.
   (`k5-annotate.test`, `micro-vector-def-annotate.test`). An
   instruction whose results nothing with an effect reads is `unused`
   (the same test). Not yet: the kernel's launch on its `.entry` line;
-  the ncu comparisons; uniform conditions under an `or` or a `not`,
-  those that are not a traced comparison, and the block each block's
-  conditions nest in; FLOPs.
+  the ncu comparisons; uniform conditions under an `or` or a `not`, and
+  the block each block's conditions nest in; FLOPs.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures

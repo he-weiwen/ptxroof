@@ -8,12 +8,14 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::execution_counts::{CtaSize, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
 use crate::analysis::memory_footprint::CountRange;
+use crate::analysis::register_effects::writes;
 use crate::analysis::thread_participation::{Atom, AtomKey, Pred};
 use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{Opcode, Stmt};
+use crate::ptx::ir::{Opcode, Register, Stmt};
 use crate::report::build::{AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel};
 use crate::report::schema::Access;
+use crate::ssa::Value;
 use std::collections::{BTreeMap, HashMap};
 
 /// Per statement, the parts of its annotation.
@@ -315,7 +317,7 @@ impl KernelReportBuilder<'_> {
     /// without one left to the threads shown.
     fn when(&self, b: BlockId, p: &Pred) -> Option<String> {
         match p {
-            Pred::Uniform(u, a) => self.atom(b, *u, a),
+            Pred::Uniform(u, a) => Some(self.atom(b, *u, a)),
             Pred::And(x, y) => {
                 let parts: Vec<String> =
                     [x, y].into_iter().filter_map(|q| self.when(b, q)).collect();
@@ -325,22 +327,58 @@ impl KernelReportBuilder<'_> {
         }
     }
 
-    /// Atom `a` of block `b`'s set, the same for the threads `u` names,
-    /// where it compares: the comparison, negated where `a` is, then the
-    /// branch deciding it and for whom it is the same.
-    fn atom(&self, b: BlockId, u: Uniform, a: &Atom) -> Option<String> {
+    /// Atom `a` of block `b`'s set, the same for the threads `u` names:
+    /// its comparison, negated where `a` is, or what it reads, then the
+    /// branch deciding it but a jump table and for whom it is the same.
+    fn atom(&self, b: BlockId, u: Uniform, a: &Atom) -> String {
         let sets = &self.counts.sets;
-        let (form, cmp) = match (&a.key, sets.forms.get(&a.key)) {
-            (_, Some((form, cmp))) => (form, *cmp),
-            (AtomKey::OutOfLoop(k), _) => (&k.form, k.cmp),
-            _ => return None,
+        let cmp = |c: Cmp| if a.negated { c.inverse() } else { c };
+        let not = |t: String| if a.negated { format!("not ({t})") } else { t };
+        let name = |b: BlockId| self.cfg.block_name(self.module, b);
+        let what = match (&a.key, sets.forms.get(&a.key)) {
+            (_, Some((form, c))) => self.formula(form, cmp(*c)),
+            (AtomKey::OutOfLoop(k), _) => self.formula(&k.form, cmp(k.cmp)),
+            (AtomKey::Def(op), _) => {
+                let reg = writes(self.module, &self.kernel.stmts[*op])
+                    .first()
+                    .copied();
+                self.predicate(reg.map(|reg| Value::Result { op: *op, reg }), a.negated)
+            }
+            (AtomKey::Value(v), _) => self.predicate(Some(*v), a.negated),
+            (AtomKey::Jump { stmt, .. }, _) => {
+                let line = self.line(*stmt).unwrap_or_default();
+                not(format!("jump table at line {line} selects this target"))
+            }
+            (AtomKey::Leave { header, target }, _) => not(format!(
+                "leaves loop {} toward {}",
+                name(*header),
+                name(*target)
+            )),
         };
-        let what = self.formula(form, if a.negated { cmp.inverse() } else { cmp });
         let scope = if u == Uniform::Cta { "CTA" } else { "warp" };
         let branch = (sets.deciders.get(&(b, a.key.clone())))
+            .filter(|_| !matches!(a.key, AtomKey::Jump { .. }))
             .and_then(|&s| Some(format!("branch at line {}, ", self.line(s)?)));
         let branch = branch.unwrap_or_default();
-        Some(format!("{what} ({branch}same for the whole {scope})"))
+        format!("{what} ({branch}same for the whole {scope})")
+    }
+
+    /// `predicate <register> (line <L>) is true`, or `false` where
+    /// `negated`; a φ or an undefined value by its name.
+    fn predicate(&self, v: Option<Value>, negated: bool) -> String {
+        let truth = if negated { "false" } else { "true" };
+        let name = match v {
+            Some(Value::Result {
+                op,
+                reg: Register::Named(r),
+            }) => {
+                let line = self.line(op).unwrap_or_default();
+                format!("{} (line {line})", self.module.interner.resolve(r))
+            }
+            Some(v) => Self::value_name(self.module, self.kernel, self.cfg, self.lines, v),
+            None => "?".to_owned(),
+        };
+        format!("predicate {name} is {truth}")
     }
 
     /// `form cmp 0` as `lhs cmp rhs`, a loop's iteration as `shifted`

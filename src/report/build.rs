@@ -921,7 +921,7 @@ impl<'a> KernelReportBuilder<'a> {
     /// `%r83@106`: a value's register and the PTX line of its statement,
     /// with the statement's index on the line when it shares it;
     /// `%r34@$L__BB0_5` for a φ, its block.
-    fn value_name(
+    pub(super) fn value_name(
         module: &Module,
         kernel: &Kernel,
         cfg: &ControlFlowGraph,
