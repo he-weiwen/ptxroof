@@ -84,16 +84,22 @@ impl KernelReportBuilder<'_> {
             let block =
                 (!own.is_empty()).then(|| (start, vec![format!("{prefix}{}", own.join(" | "))]));
             for (s, parts) in block.into_iter().chain(parts) {
-                let offset = match &self.kernel.stmts[s] {
-                    Stmt::Label { offset, .. } | Stmt::Unparsed { offset, .. } => *offset,
-                    Stmt::Instr(i) => i.offset,
-                    Stmt::BranchTargets(_) => continue,
+                let Some(line) = self.line(s) else {
+                    continue;
                 };
-                notes
-                    .entry(self.lines.line(offset))
-                    .or_default()
-                    .push(parts.join(" | "));
+                notes.entry(line).or_default().push(parts.join(" | "));
             }
+        }
+    }
+
+    /// The line of statement `s`, but a `.branchtargets` list.
+    fn line(&self, s: usize) -> Option<u32> {
+        match &self.kernel.stmts[s] {
+            Stmt::Label { offset, .. } | Stmt::Unparsed { offset, .. } => {
+                Some(self.lines.line(*offset))
+            }
+            Stmt::Instr(i) => Some(self.lines.line(i.offset)),
+            Stmt::BranchTargets(_) => None,
         }
     }
 
@@ -212,14 +218,7 @@ impl KernelReportBuilder<'_> {
     /// `c·k`'s c in the constant, or as `(iv + 1)` where a floor or a
     /// remainder holds it.
     fn form(&self, a: &AffineExpr) -> String {
-        let nested =
-            (a.terms.keys()).any(|v| v.counter().is_some() && !matches!(v, Var::Iteration(_)));
-        let k = (a.terms.iter()).filter(|(v, _)| matches!(v, Var::Iteration(_)) && !nested);
-        let base = k.fold(a.base.clone(), |base, (_, c)| SymExpr::add(base, c.clone()));
-        let shifted = AffineExpr {
-            terms: a.terms.clone(),
-            base,
-        };
+        let (shifted, nested) = shifted(a);
         self.shorten(shifted.render(|v| self.var(v, nested)))
     }
 
@@ -358,6 +357,20 @@ fn warp_lanes(masks: &[(u32, u32)], shape: [u32; 3], exact: bool) -> String {
         true => "no thread".to_owned(),
         false => groups.iter().map(group).collect::<Vec<_>>().join(" ∪ "),
     }
+}
+
+/// `a` with each `c·k` of a loop's iteration k = iv + 1 as `c·iv`, its c
+/// in the constant, unless a floor or a remainder holds a counter
+/// (`true`): then k stays, to print as `(iv + 1)`.
+fn shifted(a: &AffineExpr) -> (AffineExpr, bool) {
+    let nested = (a.terms.keys()).any(|v| v.counter().is_some() && !matches!(v, Var::Iteration(_)));
+    let k = (a.terms.iter()).filter(|(v, _)| matches!(v, Var::Iteration(_)) && !nested);
+    let base = k.fold(a.base.clone(), |base, (_, c)| SymExpr::add(base, c.clone()));
+    let shifted = AffineExpr {
+        terms: a.terms.clone(),
+        base,
+    };
+    (shifted, nested)
 }
 
 /// The parts of a conjunction that read the CTA index.
