@@ -475,4 +475,35 @@ $L__BB0_5:
             ]
         );
     }
+
+    /// Two statements on one line: their annotations joined by ` ; `.
+    #[test]
+    fn statements_on_one_line_join_their_annotations() {
+        let src = "\
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 p)
+.reqntid 32, 1, 1
+{
+	.reg .b32 %r<2>;
+	.reg .b64 %rd<2>;
+	ld.param.u64 %rd1, [p]; mov.u32 %r1, %tid.x;
+	st.global.u32 [%rd1], %r1; st.global.u32 [%rd1+4], %r1;
+	ret;
+}
+";
+        let out = annotate(src, &AnalyzeOptions::default()).expect("annotates");
+        let line = out
+            .lines()
+            .find(|l| l.contains("[%rd1+4]"))
+            .expect("the stores");
+        assert_eq!(
+            line.split_once(" // ").map(|(_, n)| n),
+            Some(
+                "global store [param_0] sectors/req 1 (ideal 1) ; \
+                 global store [param_0 + 4] sectors/req 1 (ideal 1)"
+            )
+        );
+    }
 }

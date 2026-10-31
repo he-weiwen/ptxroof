@@ -981,7 +981,8 @@ One line each, with the trigger that would start it.
 - Annotated PTX, `analyze --annotate`, to replace the text and JSON
   reports once their lit tests are ported: started 2026-10-31. The
   input's lines, each followed by nothing or by ` // ` and its
-  annotation (`tests/report_invariants.rs`). So far each block's
+  annotation (`tests/report_invariants.rs`), two statements' joined by
+  ` ; ` (`statements_on_one_line_join_their_annotations`). So far each block's
   annotation, on its label's line or else on its first statement's
   after `[<block name>]`: a loop header's `loop: trips` and the trip
   count, or `?` and why (`tests/lit/k5-annotate.test`), then, given
