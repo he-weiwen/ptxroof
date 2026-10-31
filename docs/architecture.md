@@ -47,6 +47,7 @@ only declare modules and selected public entry points.
 | `analysis/instruction_counts/classify` | Decode instructions into categories and contributions |
 | `analysis/instruction_counts/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/instruction_counts/collect` | Attach block/loop execution context to instruction contributions |
+| `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound |
 | `report/bindings` | Caller parameter bindings and their text syntax |
 | `report/measured` | Import and validate NCU records; compare measured and predicted quantities |
 | `report/schema` | Owned serializable report structures |
@@ -98,13 +99,16 @@ then:
 2. names loops, collects every loop's trip count from that instance, and pairs
    unrolled loops;
 3. collects instruction contributions per block;
-4. computes thread participation from the same instance, and refines dominance
-   and count qualifiers with its dead edges;
+4. computes thread participation from the same instance;
 5. takes compile-time thread sets: the same sets when the bindings are exactly
    the `.reqntid` block shape, otherwise from a second `AffineAnalysis` over the
    same `KernelAnalyses` and `UniformityInfo` under that shape, so runtime parameter bindings never make
    a conditionally executed instruction look removable;
-6. marks dead code, then traces addresses and computes memory footprints.
+6. marks dead code;
+7. builds `ExecutionCounts`, which takes the trip counts, thread participation
+   and dead code (the builder reads them through it), and refines dominance and
+   count qualifiers with the participation's dead edges;
+8. traces addresses and computes memory footprints.
 
 `report/build` aggregates the results into the schema and, given an NCU record,
 compares them; `main` renders text or JSON. `--dump-ast` reads, parses, prints
