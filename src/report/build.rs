@@ -25,6 +25,7 @@ use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::trip_counts::trip_counts_from;
+use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loop_forest;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::dead_code::unused;
@@ -306,14 +307,20 @@ impl KernelReportBuilder<'_> {
                     else {
                         continue;
                     };
-                    let (address, unknown, form) = match module.operand(*base) {
+                    let traced = match module.operand(*base) {
+                        Operand::Register(_) if rest.is_empty() => {
+                            Some(affine.address(*base, *offset, pos))
+                        }
+                        _ => None,
+                    };
+                    let (address, unknown, form) = match (module.operand(*base), &traced) {
                         // PTX ISA §9.7.9.26.5.2: `[tensorMap, tensorCoords]`.
                         _ if !rest.is_empty() => (
                             None,
                             Some("the tensor map holds the address".to_owned()),
                             None,
                         ),
-                        Operand::SymbolRef(s) => {
+                        (Operand::SymbolRef(s), _) => {
                             let sym = self.shorten(module.interner.resolve(*s).to_owned());
                             let addr = if *offset == 0 {
                                 sym
@@ -322,14 +329,14 @@ impl KernelReportBuilder<'_> {
                             };
                             (Some(addr), None, None)
                         }
-                        Operand::Register(_) => match affine.address(*base, *offset, pos) {
-                            Ok(a) => (Some(self.shorten(a.render(name))), None, Some(a)),
-                            Err(reason) => (
-                                None,
-                                Some(reason.render(affine.data, scope, false, &name)),
-                                None,
-                            ),
-                        },
+                        (_, Some(Ok(a))) => {
+                            (Some(self.shorten(a.render(name))), None, Some(a.clone()))
+                        }
+                        (_, Some(Err(reason))) => (
+                            None,
+                            Some(reason.render(affine.data, scope, false, &name)),
+                            None,
+                        ),
                         _ => (
                             None,
                             Some("address operand form not traced".to_owned()),
@@ -478,7 +485,7 @@ impl KernelReportBuilder<'_> {
                         footprint_unknown: footprint_unknown.or(wavefronts_unknown),
                         reuse,
                     };
-                    operands.entry(pos).or_default().push((row.clone(), form));
+                    operands.entry(pos).or_default().push((row.clone(), traced));
                     out.entry(scope).or_default().push(row);
                 }
             }
@@ -535,9 +542,9 @@ type PerWavefronts = HashMap<usize, SharedWaves>;
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
 
-/// Per statement, its memory operands' rows, each with its address's
-/// affine form where it has one.
-pub(super) type Operands = HashMap<usize, Vec<(Access, Option<AffineExpr>)>>;
+/// Per statement, its memory operands' rows, each with its address as
+/// traced where a register holds it: the affine form, or why there is none.
+pub(super) type Operands = HashMap<usize, Vec<(Access, Option<Result<AffineExpr, UnknownReason>>)>>;
 
 /// The direction a count is known in; `None` when bounded in neither.
 fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
@@ -818,6 +825,7 @@ pub(super) struct KernelReportBuilder<'a> {
     per_request: PerRequests,
     per_wavefronts: PerWavefronts,
     pub(super) operands: Operands,
+    pub(super) data: &'a KernelAnalyses<'a>,
     pub(super) counts: ExecutionCounts<'a>,
     /// The PTX file's lines, naming a uniform value by its statement's.
     pub(super) lines: &'a LineIndex,
@@ -891,6 +899,7 @@ impl<'a> KernelReportBuilder<'a> {
             per_request: HashMap::new(),
             per_wavefronts: HashMap::new(),
             operands: HashMap::new(),
+            data,
             counts,
             lines,
         };

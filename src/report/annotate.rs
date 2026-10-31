@@ -3,6 +3,7 @@
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
+use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::execution_counts::{CtaSize, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
@@ -169,10 +170,15 @@ impl KernelReportBuilder<'_> {
             true => r.min.to_string(),
             false => format!("{}–{}", r.min, r.max),
         };
+        let scope = self.forest.block_loop[self.data.block_of(s).0 as usize];
         let rows = self.operands.get(&s).map_or(&[][..], Vec::as_slice);
-        let row = |(row, form): &(Access, Option<AffineExpr>)| {
-            let address = match (form, &row.address) {
-                (Some(a), _) => format!("[{}]", self.form(a)),
+        let row = |(row, traced): &(Access, Option<Result<AffineExpr, UnknownReason>>)| {
+            let address = match (traced, &row.address) {
+                (Some(Ok(a)), _) => format!("[{}]", self.form(a)),
+                (Some(Err(why)), _) => {
+                    let why = why.render(self.data, scope, false, &|v| self.var(v, true));
+                    format!("addr ? ({why})")
+                }
                 (None, Some(a)) => format!("[{a}]"),
                 (None, None) => format!("addr ? ({})", row.unknown.as_deref().unwrap_or_default()),
             };
@@ -209,12 +215,19 @@ impl KernelReportBuilder<'_> {
             terms: a.terms.clone(),
             base,
         };
-        self.shorten(shifted.render(|v| match v {
-            Var::Iteration(l) if nested => format!("({} + 1)", self.iv(*l)),
+        self.shorten(shifted.render(|v| self.var(v, nested)))
+    }
+
+    /// A variable: a loop's iteration as `iv[<header label>]`, or for k
+    /// itself as `(iv + 1)` where `plus_one`; an unknown value by its
+    /// register and line.
+    fn var(&self, v: &Var, plus_one: bool) -> String {
+        match v {
+            Var::Iteration(l) if plus_one => format!("({} + 1)", self.iv(*l)),
             Var::Iteration(l) => self.iv(*l),
             Var::Unknown(u) => self.leaf_name(&SymbolicConstant::Unknown(*u)),
             v => v.to_string(),
-        }))
+        }
     }
 
     /// A count, a number with its thousands separated by `,`, else an
@@ -284,11 +297,7 @@ impl KernelReportBuilder<'_> {
     /// The condition on the thread and CTA indices that selects `set`, a
     /// loop's iteration k as `iv + 1`.
     fn condition(&self, set: &Pred) -> Option<String> {
-        let name = |v: &Var| match v {
-            Var::Iteration(l) => format!("({} + 1)", self.iv(*l)),
-            v => v.to_string(),
-        };
-        set.render_named(&name).map(|t| t.replace(" * ", "·"))
+        (set.render_named(&|v| self.var(v, true))).map(|t| t.replace(" * ", "·"))
     }
 
     /// Loop `l`'s iteration from 0, `iv[<header label>]`, LLVM's canonical

@@ -1003,7 +1003,9 @@ One line each, with the trigger that would start it.
   but a predicated `bra`, has its own on its line
   (`micro-guards-annotate.test`). A memory operand but a parameter is
   `<space> <direction> [<address>]`, a loop's iteration k printed as
-  `iv[<header>]` = k - 1, or `addr ?` and why, then a global one's
+  `iv[<header>]` = k - 1, or `addr ?` and why, a counter there as
+  `(iv[<header>] + 1)` (`micro-guarded-exit-bound-annotate.test`),
+  then a global one's
   `sectors/req` and a shared one's `wavefronts/req` with their ideal,
   `<=` for a bound, or `?` and why (`k5-annotate.test`,
   `micro-vector-def-annotate.test`).
