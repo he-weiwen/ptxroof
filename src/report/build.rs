@@ -865,7 +865,10 @@ impl<'a> KernelReportBuilder<'a> {
             display[r] = format!("{} (remainder)", display[r]);
         }
 
-        let sets = thread_sets(&affine);
+        let mut sets = thread_sets(&affine);
+        for (form, _) in sets.forms.values_mut() {
+            *form = affine.known_multiples(form);
+        }
         let compile_time: HashMap<SymbolicConstant, i64> =
             (SpecialVector::Ntid.components().into_iter())
                 .zip(kernel.reqntid.into_iter().flatten())

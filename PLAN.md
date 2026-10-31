@@ -1000,8 +1000,9 @@ One line each, with the trigger that would start it.
   past its immediate dominator the block runs under comparisons each the
   same for the whole CTA or a warp, `runs when` and each as `lhs cmp
   rhs`, the terms of negative coefficient and the constant on the right,
-  with the branch's polarity, its line and for whom it is the same,
-  joined by `and` (`gluon-attn-fwd-ws-annotate.test`,
+  an unknown value's known multiple as the value, with the branch's
+  polarity, its line and for whom it is the same, joined by `and`
+  (`gluon-attn-fwd-ws-annotate.test`,
   `a_block_names_the_uniform_conditions_it_runs_under`). Then how many
   times its unguarded statements run, over the launch given the grid
   and the block shape, else per CTA, else per thread: `exec
