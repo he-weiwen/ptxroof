@@ -877,6 +877,7 @@ fn runs(xs: &[i64]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::report::bindings::parse_bind;
 
     #[test]
     fn runs_of_values_print_as_ranges_strides_and_singles() {
@@ -934,14 +935,8 @@ $L__BB0_5:
 	ret;
 }
 ";
-        let out = annotate(src, &AnalyzeOptions::default()).expect("annotates");
-        let notes: Vec<&str> = out
-            .lines()
-            .filter_map(|l| l.split_once(" // "))
-            .map(|(_, n)| n)
-            .collect();
         assert_eq!(
-            notes,
+            notes(src, &AnalyzeOptions::default()),
             [
                 "per thread: global store <= 20 B; param load 8 B",
                 "loop: trips 4 | exec 4/thread",
@@ -1040,6 +1035,370 @@ $L__BB0_8:
                 "global store [param_0] sectors/req 1 (ideal 1) ; \
                  global store [param_0 + 4] sectors/req 1 (ideal 1)"
             )
+        );
+    }
+
+    /// Each annotation of `src` under `opts`, in line order.
+    fn notes(src: &str, opts: &AnalyzeOptions) -> Vec<String> {
+        let out = annotate(src, opts).expect("annotates");
+        (out.lines())
+            .filter_map(|l| l.split_once(" // "))
+            .map(|(_, n)| n.to_owned())
+            .collect()
+    }
+
+    /// The annotation of the first line of `src` holding `ptx`, under
+    /// `opts`; `None` where that line has none.
+    fn note(src: &str, opts: &AnalyzeOptions, ptx: &str) -> Option<String> {
+        let out = annotate(src, opts).expect("annotates");
+        let line = (out.lines())
+            .find(|l| l.split(" // ").next().is_some_and(|p| p.contains(ptx)))
+            .expect("a line holds it");
+        line.split_once(" // ").map(|(_, n)| n.to_owned())
+    }
+
+    /// What the counted statements of `src`'s kernel sum to per thread
+    /// under `opts`, as the `.entry` line prints it without a block shape.
+    fn per_thread(src: &str, opts: &AnalyzeOptions) -> Option<String> {
+        let mut out = None;
+        each_kernel(src, opts, |b| out = b.totals(Per::Thread)).expect("analyzes");
+        out
+    }
+
+    /// Each memory operand of `src`'s kernel as its line's annotation
+    /// prints it, an `unused` instruction's too.
+    fn memory_operands(src: &str, opts: &AnalyzeOptions) -> Vec<String> {
+        let mut out = Vec::new();
+        each_kernel(src, opts, |b| {
+            (0..b.kernel.stmts.len())
+                .filter(|&s| matches!(b.kernel.stmts[s], Stmt::Instr(_)))
+                .for_each(|s| out.extend(b.operands(s)));
+        })
+        .expect("analyzes");
+        out
+    }
+
+    /// Blocks selected by thread-index branches: the two halves of a
+    /// warp-specialized CTA, warps 4-7 and 0-3, and an elected thread,
+    /// lane 0 of warp 0. Per CTA their counts are exact: 128 threads add
+    /// once and 128 multiply twice, 384 FLOPs. Per thread they stay
+    /// bounds: a thread runs one path. Triton broadcasts the warp index
+    /// from lane 0 before comparing; the same warps run that half.
+    #[test]
+    fn thread_index_branches_select_blocks() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 256, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\nshr.u32 %r2, %r1, 5;\n\
+                   setp.lt.u32 %p1, %r2, 4;\n@%p1 bra $L__A;\n\
+                   add.f32 %f1, %f1, %f1;\nbra.uni $L__J;\n\
+                   $L__A:\nmul.f32 %f1, %f1, %f1;\nmul.f32 %f1, %f1, %f1;\n\
+                   $L__J:\nsetp.ne.s32 %p2, %r1, 0;\n@%p2 bra $L__END;\n\
+                   st.global.f32 [%rd1], %f1;\n$L__END:\nret;\n}\n";
+        assert_eq!(
+            notes(src, &opts),
+            [
+                "block 256×1×1 | per CTA: flops f32 384; global store 4 B; param load 2,048 B",
+                "[<block 0>] warp * × lane * | exec 256/CTA",
+                "[<block 1>] warp 4-7 × lane * | exec 128/CTA",
+                "warp 0-3 × lane * | exec 128/CTA",
+                "warp * × lane * | exec 256/CTA",
+                "[<block 4>] warp 0 × lane 0 | exec 1/CTA | \
+                 global store [param_0] sectors/req 1 (ideal 1)",
+                "warp * × lane * | exec 256/CTA",
+            ]
+        );
+        assert_eq!(
+            per_thread(src, &opts).as_deref(),
+            Some("per thread: flops f32 <= 3; global store <= 4 B; param load 8 B")
+        );
+        let src = src.replace(
+            "setp.lt.u32 %p1, %r2, 4;",
+            "shfl.sync.idx.b32 %r3, %r2, 0, 31, -1;\nsetp.lt.u32 %p1, %r3, 4;",
+        );
+        assert_eq!(
+            note(&src, &opts, "$L__A:").as_deref(),
+            Some("warp 0-3 × lane * | exec 128/CTA")
+        );
+    }
+
+    /// A guarded redefinition of the guard register is not read: the
+    /// store's bytes per CTA are a bound. Nine `and.pred` steps exceed
+    /// the reading depth: 64 × 4 B as a bound; the base predicate read
+    /// directly afterwards still selects warp 0 exactly, 32 × 2 B.
+    #[test]
+    fn guarded_predicate_definitions_and_deep_chains_stay_bounds() {
+        let opts = AnalyzeOptions::default();
+        let head = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                    .visible .entry k(\n.param .u64 k_param_0\n)\n\
+                    .reqntid 64, 1, 1\n{\n\
+                    ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n\
+                    setp.lt.u32 %p0, %r1, 32;\nsetp.eq.u32 %p9, %r1, 0;\n";
+        let src = format!(
+            "{head}@%p9 setp.lt.u32 %p0, %r1, 64;\n@%p0 st.global.u32 [%rd1], %r1;\nret;\n}}\n"
+        );
+        assert_eq!(
+            note(&src, &opts, ".entry").as_deref(),
+            Some("block 64×1×1 | per CTA: global store <= 256 B; param load 512 B")
+        );
+        let chain: String = (1..=9)
+            .map(|i| format!("and.pred %p{i}, %p{}, %p{};\n", i - 1, i - 1))
+            .collect();
+        let src = format!(
+            "{head}{chain}@%p9 st.global.u32 [%rd1], %r1;\n@%p0 st.global.u16 [%rd1+4], %rs1;\nret;\n}}\n"
+        );
+        assert_eq!(
+            note(&src, &opts, ".entry").as_deref(),
+            Some("block 64×1×1 | per CTA: global store <= 320 B; param load 512 B")
+        );
+        assert_eq!(
+            note(&src, &opts, "st.global.u16").as_deref(),
+            Some(
+                "warp 0 × lane * | exec 32/CTA | global store [param_0 + 4] sectors/req 1 (ideal 1)"
+            )
+        );
+    }
+
+    /// A guard every thread reads as true keeps the guarded load's bytes
+    /// per CTA exact.
+    #[test]
+    fn a_guard_every_thread_reads_as_true_keeps_counts_exact() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nsetp.eq.u32 %p1, 1, 1;\n\
+                   @%p1 ld.global.u32 %r1, [%rd1];\nst.global.u32 [%rd1], %r1;\nret;\n}\n";
+        assert_eq!(
+            note(src, &AnalyzeOptions::default(), ".entry").as_deref(),
+            Some("block 32×1×1 | per CTA: global load 128 B, store 128 B; param load 256 B")
+        );
+    }
+
+    /// The store's block is reached only through two branches no thread
+    /// takes, so the load it alone reads is `unused`, with or without a
+    /// launch shape ptxas never sees.
+    #[test]
+    fn a_launch_shape_leaves_the_unused_instructions_alone() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r1, [%rd1];\n\
+                   mov.u32 %r9, %tid.x;\nmov.pred %p1, 0;\nsetp.lt.u32 %p2, %r9, 4;\n\
+                   @%p2 bra $L__B;\n@%p1 bra $L__S;\nbra.uni $L__E;\n\
+                   $L__B:\n@%p1 bra $L__S;\nbra.uni $L__E;\n\
+                   $L__S:\nst.global.u32 [%rd1], %r1;\n$L__E:\nret;\n}\n";
+        let unused = |launch| {
+            let opts = AnalyzeOptions {
+                launch,
+                ..Default::default()
+            };
+            let out = annotate(src, &opts).expect("annotates");
+            (out.lines())
+                .filter_map(|l| l.split_once(" // "))
+                .filter(|(_, n)| n.ends_with("unused"))
+                .map(|(ptx, _)| ptx.to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert!(unused(None).contains(&"ld.global.u32 %r1, [%rd1];".to_owned()));
+        assert_eq!(unused(None), unused(Some([32, 1, 1])));
+    }
+
+    /// `%laneid` in a one-dimensional block is `%tid.x` mod 32: lane 0 of
+    /// each of 2 warps stores 4 B, 8 B per CTA, exact. In two rows of 32
+    /// the lane is not read from `%tid.x` alone: 64 × 4 B, a bound.
+    #[test]
+    fn laneid_is_the_lane_in_a_one_dimensional_block() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n\
+                   .reqntid 64, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %laneid;\n\
+                   setp.eq.u32 %p1, %r1, 0;\n@%p1 st.global.u32 [%rd1], %r1;\nret;\n}\n";
+        assert_eq!(
+            note(src, &opts, ".entry").as_deref(),
+            Some("block 64×1×1 | per CTA: global store 8 B; param load 512 B")
+        );
+        let src = src.replace(".reqntid 64, 1, 1", ".reqntid 32, 2, 1");
+        assert_eq!(
+            note(&src, &opts, ".entry").as_deref(),
+            Some("block 32×2×1 | per CTA: global store <= 256 B; param load 512 B")
+        );
+    }
+
+    /// Over a launch, a count that reads the CTA index is summed over the
+    /// grid: `k < %ctaid.x` from 0 runs max(c, 1) trips in CTA c, 7 over
+    /// 4 CTAs. A `!=` latch's count holds where its step divides its
+    /// distance into a positive count: `k != 2 - %ctaid.x` by 1 is
+    /// unknown with CTA 2, whose counter never meets 0, and by 2 with CTA
+    /// 1; two nested loops of `1 - 2 * %ctaid.x` trips are unknown with
+    /// CTA 1, though the product of their counts is 1 there. A guard
+    /// skipping CTA 0, where `k != %ctaid.x` never meets its bound, leaves
+    /// 1 + 2 + 3 trips. Past 2^24 CTAs on the axes read it is unknown.
+    /// Each is the `.entry` line's global bytes stored over the launch,
+    /// `?` where unknown.
+    #[test]
+    fn a_count_over_the_cta_index_is_summed_over_the_grid() {
+        let store = |body: &str, grid: [u32; 3]| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
+                 .reqntid 32, 1, 1\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r5, [k_param_1];\n\
+                 mov.u32 %r1, %ctaid.x;\nmov.u32 %r6, %ctaid.y;\n{body}\nret;\n}}\n"
+            );
+            let opts = AnalyzeOptions {
+                bindings: vec![parse_bind("1:n=2").expect("binding")],
+                grid: Some(grid),
+                ..Default::default()
+            };
+            let entry = note(&src, &opts, ".entry").expect("the launch's sums");
+            let (_, sums) = entry.split_once("per launch: ").expect("a grid");
+            (sums.split("; ")).find_map(|s| s.strip_prefix("global store ").map(str::to_owned))
+        };
+        let one = |bound: &str, step: i64, cmp: &str| {
+            format!(
+                "{bound}\nmov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, {step};\n\
+                 st.global.u32 [%rd1], %r2;\nsetp.{cmp}.u32 %p1, %r2, %r3;\n@%p1 bra $L__L;"
+            )
+        };
+        let (known, unknown) = (|n: &str| Some(format!("{n} B")), Some("? B".to_owned()));
+        let below = one("mov.u32 %r3, %r1;", 1, "lt");
+        assert_eq!(store(&below, [4, 1, 1]), known("896"));
+        assert_eq!(store(&below, [4, 3, 1]), known("2,688"));
+        let ne = |step| one("sub.s32 %r3, %r5, %r1;", step, "ne");
+        assert_eq!(store(&ne(1), [2, 1, 1]), known("384"));
+        assert_eq!(store(&ne(1), [3, 1, 1]), unknown);
+        assert_eq!(store(&ne(2), [1, 1, 1]), known("128"));
+        assert_eq!(store(&ne(2), [2, 1, 1]), unknown);
+        let nested = "mov.u32 %r9, 1;\nshl.b32 %r7, %r1, 1;\nsub.s32 %r3, %r9, %r7;\n\
+                      mov.u32 %r8, 0;\n$L__O:\nadd.s32 %r8, %r8, 1;\nmov.u32 %r2, 0;\n\
+                      $L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                      setp.ne.u32 %p1, %r2, %r3;\n@%p1 bra $L__L;\n\
+                      setp.ne.u32 %p2, %r8, %r3;\n@%p2 bra $L__O;";
+        assert_eq!(store(nested, [1, 1, 1]), known("128"));
+        assert_eq!(store(nested, [2, 1, 1]), unknown);
+        let guarded = "setp.lt.s32 %p3, %r1, 1;\n@%p3 bra $L__E;\nmov.u32 %r2, 0;\n\
+                       $L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                       setp.ne.u32 %p1, %r2, %r1;\n@%p1 bra $L__L;\n$L__E:";
+        assert_eq!(store(guarded, [4, 1, 1]), known("768"));
+        let both = one("add.s32 %r3, %r1, %r6;", 1, "lt");
+        assert_eq!(store(&both, [8192, 4096, 1]), unknown);
+    }
+
+    /// A loop entered only by the threads a thread-index condition picks
+    /// is a bound per thread, but per CTA its threads are counted:
+    /// `%tid.x < 64` of 128 store 4 B on each of n trips.
+    #[test]
+    fn a_loop_entered_by_counted_threads_is_exact_per_cta() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
+                   .reqntid 128, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r5, [k_param_1];\n\
+                   mov.u32 %r1, %tid.x;\nsetp.ge.u32 %p2, %r1, 64;\n@%p2 bra $L__E;\n\
+                   mov.u32 %r2, 0;\n$L__L:\nadd.s32 %r2, %r2, 1;\nst.global.u32 [%rd1], %r2;\n\
+                   setp.lt.u32 %p1, %r2, %r5;\n@%p1 bra $L__L;\n$L__E:\nret;\n}\n";
+        assert_eq!(
+            per_thread(src, &opts).as_deref(),
+            Some("per thread: global store <= (4·max(param_1, 1)) B; param load 12 B")
+        );
+        assert_eq!(
+            note(src, &opts, ".entry").as_deref(),
+            Some(
+                "block 128×1×1 | per CTA: global store (256·max(param_1, 1)) B; param load 1,536 B"
+            )
+        );
+    }
+
+    /// A block a loop counter's mask selects, but that a short-circuit
+    /// on loaded values may also skip, is a bound per CTA however its
+    /// trips count.
+    #[test]
+    fn a_bypassed_block_under_a_counter_mask_is_a_bound() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 64, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.global.u32 %r7, [%rd1];\n\
+                   ld.global.u32 %r8, [%rd1+4];\nmov.u32 %r2, %tid.x;\nmov.u32 %r3, 0;\n\
+                   $L__H:\nshl.b32 %r4, %r3, 6;\nadd.s32 %r5, %r4, %r2;\n\
+                   setp.ge.u32 %p2, %r5, 300;\n@%p2 bra $L__T;\n\
+                   setp.ne.u32 %p4, %r7, 0;\n@%p4 bra $L__S;\n\
+                   setp.eq.u32 %p5, %r8, 0;\n@%p5 bra $L__T;\n\
+                   $L__S:\nst.global.u32 [%rd1+8], %r5;\n\
+                   $L__T:\nadd.s32 %r3, %r3, 1;\nsetp.lt.u32 %p3, %r3, 8;\n@%p3 bra $L__H;\nret;\n}\n";
+        assert_eq!(
+            note(src, &AnalyzeOptions::default(), ".entry").as_deref(),
+            Some("block 64×1×1 | per CTA: global load 512 B, store <= 2,048 B; param load 512 B")
+        );
+    }
+
+    /// `a < b` as `s32` with `a = b + k`, `b = %tid.x + 2^31 - 16`: the
+    /// difference is the counter alone, but `b` leaves the type, so the
+    /// lanes differ (lane 15 alone at k = 1): the store's threads, count
+    /// and sectors per warp request under the guard are bounds.
+    #[test]
+    fn a_counter_difference_past_its_type_is_no_per_trip_comparison() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n\
+                   add.u32 %r2, %r1, 2147483632;\nmul.wide.u32 %rd2, %r1, 4;\n\
+                   add.s64 %rd3, %rd1, %rd2;\nmov.u32 %r3, 0;\n$L__L:\nadd.u32 %r3, %r3, 1;\n\
+                   add.u32 %r4, %r2, %r3;\nsetp.lt.s32 %p1, %r4, %r2;\n\
+                   @%p1 st.global.u32 [%rd3], %r3;\nsetp.lt.u32 %p2, %r3, 4;\n\
+                   @%p2 bra $L__L;\nret;\n}\n";
+        assert_eq!(
+            note(src, &AnalyzeOptions::default(), "st.global").as_deref(),
+            Some(
+                "<= warp * × lane * | exec <= 128/CTA | \
+                 global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4)"
+            )
+        );
+    }
+
+    /// §10.32: `%dynamic_smem_size` is set "for the CTA … at launch time",
+    /// so a branch on it keeps a warp whole; §10.23: `%clock` is a cycle
+    /// counter, so a branch on it may split one, and the load's sectors
+    /// per warp request are a bound. The load is `unused`: its operand as
+    /// its line would print it.
+    #[test]
+    fn a_branch_on_a_per_cta_special_register_keeps_the_lanes_exact() {
+        let opts = AnalyzeOptions::default();
+        let sectors = |sreg: &str| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 128, 1, 1\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, {sreg};\n\
+                 setp.lt.u32 %p1, %r1, 1024;\n@%p1 bra $L__end;\n\
+                 mov.u32 %r2, %tid.x;\nmul.wide.u32 %rd2, %r2, 4;\n\
+                 add.s64 %rd3, %rd1, %rd2;\nld.global.f32 %f1, [%rd3];\n$L__end:\nret;\n}}\n"
+            );
+            memory_operands(&src, &opts)
+        };
+        assert_eq!(
+            sectors("%dynamic_smem_size"),
+            ["global load [4·%tid.x + param_0] sectors/req 4–5 (ideal 4)"]
+        );
+        assert_eq!(
+            sectors("%clock"),
+            ["global load [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4)"]
+        );
+    }
+
+    /// A guard `%tid.x < 16 and min(p, q) < 7`: the second half is not
+    /// read but uniform, so each warp's lanes are still known and the
+    /// load's sectors per warp request exact. The load is `unused`: its
+    /// operand as its line would print it.
+    #[test]
+    fn a_cta_uniform_half_of_an_and_keeps_the_lanes_exact() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n\
+                   .reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r3, [k_param_1];\n\
+                   mov.u32 %r1, %tid.x;\nsetp.lt.u32 %p1, %r1, 16;\n\
+                   max.s32 %r5, %r3, 9;\nmin.s32 %r6, %r5, %r3;\n\
+                   setp.lt.s32 %p2, %r6, 7;\nand.pred %p3, %p1, %p2;\n\
+                   mul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                   @%p3 ld.global.f32 %f1, [%rd3];\nret;\n}\n";
+        assert_eq!(
+            memory_operands(src, &AnalyzeOptions::default()),
+            ["global load [4·%tid.x + param_0] sectors/req 2–3 (ideal 2)"]
         );
     }
 }
