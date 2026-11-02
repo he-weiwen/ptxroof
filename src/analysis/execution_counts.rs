@@ -6,7 +6,7 @@ use crate::analysis::affine::trip_counts::TripCountResults;
 use crate::analysis::control_flow::dominators;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier};
-use crate::analysis::instruction_counts::measurement::Precision;
+use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Precision};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets};
 use crate::ptx::cfg::BlockId;
@@ -95,6 +95,14 @@ impl FlopAccumulator {
     pub(crate) fn add_unknown(&mut self) {
         self.total.add_unknown();
     }
+}
+
+/// What counted statements contribute, summed: FLOPs by pipe and
+/// precision, bytes by space, loaded and stored, and conversions.
+pub(crate) struct Workload {
+    pub(crate) flops: BTreeMap<Pipe, FlopAccumulator>,
+    pub(crate) bytes: BTreeMap<&'static str, (CountAccumulator, CountAccumulator)>,
+    pub(crate) conversions: CountAccumulator,
 }
 
 pub(crate) struct CtaSize {
@@ -633,5 +641,113 @@ impl<'a> ExecutionCounts<'a> {
                 .and_then(|&n| u32::try_from(n).ok())
         });
         Some([x?, y?, z?])
+    }
+
+    /// Block `bm`'s multiplier at the scale `per` within loop `below`,
+    /// without trips where a loop's are not read at the launch, and how
+    /// its unguarded statements run, unknown where that does not fit in
+    /// `i64`; `None` outside `below` or where no thread runs it.
+    pub(crate) fn scaled<'c>(
+        &self,
+        bm: &BlockMeasurements,
+        below: Option<LoopId>,
+        per: Per<'c>,
+    ) -> Option<(Multiplier<'c>, Option<Participation>)> {
+        let mut multiplier = self.multiplier(bm.block, below, per)?;
+        let set = &self.sets.blocks[bm.block.0 as usize];
+        if *set == Pred::False {
+            return None;
+        }
+        if multiplier.unread {
+            multiplier.trips = None;
+        }
+        let launch = self.launches.get(&(bm.block, None)).copied();
+        let block = (self.running(bm, &multiplier, set, launch)).filter(|p| p.narrow().is_some());
+        Some((multiplier, block))
+    }
+
+    /// What `blocks`' counted statements contribute, each times how many
+    /// times it runs at the scale `per` within loop `below`.
+    pub(crate) fn workload(
+        &self,
+        blocks: &[BlockMeasurements],
+        below: Option<LoopId>,
+        per: Per,
+    ) -> Workload {
+        let mut flops: BTreeMap<Pipe, FlopAccumulator> = (Pipe::ALL.iter())
+            .map(|&p| (p, FlopAccumulator::new()))
+            .collect();
+        let mut bytes: BTreeMap<&'static str, (CountAccumulator, CountAccumulator)> =
+            (["global", "shared", "local"].into_iter())
+                .map(|s| (s, Default::default()))
+                .collect();
+        let mut conversions = CountAccumulator::default();
+        for bm in blocks {
+            let Some((multiplier, block)) = self.scaled(bm, below, per) else {
+                continue;
+            };
+            let block = block.as_ref();
+            let mut guarded = HashMap::new();
+            for m in &bm.measurements {
+                if !self.counted(bm.block, m.provenance) {
+                    continue;
+                }
+                let (stmt, operand) = (m.provenance, m.memory_operand.unwrap_or(0));
+                let (threads, at_most, mult) =
+                    match self.statement(bm, &multiplier, stmt, operand, block, &mut guarded) {
+                        Resolution::Skipped => continue,
+                        Resolution::Unknown => (0, false, None),
+                        Resolution::Counted(p) => match p.narrow() {
+                            Some((threads, _)) => (threads, p.at_most, p.trips),
+                            None => (0, false, None),
+                        },
+                    };
+                let n = (m.count as i64).checked_mul(threads);
+                let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
+                let mult = mult.as_ref();
+                match m.kind {
+                    MeasureKind::Flops { pipe, precision } => {
+                        flops
+                            .get_mut(&pipe)
+                            .expect("every pipe pre-inserted")
+                            .add(precision, n, mult, at_most);
+                    }
+                    MeasureKind::Bytes { space, direction } => {
+                        let entry = bytes.entry(space.key()).or_default();
+                        match direction {
+                            Direction::Load => entry.0.add(n, mult, at_most),
+                            Direction::Store => entry.1.add(n, mult, at_most),
+                        }
+                    }
+                    MeasureKind::Conversions => conversions.add(n, mult, at_most),
+                    MeasureKind::UnquantifiedBytes { space, direction } => {
+                        let entry = bytes.entry(space.key()).or_default();
+                        match direction {
+                            Direction::Load => entry.0.add_unknown(),
+                            Direction::Store => entry.1.add_unknown(),
+                        }
+                    }
+                    MeasureKind::UnknownOps { .. } => {
+                        flops.values_mut().for_each(FlopAccumulator::add_unknown);
+                        for space in ["global", "shared"] {
+                            let (l, s) = bytes.get_mut(space).expect("pre-inserted");
+                            l.add_unknown();
+                            s.add_unknown();
+                        }
+                    }
+                    // Op-count kinds appear in unknowns/classes, not in
+                    // the workload aggregates.
+                    MeasureKind::NonFlopOps { .. }
+                    | MeasureKind::SyncOps
+                    | MeasureKind::CommunicationOps
+                    | MeasureKind::ControlOps => {}
+                }
+            }
+        }
+        Workload {
+            flops,
+            bytes,
+            conversions,
+        }
     }
 }

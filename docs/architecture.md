@@ -47,7 +47,7 @@ only declare modules and selected public entry points.
 | `analysis/instruction_counts/classify` | Decode instructions into categories and contributions |
 | `analysis/instruction_counts/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/instruction_counts/collect` | Attach block/loop execution context to instruction contributions |
-| `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound |
+| `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs, bytes and conversions they sum to |
 | `report/bindings` | Caller parameter bindings and their text syntax |
 | `report/measured` | Import and validate NCU records; compare measured and predicted quantities |
 | `report/schema` | Owned serializable report structures |

@@ -31,6 +31,7 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::dead_code::unused;
 use crate::analysis::execution_counts::{
     CountAccumulator, CtaSize, ExecutionCounts, FlopAccumulator, Participation, Per, Resolution,
+    Workload,
 };
 use crate::analysis::instruction_counts::classify::{ClassifiedInstruction, InstructionCategory};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
@@ -1048,35 +1049,19 @@ impl<'a> KernelReportBuilder<'a> {
     /// instruction whose threads do not is counted per CTA times those
     /// counts summed over the grid, and is unknown otherwise.
     fn aggregates(&self, below: Option<LoopId>, per: Per) -> Aggregates {
-        let mut flops: BTreeMap<Pipe, FlopAccumulator> = Pipe::ALL
-            .iter()
-            .map(|&p| (p, FlopAccumulator::new()))
-            .collect();
-        let mut bytes: BTreeMap<&'static str, (CountAccumulator, CountAccumulator)> =
-            BTreeMap::new();
-        let mut conversions = CountAccumulator::default();
+        let Workload {
+            flops,
+            bytes,
+            conversions,
+        } = self.counts.workload(&self.blocks, below, per);
         let mut instructions: BTreeMap<String, InstructionAccumulator> = BTreeMap::new();
         let mut instruction_total = IssueAccumulator::default();
         let mut instruction_all = IssueAccumulator::default();
-        for s in ["global", "shared", "local"] {
-            bytes.insert(s, Default::default());
-        }
 
         for bm in &self.blocks {
-            let Some(mut multiplier) = self.counts.multiplier(bm.block, below, per) else {
+            let Some((_, block)) = self.counts.scaled(bm, below, per) else {
                 continue;
             };
-            if self.counts.sets.blocks[bm.block.0 as usize] == Pred::False {
-                continue;
-            }
-            if multiplier.unread {
-                multiplier.trips = None;
-            }
-            // A block whose count does not fit in i64 is unknown, its warps too.
-            let set = &self.counts.sets.blocks[bm.block.0 as usize];
-            let launch = self.counts.launches.get(&(bm.block, None)).copied();
-            let block = (self.counts.running(bm, &multiplier, set, launch))
-                .filter(|p| p.narrow().is_some());
             let mult = (block.as_ref()).and_then(|p| p.trips.clone());
             let mult = mult.as_ref();
             let ((threads, warps), block_at_most) = (block.as_ref())
@@ -1103,66 +1088,6 @@ impl<'a> KernelReportBuilder<'a> {
                     .or_default()
                     .add(threads, warps, mult, block_at_most);
                 instruction_total.add(threads, warps, mult, block_at_most);
-            }
-            let block = block.as_ref();
-            let mut guarded = HashMap::new();
-            for m in &bm.measurements {
-                if !self.counts.counted(bm.block, m.provenance) {
-                    continue;
-                }
-                let (stmt, operand) = (m.provenance, m.memory_operand.unwrap_or(0));
-                let (threads, at_most, mult) =
-                    match self
-                        .counts
-                        .statement(bm, &multiplier, stmt, operand, block, &mut guarded)
-                    {
-                        Resolution::Skipped => continue,
-                        Resolution::Unknown => (0, false, None),
-                        Resolution::Counted(p) => match p.narrow() {
-                            Some((threads, _)) => (threads, p.at_most, p.trips),
-                            None => (0, false, None),
-                        },
-                    };
-                let n = (m.count as i64).checked_mul(threads);
-                let (n, mult) = (n.unwrap_or(0), mult.filter(|_| n.is_some()));
-                let mult = mult.as_ref();
-                match m.kind {
-                    MeasureKind::Flops { pipe, precision } => {
-                        flops
-                            .get_mut(&pipe)
-                            .expect("every pipe pre-inserted")
-                            .add(precision, n, mult, at_most);
-                    }
-                    MeasureKind::Bytes { space, direction } => {
-                        let entry = bytes.entry(space.key()).or_default();
-                        match direction {
-                            Direction::Load => entry.0.add(n, mult, at_most),
-                            Direction::Store => entry.1.add(n, mult, at_most),
-                        }
-                    }
-                    MeasureKind::Conversions => conversions.add(n, mult, at_most),
-                    MeasureKind::UnquantifiedBytes { space, direction } => {
-                        let entry = bytes.entry(space.key()).or_default();
-                        match direction {
-                            Direction::Load => entry.0.add_unknown(),
-                            Direction::Store => entry.1.add_unknown(),
-                        }
-                    }
-                    MeasureKind::UnknownOps { .. } => {
-                        flops.values_mut().for_each(FlopAccumulator::add_unknown);
-                        for space in ["global", "shared"] {
-                            let (l, s) = bytes.get_mut(space).expect("pre-inserted");
-                            l.add_unknown();
-                            s.add_unknown();
-                        }
-                    }
-                    // Op-count kinds appear in unknowns/classes, not in
-                    // the workload aggregates.
-                    MeasureKind::NonFlopOps { .. }
-                    | MeasureKind::SyncOps
-                    | MeasureKind::CommunicationOps
-                    | MeasureKind::ControlOps => {}
-                }
             }
         }
 
