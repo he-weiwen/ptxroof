@@ -8,25 +8,31 @@ use ptxroof::analysis::instruction_counts::measurement::{
 use ptxroof::analysis::memory_footprint::CountRange;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
+use ptxroof::report::annotate::annotate;
 use ptxroof::report::measured::{NcuLine, NcuRecord, SectorOutcome};
-use ptxroof::report::schema::{ByteRange, ContributionDetails, Count, InstructionVariant};
+use ptxroof::report::schema::{ByteRange, Count};
 use ptxroof::report::{AnalyzeOptions, analyze, text};
 
 fn source(body: &str) -> String {
     format!(".version 8.7\n.target sm_80\n.address_size 64\n.visible .entry k() {{\n{body}\n}}")
 }
 
-fn variants<'a>(
-    agg: &'a ptxroof::report::schema::Aggregates,
-    opcode: &str,
-) -> &'a [InstructionVariant] {
-    agg.instructions
-        .by_kind
-        .values()
-        .find_map(|kind| kind.contribution_variants.get(opcode))
-        .unwrap()
+/// The annotations of the lines of `annotated` whose PTX starts with
+/// `ptx`, in order; a line without one is left out.
+fn notes<'a>(annotated: &'a str, ptx: &str) -> Vec<&'a str> {
+    (annotated.lines())
+        .filter_map(|l| l.split_once(" // "))
+        .filter(|(line, _)| line.trim_start().starts_with(ptx))
+        .map(|(_, note)| note)
+        .collect()
 }
 
+/// A loop of 3 trips holds an fma, an atom, which loads and stores
+/// `[output]`, and a red, which only stores it (PTX ISA §9.7.14.5,
+/// §9.7.14.6). Run by a CTA of 32 threads, the atom has no count of its
+/// own: it runs as its block does, 96 times per CTA. The CTA's sums are
+/// 32 times a thread's: the fma's 6 f32 FLOPs, the atom's 6 atomic f32
+/// FLOPs, 12 B loaded and 24 B stored.
 #[test]
 fn atomic_contributions_scale_with_loops_and_launch_but_instruction_counts_do_not_duplicate() {
     let src = source(
@@ -40,54 +46,33 @@ L:
     @%p1 bra L;
     ret;",
     );
-    let report = analyze(
-        &src,
-        "contributions",
-        &AnalyzeOptions {
-            launch: Some([32, 1, 1]),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let kernel = &report.kernels[0];
-    assert_eq!(kernel.instruction_classes.total, 8);
-    assert_eq!(kernel.instruction_classes.memory, 2);
-    assert_eq!(kernel.instruction_classes.flop, 1);
-    let totals = &kernel.totals;
-    assert_eq!(totals.instructions.total.expr, "20");
-    assert_eq!(totals.flops["total"].expr, "6");
-    assert_eq!(totals.atomic_flops["total"].expr, "6");
-    assert_eq!(totals.bytes["global"].load.expr, "12");
-    assert_eq!(totals.bytes["global"].store.expr, "24");
-    assert_eq!(totals.ai_global.as_ref().unwrap().value, 1.0 / 3.0);
-    let cta = kernel.totals_per_cta.as_ref().unwrap();
-    assert_eq!(cta.instructions.total.expr, "640");
-    assert_eq!(cta.atomic_flops["total"].expr, "192");
-    assert_eq!(cta.bytes["global"].load.expr, "384");
-    assert_eq!(cta.bytes["global"].store.expr, "768");
-    let atom = &variants(cta, "atom.global.add.f32")[0];
-    assert_eq!(atom.issued.expr, "96");
-    assert_eq!(atom.contributions_per_execution.len(), 3);
-    assert!(
-        matches!(&atom.contributions_per_execution[2], ContributionDetails::Flops { pipe, precision, count: 1 } if pipe == "atomic" && precision == "f32")
+    let opts = AnalyzeOptions {
+        launch: Some([32, 1, 1]),
+        ..Default::default()
+    };
+    let out = annotate(&src, &opts).expect("annotates");
+    assert_eq!(
+        notes(&out, ".visible .entry"),
+        [
+            "block 32×1×1 | per CTA: flops f32 192; atomic flops f32 192; global load 384 B, store 768 B"
+        ]
     );
-    assert_eq!(kernel.loops[0].accesses.len(), 2);
-    assert_eq!(kernel.loops[0].accesses[0].direction, "load+store");
-    assert_eq!(kernel.loops[0].accesses[0].bytes, Some(4));
-    let rendered = text::render(&report);
-    assert!(rendered.contains(
-        "per thread per execution: global load 4 B; global store 4 B; atomic f32 FLOPs 1"
-    ));
-    assert!(rendered.contains("atomic flops = 6"));
-    let json = serde_json::to_value(&report).unwrap();
-    let details = &json["kernels"][0]["totals"]["instructions"]["by_kind"]["global atomic 4 B"]["contribution_variants"]
-        ["atom.global.add.f32"][0];
-    assert_eq!(details["issued"]["expr"], "3");
-    assert_eq!(details["contributions_per_execution"][2]["kind"], "flops");
+    assert_eq!(
+        notes(&out, "L:"),
+        [
+            "loop: trips 3 | global per CTA: requested 768 B, unique ? | warp * × lane * | exec 96/CTA"
+        ]
+    );
+    assert_eq!(notes(&out, "atom"), ["global load+store [output]"]);
+    assert_eq!(notes(&out, "red"), ["global store [output]"]);
 }
 
+/// A predicated atom is one memory instruction: collection records its
+/// atomic FLOP and its 4 B loaded and stored, each predicated. Under a
+/// guard whose threads are not known it runs at most once per thread, and
+/// a thread's atomic FLOPs, global loads and stores are bounds.
 #[test]
-fn predicated_atomic_has_one_issued_instruction_and_bounded_contributions() {
+fn predicated_atomic_is_one_memory_instruction_with_bounded_contributions() {
     let src = source("@%p1 atom.global.add.f32 %f1, [output], %f2;\nret;");
     let module = parse(&src).unwrap();
     let kernel = &module.kernels[0];
@@ -130,92 +115,76 @@ fn predicated_atomic_has_one_issued_instruction_and_bounded_contributions() {
         ]
     );
     assert!(contributions.iter().all(|m| m.predicated));
-    let report = analyze(&src, "predicated", &Default::default()).unwrap();
-    let totals = &report.kernels[0].totals;
-    assert_eq!(totals.instructions.total.expr, "2");
-    let atom = &variants(totals, "atom.global.add.f32")[0];
-    assert_eq!(atom.issued.expr, "1");
-    assert!(!atom.issued.at_most);
-    assert!(totals.atomic_flops["total"].at_most);
-    assert!(totals.bytes["global"].load.at_most);
-    assert!(totals.bytes["global"].store.at_most);
-    assert!(totals.ai_global.is_none());
+    let out = annotate(&src, &AnalyzeOptions::default()).expect("annotates");
+    assert_eq!(
+        notes(&out, ".visible .entry"),
+        ["per thread: atomic flops f32 <= 1; global load <= 4 B, store <= 4 B"]
+    );
+    assert_eq!(
+        notes(&out, "@%p1 atom"),
+        ["[<block 0>] exec <= 1/thread | global load+store [output]"]
+    );
 }
 
+/// Three copies of one opcode, the first of source size 0 (PTX ISA
+/// §9.7.9.26.3.1): each loads at `[source]` and stores at
+/// `[destination]`, and a thread loads 0 + 16 + 16 = 32 B and stores
+/// 48 B.
 #[test]
-fn same_opcode_preserves_copy_size_variants_and_address_associations() {
+fn copies_of_one_opcode_count_their_own_source_sizes_and_addresses() {
     let src = source(
         "cp.async.cg.shared.global [destination], [source], 16, 0;
 cp.async.cg.shared.global [destination], [source], 16, 16;
 cp.async.cg.shared.global [destination], [source], 16, 16;
 ret;",
     );
-    let report = analyze(&src, "copies", &Default::default()).unwrap();
-    let kernel = &report.kernels[0];
-    let totals = &kernel.totals;
-    assert_eq!(kernel.instruction_classes.memory, 3);
-    assert_eq!(totals.bytes["global"].load.expr, "32");
-    assert_eq!(totals.bytes["shared"].store.expr, "48");
-    let copies = variants(totals, "cp.async.cg.shared.global");
-    assert_eq!(copies.len(), 2);
-    assert_eq!(copies[0].issued.expr, "1");
-    assert_eq!(copies[1].issued.expr, "2");
-    assert!(matches!(
-        copies[0].contributions_per_execution[0],
-        ContributionDetails::Bytes { count: 0, .. }
-    ));
-    assert!(matches!(
-        copies[1].contributions_per_execution[0],
-        ContributionDetails::Bytes { count: 16, .. }
-    ));
-    assert_eq!(kernel.accesses.len(), 6);
-    for access in &kernel.accesses {
-        match access.space.as_str() {
-            "global" => {
-                assert_eq!(access.direction, "load");
-                assert_eq!(access.address.as_deref(), Some("source"));
-            }
-            "shared" => {
-                assert_eq!(access.direction, "store");
-                assert_eq!(access.address.as_deref(), Some("destination"));
-            }
-            _ => panic!("unexpected space"),
-        }
-    }
-    let rendered = text::render(&report);
-    assert!(rendered.contains("variant issued"));
-    assert!(rendered.contains("global load 0 B; shared store 16 B"));
-    assert!(rendered.contains("global load 16 B; shared store 16 B"));
+    let out = annotate(&src, &AnalyzeOptions::default()).expect("annotates");
+    assert_eq!(
+        notes(&out, ".visible .entry"),
+        ["per thread: global load 32 B; shared store 48 B"]
+    );
+    assert_eq!(
+        notes(&out, "cp.async"),
+        [
+            "[<block 0>] shared store [destination] | global load [source]",
+            "shared store [destination] | global load [source]",
+            "shared store [destination] | global load [source]",
+        ]
+    );
 }
 
+/// An ignored prefetch has no annotation (PTX ISA §9.7.9.16); the
+/// unclassified `wgmma.fence` leaves its FLOPs and bytes out of the
+/// totals, and an `ld.global` of unknown size its bytes. A thread's FLOPs,
+/// global loads and shared bytes are then unknown, its global stores at
+/// least the `st.global.u32`'s 4 B.
 #[test]
 fn ignored_unknown_and_unquantified_contributions_stay_distinct() {
-    let report = analyze(
-        &source("prefetch.global.L2 [source];\nwgmma.fence.sync.aligned;\nld.global %r1, [source];\nst.global.u32 [source], %r1;\nret;"),
-        "unknown",
-        &Default::default(),
-    )
-    .unwrap();
-    let kernel = &report.kernels[0];
-    assert_eq!(kernel.instruction_classes.ignore, 1);
-    assert_eq!(kernel.instruction_classes.unknown, 1);
-    let totals = &kernel.totals;
-    assert!(
-        variants(totals, "prefetch.global.L2")[0]
-            .contributions_per_execution
-            .is_empty()
+    let src = source(
+        "prefetch.global.L2 [source];\nwgmma.fence.sync.aligned;\nld.global %r1, [source];\nst.global.u32 [source], %r1;\nret;",
     );
-    assert!(
-        matches!(&variants(totals, "wgmma.fence.sync.aligned")[0].contributions_per_execution[0], ContributionDetails::UnknownOps { mnemonic } if mnemonic == "wgmma")
+    let out = annotate(&src, &AnalyzeOptions::default()).expect("annotates");
+    assert_eq!(
+        notes(&out, ".visible .entry"),
+        ["per thread: flops ?; global load ? B, store >= 4 B; shared load ? B, store ? B"]
     );
-    assert!(
-        matches!(&variants(totals, "ld.global")[0].contributions_per_execution[0], ContributionDetails::UnquantifiedBytes { space, direction } if space == "global" && direction == "load")
+    assert!(notes(&out, "prefetch").is_empty());
+    assert_eq!(
+        notes(&out, "wgmma"),
+        ["not classified (its FLOPs and bytes not counted)"]
     );
-    assert!(totals.atomic_flops["total"].at_least);
-    assert!(totals.bytes["global"].load.at_least);
-    assert!(!kernel.unknowns.is_empty());
+    assert_eq!(
+        notes(&out, "ld.global"),
+        ["bytes ? (not counted) | global load [source]"]
+    );
 }
 
+/// A `cp.async` of source size 0 reads no global memory (PTX ISA
+/// §9.7.9.26.3.1): in a loop of 2 trips its sectors per request are 0,
+/// ideal 0, and no global load is summed, while it runs twice per thread
+/// and stores 32 B to shared memory. Given a CTA of 32 threads, the count
+/// and the sums are 32 times as large and the loop's global bytes per CTA
+/// are 0.
 #[test]
 fn zero_source_copy_has_no_global_sectors_but_keeps_shared_writes() {
     let src = ".version 8.7
@@ -242,49 +211,33 @@ L:
     cp.async.wait_all;
     ret;
 }";
-    let zero = ptxroof::analysis::memory_footprint::CountRange { min: 0, max: 0 };
-    for launch in [Some([32, 1, 1]), None] {
-        let report = analyze(
-            src,
-            "zero-copy",
-            &AnalyzeOptions {
-                launch,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let kernel = &report.kernels[0];
-        let loop_node = &kernel.loops[0];
-        let global = loop_node
-            .accesses
-            .iter()
-            .find(|a| a.space == "global")
-            .unwrap();
-        assert_eq!(global.bytes, Some(0));
-        assert_eq!(global.sectors_per_request, Some(zero));
-        assert_eq!(global.ideal_sectors_per_request, Some(zero));
-        assert!(global.footprint_unknown.is_none());
-        assert_eq!(kernel.totals.bytes["global"].load.expr, "0");
-        assert_eq!(kernel.totals.bytes["shared"].store.expr, "32");
+    let cases = [
+        (
+            Some([32, 1, 1]),
+            "block 32×1×1 | shared memory 512 B/CTA | per CTA: shared store 1,024 B; param load 256 B",
+            "loop: trips 2 | global per CTA: requested 0 B, unique 0 B, sectors 0 B | warp * × lane * | exec 64/CTA",
+        ),
+        (
+            None,
+            "shared memory 512 B/CTA | per thread: shared store 32 B; param load 8 B",
+            "loop: trips 2 | exec 2/thread",
+        ),
+    ];
+    for (launch, entry, header) in cases {
+        let opts = AnalyzeOptions {
+            launch,
+            ..Default::default()
+        };
+        let out = annotate(src, &opts).expect("annotates");
+        assert_eq!(notes(&out, ".visible .entry"), [entry]);
+        assert_eq!(notes(&out, "L:"), [header]);
         assert_eq!(
-            variants(&kernel.totals, "cp.async.cg.shared.global")[0]
-                .issued
-                .expr,
-            "2"
+            notes(&out, "cp.async.cg"),
+            [
+                "shared store [16·%tid.x + destination] wavefronts/req ? (wavefronts not modelled) | \
+              global load [16·%tid.x + param_0] sectors/req 0 (ideal 0)"
+            ]
         );
-        if launch.is_some() {
-            let bytes = loop_node.global_bytes_per_cta.as_ref().unwrap();
-            assert_eq!(bytes.requested, 0);
-            assert_eq!(bytes.unique, Some(ByteRange { min: 0, max: 0 }));
-            let sectors = bytes.sector_bytes.as_ref().unwrap();
-            assert_eq!((sectors.min, sectors.max), (0, 0));
-            let cta = kernel.totals_per_cta.as_ref().unwrap();
-            assert_eq!(cta.bytes["shared"].store.expr, "1024");
-            assert_eq!(
-                variants(cta, "cp.async.cg.shared.global")[0].issued.expr,
-                "64"
-            );
-        }
     }
 }
 

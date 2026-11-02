@@ -80,10 +80,9 @@ address while a copy retains its source and destination.
 Every count is per thread per execution: a warp-collective instruction
 contributes its warp total divided by the 32 lanes that issue it (PTX ISA
 §4.5.1). Loop-trip and launch multiplication happen at report time.
-The text report expands instructions with multiple contributions; JSON
-`instructions.by_kind.*.contribution_variants` exposes each opcode's
-contribution lists and issued counts. Different immediate sizes remain
-separate variants. Contribution annotations are per execution with a true
+The text report expands instructions with multiple contributions. Copies
+of one opcode with different immediate sizes each count their own bytes.
+Contribution annotations are per execution with a true
 guard, a `cp.async`'s global read on a thread that reads its source, marked
 `<=` with a src-size register, even when the report's issued counts include
 inactive threads.
@@ -91,11 +90,11 @@ inactive threads.
 Atomic/reduction FP add/min/max contribute one FLOP per scalar element,
 including packed and vector multiplicity, on the `atomic` accounting pipe.
 Integer, bitwise, exchange and CAS operations contribute no FP FLOPs.
-`atomic_flops` is separate from CUDA-core FLOPs and included in `AI(global)`.
+Atomic FLOPs are summed apart from CUDA-core FLOPs.
 The byte convention is retained: `atom` read+write, `red` write-only.
 These are requested bytes, not estimates of DRAM traffic. Tests in
-`tests/instruction_contributions.rs` cover scaling, predication, variants,
-address attribution, unknown work, and the distinct-instruction identity.
+`tests/instruction_contributions.rs` cover scaling, predication, address
+attribution, unknown work, and the distinct-instruction identity.
 
 An instruction can now combine arithmetic, memory and other contributions.
 Work owned by larger groups and quantities unavailable from PTX still
@@ -528,9 +527,10 @@ their separate scope and counting decisions. Rows above cite these by letter.
 **§A — one instruction, multiple contributions (arithmetic ⊗ memory): supported.**
 `ClassifiedInstruction` separates one exclusive category from its work.
 `atom` and `red` retain the memory category and byte convention while
-FP add/min/max also contribute atomic FLOPs. The report exposes each
-instruction's contributions without duplicating its instruction count.
-`tests/instruction_contributions.rs` pins this through collection and reporting.
+FP add/min/max also contribute atomic FLOPs. Each contribution is summed
+without duplicating the instruction's count.
+`tests/instruction_contributions.rs` pins this through collection and the
+annotated PTX.
 
 Bulk reduction copies, surface and multimem/fabric reductions can use this
 representation but still require their §B/§C/§F decisions. Integer reduction
