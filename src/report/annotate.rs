@@ -1401,4 +1401,158 @@ $L__BB0_8:
             ["global load [4·%tid.x + param_0] sectors/req 2–3 (ideal 2)"]
         );
     }
+
+    /// The global bytes per CTA the header of `src`'s loop at `label`
+    /// prints under `opts`.
+    fn loop_bytes(src: &str, opts: &AnalyzeOptions, label: &str) -> Option<String> {
+        let header = (note(src, opts, label))
+            .filter(|n| n.starts_with("loop: "))
+            .expect("a loop header");
+        (header.split(" | ")).find_map(|p| p.strip_prefix("global per CTA: ").map(str::to_owned))
+    }
+
+    /// A loop header's global bytes per CTA count every thread and trip
+    /// once: 32 lanes × 4 B × 8 trips per load; the first sweeps 1,024 B
+    /// in 4 or 5 sectors a trip, the second is one word in one sector.
+    /// Guarded on `%tid.x != 0`, the second load runs on 31 lanes;
+    /// guarded on a loaded value, on every lane as a bound; in a block a
+    /// loaded value skips, a bound though not guarded. Without a block
+    /// shape there are none.
+    #[test]
+    fn loop_bytes_count_every_thread_and_iteration_once() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u64 k_param_1\n)\n\
+                   .reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u64 %rd5, [k_param_1];\n\
+                   mov.u32 %r1, %tid.x;\nmul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                   mov.u32 %r2, 0;\nsetp.ne.s32 %p2, %r1, 0;\n\
+                   $L__LOOP:\nld.global.f32 %f1, [%rd3];\nld.global.f32 %f2, [%rd5];\n\
+                   add.s64 %rd3, %rd3, 128;\nadd.s32 %r2, %r2, 1;\nsetp.lt.u32 %p1, %r2, 8;\n\
+                   @%p1 bra $L__LOOP;\nadd.f32 %f3, %f1, %f2;\nst.global.f32 [%rd5], %f3;\nret;\n}\n";
+        assert_eq!(
+            loop_bytes(src, &opts, "$L__LOOP:").as_deref(),
+            Some("requested 2,048 B, unique 1,028 B, sectors 1,280–1,536 B")
+        );
+        let guarded = src.replace("ld.global.f32 %f2", "@%p2 ld.global.f32 %f2");
+        assert_eq!(
+            loop_bytes(&guarded, &opts, "$L__LOOP:").as_deref(),
+            Some("requested 2,016 B, unique 1,028 B, sectors 1,280–1,536 B")
+        );
+        let loaded = guarded.replace(
+            "setp.ne.s32 %p2, %r1, 0;",
+            "ld.global.u32 %r9, [%rd5];\nsetp.ne.s32 %p2, %r9, 0;",
+        );
+        assert_eq!(
+            loop_bytes(&loaded, &opts, "$L__LOOP:").as_deref(),
+            Some("requested <= 2,048 B, unique <= 1,028 B, sectors <= 1,280–1,536 B")
+        );
+        let branched = src.replace(
+            "ld.global.f32 %f2, [%rd5];",
+            "ld.global.u32 %r9, [%rd5];\nsetp.ne.s32 %p3, %r9, 0;\n@%p3 bra $L__SKIP;\n\
+             ld.global.f32 %f2, [%rd5];\n$L__SKIP:",
+        );
+        assert_eq!(
+            loop_bytes(&branched, &opts, "$L__LOOP:").as_deref(),
+            Some("requested <= 3,072 B, unique <= 1,028 B, sectors <= 1,536–1,792 B")
+        );
+        let src = src.replace(".reqntid 32, 1, 1\n", "");
+        assert_eq!(loop_bytes(&src, &opts, "$L__LOOP:"), None);
+    }
+
+    /// A store at a floor of the counter, `⌊(iv + 1)/2⌋`, over 10^9
+    /// trips: too many, so its loop header has no global bytes per CTA.
+    #[test]
+    fn a_floor_of_the_counter_over_too_many_trips_has_no_footprint() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, 0;\n\
+                   $L__LOOP:\nadd.u32 %r1, %r1, 1;\nshr.u32 %r3, %r1, 1;\n\
+                   mul.wide.u32 %rd2, %r3, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                   st.global.u32 [%rd3], 0;\nsetp.lt.u32 %p1, %r1, 1000000000;\n\
+                   @%p1 bra $L__LOOP;\nret;\n}\n";
+        assert_eq!(
+            loop_bytes(src, &AnalyzeOptions::default(), "$L__LOOP:"),
+            None
+        );
+    }
+
+    /// `%r10` is a 64-bit `selp` of 0 and `q − p`, declared after a
+    /// 32-bit `%r<2>` that does not hold it: `p + %r10` may be `q`, so
+    /// the loop's distinct global bytes per CTA are 512 to 1,024 B.
+    #[test]
+    fn a_wide_cta_uniform_offset_names_no_pointer() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0,\n.param .u64 k_param_1\n)\n\
+                   .reqntid 32, 1, 1\n{\n.reg .pred %p<3>;\n.reg .b32 %r<2>;\n\
+                   .reg .b64 %r10;\n.reg .b32 %s<8>;\n.reg .b64 %rd<8>;\n\
+                   ld.param.u64 %rd1, [k_param_0];\nld.param.u64 %rd2, [k_param_1];\n\
+                   mov.u32 %s1, %ctaid.x;\nsetp.eq.u32 %p2, %s1, 0;\n\
+                   sub.s64 %rd7, %rd2, %rd1;\nselp.b64 %r10, 0, %rd7, %p2;\n\
+                   mov.u32 %s2, %tid.x;\nmov.u32 %s3, 0;\n$L__LOOP:\n\
+                   mad.lo.s32 %s4, %s3, 32, %s2;\nmul.wide.u32 %rd3, %s4, 4;\n\
+                   add.s64 %rd4, %rd1, %r10;\nadd.s64 %rd5, %rd4, %rd3;\n\
+                   st.global.u32 [%rd5], %s2;\nadd.s64 %rd6, %rd2, %rd3;\n\
+                   st.global.u32 [%rd6], %s2;\nadd.s32 %s3, %s3, 1;\n\
+                   setp.lt.u32 %p1, %s3, 4;\n@%p1 bra $L__LOOP;\nret;\n}\n";
+        assert_eq!(
+            loop_bytes(src, &AnalyzeOptions::default(), "$L__LOOP:").as_deref(),
+            Some("requested 1,024 B, unique 512–1,024 B, sectors 1,024–1,280 B")
+        );
+    }
+
+    /// A zero-source cp.async through a loaded pointer: its address is
+    /// unknown, but it reads no global bytes, and the loop's global bytes
+    /// per CTA stay known.
+    #[test]
+    fn an_access_of_no_bytes_leaves_a_loop_footprint_whole() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 32, 1, 1\n{\n\
+                   .shared .align 16 .b8 dst[512];\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, dst;\nmov.u32 %r2, 0;\n\
+                   $L__LOOP:\nld.global.u64 %rd4, [%rd1];\n\
+                   cp.async.cg.shared.global [%r1], [%rd4], 16, 0;\n\
+                   add.s32 %r2, %r2, 1;\nsetp.lt.u32 %p1, %r2, 2;\n@%p1 bra $L__LOOP;\n\
+                   cp.async.wait_all;\nret;\n}\n";
+        assert_eq!(
+            loop_bytes(src, &AnalyzeOptions::default(), "$L__LOOP:").as_deref(),
+            Some("requested 512 B, unique 8 B, sectors 64 B")
+        );
+    }
+
+    /// A loop of 2^62 trips whose 1024 threads each read 4 bytes: the
+    /// bytes it requests pass 2^64, so its header has no global bytes per
+    /// CTA; at 4 trips, 32,768 B.
+    #[test]
+    fn loop_bytes_past_u64_are_unknown() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+            .visible .entry k(.param .u64 k_param_0, .param .u64 k_param_1)\n{\n\
+            .reg .pred %p<2>;\n.reg .f32 %f<2>;\n.reg .b32 %r<2>;\n.reg .b64 %rd<6>;\n\
+            ld.param.u64 %rd1, [k_param_0];\n\
+            ld.param.u64 %rd2, [k_param_1];\n\
+            mov.u32 %r1, %tid.x;\n\
+            mul.wide.u32 %rd3, %r1, 4;\n\
+            add.s64 %rd4, %rd1, %rd3;\n\
+            mov.u64 %rd5, 0;\n\
+            $L__L:\n\
+            ld.global.f32 %f1, [%rd4];\n\
+            st.global.f32 [%rd4], %f1;\n\
+            add.s64 %rd5, %rd5, 1;\n\
+            setp.lt.u64 %p1, %rd5, %rd2;\n\
+            @%p1 bra $L__L;\n\
+            ret;\n}\n";
+        let bytes = |n: i64| {
+            let opts = AnalyzeOptions {
+                bindings: vec![parse_bind(&format!("1:N={n}")).expect("binding")],
+                launch: Some([1024, 1, 1]),
+                ..Default::default()
+            };
+            loop_bytes(src, &opts, "$L__L:")
+        };
+        assert_eq!(
+            bytes(4).as_deref(),
+            Some("requested 32,768 B, unique 4,096 B, sectors 32,768–40,960 B")
+        );
+        assert_eq!(bytes(1 << 62), None);
+    }
 }
