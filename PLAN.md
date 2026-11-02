@@ -657,7 +657,8 @@ contract (Codex's review of 2b2731b).
   A src-size register is a bound on which threads read and how much
   (`micro/cp_async_src_size.ptx`: `global load <= 16 B (predicated)
   warp: <= 17 sectors`, `load <= 1024 B`, where 16 lanes read 8
-  sectors; `micro-cp-async-src-size.test`).
+  sectors; `micro-cp-async-src-size.test`,
+  `a_register_source_size_bounds_the_sectors_measured`).
 
 ### Presentation
 
@@ -952,7 +953,8 @@ One line each, with the trigger that would start it.
   the predicted wavefronts and ideal per warp request with the
   record's over those SASS's warp-level executions
   (`kernels[].measured[].wavefronts`, `measured shared wavefronts` in
-  the text report, `tests/lit/micro-shared-wavefronts.test`): all 1,018
+  the text report, `tests/ncu_comparisons.rs`,
+  `every_counted_shared_line_s_wavefronts_are_measured`): all 1,018
   such lines of the records agree, 544 of them in 25 B200 Triton
   kernels and 414 in nine Gluon kernels and k5 on the RTX 4090
   (`tests/ncu_corpus.rs`). ptxas may run

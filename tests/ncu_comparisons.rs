@@ -449,3 +449,90 @@ fn a_counter_bound_by_the_record_reads_the_store_s_sectors() {
     assert_eq!(sectors(&c), BTreeMap::from([("exact", 1)]));
     assert_eq!(sector_lines(&c), [(37, SectorOutcome::Agrees, 4096)]);
 }
+
+/// A block two branches decide, one on its dominator chain and one below
+/// it: the threads below 64 reach it where n != 0, or where n == 0 and m
+/// != 0, so its set is a bound. On an RTX 4090 with n = m = 0 its barrier
+/// runs on no thread, within the bound.
+#[test]
+fn a_barrier_two_branches_decide_runs_within_its_bound() {
+    let c = comparison("tests/fixtures/micro/or_entry.ncu.json");
+    assert_eq!(verdict(&c, "$L__BB0_3"), Some(Verdict::Consistent));
+    let expected = MeasuredLine {
+        line: 40,
+        ptx: "bar.sync 1, 64;".to_owned(),
+        tested: true,
+        predicted: 64,
+        at_most: true,
+        executions: 0,
+        sass: sass(&[("BAR.SYNC.DEFER_BLOCKING", 1)]),
+    };
+    assert_eq!(differing(&c, 40), Some(&expected));
+}
+
+/// Wrong output (PLAN.md): a predicated `exit` is read as falling through,
+/// so the store after it counts on every thread, exactly; on an RTX 4090
+/// at n = 20 it runs on none.
+#[test]
+fn a_store_after_a_predicated_exit_runs_on_no_thread() {
+    let c = comparison("tests/fixtures/micro/predicated_exit.ncu.json");
+    let expected = MeasuredLine {
+        line: 28,
+        ptx: "st.global.u32 [%rd1], %r1;".to_owned(),
+        tested: false,
+        predicted: 32,
+        at_most: false,
+        executions: 0,
+        sass: sass(&[("MOV", 2), ("STG.E", 1), ("ULDC.64", 1)]),
+    };
+    assert_eq!(differing(&c, 28), Some(&expected));
+}
+
+/// cp.async with an ignore-src predicate: each copy's global read counts
+/// the lanes whose ignore-src is false. Under the record, over the launch,
+/// the cache-hinted copy, whose ignore-src compares the CTA index with a
+/// parameter, reads on 64 lanes of CTA 0 and 16 of CTA 1, within its
+/// bound; the four lines' 68 measured L2 sectors agree with the
+/// predictions, three within a range and the cache-hinted copy's within a
+/// bound.
+#[test]
+fn copies_that_ignore_their_source_read_their_predicted_sectors() {
+    let c = comparison("tests/fixtures/micro/cp_async_ignore_src.ncu.json");
+    let expected = BTreeMap::from([("within a range", 3), ("within a bound", 1)]);
+    assert_eq!(sectors(&c), expected);
+    use SectorOutcome::Agrees;
+    assert_eq!(
+        sector_lines(&c),
+        [
+            (36, Agrees, 16),
+            (42, Agrees, 4),
+            (47, Agrees, 8),
+            (55, Agrees, 40)
+        ]
+    );
+}
+
+/// cp.async with a register src-size, 16 on lanes 0..15 and 0 on the
+/// others: the register is not read, so which lanes read, and how much,
+/// is a bound, within which Nsight Compute's 8 sectors over the launch
+/// fall.
+#[test]
+fn a_register_source_size_bounds_the_sectors_measured() {
+    let c = comparison("tests/fixtures/micro/cp_async_src_size.ncu.json");
+    assert_eq!(sectors(&c), BTreeMap::from([("within a bound", 1)]));
+    assert_eq!(sector_lines(&c), [(30, SectorOutcome::Agrees, 8)]);
+}
+
+/// Shared memory wavefronts per warp request, by how an RTX 4090 serves a
+/// request's lanes (micro/shared_wavefronts.ptx): under the record every
+/// counted line's wavefronts and ideal are Nsight Compute's over its
+/// executions.
+#[test]
+fn every_counted_shared_line_s_wavefronts_are_measured() {
+    let c = comparison("tests/fixtures/micro/shared_wavefronts.ncu.json");
+    let lines: Vec<bool> = (c.blocks.iter().flat_map(|b| &b.wavefronts))
+        .map(|w| w.agrees)
+        .collect();
+    assert_eq!(lines.len(), 59);
+    assert!(lines.iter().all(|&agrees| agrees));
+}
