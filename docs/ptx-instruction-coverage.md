@@ -84,8 +84,7 @@ The text report expands instructions with multiple contributions. Copies
 of one opcode with different immediate sizes each count their own bytes.
 Contribution annotations are per execution with a true
 guard, a `cp.async`'s global read on a thread that reads its source, marked
-`<=` with a src-size register, even when the report's issued counts include
-inactive threads.
+`<=` with a src-size register.
 
 Atomic/reduction FP add/min/max contribute one FLOP per scalar element,
 including packed and vector multiplicity, on the `atomic` accounting pipe.

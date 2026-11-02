@@ -1,17 +1,18 @@
-//! One instruction retains one category while contributing to several totals.
+//! One instruction retains one category while contributing to several
+//! totals, checked on collection's records, the annotated PTX and
+//! `report::build::compare`.
 use ptxroof::analysis::control_flow::loop_forest;
 use ptxroof::analysis::instruction_counts::classify::InstructionCategory;
 use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::measurement::{
     Direction, MeasureKind, Pipe, Precision, Space,
 };
-use ptxroof::analysis::memory_footprint::CountRange;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
+use ptxroof::report::AnalyzeOptions;
 use ptxroof::report::annotate::annotate;
+use ptxroof::report::build::compare;
 use ptxroof::report::measured::{NcuLine, NcuRecord, SectorOutcome};
-use ptxroof::report::schema::{ByteRange, Count};
-use ptxroof::report::{AnalyzeOptions, analyze, text};
 
 fn source(body: &str) -> String {
     format!(".version 8.7\n.target sm_80\n.address_size 64\n.visible .entry k() {{\n{body}\n}}")
@@ -257,10 +258,12 @@ fn ignore_src_kernel(name: &str, setup: &str, copy: &str) -> String {
 }
 
 /// A `cp.async` reads its source only where its ignore-src is false
-/// (PTX ISA §9.7.9.26.3.1). Over 4 trips, a copy 16 of 64 lanes read and
-/// one whose ignore-src compares a parameter, the same for every thread,
-/// request at most 4 × (16 + 64) × 16 B; the shared row is not
-/// predicated, the source rows are.
+/// (PTX ISA §9.7.9.26.3.1). Over 4 trips, a copy 16 of 64 lanes read, 8–9
+/// sectors per warp request, and one whose ignore-src compares a
+/// parameter, the same for every thread, request at most 4 × (16 + 64) ×
+/// 16 B = 5,120 B per CTA, as many distinct bytes and 5,120–5,504 B of
+/// sectors, each a bound; both store to shared memory on all 64 threads,
+/// 8,192 B.
 #[test]
 fn a_loop_footprint_counts_the_lanes_that_may_read_a_copy_s_source() {
     let setup = "setp.lt.u32 %p1, %r1, 16;\nnot.pred %p2, %p1;\nsetp.lt.u32 %p3, %r9, 7;\n\
@@ -271,97 +274,116 @@ fn a_loop_footprint_counts_the_lanes_that_may_read_a_copy_s_source() {
                 cp.async.cg.shared.global [%r4], [%rd3+65536], 16, %p3;\n\
                 add.s32 %r5, %r5, 1;\nsetp.lt.u32 %p1, %r5, 4;\n@%p1 bra $L__LOOP;";
     let src = ignore_src_kernel("loop_ignore_src", setup, copy);
-    let report = analyze(&src, "loop", &AnalyzeOptions::default()).unwrap();
-    let node = &report.kernels[0].loops[0];
-    let bytes = node.global_bytes_per_cta.as_ref().unwrap();
-    assert_eq!(bytes.requested, 5120);
+    let out = annotate(&src, &AnalyzeOptions::default()).expect("annotates");
     assert_eq!(
-        bytes.unique,
-        Some(ByteRange {
-            min: 5120,
-            max: 5120
-        })
+        notes(&out, ".visible .entry"),
+        [
+            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: global load <= 5,120 B; shared store 8,192 B; param load 768 B"
+        ]
     );
-    let sectors = bytes.sector_bytes.as_ref().unwrap();
     assert_eq!(
-        (sectors.min, sectors.max, bytes.at_most),
-        (5120, 5504, true)
+        notes(&out, "$L__LOOP:"),
+        [
+            "loop: trips 4 | global per CTA: requested <= 5,120 B, unique <= 5,120 B, sectors <= 5,120–5,504 B | warp * × lane * | exec 256/CTA"
+        ]
     );
-    let flags: Vec<(&str, bool)> = (node.accesses.iter())
-        .map(|a| (a.space.as_str(), a.predicated))
-        .collect();
-    let expected = [("shared", false), ("global", true)];
-    assert_eq!(flags, [expected, expected].concat());
+    assert_eq!(
+        notes(&out, "cp.async.cg"),
+        [
+            "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
+             global load [16·%tid.x + 1024·iv[$L__LOOP] + param_0] sectors/req 8–9 (ideal 8)",
+            "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
+             global load [16·%tid.x + 1024·iv[$L__LOOP] + param_0 + 65536] sectors/req 16–17 (ideal 16)",
+        ]
+    );
 }
 
 /// Lanes 8 B apart read 16 B where ignore-src is false. The even lanes,
-/// one residue modulo 16, touch 8–9 sectors per warp; where a loaded
-/// value decides, the lanes that may read differ modulo 16 and the
-/// footprint is unknown, not a bound.
+/// one residue modulo 16, touch 8–9 sectors per warp request, and the
+/// CTA's 32 of them load 512 B; where a loaded value decides, the copy's
+/// read is a bound, `<= 1,280 B` with the load's 256 B, and the lanes that
+/// may read differ modulo 16: its sectors per request are unknown, not a
+/// bound.
 #[test]
 fn a_source_read_at_mixed_residues_by_unknown_lanes_has_no_footprint() {
     let copy = "cp.async.cg.shared.global [%r4], [%rd3], 16, %p1;";
     let at = "mul.wide.u32 %rd2, %r1, 8;\nadd.s64 %rd3, %rd1, %rd2;\n";
-    let source = |name: &str, setup: &str| {
+    let annotated = |name: &str, setup: &str| {
         let src = ignore_src_kernel(name, &format!("{at}{setup}"), copy);
-        let report = analyze(&src, name, &AnalyzeOptions::default()).unwrap();
-        (report.kernels[0].accesses.iter())
-            .find(|a| a.space == "global" && a.opcode.starts_with("cp.async"))
-            .cloned()
-            .unwrap()
+        annotate(&src, &AnalyzeOptions::default()).expect("annotates")
     };
-    let odd = source("odd", "and.b32 %r5, %r1, 1;\nsetp.eq.u32 %p1, %r5, 1;");
-    let range = |min, max| Some(CountRange { min, max });
-    assert_eq!(odd.sectors_per_request, range(8, 9));
-    assert_eq!(odd.threads.and_then(|t| t.count), Some(32));
-    let loaded = source(
+    let odd = annotated("odd", "and.b32 %r5, %r1, 1;\nsetp.eq.u32 %p1, %r5, 1;");
+    assert_eq!(
+        notes(&odd, ".visible .entry"),
+        [
+            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: global load 512 B; shared store 1,024 B; param load 512 B"
+        ]
+    );
+    assert_eq!(
+        notes(&odd, "cp.async.cg"),
+        [
+            "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
+          global load [8·%tid.x + param_0] sectors/req 8–9 (ideal 8)"
+        ]
+    );
+    let loaded = annotated(
         "loaded",
         "ld.global.u32 %r5, [%rd3];\nsetp.eq.u32 %p1, %r5, 1;",
     );
-    assert!(loaded.predicated && loaded.sectors_per_request.is_none());
     assert_eq!(
-        loaded.footprint_unknown.as_deref(),
-        Some("lane addresses differ modulo the 16 B access size")
+        notes(&loaded, ".visible .entry"),
+        [
+            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: global load <= 1,280 B; shared store 1,024 B; param load 512 B"
+        ]
+    );
+    assert_eq!(
+        notes(&loaded, "cp.async.cg"),
+        [
+            "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
+          global load [8·%tid.x + param_0] sectors/req ? (lane addresses differ modulo the 16 B access size)"
+        ]
     );
 }
 
 /// A src-size register reads at most cp-size (PTX ISA §9.7.9.26.3.1):
-/// beside a copy that reads its 16 B under the same opcode, its row and
-/// its variant read `<= 16 B`, in text and JSON, and the two variants
-/// stay apart.
+/// beside a copy that reads its 16 B under the same opcode, 16–17 sectors
+/// per warp request, its sectors per request are bounds, `<= 17 (ideal
+/// <= 16)`, and the CTA's 64 threads load at most 2 × 64 × 16 B = 2,048 B.
+/// Each copy runs as its block does, 64 times per CTA.
 #[test]
 fn a_src_size_register_reads_at_most_cp_size() {
     let at = "mul.wide.u32 %rd2, %r1, 16;\nadd.s64 %rd3, %rd1, %rd2;";
     let copy = "cp.async.cg.shared.global [%r4], [%rd3], 16;\n\
                 cp.async.cg.shared.global [%r4+1024], [%rd3+1024], 16, %r9;";
     let src = ignore_src_kernel("partial_src_size", at, copy);
-    let report = analyze(&src, "partial", &AnalyzeOptions::default()).unwrap();
-    let rendered = text::render(&report);
-    assert!(rendered.contains("global load <= 16 B (predicated)"));
-    assert!(rendered.contains("global load 16 B; shared store 16 B"));
-    assert!(rendered.contains("global load <= 16 B; shared store 16 B"));
-    let json = serde_json::to_value(&report).unwrap();
-    let kernel = &json["kernels"][0];
-    let rows: Vec<_> = (kernel["accesses"].as_array().unwrap().iter())
-        .filter(|a| a["space"] == "global")
-        .map(|a| (a.get("bytes_at_most").is_some(), a["predicated"] == true))
-        .collect();
-    assert_eq!(rows, [(false, false), (true, true)]);
-    let copies = &kernel["totals_per_cta"]["instructions"]["by_kind"]["global -> shared copy 16 B"]
-        ["contribution_variants"]["cp.async.cg.shared.global"];
-    let read = |v: usize| copies[v]["contributions_per_execution"][0].clone();
-    assert_eq!(read(0).get("at_most"), None);
-    assert_eq!(read(1)["at_most"], true);
-    assert_eq!(copies[1]["issued"]["expr"], "64");
-    let load = &report.kernels[0].totals_per_cta.as_ref().unwrap().bytes["global"].load;
-    assert_eq!((load.expr.as_str(), load.at_most), ("2048", true));
+    let out = annotate(&src, &AnalyzeOptions::default()).expect("annotates");
+    assert_eq!(
+        notes(&out, ".visible .entry"),
+        [
+            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: global load <= 2,048 B; shared store 2,048 B; param load 768 B"
+        ]
+    );
+    assert_eq!(
+        notes(&out, "ld.param.u64"),
+        ["[<block 0>] warp * × lane * | exec 64/CTA"]
+    );
+    assert_eq!(
+        notes(&out, "cp.async.cg"),
+        [
+            "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
+             global load [16·%tid.x + param_0] sectors/req 16–17 (ideal 16)",
+            "shared store [16·%tid.x + buf + 1024] wavefronts/req ? (wavefronts not modelled) | \
+             global load [16·%tid.x + param_0 + 1024] sectors/req <= 17 (ideal <= 16)",
+        ]
+    );
 }
 
-/// Each guard against each ignore-src, per CTA of 64 threads: a 16-byte
-/// copy reads its source on the threads it runs on whose ignore-src is
-/// false, a loaded mask a bound, and writes shared memory on all it runs
-/// on. It issues on the block's threads; under a guard no thread passes
-/// it is in no live count and predicts no execution.
+/// Each guard against each ignore-src, over a launch of one CTA of 64
+/// threads: a 16-byte copy reads its source on the threads it runs on
+/// whose ignore-src is false, a loaded mask a bound, and writes shared
+/// memory on all it runs on; the `.entry` line leaves a zero sum out.
+/// Against a record, its line's predicted executions are the threads it
+/// runs on, none under a guard no thread passes.
 #[test]
 fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
     let guards = [
@@ -376,10 +398,26 @@ fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
         "setp.ge.u32 %p2, %r1, 16;",
         "ld.global.u32 %r5, [%rd1];\nsetp.eq.u32 %p2, %r5, 0;",
     ];
-    let reads = ["1024", "0", "256", "<= 1280"];
-    let global = [reads, reads, ["0"; 4], ["768", "0", "256", "<= 1024"]];
-    let (shared, predicted) = (["1024", "1024", "0", "768"], [64, 64, 0, 48]);
-    let count = |c: &Count| format!("{}{}", if c.at_most { "<= " } else { "" }, c.expr);
+    let reads = [
+        "global load 1,024 B",
+        "",
+        "global load 256 B",
+        "global load <= 1,280 B",
+    ];
+    let guarded = [
+        "global load 768 B",
+        "",
+        "global load 256 B",
+        "global load <= 1,024 B",
+    ];
+    let global = [reads, reads, [""; 4], guarded];
+    let shared = [
+        "shared store 1,024 B",
+        "shared store 1,024 B",
+        "",
+        "shared store 768 B",
+    ];
+    let predicted = [64, 64, 0, 48];
     for (g, (def, guard)) in guards.into_iter().enumerate() {
         for (i, ignore) in ignores.into_iter().enumerate() {
             let setup =
@@ -411,20 +449,23 @@ fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
                 ncu: Some(record),
                 ..Default::default()
             };
-            let report = analyze(&src, "matrix", &opts).unwrap();
-            let kernel = &report.kernels[0];
-            let cta = kernel.totals_per_cta.as_ref().unwrap();
+            let out = annotate(&src, &opts).expect("annotates");
+            let entry = notes(&out, ".visible .entry");
+            let sums: Vec<&str> = (entry[0].split_once("per launch: "))
+                .map_or("", |(_, sums)| sums)
+                .split("; ")
+                .filter(|s| s.starts_with("global") || s.starts_with("shared"))
+                .collect();
             let cell = (g, i);
-            assert_eq!(count(&cta.bytes["global"].load), global[g][i], "{cell:?}");
-            assert_eq!(count(&cta.bytes["shared"].store), shared[g], "{cell:?}");
-            let copies = cta.instructions.by_kind.get("global -> shared copy 16 B");
-            let live = copies.map(|c| c.total.expr.as_str());
-            assert_eq!(live, (g != 2).then_some("64"), "{cell:?}");
-            if g == 2 {
-                let all = cta.instructions.all.as_ref().map(|c| c.expr.as_str());
-                assert_eq!(all, Some(if i == 3 { "896" } else { "832" }), "{cell:?}");
-            }
-            let lines: Vec<u64> = (kernel.measured.as_ref().unwrap().iter())
+            let expected: Vec<&str> = [global[g][i], shared[g]]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect();
+            assert_eq!(sums, expected, "{cell:?}");
+            let c = compare(&src, &opts)
+                .expect("analyzes")
+                .expect("the record's kernel");
+            let lines: Vec<u64> = (c.blocks.iter())
                 .flat_map(|b| b.differing.iter().map(|d| d.predicted))
                 .collect();
             assert_eq!(lines, [predicted[g]], "{cell:?}");
@@ -466,9 +507,10 @@ fn a_cta_uniform_ignore_src_predicts_a_bound_of_sectors() {
         ncu: Some(record),
         ..Default::default()
     };
-    let report = analyze(&src, "uniform", &opts).unwrap();
-    let blocks = report.kernels[0].measured.as_ref().unwrap();
-    let [sectors] = &blocks[0].sectors[..] else {
+    let c = compare(&src, &opts)
+        .expect("analyzes")
+        .expect("the record's kernel");
+    let [sectors] = &c.blocks[0].sectors[..] else {
         panic!("one line compared");
     };
     let predicted = (sectors.predicted.max, sectors.ideal.max);
@@ -478,21 +520,26 @@ fn a_cta_uniform_ignore_src_predicts_a_bound_of_sectors() {
     );
 }
 
-/// An ignore-src that is always true reads on no thread: no sectors.
+/// An ignore-src that is always true reads on no thread: no sectors per
+/// request, and the CTA loads no global bytes while it stores 1,024 B to
+/// shared memory.
 #[test]
 fn a_source_every_thread_ignores_is_read_by_none() {
     let at = "mul.wide.u32 %rd2, %r1, 16;\nadd.s64 %rd3, %rd1, %rd2;\nmov.pred %p1, -1;";
     let copy = "cp.async.cg.shared.global [%r4], [%rd3], 16, %p1;";
     let src = ignore_src_kernel("never", at, copy);
-    let report = analyze(&src, "never", &AnalyzeOptions::default()).unwrap();
-    let global = (report.kernels[0].accesses.iter())
-        .find(|a| a.space == "global")
-        .unwrap();
-    let none = Some(CountRange { min: 0, max: 0 });
-    assert_eq!(global.sectors_per_request, none);
-    let threads = global.threads.as_ref().unwrap();
+    let out = annotate(&src, &AnalyzeOptions::default()).expect("annotates");
     assert_eq!(
-        (threads.condition.as_str(), threads.count),
-        ("no thread", Some(0))
+        notes(&out, ".visible .entry"),
+        [
+            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: shared store 1,024 B; param load 512 B"
+        ]
+    );
+    assert_eq!(
+        notes(&out, "cp.async.cg"),
+        [
+            "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
+          global load [16·%tid.x + param_0] sectors/req 0 (ideal 0)"
+        ]
     );
 }
