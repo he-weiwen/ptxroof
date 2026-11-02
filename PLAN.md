@@ -1003,8 +1003,9 @@ One line each, with the trigger that would start it.
   on the right,
   an unknown value by its register and line (`%r1880@$L__BB0_39`), its
   known multiple as the value, with the branch's polarity, joined by
-  `and`, one under an `or` or a `not` with every part, an `and` under
-  an `or` and an `or` under an `and` parenthesized, a thread-index
+  `and`, one under an `or` or a `not` with every part, the `not` of an
+  `and` or an `or` by De Morgan's laws, an `and` under an `or` and an
+  `or` under an `and` parenthesized, a thread-index
   comparison too; then `CTA-uniform` where each is the same for the
   CTA, else `warp-uniform`, and the lines of the branches deciding them
   (`gluon-attn-fwd-ws-annotate.test`, `micro-or-entry-annotate.test`,

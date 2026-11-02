@@ -361,8 +361,9 @@ impl KernelReportBuilder<'_> {
     /// The uniform unknowns of `p`, block `b`'s set on its immediate
     /// dominator, by `atom`, joined by ` and `, a conjunct without one
     /// left to the threads shown; an `or` or a `not` holding one with all
-    /// its parts (`whole`), a thread-index comparison by `formula` and any
-    /// other unknown as `?`; an `or` among the parts of an `and`, and an
+    /// its parts (`whole`), the `not` of an `and` or an `or` as the `or` or
+    /// the `and` of its parts' negations, a thread-index comparison by
+    /// `formula` and any other unknown as `?`; an `or` among the parts of an `and`, and an
     /// `and` among those of an `or`, parenthesized. Each unknown adds the
     /// line of the branch deciding it and its scope to `tags`.
     fn when(&self, b: BlockId, p: &Pred, whole: bool, tags: &mut Tags) -> Option<String> {
@@ -393,7 +394,17 @@ impl KernelReportBuilder<'_> {
                     .collect::<Option<Vec<String>>>()?;
                 Some(parts.join(" or "))
             }
-            Pred::Not(x) => Some(format!("not ({})", self.when(b, x, true, tags)?)),
+            Pred::Not(x) => match &**x {
+                Pred::And(y, z) | Pred::Or(y, z) => {
+                    let (y, z) = (Box::new(!(**y).clone()), Box::new(!(**z).clone()));
+                    let dual = match **x {
+                        Pred::And(..) => Pred::Or(y, z),
+                        _ => Pred::And(y, z),
+                    };
+                    self.when(b, &dual, whole, tags)
+                }
+                x => Some(format!("not ({})", self.when(b, x, true, tags)?)),
+            },
             Pred::Cmp(c) if whole => Some(self.formula(&c.form, c.cmp)),
             Pred::Elect(_) if whole => Some("elected".to_owned()),
             Pred::Unknown if whole => Some("?".to_owned()),
@@ -706,8 +717,9 @@ $L__BB0_5:
     /// A block under uniform conditions names them past its immediate
     /// dominator's: each as its comparison with the branch's polarity,
     /// the sides swapped where every term would move right, two in a
-    /// conjunction joined by `and`, one under an `or` or a `not` with
-    /// every part; then `CTA-uniform` and the deciding branch's line.
+    /// conjunction joined by `and`, the `not` of an `or` as the `and` of
+    /// its parts' negations, its thread-index part left to the threads
+    /// shown; then `CTA-uniform` and the deciding branch's line.
     #[test]
     fn a_block_names_the_uniform_conditions_it_runs_under() {
         let src = "\
@@ -752,7 +764,7 @@ $L__BB0_8:
         assert_eq!(
             when,
             [
-                "not (param_1 < 1 or %tid.x ≠ 0) (CTA-uniform, branch at line 17)",
+                "param_1 ≥ 1 (CTA-uniform, branch at line 17)",
                 "param_2 > 3 and param_1 < 1 (CTA-uniform, branch at line 22)",
                 "param_1 ≥ 1 (CTA-uniform, branch at line 25)",
                 "param_2 ≤ 5 (CTA-uniform, branch at line 29)",
