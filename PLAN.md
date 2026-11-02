@@ -990,10 +990,11 @@ One line each, with the trigger that would start it.
   <L>` per group of warps with the same lanes, `<=` where the lanes are
   a bound (`micro-guards-annotate.test`,
   `gluon-attn-fwd-ws-annotate.test`); with the grid, where they read
-  the CTA index, the conjuncts that read it, each as `runs when` prints
-  a comparison, and the CTAs that run it, `| CTAs %ctaid.x < 64
-  (64/128)`, `| CTAs %ctaid.x ≥ 1 (3/4)` (`micro-cta-trips-annotate.test`),
-  or where the lanes differ by CTA
+  the CTA index, the conjuncts that read it, the `not` of an `or` taken
+  as the `and` of its parts' negations, each as `runs when` prints a
+  comparison, and the CTAs that run it, `| CTAs %ctaid.x < 64
+  (64/128)`, `| CTAs %ctaid.x ≥ 1 (3/4)` (`micro-cta-trips-annotate.test`,
+  `b200-cta-condition-annotate.test`), or where the lanes differ by CTA
   the most CTAs' lanes, `in 3844/3969 CTAs, other 125 CTAs differ`
   (`k1-annotate.test`); and without the block shape the condition
   that selects them, a loop's iteration k printed as

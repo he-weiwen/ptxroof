@@ -330,7 +330,7 @@ impl KernelReportBuilder<'_> {
             1 => {
                 let mut tags = (BTreeSet::new(), Uniform::Cta);
                 let parts: Vec<String> = (cta_conjuncts(set).into_iter())
-                    .filter_map(|p| self.when(b, p, true, &mut tags))
+                    .filter_map(|p| self.when(b, &p, true, &mut tags))
                     .collect();
                 format!("{lanes} | CTAs {} ({n}/{total})", parts.join(" and "))
             }
@@ -629,11 +629,20 @@ fn operands(p: &Pred, or: bool) -> Vec<&Pred> {
     }
 }
 
-/// The parts of a conjunction that read the CTA index.
-fn cta_conjuncts(set: &Pred) -> Vec<&Pred> {
+/// The parts of a conjunction that read the CTA index, the `not` of an
+/// `or` taken as the `and` of its parts' negations.
+fn cta_conjuncts(set: &Pred) -> Vec<Pred> {
+    if let Pred::Not(x) = set
+        && let Pred::Or(a, b) = &**x
+    {
+        return [!(**a).clone(), !(**b).clone()]
+            .iter()
+            .flat_map(cta_conjuncts)
+            .collect();
+    }
     match set {
         Pred::And(a, b) => [cta_conjuncts(a), cta_conjuncts(b)].concat(),
-        p if p.varies_by_cta() => vec![p],
+        p if p.varies_by_cta() => vec![p.clone()],
         _ => Vec::new(),
     }
 }
