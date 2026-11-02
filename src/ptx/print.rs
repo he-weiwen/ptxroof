@@ -85,7 +85,7 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
     let mut last_loc: Option<SourceLoc> = None;
     for stmt in &k.stmts {
         match stmt {
-            Stmt::Label(sym) => {
+            Stmt::Label { name: sym, .. } => {
                 let _ = writeln!(out, "{}:", m.interner.resolve(*sym));
             }
             Stmt::BranchTargets(targets) => {

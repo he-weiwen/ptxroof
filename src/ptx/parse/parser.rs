@@ -460,12 +460,12 @@ impl<'a> Parser<'a> {
                     return Err(self.err("unexpected end of file inside kernel body"));
                 }
                 TokenKind::Identifier if self.peek_at(1).kind == TokenKind::Colon => {
-                    let text = self.peek().text;
+                    let (text, offset) = (self.peek().text, self.peek().offset);
                     let label = self.interner.intern(text);
-                    let label = self.scoped(label);
+                    let name = self.scoped(label);
                     self.bump();
                     self.bump();
-                    kernel.stmts.push(Stmt::Label(label));
+                    kernel.stmts.push(Stmt::Label { name, offset });
                 }
                 TokenKind::Dot => {
                     self.parse_body_directive(kernel, &mut cur_loc)?;
@@ -1208,7 +1208,7 @@ mod tests {
     fn predicated_branch_and_label() {
         let m = parse_body("$L__BB0_4:\n@!%p6 bra $L__BB0_4;");
         let k = &m.kernels[0];
-        assert!(matches!(k.stmts[0], Stmt::Label(_)));
+        assert!(matches!(k.stmts[0], Stmt::Label { .. }));
         let i = instrs(&m)[0];
         let p = i.predicate.expect("predicate parsed");
         assert!(p.negated);
@@ -1596,7 +1596,7 @@ mod tests {
             .stmts
             .iter()
             .filter_map(|s| match s {
-                Stmt::Label(l) => Some(m.interner.resolve(*l)),
+                Stmt::Label { name, .. } => Some(m.interner.resolve(*name)),
                 _ => None,
             })
             .collect();

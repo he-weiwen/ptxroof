@@ -25,6 +25,7 @@ use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::trip_counts::trip_counts_from;
+use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loop_forest;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::dead_code::unused;
@@ -82,19 +83,56 @@ pub fn analyze(
     input_name: &str,
     opts: &AnalyzeOptions,
 ) -> Result<Report, AnalyzeError> {
+    let mut kernels = Vec::new();
+    let mut classified = Fraction { num: 0, den: 0 };
+    let mut trips_resolved = Fraction { num: 0, den: 0 };
+    let bindings = each_kernel(source, opts, |builder| {
+        let ncu = opts.ncu.as_ref().map(|r| (r, builder.lines));
+        let k = builder.build(opts.launch, ncu);
+        classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
+        classified.den += k.instruction_classes.total;
+        let mut count_loops = |nodes: &[LoopNode]| {
+            fn walk(nodes: &[LoopNode], f: &mut Fraction) {
+                for n in nodes {
+                    f.den += 1;
+                    f.num += u64::from(n.trips.expr.is_some());
+                    walk(&n.loops, f);
+                }
+            }
+            walk(nodes, &mut trips_resolved);
+        };
+        count_loops(&k.loops);
+        kernels.push(k);
+    })?;
+
+    let mut coverage = BTreeMap::new();
+    coverage.insert("instructions_classified".to_owned(), classified);
+    coverage.insert("loop_trips_resolved".to_owned(), trips_resolved);
+
+    Ok(Report {
+        input: input_name.to_owned(),
+        bindings,
+        grid: opts.grid,
+        kernels,
+        coverage,
+    })
+}
+
+/// Parse `source` and run `each` on every kernel's report builder, under
+/// the options' bindings, block shape and grid; the bindings it applied.
+pub(super) fn each_kernel(
+    source: &str,
+    opts: &AnalyzeOptions,
+    mut each: impl FnMut(KernelReportBuilder<'_>),
+) -> Result<Vec<Binding>, AnalyzeError> {
     let module = parse(source)?;
     if let Some(record) = &opts.ncu {
         record.check(&module, source).map_err(AnalyzeError::Ncu)?;
     }
-
     let lines = LineIndex::new(source);
-    let mut kernels = Vec::new();
-    let mut classified = Fraction { num: 0, den: 0 };
-    let mut trips_resolved = Fraction { num: 0, den: 0 };
-    let mut bindings_echo = Vec::new();
-
+    let mut bindings = Vec::new();
     for kernel in &module.kernels {
-        let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings_echo)?;
+        let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings)?;
         // The block shape, when it is the launch's: --launch, else
         // .reqntid; the grid, when given.
         let shapes = [
@@ -110,38 +148,12 @@ pub fn analyze(
                 bind_map.insert(SymbolicConstant::SpecialReg(reg), i64::from(n));
             }
         }
-        let ncu = opts.ncu.as_ref().map(|r| (r, &lines));
         let cfg = build_cfg(&module, kernel);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&module, kernel, &cfg, &forest);
-        let k = KernelReportBuilder::new(&data, &bind_map, &lines).build(opts.launch, ncu);
-        classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
-        classified.den += k.instruction_classes.total;
-        let mut count_loops = |nodes: &[LoopNode]| {
-            fn walk(nodes: &[LoopNode], f: &mut Fraction) {
-                for n in nodes {
-                    f.den += 1;
-                    f.num += u64::from(n.trips.expr.is_some());
-                    walk(&n.loops, f);
-                }
-            }
-            walk(nodes, &mut trips_resolved);
-        };
-        count_loops(&k.loops);
-        kernels.push(k);
+        each(KernelReportBuilder::new(&data, &bind_map, &lines));
     }
-
-    let mut coverage = BTreeMap::new();
-    coverage.insert("instructions_classified".to_owned(), classified);
-    coverage.insert("loop_trips_resolved".to_owned(), trips_resolved);
-
-    Ok(Report {
-        input: input_name.to_owned(),
-        bindings: bindings_echo,
-        grid: opts.grid,
-        kernels,
-        coverage,
-    })
+    Ok(bindings)
 }
 
 fn resolve_bindings(
@@ -209,10 +221,12 @@ impl KernelReportBuilder<'_> {
         ByScope<AccessForm>,
         PerRequests,
         PerWavefronts,
+        Operands,
     ) {
         let (module, kernel, cfg, forest) = (self.module, self.kernel, self.cfg, self.forest);
         let display = &self.display;
         let mut forms: ByScope<AccessForm> = HashMap::new();
+        let mut operands = Operands::new();
         let mut per_request = PerRequests::new();
         let mut per_wavefronts = PerWavefronts::new();
         let name = |v: &Var| match v {
@@ -222,27 +236,6 @@ impl KernelReportBuilder<'_> {
                 Self::value_name(self.module, self.kernel, self.cfg, self.lines, *u)
             ),
             other => other.to_string(),
-        };
-        // A shared array's mangled name reads as its source name.
-        let arrays: Vec<(String, String)> = kernel
-            .shared_decls
-            .iter()
-            .chain(&module.shared_decls)
-            .map(|d| {
-                let raw = module.interner.resolve(d.name).to_owned();
-                let short = demangle(&raw)
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(&raw)
-                    .to_owned();
-                (raw, short)
-            })
-            .collect();
-        let shorten = |mut text: String| {
-            for (raw, short) in &arrays {
-                text = text.replace(raw, short);
-            }
-            text
         };
         let shape = self.counts.shape;
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
@@ -314,15 +307,21 @@ impl KernelReportBuilder<'_> {
                     else {
                         continue;
                     };
-                    let (address, unknown, form) = match module.operand(*base) {
+                    let traced = match module.operand(*base) {
+                        Operand::Register(_) if rest.is_empty() => {
+                            Some(affine.address(*base, *offset, pos))
+                        }
+                        _ => None,
+                    };
+                    let (address, unknown, form) = match (module.operand(*base), &traced) {
                         // PTX ISA §9.7.9.26.5.2: `[tensorMap, tensorCoords]`.
                         _ if !rest.is_empty() => (
                             None,
                             Some("the tensor map holds the address".to_owned()),
                             None,
                         ),
-                        Operand::SymbolRef(s) => {
-                            let sym = shorten(module.interner.resolve(*s).to_owned());
+                        (Operand::SymbolRef(s), _) => {
+                            let sym = self.shorten(module.interner.resolve(*s).to_owned());
                             let addr = if *offset == 0 {
                                 sym
                             } else {
@@ -330,14 +329,14 @@ impl KernelReportBuilder<'_> {
                             };
                             (Some(addr), None, None)
                         }
-                        Operand::Register(_) => match affine.address(*base, *offset, pos) {
-                            Ok(a) => (Some(shorten(a.render(name))), None, Some(a)),
-                            Err(reason) => (
-                                None,
-                                Some(reason.render(affine.data, scope, false, &name)),
-                                None,
-                            ),
-                        },
+                        (_, Some(Ok(a))) => {
+                            (Some(self.shorten(a.render(name))), None, Some(a.clone()))
+                        }
+                        (_, Some(Err(reason))) => (
+                            None,
+                            Some(reason.render(affine.data, scope, false, &name)),
+                            None,
+                        ),
                         _ => (
                             None,
                             Some("address operand form not traced".to_owned()),
@@ -466,7 +465,7 @@ impl KernelReportBuilder<'_> {
                         ),
                         None => cfg.block_name(module, bid),
                     };
-                    out.entry(scope).or_default().push(Access {
+                    let row = Access {
                         site,
                         opcode: module.opcode(instr),
                         space: space.key().to_owned(),
@@ -485,11 +484,24 @@ impl KernelReportBuilder<'_> {
                         ideal_wavefronts_per_request: ideal_wavefronts,
                         footprint_unknown: footprint_unknown.or(wavefronts_unknown),
                         reuse,
-                    });
+                    };
+                    let traced = traced.map(|t| t.map(|a| affine.known_multiples(&a)));
+                    operands.entry(pos).or_default().push((row.clone(), traced));
+                    out.entry(scope).or_default().push(row);
                 }
             }
         }
-        (out, forms, per_request, per_wavefronts)
+        (out, forms, per_request, per_wavefronts, operands)
+    }
+
+    /// `text` with each shared array's mangled name as its source name.
+    pub(super) fn shorten(&self, mut text: String) -> String {
+        let decls = (self.kernel.shared_decls.iter()).chain(&self.module.shared_decls);
+        for raw in decls.map(|d| self.module.interner.resolve(d.name)) {
+            let demangled = demangle(raw);
+            text = text.replace(raw, demangled.rsplit("::").next().unwrap_or(raw));
+        }
+        text
     }
 }
 
@@ -530,6 +542,11 @@ type PerWavefronts = HashMap<usize, SharedWaves>;
 
 /// Rows per scope: a block's innermost loop, or `None` outside every loop.
 type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
+
+/// Per statement, its memory operands' rows, each with its address as
+/// traced where a register holds it: the affine form, an unknown value's
+/// known multiple as the value, or why there is none.
+pub(super) type Operands = HashMap<usize, Vec<(Access, Option<Result<AffineExpr, UnknownReason>>)>>;
 
 /// The direction a count is known in; `None` when bounded in neither.
 fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
@@ -792,14 +809,14 @@ impl FlopAccumulator {
 }
 
 /// `(constant coefficient, the rest)` of a product.
-struct KernelReportBuilder<'a> {
-    module: &'a Module,
-    kernel: &'a Kernel,
-    cfg: &'a ControlFlowGraph,
-    forest: &'a LoopForest,
+pub(super) struct KernelReportBuilder<'a> {
+    pub(super) module: &'a Module,
+    pub(super) kernel: &'a Kernel,
+    pub(super) cfg: &'a ControlFlowGraph,
+    pub(super) forest: &'a LoopForest,
     names: Vec<LoopName>,
-    blocks: Vec<BlockMeasurements>,
-    bind_map: &'a HashMap<SymbolicConstant, i64>,
+    pub(super) blocks: Vec<BlockMeasurements>,
+    pub(super) bind_map: &'a HashMap<SymbolicConstant, i64>,
     /// Display names with the remainder suffix applied.
     display: Vec<String>,
     /// Memory operands per scope: the innermost loop of their block, or
@@ -809,9 +826,11 @@ struct KernelReportBuilder<'a> {
     access_forms: ByScope<AccessForm>,
     per_request: PerRequests,
     per_wavefronts: PerWavefronts,
-    counts: ExecutionCounts<'a>,
+    pub(super) operands: Operands,
+    pub(super) data: &'a KernelAnalyses<'a>,
+    pub(super) counts: ExecutionCounts<'a>,
     /// The PTX file's lines, naming a uniform value by its statement's.
-    lines: &'a LineIndex,
+    pub(super) lines: &'a LineIndex,
 }
 
 impl<'a> KernelReportBuilder<'a> {
@@ -881,14 +900,18 @@ impl<'a> KernelReportBuilder<'a> {
             access_forms: HashMap::new(),
             per_request: HashMap::new(),
             per_wavefronts: HashMap::new(),
+            operands: HashMap::new(),
+            data,
             counts,
             lines,
         };
-        let (accesses, access_forms, per_request, per_wavefronts) = b.accesses_by_scope(&affine);
+        let (accesses, access_forms, per_request, per_wavefronts, operands) =
+            b.accesses_by_scope(&affine);
         b.accesses = accesses;
         b.access_forms = access_forms;
         b.per_request = per_request;
         b.per_wavefronts = per_wavefronts;
+        b.operands = operands;
         b
     }
 
@@ -1005,7 +1028,7 @@ impl<'a> KernelReportBuilder<'a> {
 
     /// A symbol as the report prints it: a loop's unknown count by the
     /// loop's name, a uniform value by its register and line.
-    fn leaf_name(&self, leaf: &SymbolicConstant) -> String {
+    pub(super) fn leaf_name(&self, leaf: &SymbolicConstant) -> String {
         match leaf {
             SymbolicConstant::TripCount(l) => format!("trips({})", self.loop_ref(*l)),
             SymbolicConstant::Unknown(v) => format!(

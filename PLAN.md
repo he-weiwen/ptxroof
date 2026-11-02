@@ -978,6 +978,43 @@ One line each, with the trigger that would start it.
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.
 - Per-line HTML view. Trigger: wanting it.
+- Annotated PTX, `analyze --annotate`, to replace the text and JSON
+  reports once their lit tests are ported: started 2026-10-31. The
+  input's lines, each followed by nothing or by ` // ` and its
+  annotation (`tests/report_invariants.rs`), two statements' joined by
+  ` ; ` (`statements_on_one_line_join_their_annotations`). So far each
+  block's annotation, on its label's line or else on its first
+  statement's after `[<block name>]`: a loop header's `loop: trips` and
+  the trip count, or `?` and why (`tests/lit/k5-annotate.test`), then,
+  given the block shape, the threads that run it as `warp <W> × lane
+  <L>` per group of warps with the same lanes, `<=` where the lanes are
+  a bound (`micro-guards-annotate.test`,
+  `gluon-attn-fwd-ws-annotate.test`); with the grid, where they read
+  the CTA index, the conjuncts that read it and the CTAs that run it,
+  `| CTAs %ctaid.x < 64 (64/128)`, or where the lanes differ by CTA
+  the most CTAs' lanes, `in 3844/3969 CTAs, other 125 CTAs differ`
+  (`k1-annotate.test`); and without the block shape the condition
+  that selects them, a loop's iteration k printed as
+  `(iv[<header>] + 1)`
+  (`without_a_block_shape_a_block_names_its_condition`). Then how many
+  times its unguarded statements run, over the launch given the grid
+  and the block shape, else per CTA, else per thread: `exec
+  32,768/launch`, `<=` for a bound, and under a loop whose trips are
+  not known `exec ? (trips of <header>)` (`k5-annotate.test`,
+  `gluon-attn-fwd-ws-annotate.test`); a statement whose count differs,
+  but a predicated `bra`, has its own on its line
+  (`micro-guards-annotate.test`). A memory operand but a parameter is
+  `<space> <direction> [<address>]`, a loop's iteration k printed as
+  `iv[<header>]` = k - 1, or `addr ?` and why, a counter there as
+  `(iv[<header>] + 1)` (`micro-guarded-exit-bound-annotate.test`),
+  and `c·⌊u/d⌋` of an unknown value u whose low bits every definition
+  leaves 0 up to d as `(c/d)·u` (`micro-uniform-aligned-annotate.test`),
+  then a global one's `sectors/req` and a shared one's
+  `wavefronts/req` with their ideal, `<=` for a bound, or `?` and why
+  (`k5-annotate.test`, `micro-vector-def-annotate.test`). An
+  instruction whose results nothing with an effect reads is `unused`
+  (the same test). Not yet: the kernel's launch on its `.entry` line;
+  the ncu comparisons, branch conditions as formulas and FLOPs.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures
