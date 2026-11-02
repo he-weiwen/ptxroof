@@ -10,7 +10,7 @@ use crate::analysis::execution_counts::{
 };
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
 use crate::analysis::instruction_counts::measurement::Pipe;
-use crate::analysis::memory_footprint::CountRange;
+use crate::analysis::memory_footprint::{ByteRange, CountRange};
 use crate::analysis::register_effects::writes;
 use crate::analysis::thread_participation::{Atom, AtomKey, Pred};
 use crate::analysis::uniformity_info::Uniform;
@@ -75,7 +75,10 @@ impl KernelReportBuilder<'_> {
             let (b, start) = (bm.block, self.cfg.block(bm.block).start);
             let header = self.forest.block_loop[b.0 as usize]
                 .filter(|&l| self.forest.get(l).header == b)
-                .map(|l| format!("loop: trips {}", self.trips(l)));
+                .map(|l| {
+                    let bytes = self.loop_global(l).map(|b| format!(" | {b}"));
+                    format!("loop: trips {}{}", self.trips(l), bytes.unwrap_or_default())
+                });
             let (exec, mut parts) = self.execs(bm, per);
             for s in bm.instructions.iter().map(|i| i.provenance) {
                 if self.counts.unused[s] {
@@ -234,6 +237,28 @@ impl KernelReportBuilder<'_> {
             (false, false, _) => self.count(&expr),
         };
         format!("{n}{unit}")
+    }
+
+    /// The global bytes one CTA requests over one run of loop `l`'s own
+    /// blocks, not its nested loops', the distinct bytes they touch and
+    /// the bytes of the sectors they touch, where known; `<= ` for a
+    /// bound.
+    fn loop_global(&self, l: LoopId) -> Option<String> {
+        let b = self.loop_bytes(l)?;
+        let n = |n: u64| i64::try_from(n).map_or(n.to_string(), |n| self.count(&SymExpr::Const(n)));
+        let bound = if b.at_most { "<= " } else { "" };
+        let range = |r: ByteRange| match r.min == r.max {
+            true => format!("{bound}{} B", n(r.min)),
+            false => format!("{bound}{}–{} B", n(r.min), n(r.max)),
+        };
+        let requested = if b.requested_at_most { "<= " } else { "" };
+        let unique = b.unique.map_or("?".to_owned(), range);
+        let sectors = b.sector_bytes.map(|s| format!(", sectors {}", range(s)));
+        Some(format!(
+            "global per CTA: requested {requested}{} B, unique {unique}{}",
+            n(b.requested),
+            sectors.unwrap_or_default()
+        ))
     }
 
     /// The line of statement `s`, but a `.branchtargets` list.

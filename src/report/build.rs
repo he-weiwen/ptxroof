@@ -885,7 +885,7 @@ impl<'a> KernelReportBuilder<'a> {
         }
     }
 
-    fn loop_bytes(&self, id: LoopId) -> Option<LoopBytes> {
+    pub(super) fn loop_bytes(&self, id: LoopId) -> Option<LoopBytes> {
         let trips = self.counts.trip_exprs[id.0 as usize]
             .as_const()
             .filter(|&t| t > 0)?;

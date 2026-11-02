@@ -985,7 +985,12 @@ One line each, with the trigger that would start it.
   ` ; ` (`statements_on_one_line_join_their_annotations`). So far each
   block's annotation, on its label's line or else on its first
   statement's after `[<block name>]`: a loop header's `loop: trips` and
-  the trip count, or `?` and why (`tests/lit/k5-annotate.test`), then,
+  the trip count, or `?` and why (`tests/lit/k5-annotate.test`), and
+  the global bytes one CTA requests over one run of the loop's own
+  blocks, the distinct bytes and the bytes of the sectors they touch,
+  `<=` for a bound, `?` where an address is not read
+  (`k5-annotate.test`, `k1-annotate.test`,
+  `micro-loop-bytes-annotate.test`), then,
   given the block shape, the threads that run it as `warp <W> × lane
   <L>` per group of warps with the same lanes, `<=` where the lanes are
   a bound (`micro-guards-annotate.test`,
