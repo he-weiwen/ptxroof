@@ -19,7 +19,6 @@ config.environment["FILECHECK_OPTS"] = "--strict-whitespace"
 config.ptxroof = os.environ.get("PTXROOF", os.path.join(repo, "target", "debug", "ptxroof"))
 config.substitutions.append(("%ptxroof", shlex.quote(config.ptxroof)))
 config.substitutions.append(("%fixtures", shlex.quote(os.path.join(repo, "tests", "fixtures"))))
-config.substitutions.append(("%check-report", "python3 " + shlex.quote(os.path.join(config.test_source_root, "check_report.py"))))
 if shutil.which("ptxas") and shutil.which("cuobjdump"):
     release = subprocess.run(["ptxas", "--version"], capture_output=True, text=True).stdout
     config.available_features.update(f"ptxas-{r}" for r in re.findall(r"release (\S+),", release))

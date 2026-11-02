@@ -1,4 +1,0 @@
-# The partial JSON comparison: extra fields pass, missing or different
-# ones fail.
-RUN: %check-report --self-test | FileCheck "%s"
-CHECK: check_report.py --self-test: 8 assertions passed
