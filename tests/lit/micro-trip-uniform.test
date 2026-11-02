@@ -1,14 +1,12 @@
 # A count in a value the tracer does not read, the same for every thread,
 # is that value as a symbol only where it is one value at every trip of
-# every entry of the loop: not where an outer loop defines it (it read
-# max(uniform(%r5@31), 1) per entry, where the inner count changes with
-# the outer counter), nor where threads left the loop defining it at
-# different trips (max(uniform(%r5@61), 1), where each thread has its
-# own).
-RUN: %ptxroof analyze %fixtures/micro/trip_uniform.ptx | FileCheck "%s"
-CHECK-LABEL: kernel micro_trip_uniform_outer
-CHECK: trips = 4
-CHECK: trips = unknown: uniform(%r5@31) is defined in an enclosing loop: div by a non-constant divisor
-CHECK-LABEL: kernel micro_trip_uniform_after_exit
-CHECK: trips = unknown: latch condition depends on special register %tid.x
-CHECK: trips = unknown: uniform(%r5@61) differs between lanes: depends on %tid.x
+# every entry of the loop: not where an outer loop of 4 trips defines it
+# (it read max(uniform(%r5@31), 1) per entry, where the inner count
+# changes with the outer counter), nor where threads left the loop
+# defining it at different trips (max(uniform(%r5@61), 1), where each
+# thread has its own). Each unknown count names why.
+RUN: %ptxroof analyze --annotate %fixtures/micro/trip_uniform.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_1: // loop: trips 4 | warp * × lane * | exec 128/CTA{{$}}
+ANN: {{^}}$L__BB0_2: // loop: trips ? (uniform(%r5@31) is defined in an enclosing loop: div by a non-constant divisor) | warp * × lane * | exec ?{{$}}
+ANN: {{^}}$L__BB1_1: // loop: trips ? (latch condition depends on special register %tid.x) | warp * × lane * | exec ?{{$}}
+ANN: {{^}}$L__BB1_3: // loop: trips ? (uniform(%r5@61) differs between lanes: depends on %tid.x) | warp * × lane * | exec ?{{$}}

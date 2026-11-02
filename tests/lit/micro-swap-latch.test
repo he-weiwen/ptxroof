@@ -1,6 +1,6 @@
 # A latch on registers whose header φs read each other: the search for
 # the reason its trip count is not read visits each register once and
-# ends, where it recursed until the stack overflowed (13 census kernels).
-RUN: %ptxroof analyze %fixtures/micro/swap_latch.ptx | FileCheck "%s"
-CHECK: loop $L__BB0_1 ($L__BB0_1)
-CHECK-NEXT: trips = unknown: uniform(%r2@$L__BB0_1) is defined in an enclosing loop: depends on %r2, carried around an enclosing loop
+# ends, where it recursed until the stack overflowed (13 census kernels);
+# the loop's trip count is unknown, and why is named.
+RUN: %ptxroof analyze --annotate %fixtures/micro/swap_latch.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_1: // loop: trips ? (uniform(%r2@$L__BB0_1) is defined in an enclosing loop: depends on %r2, carried around an enclosing loop) | warp * × lane * | exec ?{{$}}
