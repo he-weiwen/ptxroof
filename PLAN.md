@@ -619,8 +619,8 @@ contract (Codex's review of 2b2731b).
   address is (`micro/guards.ptx`: the store total stays a bound, a
   request's sectors are exact). A comparison with a loop counter is counted trip by trip
   (`micro/counter_guard.ptx`: 384 barriers and 300 stores per CTA, as
-  measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `k < 511`,
-  confirmed at 12,533,760, `gluon-counter-guard.test`,
+  measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `runs when
+  iv[$L__BB0_3] < 510`, confirmed at 12,533,760, `gluon-counter-guard.test`,
   `lm_head_dx_s_counter_guard_confirms_its_block`) only where the
   block lies in that loop, the loop's trip count is a constant and the
   comparison holds that one counter with the thread index; with a
@@ -791,11 +791,9 @@ contract (Codex's review of 2b2731b).
 - Hardware cross-check on an RTX 4090 with Nsight Compute: k5's
   counts, and the c_fc fp8 GEMM's launch (M=4096, N=3072, K=768):
   `sm__ops_path_tensor_src_fp8.sum` = 19,327,352,832 = 2·M·N·K, the
-  tool's 16384 fp8 flops per thread per K iteration times 12
-  iterations, 128 threads and 768 CTAs; `sm__inst_executed_pipe_tensor`
-  = 2,359,296 = 64 `mma` per warp-iteration likewise, the tool's
-  3072 warp `mma` per CTA at K=768 times 768 CTAs
-  (`gluon-fp8-gemm-c-fc-warps.test`); l1tex global-load
+  tool's 25,165,824 fp8 tensor flops per CTA at K=768 times 768 CTAs
+  (`gluon-fp8-gemm-c-fc-warps.test`); `sm__inst_executed_pipe_tensor`
+  = 2,359,296, that at 8,192 per `mma`; l1tex global-load
   bytes (151,191,552) = every `cp.async` byte (150,994,944: two
   prologue stages plus ten of the twelve iterations, the predicated
   prefetches off at the end) plus 256 B per CTA for the two scale

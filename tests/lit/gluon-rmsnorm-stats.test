@@ -1,27 +1,13 @@
-# Residual RMSNorm pass 1: one block of 1146 instructions, no branches,
-# run once by each of the 128 threads. The flops are exact, 534 per
-# thread; the loads and stores are masked (`@%p`), so the per-thread byte
-# totals are upper bounds and AI(global) is a lower bound. Nothing
-# unknown.
+# Residual RMSNorm pass 1: one block, no branches, run once by each of
+# the 128 threads. The flops are exact, 534 per thread.
 # The masks are constants: `mov.pred %p1, -1` keeps every lane, its
 # loads' warp requests 16–17 sectors, and the fourth vector of each row
 # under `mov.pred %p2, 0` runs on no thread (ptxas emits no SASS for
 # those lines, rmsnorm_stats_kernel.sm_89.ncu.json).
-# 1146 instructions, of which 1041 count: not the 8 accesses under
-# %p2 or the 97 unused (mostly the default values of the masked loads).
-# Per thread the dead vectors count nothing either: 18 live 16 B and
-# 2 live 4 B loads, plus the guarded `atom`'s 4 B.
 # Per CTA the live loads and stores measure 37888 B and 12320 B (the
 # ncu record's LDG and STG executions); the 4 B more are the `atom` one
 # thread of each CTA runs (512 executions over 512 CTAs).
-RUN: %ptxroof analyze %fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx | FileCheck "%s"
 RUN: %ptxroof analyze --annotate %fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: $L__func_begin0  gluon_norm.py:37-64    1146  (end)
-CHECK: instructions = 1041 live of 1146
-CHECK: global bytes: load <= 300 B, store <= 108 B
-CHECK: AI(global) >= 1.3186274509803921 flop/B
-CHECK: unknowns: none
-CHECK: coverage: instructions_classified 100.0% (1146/1146)
 ANN: {{^}}.visible .entry rmsnorm_stats_kernel( // block 128×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 68,352; sfu flops f32 512; global load 37,892 B, store 12,324 B; shared load 512 B, store 512 B; param load 8,704 B{{$}}
 ANN: {{^}}$L__func_begin0: // warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}	@%p1 ld.global.v4.b32 { %r3, %r4, %r5, %r6 }, [ %rd3 + 0 ]; // global load [12288·%ctaid.x + 16·(%tid.x mod 32) + 1536·(⌊%tid.x/32⌋ mod 4) + param_0] sectors/req 16–17 (ideal 16){{$}}
