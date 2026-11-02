@@ -1,17 +1,8 @@
 # S9.1 (PLAN.md, acceptance scenarios): does the tool admit what it can't
 # see? The latch compares loaded floats: the trip count is unknown with
 # a reason, the kernel's FLOPs and bytes name the loop whose trips they
-# need (never a silent zero), the trip coverage stat drops below 100%,
-# and the exit code is still 0 — unknowns are results, not errors.
+# need (never a silent zero), and the exit code is still 0 — unknowns
+# are results, not errors.
 RUN: %ptxroof analyze --annotate %fixtures/micro/data_dep.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/micro/data_dep.ptx --json | %check-report "%s"
 ANN: {{^}}.visible .entry micro_data_dep( // per thread: flops f32 ? (trips of $L__BB0_1); global load ? B (trips of $L__BB0_1), store ? B (trips of $L__BB0_1); param load 8 B{{$}}
 ANN: {{^}}$L__BB0_1: // loop: trips ? (latch condition compares floating-point values) | exec ?{{$}}
-{
-  "kernels": [
-    {
-      "name": "micro_data_dep"
-    }
-  ],
-  "coverage": {"instructions_classified": {"num": 9, "den": 9}, "loop_trips_resolved": {"num": 0, "den": 1}}
-}

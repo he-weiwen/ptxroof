@@ -548,10 +548,11 @@ contract (Codex's review of 2b2731b).
   `cp.async.bulk.commit_group` and `cp.async.bulk.wait_group` in four.
 - **A tensor copy's bytes are unknown.** `cp.async.bulk.tensor` moves
   the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8),
-  not the PTX: both its sides count as ops with unknown bytes in every
-  total, its global row reads `unknown: the tensor map holds the
-  address`, and a loop holding one in its own blocks has no footprint
-  (`micro/tensor_copies.ptx`, `micro-tensor-copies.test`).
+  not the PTX: the bytes of both its sides are unknown in every total,
+  `bytes ? (not counted)` on its line, its global side reads `addr ?
+  (the tensor map holds the address)`, and a loop holding one in its
+  own blocks has no footprint (`micro/tensor_copies.ptx`,
+  `micro-tensor-copies.test`).
 - **Special registers PTX ISA §10 does not describe** — `%pm*`
   ("behavior is currently undefined"), `%envreg*` (driver-defined),
   `%globaltimer*` (target-specific), `%reserved_smem_offset_*` — read

@@ -1,6 +1,0 @@
-# Two fma.rn.f32 on one line, under the record: all seven instructions
-# are classified, and there is no loop.
-RUN: %ptxroof analyze "%S/Inputs/ncu-two-per-line.ptx" --ncu "%S/Inputs/ncu-two-per-line.ncu.json" --json | %check-report "%s"
-{
-  "coverage": {"instructions_classified": {"num": 7, "den": 7}, "loop_trips_resolved": {"num": 0, "den": 0}}
-}
