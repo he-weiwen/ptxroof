@@ -1555,4 +1555,208 @@ $L__BB0_8:
         );
         assert_eq!(bytes(1 << 62), None);
     }
+
+    /// Each memory operand of `src`'s kernel, its space, direction and
+    /// address as its line's annotation prints them, an `unused`
+    /// instruction's too, whose line says only `unused`.
+    fn addresses(src: &str, opts: &AnalyzeOptions) -> Vec<String> {
+        (memory_operands(src, opts).into_iter())
+            .map(|o| {
+                let end = [" sectors/req", " wavefronts/req"]
+                    .iter()
+                    .filter_map(|r| o.find(r))
+                    .min();
+                o[..end.unwrap_or(o.len())].to_owned()
+            })
+            .collect()
+    }
+
+    /// `%r1` steps by 2^30 for 8 trips: its update reaches 2^33, past 32
+    /// bits, though the store reads it before the update. It is no
+    /// counter, but one value for every thread on each trip; stepping by
+    /// 1 it is the loop's iteration, `iv[$L__LOOP]`.
+    #[test]
+    fn a_counter_whose_update_leaves_its_type_is_no_counter() {
+        let src = |step: &str| {
+            format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0\n)\n.reqntid 1, 1, 1\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, 0;\nmov.u32 %r5, 0;\n\
+                 $L__LOOP:\nmul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                 st.global.u32 [%rd3], 0;\nadd.u32 %r1, %r1, {step};\n\
+                 add.u32 %r5, %r5, 1;\nsetp.lt.u32 %p1, %r5, 8;\n@%p1 bra $L__LOOP;\nret;\n}}\n"
+            )
+        };
+        let address = |step: &str| addresses(&src(step), &AnalyzeOptions::default());
+        assert_eq!(address("1"), ["global store [4·iv[$L__LOOP] + param_0]"]);
+        assert_eq!(
+            address("1073741824"),
+            ["global store [4·uniform(%r1@$L__LOOP) + param_0]"]
+        );
+    }
+
+    /// A shared load at `%tid.x` split by 8, its array by its demangled
+    /// name, and a global load in a loop, moving 4 B a trip of `$L__L`.
+    #[test]
+    fn accesses_are_affine_addresses() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   .shared .align 2 .b8 _ZZ1kE2As[128];\n\
+                   ld.param.u64 %rd1, [k_param_0];\ncvta.to.global.u64 %rd2, %rd1;\n\
+                   mov.u32 %r1, %tid.x;\nshr.u32 %r2, %r1, 3;\nand.b32 %r3, %r1, 7;\n\
+                   shl.b32 %r4, %r2, 4;\nshl.b32 %r5, %r3, 1;\nadd.s32 %r6, %r4, %r5;\n\
+                   mov.u32 %r7, _ZZ1kE2As;\nadd.s32 %r8, %r7, %r6;\nld.shared.u16 %rs1, [%r8+2];\n\
+                   mov.u64 %rd3, %rd2;\nmov.u32 %r9, 0;\n\
+                   $L__L:\nld.global.f32 %f1, [%rd3];\nadd.s64 %rd3, %rd3, 4;\n\
+                   add.s32 %r9, %r9, 1;\nsetp.lt.s32 %p1, %r9, 8;\n@%p1 bra $L__L;\nret;\n}\n";
+        assert_eq!(
+            addresses(src, &AnalyzeOptions::default()),
+            [
+                "shared load [16·⌊%tid.x/8⌋ + 2·(%tid.x mod 8) + As + 2]",
+                "global load [4·iv[$L__L] + param_0]",
+            ]
+        );
+    }
+
+    /// A max of a parameter scaling the thread index divides once the
+    /// parameter is bound: `(max(n, 1)·%tid.x) >> 2` at n = 2 is
+    /// ⌊%tid.x/2⌋, and its `rem` by 4 is 2·(%tid.x mod 2).
+    #[test]
+    fn a_bound_max_coefficient_divides() {
+        let opts = AnalyzeOptions {
+            bindings: vec![parse_bind("1:n=2").expect("binding")],
+            ..Default::default()
+        };
+        let src = |reduce: &str| {
+            format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u64 k_param_0,\n.param .u32 k_param_1\n)\n{{\n\
+                 ld.param.u64 %rd1, [k_param_0];\nld.param.u32 %r1, [k_param_1];\n\
+                 max.s32 %r2, %r1, 1;\nmov.u32 %r3, %tid.x;\nmul.lo.s32 %r4, %r2, %r3;\n\
+                 {reduce}\nmul.wide.u32 %rd2, %r5, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+                 st.global.u32 [%rd3], %r5;\nret;\n}}\n"
+            )
+        };
+        let address = |reduce: &str| addresses(&src(reduce), &opts);
+        assert_eq!(
+            address("shr.u32 %r5, %r4, 2;"),
+            ["global store [4·⌊%tid.x/2⌋ + param_0]"]
+        );
+        assert_eq!(
+            address("rem.u32 %r5, %r4, 4;"),
+            ["global store [8·(%tid.x mod 2) + param_0]"]
+        );
+    }
+
+    /// `mov.b64 {%r2, %r3}, %rd1` writes %r2 as half of %rd1, not %rd1:
+    /// an address through it is a uniform variable, not param_0.
+    #[test]
+    fn a_vector_destination_is_not_the_whole_source() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.b64 {%r2, %r3}, %rd1;\n\
+                   cvt.u64.u32 %rd2, %r2;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
+        assert_eq!(
+            addresses(src, &AnalyzeOptions::default()),
+            ["global load [uniform(%r2@9)]"]
+        );
+    }
+
+    /// The base at depth 0, `%r30` at 2 and `%r0` at 32, the deepest
+    /// definition affine analysis follows: `%tid.x` below it is a leaf.
+    #[test]
+    fn a_special_register_at_the_depth_limit_is_read() {
+        let chain: String = (1..=30)
+            .map(|i| format!("add.u32 %r{i}, %r{}, 1;\n", i - 1))
+            .collect();
+        let src = format!(
+            ".version 8.7\n.target sm_80\n.address_size 64\n\
+             .visible .entry k(\n.param .u64 k_param_0\n)\n{{\n\
+             ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r0, %tid.x;\n{chain}\
+             mul.wide.u32 %rd2, %r30, 4;\nadd.s64 %rd3, %rd1, %rd2;\n\
+             ld.global.f32 %f1, [%rd3];\nret;\n}}\n"
+        );
+        assert_eq!(
+            addresses(&src, &AnalyzeOptions::default()),
+            ["global load [4·%tid.x + param_0 + 120]"]
+        );
+    }
+
+    /// PTX ISA §6.4.3: `{Ra, Rb, Rc, Rd}` take `V.x`, `V.y`, `V.z`, `V.w`;
+    /// §10.1: `%tid`'s fourth element "always returns zero".
+    #[test]
+    fn a_special_vector_is_read_by_element() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\n\
+                   mov.v4.u32 {%r1, %r2, %r3, %r4}, %tid;\nmov.u32 %r5, %tid.a;\n\
+                   mul.wide.u32 %rd2, %r1, 4;\nadd.s64 %rd3, %rd1, %rd2;\nld.global.f32 %f1, [%rd3];\n\
+                   mul.wide.u32 %rd4, %r4, 4;\nadd.s64 %rd5, %rd1, %rd4;\nld.global.f32 %f2, [%rd5];\n\
+                   mul.wide.u32 %rd6, %r5, 4;\nadd.s64 %rd7, %rd1, %rd6;\nld.global.f32 %f3, [%rd7];\n\
+                   ret;\n}\n";
+        assert_eq!(
+            addresses(src, &AnalyzeOptions::default()),
+            [
+                "global load [4·%tid.x + param_0]",
+                "global load [param_0]",
+                "global load [param_0]",
+            ]
+        );
+    }
+
+    /// `ld.param.v2.u32 {%r1, %r2}` loads two words of the parameter: %r2
+    /// is the second, a uniform variable, not param_0.
+    #[test]
+    fn a_vector_parameter_load_element_is_not_the_parameter() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .align 8 .b8 k_param_0[8]\n)\n{\n\
+                   ld.param.v2.u32 {%r1, %r2}, [k_param_0];\n\
+                   cvt.u64.u32 %rd2, %r2;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
+        assert_eq!(
+            addresses(src, &AnalyzeOptions::default()),
+            ["global load [uniform(%r2@8)]"]
+        );
+    }
+
+    /// Both paths write `{%r2, %r3}` from one 64-bit immediate: %r3 is its
+    /// upper half, not the immediate, the same for every thread, so the
+    /// address is known.
+    #[test]
+    fn merged_vector_writes_of_one_immediate_are_not_that_immediate() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u32 k_param_0\n)\n{\n\
+                   ld.param.u32 %r1, [k_param_0];\nsetp.eq.u32 %p1, %r1, 0;\n\
+                   @%p1 bra $L1;\nmov.b64 {%r2, %r3}, 1;\nbra.uni $L2;\n\
+                   $L1:\nmov.b64 {%r2, %r3}, 1;\n$L2:\n\
+                   cvt.u64.u32 %rd2, %r3;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
+        assert_eq!(
+            addresses(src, &AnalyzeOptions::default()),
+            ["global load [uniform(%r3@$L2)]"]
+        );
+    }
+
+    /// An `or` whose constant is the high side: the lane part fits below
+    /// it. No power of two fits above 2^62 in an i64: that order is
+    /// refused and the other, the 0 below 1, still read.
+    #[test]
+    fn an_or_above_the_other_sides_largest_value_is_an_add() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k(\n.param .u64 k_param_0\n)\n{\n\
+                   ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, %tid.x;\n\
+                   and.b32 %r2, %r1, 31;\nor.b32 %r3, %r2, 256;\nmul.wide.u32 %rd2, %r3, 4;\n\
+                   add.s64 %rd3, %rd1, %rd2;\nld.global.f32 %f1, [%rd3];\nret;\n}\n";
+        assert_eq!(
+            addresses(src, &opts),
+            ["global load [4·(%tid.x mod 32) + param_0 + 1024]"]
+        );
+        let wide = src.replace(
+            "mov.u32 %r1, %tid.x;\n",
+            "mov.u64 %rd8, 0x4000000000000000;\nor.b64 %rd9, %rd8, 0;\nadd.s64 %rd1, %rd1, %rd9;\nmov.u32 %r1, %tid.x;\n",
+        );
+        assert_eq!(
+            addresses(&wide, &opts),
+            ["global load [4·(%tid.x mod 32) + param_0 + 4611686018427388928]"]
+        );
+    }
 }
