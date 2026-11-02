@@ -11,7 +11,7 @@ RUN: %ptxroof analyze %fixtures/micro/counter_guard.ptx --bind 1:n=300 | FileChe
 ANN: {{^}}.visible .entry micro_counter_guard( // block 64×1×1 | param_1 = 300 | per CTA: global store 1,200 B; param load 768 B{{$}}
 ANN: {{^}}$L__BB0_1: // loop: trips 8 | global per CTA: requested 1,200 B, unique <= 256 B, sectors <= 2,048–2,560 B | warp * × lane * | exec 512/CTA{{$}}
 ANN: {{^}}	bar.sync 	0; // [<block 2>] warp * × lane * | exec 384/CTA{{$}}
-ANN: {{^}}	st.global.u32 	[%rd3], %r5; // [<block 4>] <= warp * × lane * | exec 300/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal 4){{$}}
+ANN: {{^}}	st.global.u32 	[%rd3], %r5; // [<block 4>] <= warp * × lane * | exec 300/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
 CHECK: <block 2>  (no line info)       1  <= 64 in <= 2 warps (k[$L__BB0_1] >= 3)
 CHECK: <block 4>  (no line info)       1  <= 64 in <= 2 warps (%tid.x + 64 * k[$L__BB0_1] < 364)
 CHECK: totals per CTA [static]:
