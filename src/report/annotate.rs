@@ -424,9 +424,9 @@ impl KernelReportBuilder<'_> {
     }
 
     /// `form cmp 0` as `lhs cmp rhs`, a loop's iteration as `shifted`
-    /// gives it: the terms and symbols of negative coefficient and the
-    /// constant moved right, the comparison swapped where nothing would
-    /// stay left.
+    /// gives it and an unknown value by its register and line: the terms
+    /// and symbols of negative coefficient and the constant moved right,
+    /// the comparison swapped where nothing would stay left.
     fn formula(&self, form: &AffineExpr, cmp: Cmp) -> String {
         let (form, nested) = shifted(form);
         let negative = |c: &SymExpr| SymExpr::split_const(c.clone()).0 < 0;
@@ -461,7 +461,11 @@ impl KernelReportBuilder<'_> {
             Cmp::Eq => "=",
             Cmp::Ne => "≠",
         };
-        let side = |s: AffineExpr| s.render(|v| self.var(v, nested)).replace(" * ", "·");
+        let name = |v: &Var| match v {
+            Var::Unknown(u) => Self::value_name(self.module, self.kernel, self.cfg, self.lines, *u),
+            v => self.var(v, nested),
+        };
+        let side = |s: AffineExpr| s.render(name).replace(" * ", "·");
         let rhs = side(rhs.scale(SymExpr::Const(-1)));
         self.shorten(format!("{} {op} {rhs}", side(lhs)))
     }

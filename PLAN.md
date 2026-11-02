@@ -1001,7 +1001,8 @@ One line each, with the trigger that would start it.
   same for the whole CTA or a warp, `runs when` and each, a comparison
   as `lhs cmp rhs`, the terms of negative coefficient and the constant
   on the right,
-  an unknown value's known multiple as the value, with the branch's
+  an unknown value by its register and line (`%r1880@$L__BB0_39`), its
+  known multiple as the value, with the branch's
   polarity, its line and for whom it is the same, joined by `and`, one
   under an `or` or a `not` with every part, a thread-index comparison
   too (`gluon-attn-fwd-ws-annotate.test`,
