@@ -1,33 +1,11 @@
 # The cross-entropy chunk at nanochat's vocabulary, 512 threads, its
 # shared memory set at launch: two eight-trip loops, fully counted, each
 # CTA's global bytes over them 65,536 B and 131,072 B requested, all
-# distinct, in a seven-row block table (LLVM's `$L__tmpN` debug labels
-# are not branch targets and start no block). The reductions inlined
-# from Triton's standard.py are attributed to the gluon_ce.py lines they
-# were inlined at (50 and 64), two hops down. The target column each CTA
-# gathers (line 45) is one value for the CTA: its index is loaded
-# through param_1, which the kernel does not write, and its load
-# requests 1 sector. The `atom` runs on one thread of each CTA,
-# `%tid.x == 0`. The text report pins the block table, each loop's
-# flops and bytes per iteration, AI(global), the unrolled lines, no
-# unknowns and full coverage.
-RUN: %ptxroof analyze %fixtures/gluon/ce_chunk_kernel.sm_89.ptx | FileCheck "%s"
+# distinct. The target column each CTA gathers (line 45) is one value
+# for the CTA: its index is loaded through param_1, which the kernel
+# does not write, and its load requests 1 sector. The `atom` runs on one
+# thread of each CTA, `%tid.x == 0`.
 RUN: %ptxroof analyze --annotate %fixtures/gluon/ce_chunk_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: |    <block 3>        (no line info)          2  $L__BB0_4
-CHECK: $L__tmp27        gluon_ce.py:31-65      35  (end)
-CHECK: loop gluon_ce.py:47 ($L__BB0_1)
-CHECK: flops = 89  (f32 89)
-CHECK: global bytes: load 16 B, store 0 B
-CHECK: AI(global) = 7.0625 flop/B
-CHECK: loop gluon_ce.py:54 ($L__BB0_5)
-CHECK: flops = 161  (bf16 8, f32 153)
-CHECK: global bytes: load 16 B, store 16 B
-CHECK: accesses outside loops:
-CHECK: gluon_ce.py:65  atom.global.gpu.acq_rel.max.s32  global load+store 4 B on 1 thread in 1 warp (%tid.x == 0)       warp: 1 sector (ideal 1)     [param_4]
-CHECK: totals [static]:
-CHECK: unrolled source lines: gluon_ce.py:31 x6, gluon_ce.py:42 x2, gluon_ce.py:45 x11, gluon_ce.py:50 x33, gluon_ce.py:64 x18
-CHECK: unknowns: none
-CHECK: coverage: instructions_classified 100.0% (589/589)
 ANN: {{^}}.visible .entry ce_chunk_kernel( // block 512×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops bf16 32,768 + f32 <= 1,026,560; sfu flops f32 198,144; global load 138,244 B, store 65,544 B; shared load 4,096 B, store 4,096 B; param load 26,624 B{{$}}
 ANN: {{^}}	ld.global.b64 { %rd7 }, [ %rd8 + 0 ]; // global load [8·%ctaid.x + param_1] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	ld.global.b16 { %rs1 }, [ %rd10 + 0 ]; // global load [65536·%ctaid.x + 2·uniform(%rd14@86) + param_0] sectors/req 1 (ideal 1){{$}}

@@ -397,7 +397,7 @@ contract (Codex's review of 2b2731b).
   shapes. The records keep thread instructions only
   (`tools/ncu/measure.py`), not the warp instructions per line that
   would check it. The cross-entropy's target column, its index loaded
-  through param_1, reads `[65536 * %ctaid.x + 2 * uniform(%rd14@86) +
+  through param_1, reads `[65536·%ctaid.x + 2·uniform(%rd14@86) +
   param_0]`, 1 sector, as its record measures (`gluon-ce-chunk.test`).
   A `.volatile`, `.relaxed`, `.acquire`, `.mmio` or generic load is
   never one value (`a_global_load_at_one_address_is_one_value_per_warp`).
@@ -804,7 +804,8 @@ contract (Codex's review of 2b2731b).
   `sm__inst_executed_pipe_tensor` = 3,244,032 for the forward, the
   3,264 key-block visits times the tool's 1,024 warp-`mma` per CTA
   visit minus the 192 masked half-blocks it skips at 512; 8,110,080
-  for the backward, 6,336 visits times 160 per warp; the pre and post
+  for the backward, the tool's 33,218,887,680 bf16 tensor flops at
+  4,096 per `mma` (`gluon-attn-bwd.test`); the pre and post
   kernels' cuda-core flops (2·ffma + fadd + fmul) 6,684,672 and
   3,145,728 are the tool's per-CTA 17,408 and 8,192 times 384 CTAs.
   Sectors per warp request, k5 and k1 at M=N=K=256 (`tests/lit/

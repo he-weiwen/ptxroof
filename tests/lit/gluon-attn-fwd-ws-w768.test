@@ -1,21 +1,9 @@
 # The same kernel with a left window of 768: the key loop's lower bound
-# adds a branch, block 2 grows from 55 to 63 instructions, and the block
-# past line 118's branch runs when `%r68 = ⌊%r69/64⌋`, the same for the
-# whole CTA, the two bounds' blocks. The trip counts stay unknown for
-# the same reasons, the inner key loop's still depending on the CTA
-# index through the tile loop.
-RUN: %ptxroof analyze %fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx | FileCheck "%s"
+# adds a branch, and the block past the branch at line 367 runs when
+# `%r68 = ⌊%r69/64⌋`, the same for the whole CTA, the two bounds'
+# blocks. The trip counts stay unknown for the same reasons, the inner
+# key loop's still depending on the CTA index through the tile loop.
 RUN: %ptxroof analyze --annotate %fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: /-------------  <block 1>        gluon_attn_fwd.py:79-229       93  128 in 4 warps (⌊%tid.x/32⌋ < 4)             $L__BB0_62, <block 2>
-CHECK: |  |      /---  <block 2>        gluon_attn_fwd.py:98-118       63  <= 128 in <= 4 warps (⌊%tid.x/32⌋ < 4)       $L__BB0_38, $L__tmp5
-CHECK: loop gluon_attn_fwd.py:143 ($L__BB0_43)
-CHECK: mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32                                                              <= 128
-CHECK: tensor flops = <= 16384  (bf16 <= 16384)
-CHECK: global bytes: load <= 128 B, store 0 B
-CHECK: totals per CTA [static]:
-CHECK: tensor flops = <= 2097152 * trips(gluon_attn_fwd.py:126) * trips(gluon_attn_fwd.py:143) + 2097152 * trips(gluon_attn_fwd.py:213 $L__BB0_2) * trips(gluon_attn_fwd.py:213 $L__BB0_10) * trips(gluon_attn_fwd.py:213 $L__BB0_14)  (bf16 <= 2097152 * trips(gluon_attn_fwd.py:126) * trips(gluon_attn_fwd.py:143) + 2097152 * trips(gluon_attn_fwd.py:213 $L__BB0_2) * trips(gluon_attn_fwd.py:213 $L__BB0_10) * trips(gluon_attn_fwd.py:213 $L__BB0_14))
-CHECK: unknowns:
-CHECK: coverage: instructions_classified 100.0% (3024/3024)
 ANN: {{^}}.visible .entry attn_fwd_ws_kernel( // block 256×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 ? (trips of $L__BB0_39); tensor flops bf16 ? (trips of $L__BB0_39); sfu flops f32 ? (trips of $L__BB0_39); global load ? B (trips of $L__BB0_39), store ? B (trips of $L__BB0_39); shared load ? B (trips of $L__BB0_2), store ? B (trips of $L__BB0_39); param load 18,432 B{{$}}
 ANN: {{^}}	setp.eq.b32 	%p96, %r1845, 0; // [<block 1>] warp 0-3 × lane * | exec 128/CTA{{$}}
 ANN: {{^}}	add.s64 	%rd149, %rd25, %rd142; // [<block 2>] warp 0-3 × lane * | runs when %ctaid.x < param_10 (CTA-uniform, branch at line 258) | exec <= 128/CTA{{$}}

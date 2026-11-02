@@ -291,6 +291,16 @@ fn gluon_records_agree_on_counts_sectors_and_launch_totals() {
     }
 }
 
+/// Flash-attention backward: the loop over the query blocks at or after
+/// the CTA's runs 32 − %ctaid.x trips under the record, Σ (32 − x) · 12 =
+/// 6336 over its 32x12 CTAs, 1,622,016 thread executions, as the RTX 4090
+/// measures.
+#[test]
+fn attn_bwd_s_query_block_loop_is_confirmed_over_the_launch() {
+    let c = comparison("tests/fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json");
+    assert_eq!(verdict(&c, "$L__BB0_2"), Some(Verdict::Confirmed));
+}
+
 /// Counts over the launch, summed over the record's CTAs. In
 /// _chunk_scan_fwd_tma (grid 2x32x80, 384 threads), the load on line 184
 /// runs on the 256 threads of warps 0 to 7 in the CTAs whose %ctaid.y is

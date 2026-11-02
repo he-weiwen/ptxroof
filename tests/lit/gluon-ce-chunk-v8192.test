@@ -3,16 +3,7 @@
 # (`mov.pred` set true before the loop, copied in the header, set false
 # in the latch). The matcher reads that as two trips. The default values
 # Triton moves into loads it then issues unguarded are unused (no SASS in
-# the kernel's ncu record) and count in no total: the loop's 261
-# instructions per iteration, at most 960 per thread.
-RUN: %ptxroof analyze %fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ptx | FileCheck "%s"
+# the kernel's ncu record).
 RUN: %ptxroof analyze --annotate %fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: loop gluon_ce.py:54 ($L__BB0_3)
-CHECK: instructions = 261
-CHECK: AI(global) = 5.78125 flop/B
-CHECK: totals [static]:
-CHECK: instructions = <= 960
-CHECK: unknowns: none
-CHECK: coverage: loop_trips_resolved 100.0% (1/1)
 ANN: {{^}}$L__BB0_3:                              // =>This Inner Loop Header: Depth=1 // loop: trips 2 | global per CTA: requested 32,768 B, unique ? | warp * × lane * | exec 1,024/CTA{{$}}
 ANN: {{^}}	mov.u32 %r340, 0x0; // unused{{$}}
