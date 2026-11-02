@@ -1111,8 +1111,8 @@ Each id names a lit test, `tests/lit/s*.test`, in its first comment:
 | id | question | fixture |
 |---|---|---|
 | S1.1, S1.2 | Is k5's design point what I computed on paper, at sm_80 and sm_89? | k5 |
-| S6 | Where does the work go? (unroll pair ranked) | k2 |
-| S7.1, S7.2 | Did tiling pay off? (AI 0.5 vs 32) | k1, k5 |
+| S6 | Where does the work go? (main loop and remainder trips) | k2 |
+| S7.1, S7.2 | Did tiling pay off? (f32 FLOPs per global byte a trip, 8/16 vs 1024/32) | k1, k5 |
 | S8 | Am I on the precision path I think? (0 f16 flops) | k2 |
 | S9.1, S9.2, S9.3 | Does the tool admit what it cannot see? | micro/data_dep, branchy, no_loc |
 | S10.1, S10.2 | Is my tensor-core work visible, and only the work? | mma_demo, k14 |

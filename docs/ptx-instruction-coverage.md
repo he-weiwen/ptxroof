@@ -282,7 +282,7 @@ requested.
 | 9.7.9.19 | `createpolicy` | `Ignore` | OK — builds a cache-policy register, touches no memory. |
 | 9.7.9.20 | `isspacep` | `Predicate` | OK. |
 | 9.7.9.21 | `cvta` | `Move` | OK — address-space cast, not a value conversion; tested. |
-| 9.7.9.22 | `cvt` | `Conversion` | OK — and future-proof: every format including FP8/FP6/FP4 (`e4m3`, `e5m2`, `e2m1`, …) lands here with no per-format code. Conversions as their own kind is load-bearing for the S8 precision audit (8 `cvt` per k2 main-loop iteration). |
+| 9.7.9.22 | `cvt` | `Conversion` | OK — and future-proof: every format including FP8/FP6/FP4 (`e4m3`, `e5m2`, `e2m1`, …) lands here with no per-format code. |
 | 9.7.9.23 | `cvt.pack` | `Conversion` (mnemonic `cvt` + `pack` modifier) | OK. |
 | 9.7.9.24 | `mapa` | `Move` | OK — an address computation into a peer CTA's shared memory; the access it feeds is counted where it happens. |
 | 9.7.9.25 | `getctarank` | `Integer` | OK. |

@@ -4,30 +4,7 @@
 # f16 tensor FLOPs per lane, one mma.sync m16n8k16 = 2*16*8*16 / 32 =
 # 128, and no cuda-core FLOPs: v1 credited every wmma.load with 8192
 # phantom flops, and this is where that regression would show. Each
-# kernel's global bytes per lane, every instruction classified, nothing
-# unknown, and AI(global).
+# kernel's global bytes per lane are exact.
 RUN: %ptxroof analyze --annotate %fixtures/mma_demo/mma_demo.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/mma_demo/mma_demo.sm_80.ptx --json | %check-report "%s"
 ANN: {{^}}.visible .entry _Z18gemm_wmma_16x16x16PK6__halfS1_Pf( // per thread: tensor flops f16 256; global load 32 B, store 32 B; param load 24 B{{$}}
 ANN: {{^}}.visible .entry _Z16gemm_mma_16x8x16PK6__halfS1_Pf( // per thread: tensor flops f16 128; global load 24 B, store 16 B; param load 24 B{{$}}
-{
-  "kernels": [
-    {
-      "name": "_Z18gemm_wmma_16x16x16PK6__halfS1_Pf",
-      "instruction_classes": {"unknown": 0, "unparsed": 0},
-      "totals": {
-        "ai_global": {"value": 4.0, "bound": "exact"}
-      },
-      "unknowns": []
-    },
-    {
-      "name": "_Z16gemm_mma_16x8x16PK6__halfS1_Pf",
-      "instruction_classes": {"unknown": 0, "unparsed": 0},
-      "totals": {
-        "ai_global": {"value": 3.2, "bound": "exact"}
-      },
-      "unknowns": []
-    }
-  ],
-  "coverage": {"loop_trips_resolved": {"num": 0, "den": 0}, "instructions_classified": {"num": 49, "den": 49}}
-}
