@@ -1,28 +1,33 @@
-# Comparisons of the thread index with the CTA index, per CTA. With no
-# grid each is an unknown selector. With one, a lane is in at every CTA,
-# at none, or at some, and the per-CTA counts are bounds: the lanes in at
-# some CTA, `<=`. A comparison the grid decides folds, and one whose
-# %ctaid terms take one value loses them.
+# Comparisons of the thread index with the CTA index. With no grid each
+# is an unknown selector: a guarded store runs at most on its block's
+# threads, per CTA, and the stores' bytes per CTA are bounds, the
+# branch kernel's stores under `%tid.x < 16` and `%tid.x < 16 or ?`. With
+# a grid, a lane is in at every CTA, at none, or at some, and the per-CTA
+# counts are bounds: the lanes in at some CTA, `<=`. A comparison the
+# grid decides folds, and one whose %ctaid terms take one value loses
+# them; over the launch the counts are exact.
 RUN: %ptxroof analyze %fixtures/micro/cta_guards.ptx | FileCheck --check-prefix=FREE "%s"
 RUN: %ptxroof analyze %fixtures/micro/cta_guards.ptx --grid 2 | FileCheck --check-prefix=TWO "%s"
 RUN: %ptxroof analyze %fixtures/micro/cta_guards.ptx --grid 8 | FileCheck --check-prefix=EIGHT "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/cta_guards.ptx | FileCheck --check-prefix=ANNFREE "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/cta_guards.ptx --grid 2 | FileCheck --check-prefix=ANNTWO "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/cta_guards.ptx --grid 8 | FileCheck --check-prefix=ANNEIGHT "%s"
 
-FREE: kernel micro_cta_compare
-FREE: st.global.u32  global store 4 B (predicated)
-FREE: totals per CTA [static]:
-FREE: global bytes: load 0 B, store <= 768 B
 FREE: kernel micro_cta_branch
 FREE: st.global.u32  global store 4 B on <= 16 threads in <= 1 warps (%tid.x < 16)
 FREE: st.global.u32  global store 4 B on <= 32 threads in <= 1 warps ((%tid.x < 16 or ?))
-FREE: totals per CTA [static]:
-FREE: global bytes: load 0 B, store <= 448 B
-FREE: kernel micro_cta_rows
-FREE: st.global.u32  global store 4 B (predicated)
+ANNFREE: {{^}}.visible .entry micro_cta_compare( // block 32×1×1 | per CTA: global store <= 768 B; param load 256 B{{$}}
+ANNFREE: {{^}}	@%p1 st.global.u32 	[%rd3], 1; // exec <= 32/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal 4){{$}}
+ANNFREE: {{^}}.visible .entry micro_cta_branch( // block 32×1×1 | per CTA: global store <= 448 B; param load 256 B{{$}}
+ANNFREE: {{^}}	@%p4 st.global.u32 	[%rd3], 1; // exec <= 16/CTA | global store [4·%tid.x + param_0] sectors/req 2–3 (ideal 2){{$}}
+ANNFREE: {{^}}.visible .entry micro_cta_rows( // block 40×2×1 | per CTA: global store <= 320 B; param load 640 B{{$}}
+ANNFREE: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // exec <= 80/CTA | global store [4·%tid.x + param_0] sectors/req <= 6 (ideal 4){{$}}
 
 # Under 2 CTAs, t < 2c holds at some CTA on lanes 0 and 1, t <= 2c on
 # lane 0 at every CTA and on lanes 1 and 2 at some; the six total
-# 4·(2 + 3 + 31 + 32 + 3 + 32) = 412 B. %ctaid.x < 2 holds and
-# %ctaid.x >= 4 does not, so the branch kernel is exact.
+# 4·(2 + 3 + 31 + 32 + 3 + 32) = 412 B per CTA. %ctaid.x < 2 holds and
+# %ctaid.x >= 4 does not, so the branch kernel is exact: 384 B per CTA,
+# 768 B over the launch, its guarded stores on 16 threads of each CTA.
 TWO: kernel micro_cta_compare
 TWO: st.global.u32  global store 4 B on <= 2 threads in <= 1 warps (%tid.x - 2 * %ctaid.x < 0)
 TWO: st.global.u32  global store 4 B on <= 3 threads in 1 warp (%tid.x - 2 * %ctaid.x <= 0)
@@ -34,20 +39,24 @@ TWO: totals per CTA [static]:
 TWO: global bytes: load 0 B, store <= 412 B
 TWO: kernel micro_cta_branch
 TWO: st.global.u32  global store 4 B on 16 threads in 1 warp (%tid.x < 16)
-TWO: st.global.u32  global store 4 B (predicated)
 TWO: st.global.u32  global store 4 B on 16 threads in 1 warp (%tid.x >= 16)
-TWO: totals per CTA [static]:
-TWO: global bytes: load 0 B, store 384 B
 # A block of 40×2: x + 16·c < 24 holds on x < 8 at both CTAs, on
 # x < 24 at CTA 0, two rows each; the third warp's 16 lanes are x >= 24.
 TWO: kernel micro_cta_rows
 TWO: st.global.u32  global store 4 B on <= 48 threads in 2 warps (%tid.x + 16 * %ctaid.x < 24)
 TWO: totals per CTA [static]:
 TWO: global bytes: load 0 B, store <= 192 B
+ANNTWO: {{^}}.visible .entry micro_cta_branch( // grid 2×1×1 | block 32×1×1 | per launch: global store 768 B; param load 512 B{{$}}
+ANNTWO: {{^}}	mul.wide.u32 	%rd2, %r1, 4; // [<block 1>] warp * × lane * | exec 64/launch{{$}}
+ANNTWO: {{^}}	@%p4 st.global.u32 	[%rd3], 1; // exec 32/launch | global store [4·%tid.x + param_0] sectors/req 2–3 (ideal 2){{$}}
+ANNTWO: {{^}}	@%p5 st.global.u32 	[%rd3], 2; // global store [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
+ANNTWO: {{^}}	@!%p4 st.global.u32 	[%rd3], 3; // exec 32/launch | global store [4·%tid.x + param_0] sectors/req 2–3 (ideal 2){{$}}
 
-# Under 8 CTAs %ctaid.x < 4 selects the block on some CTAs only.
+# Under 8 CTAs %ctaid.x < 4 selects the block on some CTAs only, 4 of 8.
 EIGHT: kernel micro_cta_branch
 EIGHT: <block 1>  (no line info)      10  <= 32 in <= 1 warps (%ctaid.x < 4)
 EIGHT: st.global.u32  global store 4 B on <= 16 threads in <= 1 warps (%ctaid.x < 4 and %tid.x < 16 and %ctaid.x < 2)
 EIGHT: totals per CTA [static]:
 EIGHT: global bytes: load 0 B, store <= 448 B
+ANNEIGHT: {{^}}.visible .entry micro_cta_branch( // grid 8×1×1 | block 32×1×1 | per launch: global store 1,408 B; param load 2,048 B{{$}}
+ANNEIGHT: {{^}}	mul.wide.u32 	%rd2, %r1, 4; // [<block 1>] warp * × lane * | CTAs %ctaid.x < 4 (4/8) | exec 128/launch{{$}}
