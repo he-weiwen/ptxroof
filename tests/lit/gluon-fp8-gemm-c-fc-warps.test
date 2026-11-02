@@ -8,9 +8,9 @@
 # instructions), runs on no thread; the record executes it 0 times.
 # Two default-value movs nothing reads are unused and count in no total
 # either; the count with them follows the live one. The K loop's
-# prefetch block runs on its trips with `k < 11`, 10 of 12, counted trip
-# by trip: 1,280 executions per CTA. The text report pins the mma and
-# instruction tallies.
+# prefetch block runs on its trips with `k < 11`, `runs when iv < 10`,
+# 10 of 12, counted trip by trip: 1,280 executions per CTA. The text
+# report pins the mma and instruction tallies.
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx --bind 10:K=768 | FileCheck "%s"
 RUN: %ptxroof analyze --annotate %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx --bind 10:K=768 | FileCheck --check-prefix=ANN "%s"
 CHECK: tensor fp8                                                64
@@ -25,5 +25,5 @@ ANN: {{^}}.visible .entry fp8_gemm_kernel( // block 128×1×1 | param_10 = 768 |
 ANN: {{^}}	mov.u32 %r22, 0x0; // unused{{$}}
 ANN: {{^}}	mov.u32 %r23, 0x0; // unused{{$}}
 ANN: {{^}}$L__BB0_3:                              // =>This Inner Loop Header: Depth=1 // loop: trips 12 | global per CTA: requested 163,840 B, unique ? | warp * × lane * | exec 1,536/CTA{{$}}
-ANN: {{^}}	mul.hi.u32 	%r169, %r608, -1431655765; // [<block 4>] warp * × lane * | exec 1,280/CTA{{$}}
+ANN: {{^}}	mul.hi.u32 	%r169, %r608, -1431655765; // [<block 4>] warp * × lane * | runs when iv[$L__BB0_3] < 10 (CTA-uniform, branch at line 895) | exec 1,280/CTA{{$}}
 ANN: {{^}}$L__BB0_1:                              // %.._crit_edge_crit_edge // no thread{{$}}

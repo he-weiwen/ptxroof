@@ -2,6 +2,7 @@
 //! it as a ` // ` comment.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Cmp, Var};
+use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
@@ -12,7 +13,7 @@ use crate::analysis::instruction_counts::collect::BlockMeasurements;
 use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::memory_footprint::{ByteRange, CountRange};
 use crate::analysis::register_effects::writes;
-use crate::analysis::thread_participation::{Atom, AtomKey, Pred};
+use crate::analysis::thread_participation::{Atom, AtomKey, Constraint, Pred};
 use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Opcode, Register, Stmt};
@@ -557,11 +558,7 @@ impl KernelReportBuilder<'_> {
     /// uniform condition of its own, after `nested in` where `b` has one,
     /// `adds`, else after `under`.
     fn nesting(&self, b: BlockId, adds: bool) -> Option<String> {
-        let sets = &self.counts.sets;
-        let has = |d: BlockId| {
-            let i = d.0 as usize;
-            sets.blocks[i] != Pred::False && !sets.relative[i].atoms().is_empty()
-        };
+        let has = |d: BlockId| self.runs_when(d).is_some();
         let mut up = self.forest.doms.idom[b.0 as usize];
         while let Some(d) = up.filter(|&d| !has(d)) {
             up = self.forest.doms.idom[d.0 as usize];
@@ -574,13 +571,15 @@ impl KernelReportBuilder<'_> {
     }
 
     /// The uniform unknowns of `p`, block `b`'s set on its immediate
-    /// dominator, by `atom`, joined by ` and `, a conjunct without one
-    /// left to the threads shown; an `or` or a `not` holding one with all
-    /// its parts (`whole`), the `not` of an `and` or an `or` as the `or` or
-    /// the `and` of its parts' negations, a thread-index comparison by
-    /// `formula` and any other unknown as `?`; an `or` among the parts of an `and`, and an
-    /// `and` among those of an `or`, parenthesized. Each unknown adds the
-    /// line of the branch deciding it and its scope to `tags`.
+    /// dominator, by `atom`, and its comparisons the same for the CTA by
+    /// `formula`, joined by ` and `, a conjunct without either left to the
+    /// threads shown; an `or` or a `not` holding one with all its parts
+    /// (`whole`), the `not` of an `and` or an `or` as the `or` or the `and`
+    /// of its parts' negations, a thread-index comparison by `formula` and
+    /// any other unknown as `?`; an `or` among the parts of an `and`, and
+    /// an `and` among those of an `or`, parenthesized. Each unknown and
+    /// comparison the same for the CTA adds the line of the branch
+    /// deciding it and its scope to `tags`.
     fn when(&self, b: BlockId, p: &Pred, whole: bool, tags: &mut Tags) -> Option<String> {
         let paren = |t: String, inner: bool| if inner { format!("({t})") } else { t };
         match p {
@@ -597,7 +596,13 @@ impl KernelReportBuilder<'_> {
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
-            Pred::Or(..) | Pred::Not(_) if !whole && p.atoms().is_empty() => None,
+            Pred::Or(..) | Pred::Not(_)
+                if !whole
+                    && p.atoms().is_empty()
+                    && !p.comparisons().into_iter().any(cta_uniform) =>
+            {
+                None
+            }
             Pred::Or(..) => {
                 let parts = (operands(p, true).into_iter())
                     .map(|q| {
@@ -620,7 +625,13 @@ impl KernelReportBuilder<'_> {
                 }
                 x => Some(format!("not ({})", self.when(b, x, true, tags)?)),
             },
-            Pred::Cmp(c) if whole => Some(self.formula(&c.form, c.cmp)),
+            Pred::Cmp(c) if whole || cta_uniform(c) => {
+                if cta_uniform(c) {
+                    let decider = self.counts.sets.comparison_deciders.get(&(b, c.clone()));
+                    tags.0.extend(decider.and_then(|&s| self.line(s)));
+                }
+                Some(self.formula(&c.form, c.cmp))
+            }
             Pred::Elect(_) if whole => Some("elected".to_owned()),
             Pred::Unknown if whole => Some("?".to_owned()),
             _ => None,
@@ -801,6 +812,12 @@ fn shifted(a: &AffineExpr) -> (AffineExpr, bool) {
         base,
     };
     (shifted, nested)
+}
+
+/// Comparison `c` reads no thread or CTA index, so it is the same for
+/// the CTA, a loop counter's or a parameter's.
+fn cta_uniform(c: &Constraint) -> bool {
+    c.cta.is_none() && c.form.terms.iter().all(|(v, _)| !depends_on_lane(v))
 }
 
 /// The parts of `p` under the `and`s at its top, or the `or`s where `or`.

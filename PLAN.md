@@ -1038,7 +1038,9 @@ One line each, with the trigger that would start it.
   test); a jump table's target as `jump table at line <L> selects this
   target` (`b200-jump-table-annotate.test`), a loop's exit as `leaves
   loop <header> toward <block>`
-  (`micro-loop-guard-sibling-annotate.test`). Then, where a block
+  (`micro-loop-guard-sibling-annotate.test`). A comparison of a loop's
+  counter, the same for the CTA, joins them, `runs when iv[$L__BB0_1] ≥
+  2` (`micro-counter-guard.test`). Then, where a block
   dominating it has such a condition of its own, the nearest's line: after
   `nested in` where the block has one, else after `under`
   (`gluon-attn-fwd-ws-annotate.test`). Then how many times its

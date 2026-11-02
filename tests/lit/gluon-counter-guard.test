@@ -1,8 +1,9 @@
 # fp8_gemm_kernel.lm_head_dx's <block 4> runs only on the K loop's trips
 # whose counter passes line 957's `setp.ge.u64 %p3, %rd55, %rd2`, read
-# per trip as `k < 511`: on every thread of a trip that runs it, 510
-# trips x 256 threads x 96 CTAs = 12,533,760 times.
+# per trip as `k < 511`, `runs when iv < 510`: on every thread of a
+# trip that runs it, 510 trips x 256 threads x 96 CTAs = 12,533,760
+# times.
 RUN: %ptxroof analyze --annotate %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx --ncu %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json | FileCheck --check-prefix=ANN "%s"
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx --ncu %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json | FileCheck "%s"
-ANN: {{^}}	cvt.u32.u64 	%r275, %rd55; // [<block 4>] warp * × lane * | exec 12,533,760/launch{{$}}
+ANN: {{^}}	cvt.u32.u64 	%r275, %rd55; // [<block 4>] warp * × lane * | runs when iv[$L__BB0_3] < 510 (CTA-uniform, branch at line 960) | exec 12,533,760/launch{{$}}
 CHECK: <block 4>{{ +}}gluon_fp8.py:201{{ +}}16  <= 256 in <= 8 warps (k[gluon_fp8.py:173] < 511)
