@@ -410,6 +410,23 @@ fn the_second_of_two_guarded_loops_stores_its_predicted_sectors() {
     assert_eq!(sector_lines(&c), [(44, SectorOutcome::Agrees, 10)]);
 }
 
+/// A loop of n / d trips, its latch traced under the record's bindings:
+/// at n = 20, d = 4 the quotient gives 5 trips, as on an RTX 4090, which
+/// confirms the loop.
+#[test]
+fn a_loop_of_a_quotient_s_trips_is_confirmed() {
+    let c = comparison("tests/fixtures/micro/trip_div_param.ncu.json");
+    assert_eq!(verdict(&c, "$L__BB0_2"), Some(Verdict::Confirmed));
+}
+
+/// A loop of max(n, 2) trips: micro_trip_max at n = 1 runs 2, as on an
+/// RTX 4090, which confirms the loop.
+#[test]
+fn a_loop_of_a_max_s_trips_is_confirmed() {
+    let c = comparison("tests/fixtures/micro/trip_max.ncu.json");
+    assert_eq!(verdict(&c, "$L__BB0_1"), Some(Verdict::Confirmed));
+}
+
 /// A causal loop: CTA c runs c trips. Over the launch each CTA's threads
 /// count its trips, 0 + 1 + 2 + 3, so the barrier runs 192 times, as on an
 /// RTX 4090 with 4 CTAs, which confirms the loop. Without the guard

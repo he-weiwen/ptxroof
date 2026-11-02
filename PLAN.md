@@ -531,7 +531,8 @@ contract (Codex's review of 2b2731b).
   `src/analysis/affine/induction_variables.rs`): a register stepped by a guarded
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
   param_0) is no counter; its guard the same for every thread, it reads
-  `[4 * uniform(%r1@29) + param_0]`, varying with the loop.
+  `[4·uniform(%r1@29) + param_0]`, and the loop's unique bytes are
+  unknown (`micro-guarded-step.test`).
 - **A join's φ whose paths write one value through a loop counter is
   refused**, though both definitions and the join lie in one trip of
   the loop: `micro/join_same_value.ptx`'s `micro_join_counter`,
@@ -686,12 +687,6 @@ contract (Codex's review of 2b2731b).
   of the block table says which threads run each block (`128
   (⌊%tid.x/32⌋ < 4)`), and the per-CTA totals count each block on its
   own threads, but there is no per-role view of the per-thread numbers.
-- A kernel's `unknowns:` line lists what leaves a count incomplete
-  (unparsed statements, unclassified instructions, unknown trip
-  counts, calls), not unknown addresses, which are only on their access
-  rows: `micro/uniform_address.ptx`'s `micro_uniform_div_lanes` reads
-  `unknowns: none` beside a store whose address is `unknown`
-  (`tests/lit/micro-uniform-address.test`).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.

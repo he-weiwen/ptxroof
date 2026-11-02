@@ -1,11 +1,8 @@
 # A register whose only write in the loop is guarded on a false
 # predicate: ptxas stores once, at param_0, 4 B. A guarded write is no
 # recurrence's step; the guard is the same for every thread, so the
-# register is a uniform variable that varies with the loop, and the
-# loop's footprint requests 16 B and its unique bytes are unknown.
-RUN: %ptxroof analyze %fixtures/micro/guarded_step.ptx | FileCheck "%s"
+# register is a uniform variable, and the loop's footprint requests 16 B
+# and its unique bytes are unknown.
 RUN: %ptxroof analyze --annotate %fixtures/micro/guarded_step.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: kernel micro_guarded_step
-CHECK: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)  [4 * uniform(%r1@29) + param_0]  k[$L__BB0_1]: varies
 ANN: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 16 B, unique ? | warp * × lane * | exec 4/CTA{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], 0; // global store [4·uniform(%r1@29) + param_0] sectors/req 1 (ideal 1){{$}}

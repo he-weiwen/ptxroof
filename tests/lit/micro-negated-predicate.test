@@ -1,10 +1,7 @@
 # `!%p2` is a negated predicate source, so the latch's `setp.lt.and` is
-# parsed: a comparison combined with a predicate, no trip count, and
-# counted, 4 instructions per trip. It was unparsed, "latch predicate
-# is not defined in the latch block", and missing from the loop's
-# instructions.
-RUN: %ptxroof analyze %fixtures/micro/negated_predicate.ptx | FileCheck "%s"
+# parsed and counted, its line saying nothing is left out: a comparison
+# combined with a predicate, no trip count. It was unparsed, "latch
+# predicate is not defined in the latch block", and not counted.
 RUN: %ptxroof analyze --annotate %fixtures/micro/negated_predicate.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: kernel micro_negated_predicate
-CHECK: instructions = 4 * trips($L__loop) + 5
 ANN: {{^}}$L__loop: // loop: trips ? (latch condition combines a comparison with a predicate) | warp * × lane * | exec ?{{$}}
+ANN: {{^}}	setp.lt.and.s32 	%p1, %r2, 10, !%p2;{{$}}

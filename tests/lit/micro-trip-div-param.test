@@ -6,7 +6,6 @@
 RUN: %ptxroof analyze --annotate %fixtures/micro/trip_div_param.ptx | FileCheck --check-prefix=ANN "%s"
 RUN: %ptxroof analyze --annotate %fixtures/micro/trip_div_param.ptx --bind 2:d=4 | FileCheck --check-prefix=BOUNDANN "%s"
 RUN: %ptxroof analyze --annotate %fixtures/micro/trip_div_param.ptx --ncu %fixtures/micro/trip_div_param.ncu.json | FileCheck --check-prefix=NCUANN "%s"
-RUN: %ptxroof analyze %fixtures/micro/trip_div_param.ptx --ncu %fixtures/micro/trip_div_param.ncu.json | FileCheck "%s"
 # The quotient is one value per CTA, not per launch: over 4 CTAs the
 # loop's count and the bytes it stores are unknown, where the barrier
 # read `128 * uniform(%r3@30)`.
@@ -14,6 +13,5 @@ RUN: %ptxroof analyze --annotate %fixtures/micro/trip_div_param.ptx --grid 4,1,1
 ANN: {{^}}$L__BB0_2: // loop: trips uniform(%r3@30) | warp * × lane * | under line 33 | exec 32·uniform(%r3@30)/CTA{{$}}
 BOUNDANN: {{^}}$L__BB0_2: // loop: trips param_1 / 4 | warp * × lane * | under line 33 | exec (32·(param_1 / 4))/CTA{{$}}
 NCUANN: {{^}}$L__BB0_2: // loop: trips 5 | global per CTA: requested 640 B, unique 4 B, sectors 160 B | warp * × lane * | exec 160/launch{{$}}
-CHECK: $L__BB0_2  confirmed
 GRIDANN: {{^}}.visible .entry micro_trip_div_param( // grid 4×1×1 | block 32×1×1 | per launch: global store ? B; param load 2,048 B{{$}}
 GRIDANN: {{^}}$L__BB0_2: // loop: trips uniform(%r3@30) | warp * × lane * | under line 33 | exec ?{{$}}

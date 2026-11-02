@@ -5,9 +5,8 @@
 # unioned; a base whose coefficient names another pointer and a 64-bit
 # uniform base have no known pointer and give a range; under a guard
 # both ends are upper bounds; a uniform value an outer loop computes is
-# fixed in the inner, 128 B a trip, and varies with the outer loop.
+# fixed in the inner, whose store steps 128 B a trip.
 RUN: %ptxroof analyze --annotate %fixtures/micro/uniform_bases.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/micro/uniform_bases.ptx | FileCheck "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 1,024 B, unique 512–1,024 B, sectors 1,024–1,280 B | warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}$L__BB1_1: // loop: trips 4 | global per CTA: requested <= 1,024 B, unique <= 512–1,024 B, sectors <= 1,024–1,280 B | warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}$L__BB2_1: // loop: trips 4 | global per CTA: requested 1,024 B, unique 1,024 B, sectors 1,024–1,280 B | warp * × lane * | exec 128/CTA{{$}}
@@ -18,5 +17,3 @@ ANN: {{^}}$L__BB5_1: // loop: trips 4 | global per CTA: requested 1,024 B, uniqu
 ANN: {{^}}	st.global.u32 	[%rd3], %r2; // global store [4·%tid.x + 128·iv[$L__BB5_1] + uniform(%rd7@211)] sectors/req 4–5 (ideal 4){{$}}
 ANN: {{^}}$L__BB7_2: // loop: trips 4 | global per CTA: requested 512 B, unique 512 B, sectors 512–640 B | warp * × lane * | exec 256/CTA{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r2; // global store [4·%tid.x + 128·iv[$L__BB7_2] + 512·uniform(%r5@244) + param_0] sectors/req 4–5 (ideal 4){{$}}
-CHECK-LABEL: kernel micro_bases_outer_uniform
-CHECK: k[$L__BB7_2]: +128 B/iter, k[$L__BB7_1]: varies

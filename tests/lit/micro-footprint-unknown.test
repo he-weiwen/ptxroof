@@ -1,16 +1,10 @@
 # A loop of 4 trips requesting 4 + 8 + 4 B a trip, 64 B (ptxas unrolls
 # it into four STG, LDG.E.64, STG), one store through a pointer the loop
 # loads, one value for a warp at each trip but not one for the CTA over
-# the loop: the store's address is a uniform variable that varies with
-# the loop, the loop's footprint requests all 64 B, and its unique bytes
-# are unknown.
-RUN: %ptxroof analyze %fixtures/micro/footprint_unknown.ptx | FileCheck "%s"
+# the loop: the store's address is a uniform variable, the loop's
+# footprint requests all 64 B, and its unique bytes are unknown, which
+# leaves the kernel's totals exact.
 RUN: %ptxroof analyze --annotate %fixtures/micro/footprint_unknown.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: kernel micro_footprint_unknown
-CHECK: global bytes: load 8 B, store 8 B
-CHECK: st.global.u32{{ +}}global store 4 B{{ +}}warp: 1 sector (ideal 1){{ +}}[uniform(%rd4@32)]{{ +}}k[$L__BB0_1]: varies
-# The kernel's unknowns line lists what leaves a count incomplete, not
-# an address: it reads none.
-CHECK: unknowns: none
+ANN: {{^}}.visible .entry micro_footprint_unknown( // block 1×1×1 | per CTA: global load 32 B, store 32 B; param load 16 B{{$}}
 ANN: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 64 B, unique ? | warp * × lane * | exec 4/CTA{{$}}
 ANN: {{^}}	st.global.u32 	[%rd4], %r1; // global store [uniform(%rd4@32)] sectors/req 1 (ideal 1){{$}}
