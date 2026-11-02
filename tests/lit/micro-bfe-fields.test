@@ -1,0 +1,13 @@
+# bfe at the edges of its controls (micro/bfe_fields.ptx, PTX ISA
+# §9.7.1.20): a field of length 0 is 0 and an unsigned field past bit 31
+# keeps what lies below it, so both stores run on every thread, as
+# micro/bfe_fields.ncu.json measures. A signed field from past the msb
+# is refused: the record has it 2 sectors with the position given at run
+# time, the sign bit, and 1 with it immediate, which ptxas folds to -1.
+RUN: %ptxroof analyze %fixtures/micro/bfe_fields.ptx | FileCheck "%s"
+RUN: %ptxroof analyze --ncu %fixtures/micro/bfe_fields.ncu.json %fixtures/micro/bfe_fields.ptx | FileCheck --check-prefix=BOUND "%s"
+CHECK: {{^}}	@%p1 st.global.u32 	[%rd1], %r1; // global store [param_0] sectors/req 1 (ideal 1){{$}}
+CHECK: {{^}}	@%p2 st.global.u32 	[%rd1+4], %r1; // global store [param_0 + 4] sectors/req 1 (ideal 1){{$}}
+CHECK: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (bfe at 32 of 1 bits){{$}}
+CHECK: {{^}}	st.global.u32 	[%rd5+4096], %r1; // global store addr ? (bfe with a non-constant position or length){{$}}
+BOUND: {{^}}	st.global.u32 	[%rd5+4096], %r1; // global store addr ? (bfe at 32 of 1 bits){{$}}

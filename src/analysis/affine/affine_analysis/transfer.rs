@@ -200,33 +200,56 @@ impl AffineAnalysis<'_> {
                     _ => Err(self.unread(instr, def)),
                 }
             }
+            // PTX ISA §9.7.1.20: pos and len are b & 0xff and c & 0xff; a
+            // field past the msb, or all of a signed one's high bits, is the
+            // sign bit a[min(pos + len - 1, msb)], 0 when unsigned or len is 0.
+            // A signed field from past the msb ptxas 13.4 folds otherwise
+            // (micro/bfe_fields.ptx).
             Opcode::Bfe if ops.len() == 4 => {
-                // bfe d, a, pos, len: bits [pos, pos + len) of a. Signed from
-                // bit 0 is a width change, value-preserving in the nonneg
-                // domain like cvt; unsigned is (a >> pos) mod 2^len.
-                let a = arg(1)?;
                 let (Some(pos), Some(len)) = (self.constant(&arg(2)?), self.constant(&arg(3)?))
                 else {
                     return Err("bfe with a non-constant position or length".into());
                 };
-                let signed = mods.iter().any(|m| m.starts_with('s'));
-                if signed && pos == 0 {
-                    let half = 1i128 << (len.clamp(1, 64) - 1);
-                    return match self.within(&a, (-half, half)) {
-                        false => Err(format!("bfe of {len} bits leaves them").into()),
-                        true => Ok(a),
-                    };
+                let (pos, len) = (pos & 0xff, len & 0xff);
+                let Some(ty) = IntType::of(&mods).filter(|t| t.kind != IntKind::Bits) else {
+                    return Err("bfe of no integer type".into());
+                };
+                let (w, signed) = (i64::from(ty.width), ty.kind == IntKind::Signed);
+                if len == 0 || !signed && pos >= w {
+                    return Ok(AffineExpr::from_base(SymExpr::Const(0)));
                 }
-                if signed || !(0..63).contains(&pos) || !(1..63).contains(&len) {
+                if pos >= w {
                     return Err(format!("bfe at {pos} of {len} bits").into());
                 }
-                let shifted = (self
-                    .reduced(&a, |x| x.div_const(1i64 << pos, &|v| self.var_bounds(v))))
-                .ok_or_else(|| refuse(&a, "bit field"))?;
-                (self.reduced(&shifted, |x| {
-                    x.modulo_const(1i64 << len, &|v| self.var_bounds(v))
-                }))
-                .ok_or_else(|| refuse(&shifted, "bit field"))
+                let a = arg(1)?;
+                let field = |pos: i64, len: i64| {
+                    let shifted = (self
+                        .reduced(&a, |x| x.div_const(1i64 << pos, &|v| self.var_bounds(v))))
+                    .ok_or_else(|| refuse(&a, "bit field"))?;
+                    (self.reduced(&shifted, |x| {
+                        x.modulo_const(1i64 << len, &|v| self.var_bounds(v))
+                    }))
+                    .ok_or_else(|| refuse(&shifted, "bit field"))
+                };
+                match (signed, pos, len.min(w - pos)) {
+                    (true, p, _) if len == 1 && p < 63 => {
+                        Ok(field(p, 1)?.scale(SymExpr::Const(-1)))
+                    }
+                    (true, 0, _) => {
+                        let half = 1i128 << (len.min(w) - 1);
+                        match self.within(&a, (-half, half)) {
+                            false => Err(format!("bfe of {len} bits leaves them").into()),
+                            true => Ok(a),
+                        }
+                    }
+                    (false, p, n) if p < 63 && n < 63 => field(p, n),
+                    _ => Err(format!("bfe at {pos} of {len} bits").into()),
+                }
+            }
+            Opcode::Selp if ops.len() == 4 => {
+                let selected =
+                    IntType::of(&mods).and_then(|ty| self.selected(&ops, def, depth, ty));
+                selected.ok_or_else(|| self.unread(instr, def))
             }
             Opcode::Shl if ops.len() == 3 => {
                 let v = arg(1)?;
@@ -423,6 +446,76 @@ impl AffineAnalysis<'_> {
             _ => Err(self.unread(instr, def)),
         }?;
         self.fits(value, instr, &mods)
+    }
+
+    /// `selp a, b, c` of constants `a` and `b` of `ty` by a `c` that an
+    /// unguarded integer `setp.eq` or `setp.ne` writes, as its first output
+    /// or the complement as its second (PTX ISA §9.7.6.2, §9.7.6.3), of two
+    /// forms whose difference is k·v + d, v a bit of `%tid.x`: the value
+    /// chosen at v = 0, plus v times the change at v = 1.
+    fn selected(
+        &self,
+        ops: &[OperandId],
+        def: usize,
+        depth: u32,
+        ty: IntType,
+    ) -> Option<AffineExpr> {
+        let module = self.data.module;
+        let &Operand::Register(c) = module.operand(ops[3]) else {
+            return None;
+        };
+        let Some(Value::Result { op, .. }) = self.data.ssa.value_before(def, Register::Named(c))
+        else {
+            return None;
+        };
+        let Stmt::Instr(setp) = &self.data.kernel.stmts[op] else {
+            return None;
+        };
+        let mods: Vec<&str> = (module.modifiers(setp).iter())
+            .map(|&m| module.interner.resolve(m))
+            .collect();
+        let cmp = Cmp::from_name(mods.first()?).filter(|c| matches!(c, Cmp::Eq | Cmp::Ne))?;
+        let width = IntType::of(&mods).filter(|_| mods.len() == 2)?.width;
+        let sops = module.operand_ids(setp.operands);
+        if setp.mnemonic != Opcode::Setp || setp.predicate.is_some() || sops.len() != 3 {
+            return None;
+        }
+        let writes = |id: OperandId| matches!(module.operand(id), Operand::Register(r) if *r == c);
+        let complement = match module.operand(sops[0]) {
+            Operand::MultipleDestinations { children } => match *module.operand_ids(*children) {
+                [p, _] if writes(p) => false,
+                [_, q] if writes(q) => true,
+                _ => return None,
+            },
+            _ if writes(sops[0]) => false,
+            _ => return None,
+        };
+        let read = |id, at| {
+            let x = self.operand_at(id, at, depth + 1).ok()?;
+            Some(self.bindings.map_or(x.clone(), |m| x.bind(m)))
+        };
+        let diff = read(sops[1], op)? - read(sops[2], op)?;
+        let &[(v, k)] = diff.terms.iter().collect::<Vec<_>>().as_slice() else {
+            return None;
+        };
+        let bit = AffineExpr::var(v.clone()).xor_swizzle()?;
+        if bit.constant != 0 || bit.columns.iter().any(|&col| col > 1) {
+            return None;
+        }
+        let (k, d) = (i128::from(k.as_const()?), i128::from(diff.base.as_const()?));
+        let holds = |x: i128| (x.rem_euclid(1 << width) == 0) ^ (cmp == Cmp::Ne) ^ complement;
+        let (lo, hi) = ty.values();
+        let arm = |id| {
+            self.constant(&read(id, def)?)
+                .filter(|&x| (lo..hi).contains(&i128::from(x)))
+        };
+        let (a, b) = (arm(ops[1])?, arm(ops[2])?);
+        let [r0, r1] = [d, k + d].map(|x| if holds(x) { a } else { b });
+        let base = AffineExpr::from_base(SymExpr::Const(r0));
+        match r1.checked_sub(r0)? {
+            0 => Some(base),
+            change => Some(base + AffineExpr::var(v.clone()).scale(SymExpr::Const(change))),
+        }
     }
 
     /// Why statement `def`'s instruction gives no value: what its inputs

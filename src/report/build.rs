@@ -303,7 +303,7 @@ impl KernelReportBuilder<'_> {
                         continue;
                     };
                     let traced = match module.operand(*base) {
-                        Operand::Register(_) if rest.is_empty() => {
+                        Operand::Register(_) | Operand::SymbolRef(_) if rest.is_empty() => {
                             Some(affine.address(*base, *offset, pos))
                         }
                         _ => None,
@@ -315,15 +315,6 @@ impl KernelReportBuilder<'_> {
                             Some("the tensor map holds the address".to_owned()),
                             None,
                         ),
-                        (Operand::SymbolRef(s), _) => {
-                            let sym = self.shorten(module.interner.resolve(*s).to_owned());
-                            let addr = if *offset == 0 {
-                                sym
-                            } else {
-                                format!("{sym} + {offset}")
-                            };
-                            (Some(addr), None, None)
-                        }
                         (_, Some(Ok(a))) => {
                             (Some(self.shorten(a.render(name))), None, Some(a.clone()))
                         }

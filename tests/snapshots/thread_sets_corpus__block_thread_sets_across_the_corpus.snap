@@ -1794,6 +1794,7 @@ tests/fixtures/micro/and_sign_remainder.ptx:48	warp * × lane *
 tests/fixtures/micro/bare_registers.ptx:21	warp * × lane *
 tests/fixtures/micro/bare_registers.ptx:28	<= warp * × lane *
 tests/fixtures/micro/barrier_red.ptx:21	warp * × lane *
+tests/fixtures/micro/bfe_fields.ptx:25	warp * × lane *
 tests/fixtures/micro/branchy.ptx:28	runs when param_1 ≥ 1 (CTA-uniform, branch at line 26)
 tests/fixtures/micro/branchy.ptx:40	runs when predicate %p2 (line 36) is false (warp-uniform, branch at line 37)
 tests/fixtures/micro/call_returns.ptx:43	warp * × lane *
@@ -2080,6 +2081,7 @@ tests/fixtures/micro/rem_offset.ptx:75	warp * × lane *
 tests/fixtures/micro/scoped_family.ptx:19	warp * × lane *
 tests/fixtures/micro/scoped_shadow.ptx:19	warp * × lane *
 tests/fixtures/micro/scoped_variable.ptx:21	warp * × lane *
+tests/fixtures/micro/selp_bits.ptx:23	warp * × lane *
 tests/fixtures/micro/setp_f16x2.ptx:20	warp * × lane *
 tests/fixtures/micro/setp_f16x2.ptx:26	<= warp * × lane *
 tests/fixtures/micro/setp_float.ptx:26	warp * × lane *
@@ -2107,6 +2109,7 @@ tests/fixtures/micro/setp_wraps.ptx:48	<= warp * × lane *
 tests/fixtures/micro/shared_scalar.ptx:22	warp * × lane *
 tests/fixtures/micro/shared_wavefronts.ptx:27	warp * × lane *
 tests/fixtures/micro/shared_wavefronts.ptx:583	warp * × lane *
+tests/fixtures/micro/shared_wavefronts.ptx:799	warp * × lane *
 tests/fixtures/micro/shfl_2d_block.ptx:24	warp * × lane *
 tests/fixtures/micro/shfl_idx.ptx:36	warp * × lane *
 tests/fixtures/micro/shfl_idx.ptx:54	warp * × lane *
