@@ -1,14 +1,10 @@
 # A φ at a join whose paths write one value reads as that value: census
 # kernel 00004.ptx's %tid.x, written on both paths of a branch, gives
-# the store its address and its threads, 64 of the CTA's 128, under the
-# guard 64·⌊(%tid.x mod 128)/64⌋ == 0 in 2 warps. Paths that write
-# different values leave the address unknown with the obstacle of a
-# definition, and so do paths that write one value through a loop
-# counter (census kernel 00376.ptx; PLAN.md).
-RUN: %ptxroof analyze %fixtures/micro/join_same_value.ptx | FileCheck "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/join_same_value.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: kernel micro_join_same_tid
-CHECK: $L__BB0_3  st.global.u32  global store 4 B on 64 threads in 2 warps (64 * ⌊(%tid.x mod 128)/64⌋ == 0)
+# the store its address and its threads, 64 of the CTA's 128 in warps 0
+# and 1. Paths that write different values leave the address unknown
+# with the obstacle of a definition, and so do paths that write one
+# value through a loop counter (census kernel 00376.ptx; PLAN.md).
+RUN: %ptxroof analyze %fixtures/micro/join_same_value.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_3: // warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}	@%p3 st.global.u32 	[%rd3], %r7; // warp 0-1 × lane * | exec 64/CTA | global store [256·%ctaid.y + 4·(%tid.x mod 64) + param_0] sectors/req 4–5 (ideal 4){{$}}
 ANN: {{^}}$L__BB1_3: // warp * × lane * | exec 128/CTA{{$}}

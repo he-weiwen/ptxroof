@@ -1,26 +1,10 @@
-# k12: the wmma + cp.async double buffer. Same tile as k14, so the same
-# per-iteration design point (4096 tensor flops, at most 64 global bytes
-# via cp.async) and the same A100 machine line; the fragments come
-# through wmma.load from shared (4 A x 16 B + 16 B x 16 B = 320 B), the
-# kernel's totals' terms in K/16. Each CTA declares 16384 B of shared
-# memory. The loop's guard `K + 15 > 30` tests its latch at k = 0,
-# ⌊K/16⌋ > 0, so the loop is counted per execution of the guard: its
-# tensor flops over the kernel, 4096·(K/16) per thread, are exact. The
-# text report pins the loop ranking, the iteration's instruction tally,
-# AI(global) >= 64, no unknowns and full coverage.
-RUN: %ptxroof analyze %fixtures/k12/k12.sm_80.ptx | FileCheck "%s"
-RUN: %ptxroof analyze --annotate %fixtures/k12/k12.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: loop with the most instructions (static): 12_double_buffer.cuh:114
-CHECK: loop 12_double_buffer.cuh:114 ($L__BB0_5)
-CHECK: instructions = <= 98
-CHECK: shared load 16 B                                        20
-CHECK: {{  }}wmma.load.b.sync.aligned.row.m16n16k16.shared.f16     16
-CHECK: {{  }}wmma.load.a.sync.aligned.row.m16n16k16.shared.f16      4
-CHECK: tensor f16                                              16
-CHECK: {{  }}wmma.mma.sync.aligned.row.row.m16n16k16.f32.f32       16
-CHECK: AI(global) >= 64 flop/B
-CHECK: unknowns: none
-CHECK: coverage: instructions_classified 100.0%
-CHECK: coverage: loop_trips_resolved 100.0% (1/1)
+# k12: the wmma + cp.async double buffer: per thread and trip 4096
+# tensor flops and at most 64 global bytes via cp.async; the fragments
+# come through wmma.load from shared (4 A x 16 B + 16 B x 16 B =
+# 320 B), the kernel's totals' terms in K/16. Each CTA declares 16384 B
+# of shared memory. The loop's guard `K + 15 > 30` tests its latch at
+# k = 0, ⌊K/16⌋ > 0, so the loop is counted per execution of the guard:
+# its tensor flops over the kernel, 4096·(K/16) per thread, are exact.
+RUN: %ptxroof analyze %fixtures/k12/k12.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z19hgemm_double_bufferILi128ELi128ELi16ELi64ELi64ELi128EEviiifPK6__halfS2_fPS0_( // shared memory 16,384 B/CTA | per thread: flops f32 <= 384; tensor flops f16 (4096·(param_2 / 16)); global load <= (64·(param_2 / 16) + 384) B, store <= 512 B; shared load (320·(param_2 / 16)) B, store <= (64·(param_2 / 16) + 128) B; param load <= 48 B{{$}}
 ANN: {{^}}$L__BB0_5: // loop: trips param_2 / 16 | under line 225 | exec (param_2 / 16)/thread{{$}}

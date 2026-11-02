@@ -3,7 +3,7 @@
 # CTA declares 8 + 8 = 16 B of shared memory (ptxas 13.4 -v: `16 bytes
 # smem`); it was read as an `.extern .shared` array sized at launch.
 RUN: %ptxroof analyze --dump-ast %fixtures/micro/shared_scalar.ptx | FileCheck --check-prefix=AST "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/shared_scalar.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/shared_scalar.ptx | FileCheck --check-prefix=ANN "%s"
 AST-NOT: .extern
 AST: .shared .align 8 .b64 total;
 AST: .shared .align 8 .b64 count;

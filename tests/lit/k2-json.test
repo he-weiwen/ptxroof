@@ -1,31 +1,7 @@
 # Symbolic k2 analysis (PR 12): the kernel's FLOPs and global bytes per
-# thread as expressions in K, all behind the bounds guard (hence `<=`). Hand-derivation: main loop 8 flops/16 B per
-# iteration x (K - K mod 4)/4 trips, remainder 2/4 x (K mod 4), epilogue
-# 3 flops + 2 B load + 2 B store. The JSON report pins the
-# instruction-class accounting, the ranking, the conversions, no
-# unknowns and full coverage.
-RUN: %ptxroof analyze --annotate %fixtures/k2/k2.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx --json | %check-report "%s"
+# thread as expressions in K, all behind the bounds guard (hence `<=`).
+# Hand-derivation: main loop 8 flops/16 B per iteration x
+# (K - K mod 4)/4 trips, remainder 2/4 x (K mod 4), epilogue 3 flops +
+# 2 B load + 2 B store.
+RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z15hgemm_coalescediiifPK6__halfS1_fPS_( // per thread: flops f32 <= (2·(param_2 mod 4) + 8·((param_2 - param_2 mod 4) / 4) + 3); global load <= (4·(param_2 mod 4) + 16·((param_2 - param_2 mod 4) / 4) + 2) B, store <= 2 B; param load 44 B{{$}}
-{
-  "bindings": [],
-  "kernels": [
-    {
-      "demangled": "hgemm_coalesced(int, int, int, float, __half const*, __half const*, float, __half*)",
-      "instruction_classes": {"total": 101, "flop": 7, "memory": 20, "unknown": 0},
-      "most_instructions_loop": "2_coalesced.cuh:14",
-      "ranking": [
-        {"loop": "2_coalesced.cuh:14", "instructions": "31 * ((param_2 - param_2 mod 4) / 4)"},
-        {"loop": "2_coalesced.cuh:14 (remainder)", "instructions": "12 * (param_2 mod 4)"}
-      ],
-      "totals": {
-        "conversions": {"expr": "2 * (param_2 mod 4) + 8 * ((param_2 - param_2 mod 4) / 4) + 2", "at_most": true}
-      },
-      "unknowns": []
-    }
-  ],
-  "coverage": {
-    "instructions_classified": {"num": 101, "den": 101},
-    "loop_trips_resolved": {"num": 2, "den": 2}
-  }
-}

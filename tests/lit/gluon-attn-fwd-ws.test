@@ -8,24 +8,8 @@
 # which the tile loop carries, the wait loops spin on
 # `mbarrier.test_wait`, and the persistent tile loop has a latch per
 # partition (PLAN.md); so the kernel's FLOPs and bytes per CTA are
-# unknown, each naming a loop it reads. Per key block per thread the
-# partition body is 128 bf16 mma, 16384 tensor flops and 128 B of
-# copies, bounded because SKIP_MASKED skips the masked half-block; per
-# CTA its tensor flops are 2097152 times the loops' trips. The text
-# report pins these counts, the block table and full instruction
-# coverage.
-RUN: %ptxroof analyze %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck "%s"
-RUN: %ptxroof analyze --annotate %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: /-------------  <block 1>        gluon_attn_fwd.py:79-229       93  128 in 4 warps (⌊%tid.x/32⌋ < 4)             $L__BB0_62, <block 2>
-CHECK: |  |      /---  <block 2>        gluon_attn_fwd.py:98-118       55  <= 128 in <= 4 warps (⌊%tid.x/32⌋ < 4)       $L__BB0_38, $L__tmp5
-CHECK: loop gluon_attn_fwd.py:143 ($L__BB0_43)
-CHECK: mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32                                                              <= 128
-CHECK: tensor flops = <= 16384  (bf16 <= 16384)
-CHECK: global bytes: load <= 128 B, store 0 B
-CHECK: totals per CTA [static]:
-CHECK: tensor flops = <= 2097152 * trips(gluon_attn_fwd.py:126) * trips(gluon_attn_fwd.py:143) + 2097152 * trips(gluon_attn_fwd.py:213 $L__BB0_2) * trips(gluon_attn_fwd.py:213 $L__BB0_10) * trips(gluon_attn_fwd.py:213 $L__BB0_14)  (bf16 <= 2097152 * trips(gluon_attn_fwd.py:126) * trips(gluon_attn_fwd.py:143) + 2097152 * trips(gluon_attn_fwd.py:213 $L__BB0_2) * trips(gluon_attn_fwd.py:213 $L__BB0_10) * trips(gluon_attn_fwd.py:213 $L__BB0_14))
-CHECK: unknowns:
-CHECK: coverage: instructions_classified 100.0% (2858/2858)
+# unknown, each naming a loop it reads.
+RUN: %ptxroof analyze %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry attn_fwd_ws_kernel( // block 256×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 ? (trips of $L__BB0_39); tensor flops bf16 ? (trips of $L__BB0_39); sfu flops f32 ? (trips of $L__BB0_39); global load ? B (trips of $L__BB0_39), store ? B (trips of $L__BB0_39); shared load ? B (trips of $L__BB0_2), store ? B (trips of $L__BB0_39); param load 17,408 B{{$}}
 ANN: {{^}}	setp.eq.b32 	%p58, %r1753, 0; // [<block 1>] warp 0-3 × lane * | exec 128/CTA{{$}}
 ANN: {{^}}	add.s64 	%rd162, %rd37, %rd155; // [<block 2>] warp 0-3 × lane * | runs when %ctaid.x < param_10 (CTA-uniform, branch at line 257) | exec <= 128/CTA{{$}}

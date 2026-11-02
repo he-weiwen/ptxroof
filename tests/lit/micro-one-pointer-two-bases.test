@@ -1,7 +1,7 @@
 # a[k] and a[k + n] over 4 trips: 8 distinct words when n is 4 or more,
 # 4 when n is 0. Unbound, two bases on one pointer may overlap, so the
 # loop's unique bytes are 16 to 32; bound to 0, they are one base.
-RUN: %ptxroof analyze --annotate %fixtures/micro/one_pointer_two_bases.ptx | FileCheck --check-prefix=ANN-FREE "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/one_pointer_two_bases.ptx --bind 1:n=0 | FileCheck --check-prefix=ANN-ZERO "%s"
+RUN: %ptxroof analyze %fixtures/micro/one_pointer_two_bases.ptx | FileCheck --check-prefix=ANN-FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/one_pointer_two_bases.ptx --bind 1:n=0 | FileCheck --check-prefix=ANN-ZERO "%s"
 ANN-FREE: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 32 B, unique 16–32 B, sectors 256 B | warp * × lane * | exec 4/CTA{{$}}
 ANN-ZERO: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 32 B, unique 16 B, sectors 256 B | warp * × lane * | exec 4/CTA{{$}}

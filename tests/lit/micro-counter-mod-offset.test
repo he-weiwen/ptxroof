@@ -1,12 +1,9 @@
 # A 0-based counter's `i % 2` read before its increment is (k − 1) mod 2
 # on trip k. The base −1 is no multiple of 2, so the tracer does not
 # take the remainder of the counter, and the value, the same on every
-# thread, is a uniform variable the loop defines: its stride varies, and
-# the loop's 4 trips' unique bytes are unknown where ptxas stores 8
-# distinct bytes (PLAN, "Addresses the tracer cannot read").
-RUN: %ptxroof analyze %fixtures/micro/counter_mod_offset.ptx | FileCheck "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/counter_mod_offset.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: st.global.u32  global store 4 B  warp: 1 sector (ideal 1)
-CHECK-SAME: [4 * uniform(%r2@25) + param_0]  k[$L__BB0_1]: varies
+# thread, is a uniform variable the loop defines: the loop's 4 trips'
+# unique bytes are unknown where ptxas stores 8 distinct bytes (PLAN,
+# "Addresses the tracer cannot read").
+RUN: %ptxroof analyze %fixtures/micro/counter_mod_offset.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 16 B, unique ? | warp * × lane * | exec 4/CTA{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·uniform(%r2@25) + param_0] sectors/req 1 (ideal 1){{$}}

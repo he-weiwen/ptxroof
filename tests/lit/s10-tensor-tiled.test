@@ -3,94 +3,10 @@
 # = 32 MMAs = 32 * 128 = 4096 f16 tensor FLOPs per lane and no
 # cuda-core FLOPs; the tile's A and B panels arrive by four 16-byte
 # cp.async per thread = 64 global bytes (an upper bound: the prefetch is
-# guarded by `tile + 2 < num_k_tiles`), so AI(global) = 64. Fragments
-# come from shared via ldmatrix: 4 x4 (16 B) + 8 x2 (8 B) = 128 B per
-# lane. K / 16 trips through nvcc's signed-divide sequence; the
-# epilogue loop runs 4. On the A100 table 64 flop/B is below the f16
-# tensor peak ratio (312 TFLOPS / 1555 GB/s = 200.6 flop/B). The tile
-# issues 101 instructions per lane per iteration, 48 of them workload:
-# 32 mma, 12 ldmatrix, 4 cp.async.
-RUN: %ptxroof analyze --annotate %fixtures/k14/k14.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/k14/k14.sm_80.ptx --json | %check-report "%s"
+# guarded by `tile + 2 < num_k_tiles`). Fragments come from shared via
+# ldmatrix: 4 x4 (16 B) + 8 x2 (8 B) = 128 B per lane. K / 16 trips
+# through nvcc's signed-divide sequence; the epilogue loop runs 4.
+RUN: %ptxroof analyze %fixtures/k14/k14.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z18hgemm_ldmatrix_mmaILi128ELi128ELi16ELi64ELi64ELi128ELi8ELi8EEviiifPK6__halfS2_fPS0_( // shared memory 20,992 B/CTA | per thread: flops f32 <= 384; tensor flops f16 (4096·(param_2 / 16)); global load <= (64·(param_2 / 16) + 384) B, store <= 512 B; shared load (128·(param_2 / 16)) B, store <= (64·(param_2 / 16) + 128) B; local load <= 960 B, store <= 1,024 B; param load 44 B{{$}}
 ANN: {{^}}$L__BB0_4: // loop: trips param_2 / 16 | under line 267 | exec (param_2 / 16)/thread{{$}}
 ANN: {{^}}$L__BB0_12: // loop: trips 4 | exec 4/thread{{$}}
-{
-  "kernels": [
-    {
-      "name": "_Z18hgemm_ldmatrix_mmaILi128ELi128ELi16ELi64ELi64ELi128ELi8ELi8EEviiifPK6__halfS2_fPS0_",
-      "most_instructions_loop": "14_ldmatrix_mma.cuh:208",
-      "instruction_classes": {
-        "unknown": 0,
-        "unparsed": 0
-      },
-      "loops": [
-        {
-          "name": "14_ldmatrix_mma.cuh:208",
-          "per_iteration": {
-            "instructions": {
-              "total": {
-                "expr": "101",
-                "at_most": true
-              },
-              "by_kind": {
-                "tensor f16": {
-                  "total": {
-                    "expr": "32",
-                    "at_most": false
-                  },
-                  "opcodes": {
-                    "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32": {
-                      "expr": "32",
-                      "at_most": false
-                    }
-                  }
-                },
-                "shared load 16 B": {
-                  "total": {
-                    "expr": "4",
-                    "at_most": false
-                  }
-                },
-                "shared load 8 B": {
-                  "total": {
-                    "expr": "8",
-                    "at_most": false
-                  }
-                },
-                "global -> shared copy 16 B": {
-                  "total": {
-                    "expr": "4",
-                    "at_most": true
-                  }
-                },
-                "integer arithmetic": {
-                  "total": {
-                    "expr": "38",
-                    "at_most": true
-                  }
-                }
-              }
-            },
-            "ai_global": {
-              "value": 64.0,
-              "bound": "at_least"
-            }
-          },
-          "loops": []
-        },
-        {
-          "name": "14_ldmatrix_mma.cuh:247",
-          "loops": []
-        }
-      ],
-      "unknowns": []
-    }
-  ],
-  "coverage": {"instructions_classified": {"num": 1099, "den": 1099}, 
-    "loop_trips_resolved": {
-      "num": 2,
-      "den": 2
-    }
-  }
-}

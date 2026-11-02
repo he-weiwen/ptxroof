@@ -4,7 +4,7 @@
 # each outer trip. The outer counter steps by the inner loop's exit, and
 # the inner one starts from it: 16·iv_out + 4·iv_in, iv the trip less 1.
 # One inner execution touches 16 B of the 512 B its CTA requests.
-RUN: %ptxroof analyze --annotate %fixtures/micro/carried_counter.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/carried_counter.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips 8 | warp * × lane * | exec 256/CTA{{$}}
 ANN: {{^}}$L__BB0_2: // loop: trips 4 | global per CTA: requested 512 B, unique 16 B, sectors 128 B | warp * × lane * | exec 1,024/CTA{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [16·iv[$L__BB0_1] + 4·iv[$L__BB0_2] + param_0] sectors/req 1 (ideal 1){{$}}

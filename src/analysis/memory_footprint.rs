@@ -13,7 +13,6 @@ use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::measurement::Space;
 use crate::analysis::thread_participation::Pred;
-use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const SECTOR: i64 = 32;
@@ -54,7 +53,7 @@ pub fn in_block(shape: [u32; 3]) -> impl Fn(&Var) -> Option<(i64, i64)> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CountRange {
     pub min: u32,
     pub max: u32,
@@ -376,18 +375,16 @@ impl SectorPattern {
     }
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoopBytes {
     pub requested: u64,
     /// The distinct bytes: at most the sum over the bases, at least the
     /// largest base on each pointer, summed (bases on one pointer may
     /// overlap); `None` when an access's address is not read.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub unique: Option<ByteRange>,
     /// The bytes of the 32-byte sectors those requests touch, over the
     /// alignments of each base pointer, when every access on it is
     /// aligned under one of them.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub sector_bytes: Option<ByteRange>,
     /// The requested bytes are an upper bound: an access counts threads
     /// its guard may not select.
@@ -397,7 +394,7 @@ pub struct LoopBytes {
     pub at_most: bool,
 }
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteRange {
     pub min: u64,
     pub max: u64,

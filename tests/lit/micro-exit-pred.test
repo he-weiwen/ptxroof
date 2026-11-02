@@ -4,7 +4,7 @@
 # so are its sectors and their ideal. Nsight Compute: 17 of 64 threads
 # store. An address through the loop's counter differs between lanes
 # too, so it is unknown.
-RUN: %ptxroof analyze --annotate %fixtures/micro/exit_pred.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/exit_pred.ptx | FileCheck "%s"
 CHECK: {{^}}.visible .entry micro_exit_pred_xor( // block 64×1×1 | per CTA: global store <= 256 B; param load 512 B{{$}}
 CHECK: {{^}}	@%p3 st.global.u32 [%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
 CHECK: {{^}}.visible .entry micro_exit_pred_add( // block 64×1×1 | per CTA: global store <= 256 B; param load 512 B{{$}}

@@ -3,5 +3,5 @@
 # 16 B; its address reads the counter through `and.b32 %r2, %r1, 1`,
 # which the analysis does not trace, so the distinct bytes and their
 # sectors are not known.
-RUN: %ptxroof analyze --annotate %fixtures/micro/counter_mod_offset.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/counter_mod_offset.ptx | FileCheck "%s"
 CHECK: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 16 B, unique ? | warp * × lane * | exec 4/CTA{{$}}

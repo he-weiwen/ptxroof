@@ -1,75 +1,10 @@
 # S9.2 (PLAN.md, acceptance scenarios): an in-loop data-dependent
 # conditional makes the conditional block's counts upper bounds, at
 # most param_1 per thread; the bound propagates into the kernel's FLOPs,
-# at most 4 f32 a trip. Also pins the block table: the guarded fma sits
-# alone in an unlabelled fallthrough block inside the loop, neither
-# header nor latch.
-RUN: %ptxroof analyze --annotate %fixtures/micro/branchy.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/micro/branchy.ptx --json | %check-report "%s"
+# at most 4 f32 a trip. The guarded fma sits in an unlabelled block
+# inside the loop, which runs where a predicate the loop computes is
+# false.
+RUN: %ptxroof analyze %fixtures/micro/branchy.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_branchy( // per thread: flops f32 <= 4·param_1; global load 4·param_1 B, store 4·param_1 B; param load 12 B{{$}}
 ANN: {{^}}$L__BB0_2: // loop: trips param_1 | under line 28 | exec param_1/thread{{$}}
 ANN: {{^}}	fma.rn.f32 	%f4, %f4, %f1, 0f40000000; // [<block 3>] runs when predicate %p2 (line 36) is false (warp-uniform, branch at line 37) | nested in line 28 | exec <= param_1/thread{{$}}
-{
-  "kernels": [
-    {
-      "name": "micro_branchy",
-      "blocks": [
-        {
-          "name": "<block 0>",
-          "successors": [
-            "$L__BB0_5",
-            "<block 1>"
-          ]
-        },
-        {
-          "name": "<block 1>",
-          "successors": [
-            "$L__BB0_2"
-          ]
-        },
-        {
-          "name": "$L__BB0_2",
-          "lines": "branchy.cu:5-6",
-          "instructions": 4,
-          "successors": [
-            "$L__BB0_4",
-            "<block 3>"
-          ],
-          "loop": {
-            "name": "branchy.cu:4",
-            "header": true,
-            "latch": false
-          }
-        },
-        {
-          "name": "<block 3>",
-          "lines": "branchy.cu:7",
-          "instructions": 1,
-          "loop": {
-            "name": "branchy.cu:4",
-            "header": false,
-            "latch": false
-          }
-        },
-        {
-          "name": "$L__BB0_4",
-          "lines": "branchy.cu:4-8",
-          "successors": [
-            "$L__BB0_2",
-            "$L__BB0_5"
-          ],
-          "loop": {
-            "name": "branchy.cu:4",
-            "header": false,
-            "latch": true
-          }
-        },
-        {
-          "name": "$L__BB0_5",
-          "successors": []
-        }
-      ]
-    }
-  ],
-  "coverage": {"instructions_classified": {"num": 18, "den": 18}, "loop_trips_resolved": {"num": 1, "den": 1}}
-}

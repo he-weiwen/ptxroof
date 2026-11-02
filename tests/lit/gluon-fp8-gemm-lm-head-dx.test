@@ -3,23 +3,9 @@
 # sets. The in-kernel quantization's inline-asm scopes declare `.reg
 # .b16 lo, hi;`, registers without `%`. The strided K counter's loop
 # runs ⌈K/64⌉ trips behind a guard on K > 0, so the kernel's per-CTA
-# totals are bounds: per thread and trip at most 96 B of global loads
-# and no stores. The text report pins the loop's instruction tally, its
-# exact per-iteration 96 f32 and 8192 tensor flops, AI(global), no
-# unknowns and full coverage.
-RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx | FileCheck "%s"
-RUN: %ptxroof analyze --annotate %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: loop gluon_fp8.py:173 ($L__BB0_3)
-CHECK: cvt.rn.satfinite.e4m3x2.f32                             16
-CHECK: tensor fp8                                                32
-CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     32
-CHECK: ld.global.v4.b32                                         4
-CHECK: global -> shared copy 16 B                              <= 2
-CHECK: cp.async.cg.shared.global                             <= 2
-CHECK: flops = 96  (f32 96)
-CHECK: tensor flops = 8192  (fp8 8192)
-CHECK: AI(global) >= 86.33333333333333 flop/B
-CHECK: unknowns: none
-CHECK: coverage: instructions_classified 100.0% (950/950)
+# totals are bounds: per thread and trip 96 f32 flops, 8192 tensor
+# flops, at most 96 B of global loads and no stores, 256 times that per
+# CTA.
+RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry fp8_gemm_kernel( // block 256×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 <= (24576·⌈param_10/64⌉ + 33024); tensor flops fp8 <= 2097152·⌈param_10/64⌉; sfu flops f32 256; global load <= (24576·⌈param_10/64⌉ + 34816) B, store 32,768 B; shared load <= (49152·⌈param_10/64⌉ + 65536) B, store <= (16384·⌈param_10/64⌉ + 81920) B; param load 16,384 B{{$}}
 ANN: {{^}}$L__BB0_3:                              // =>This Inner Loop Header: Depth=1 // loop: trips ⌈param_10/64⌉ | warp * × lane * | under line 287 | exec <= 256·⌈param_10/64⌉/CTA{{$}}

@@ -1,7 +1,7 @@
 # The annotated PTX of micro/vector_def.ptx: the `mov` a vector load
 # overwrites is unused; the store under a guard on the loaded value runs
 # on at most the CTA's 64 threads, so its sectors per request are a bound.
-RUN: %ptxroof analyze --annotate %fixtures/micro/vector_def.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/vector_def.ptx | FileCheck "%s"
 CHECK: {{^}}	mov.u32 	%r3, 0; // unused{{$}}
 CHECK: {{^}}	ld.global.v2.u32 	{%r3, %r4}, [%rd3]; // global load [8·%tid.x + param_0] sectors/req 8–9 (ideal 8){{$}}
 CHECK: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [8·%tid.x + param_0] sectors/req <= 9 (ideal <= 4){{$}}

@@ -1,14 +1,10 @@
-//! Every loop's trip count (`super::affine_analysis`), and nvcc's unroll
-//! main+remainder pairs — sibling loops on the same source line whose
-//! trips match `(X − X mod c)/c` and `X mod c` — linked into one logical
-//! loop with factor c.
+//! Every loop's trip count (`super::affine_analysis`).
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::Var;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::kernel_analyses::KernelAnalyses;
-use crate::analysis::loop_names::LoopName;
 use crate::analysis::uniformity_info::UniformityInfo;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Register};
@@ -18,13 +14,6 @@ use std::collections::HashMap;
 /// Trip count of one loop: an expression, or a named reason there
 /// isn't one.
 pub type TripCount = Result<SymExpr, String>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnrollPair {
-    pub main: LoopId,
-    pub remainder: LoopId,
-    pub factor: i64,
-}
 
 #[derive(Debug)]
 pub struct TripCountResults {
@@ -37,7 +26,6 @@ pub struct TripCountResults {
     /// covers and its step; the count holds where the step divides the
     /// distance into a positive count.
     pub distances: Vec<Option<(SymExpr, i64)>>,
-    pub unroll_pairs: Vec<UnrollPair>,
 }
 
 /// Every loop's trip count, its latch traced under `bindings` (`--bind`,
@@ -47,14 +35,12 @@ pub fn trip_counts(
     kernel: &Kernel,
     cfg: &ControlFlowGraph,
     forest: &LoopForest,
-    names: &[LoopName],
     bindings: &HashMap<SymbolicConstant, i64>,
 ) -> TripCountResults {
     let data = KernelAnalyses::new(module, kernel, cfg, forest);
     let uniformity = UniformityInfo::new(&data);
     trip_counts_from(
         &AffineAnalysis::new(&data, &uniformity, Some(bindings)),
-        names,
         &|v| unknown_by_register(module, v),
     )
 }
@@ -77,7 +63,6 @@ pub(crate) fn unknown_by_register(module: &Module, v: &Var) -> String {
 /// values as `name` prints them.
 pub(crate) fn trip_counts_from(
     affine: &AffineAnalysis,
-    names: &[LoopName],
     name: &dyn Fn(&Var) -> String,
 ) -> TripCountResults {
     let forest = affine.data.forest;
@@ -96,82 +81,24 @@ pub(crate) fn trip_counts_from(
         distances.push(distance);
     }
 
-    // -- unroll main+remainder linking ----------------------------------
-    let mut unroll_pairs = Vec::new();
-    for main in 0..forest.loops.len() {
-        for rem in 0..forest.loops.len() {
-            if main == rem
-                || forest.loops[main].parent != forest.loops[rem].parent
-                || names[main].line.is_none()
-                || names[main].line != names[rem].line
-                || names[main].file != names[rem].file
-            {
-                continue;
-            }
-            if let (Ok(m), Ok(r)) = (&trips[main], &trips[rem])
-                && let Some(factor) = unroll_factor(m, r)
-            {
-                unroll_pairs.push(UnrollPair {
-                    main: LoopId(main as u32),
-                    remainder: LoopId(rem as u32),
-                    factor,
-                });
-            }
-        }
-    }
-
     TripCountResults {
         trips,
         entries,
         distances,
-        unroll_pairs,
     }
-}
-
-/// `main = (X − X mod c)/c`, or its max with 0, and `rem = X mod c` →
-/// factor c.
-fn unroll_factor(main: &SymExpr, rem: &SymExpr) -> Option<i64> {
-    let SymExpr::Mod(rem_x, c) = rem else {
-        return None;
-    };
-    let main = match main {
-        SymExpr::Max(m, z) if **z == SymExpr::Const(0) => m,
-        _ => main,
-    };
-    let SymExpr::FloorDiv(inner, mc) = main else {
-        return None;
-    };
-    if mc != c {
-        return None;
-    }
-    let SymExpr::Sum(terms) = inner.as_ref() else {
-        return None;
-    };
-    if terms.len() != 2 {
-        return None;
-    }
-    let has_x = terms.iter().any(|t| t == rem_x.as_ref());
-    let has_neg_mod = terms.iter().any(|t| match t {
-        SymExpr::Prod(fs) => {
-            fs.len() == 2 && fs[0] == SymExpr::Const(-1) && fs[1] == SymExpr::Mod(rem_x.clone(), *c)
-        }
-        _ => false,
-    });
-    (has_x && has_neg_mod).then_some(*c)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::analysis::control_flow::loop_forest;
-    use crate::analysis::loop_names::loop_names;
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
 
     #[test]
-    fn unroll_pair_links_main_and_remainder() {
-        // Two sibling loops on the same source line with the
-        // (X − X mod 4)/4 and X mod 4 trip shapes.
+    fn an_unrolled_loop_s_main_part_runs_the_quotient() {
+        // nvcc's unroll by 4: a main loop of (X − X mod 4)/4 trips and a
+        // remainder of X mod 4.
         let src = String::from(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
              .visible .entry k(\n.param .u32 k_param_0\n)\n{\n\
@@ -196,16 +123,11 @@ mod tests {
             let k = &m.kernels[0];
             let cfg = build_cfg(&m, k);
             let f = loop_forest(&cfg);
-            let names = loop_names(&m, k, &cfg, &f);
-            let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
-            let main = info.unroll_pairs.first().map(|p| {
-                let trips = info.trips[p.main.0 as usize].as_ref();
-                (p.factor, trips.unwrap().to_string())
-            });
-            (info.unroll_pairs.len(), main)
+            let info = trip_counts(&m, k, &cfg, &f, bindings);
+            info.trips[0].as_ref().map(ToString::to_string).ok()
         };
         let free = HashMap::new();
-        let shape = |x: &str| (1, Some((4, format!("({x} - {x} mod 4) / 4"))));
+        let shape = |x: &str| Some(format!("({x} - {x} mod 4) / 4"));
         assert_eq!(pairs(&src, &free), shape("param_0"));
         // A min-bounded pair keeps its shape under the bindings.
         let src = src.replace(
@@ -240,10 +162,7 @@ mod tests {
              setp.ne.s32 %p2, %r4, 0;\n@%p2 bra $L__R;\n\
              ret;\n}\n.file 1 \"kern.cu\"\n",
         );
-        let clamped = (
-            1,
-            Some((4, "max((param_0 - param_0 mod 4) / 4, 0)".to_owned())),
-        );
+        let clamped = Some("max((param_0 - param_0 mod 4) / 4, 0)".to_owned());
         assert_eq!(pairs(&src, &free), clamped);
     }
 }

@@ -5,7 +5,7 @@
 # matrix; the ideal has no two words of a group in one bank. A 16-byte
 # load whose lanes share words, and a cp.async destination, are not
 # counted.
-RUN: %ptxroof analyze --annotate %fixtures/micro/shared_wavefronts.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/shared_wavefronts.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	ld.shared.u32 	%r19, [%r18]; // shared load [128·%tid.x + buf] wavefronts/req 32 (ideal 1){{$}}
 ANN: {{^}}	ld.shared.v2.u32 	{%r48, %r49}, [%r47]; // shared load [64·(%tid.x mod 2) + 8·(⌊%tid.x/4⌋ mod 8) + buf] wavefronts/req 1 (ideal 1){{$}}
 ANN: {{^}}	ld.shared.v4.u32 	{%r64, %r65, %r66, %r67}, [%r63]; // shared load [16·(%tid.x mod 16) + buf] wavefronts/req ? (two lanes of a 16-byte load share a word: no measured rule){{$}}

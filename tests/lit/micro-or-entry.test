@@ -6,7 +6,7 @@
 # or m decides. Where both branches read the thread index, the set is
 # exact: of the threads below 64, those below 16 or from 48 store, 32
 # threads storing 512 B over the loop's 4 trips.
-RUN: %ptxroof analyze --annotate %fixtures/micro/or_entry.ptx --ncu %fixtures/micro/or_entry.ncu.json | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/or_entry.ptx --ncu %fixtures/micro/or_entry.ncu.json | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_3: // warp 0-1 × lane * | runs when %r1@30 ≠ 0 or (%r1@30 = 0 and %r2@31 ≠ 0) (warp-uniform, branches at lines 36, 38) | exec <= 64/launch{{$}}
 ANN: {{^}}$L__BB1_3: // warp 0-1 × lane * | runs when %r1@55 ≠ 0 or (%r1@55 = 0 and %r2@56 ≠ 0) (warp-uniform, branches at lines 63, 65) | exec ? (trips of $L__BB1_1){{$}}
 ANN: {{^}}$L__BB1_4: // loop: trips 3 | warp 0-1 × lane * | under line 66 | exec ? (trips of $L__BB1_1){{$}}

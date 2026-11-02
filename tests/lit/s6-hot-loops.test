@@ -1,31 +1,7 @@
 # S6 (PLAN.md, acceptance scenarios): where does the work go? k2's
-# unrolled main loop runs (param_2 - param_2 mod 4) / 4 trips, its
-# nounroll remainder param_2 mod 4. Ranked by instructions executed
-# (symbolic): the main loop first, its remainder second, linked as one
-# logical loop unrolled by 4.
-RUN: %ptxroof analyze --annotate %fixtures/k2/k2.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx --json | %check-report "%s"
+# unrolled main loop runs (param_2 - param_2 mod 4) / 4 trips and its
+# nounroll remainder param_2 mod 4, each a bound per thread since a
+# branch before it may skip it.
+RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_4: // loop: trips (param_2 - param_2 mod 4) / 4 | under line 80 | exec <= ((param_2 - param_2 mod 4) / 4)/thread{{$}}
 ANN: {{^}}$L__BB0_7: // loop: trips param_2 mod 4 | under line 173 | exec <= (param_2 mod 4)/thread{{$}}
-{
-  "kernels": [
-    {
-      "name": "_Z15hgemm_coalescediiifPK6__halfS1_fPS_",
-      "most_instructions_loop": "2_coalesced.cuh:14",
-      "ranking": [
-        {"loop": "2_coalesced.cuh:14"},
-        {"loop": "2_coalesced.cuh:14 (remainder)"}
-      ],
-      "loops": [
-        {
-          "name": "2_coalesced.cuh:14",
-          "unroll": {"factor": 4, "remainder": "2_coalesced.cuh:14 (remainder)"}
-        },
-        {
-          "name": "2_coalesced.cuh:14 (remainder)"
-        }
-      ]
-    }
-  ],
-  "coverage": {"instructions_classified": {"num": 101, "den": 101}, "loop_trips_resolved": {"num": 2, "den": 2}}
-}

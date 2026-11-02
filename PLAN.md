@@ -6,12 +6,12 @@ before 2026-09-08 is in git: `git show 3ba19b5:PLAN.md`.
 
 ## What it does
 
-Reads a PTX file. Per kernel: the block table (CFG), the loop forest
-with trip counts as symbolic expressions over the kernel parameters,
-instruction counts by kind and opcode per loop iteration and in total,
-and per CTA also as warp instructions, one issue per warp with a
-thread in the block; flops by pipe and precision (including atomic FP work), bytes by state space,
-AI(global), and per
+Reads a PTX file and prints it back, each line followed by nothing or
+by ` // ` and what the analysis says of it (`tests/report_invariants.rs`),
+two statements' annotations on one line joined by ` ; `
+(`statements_on_one_line_join_their_annotations`). Per kernel the
+analysis finds the loop forest with trip counts as symbolic expressions
+over the kernel parameters, and per
 memory operand its address as an affine form over the thread and CTA
 indices, the loop counters and the parameters, with the 32-byte
 sectors one warp's request touches and the fewest its distinct bytes
@@ -41,43 +41,129 @@ totals per launch its threads summed over the CTAs
 64), and which lanes of a warp
 run it when the rest of the condition is the same for every thread
 (`micro/carry_uniform.ptx`'s branch on a carry from two parameters:
-`warp: 4–5 sectors`); and per loop
+`sectors/req 4–5`); and per loop
 with a numeric trip count, the global bytes one CTA
 requests over the loop's own blocks, the bytes of the sectors those
 requests touch, and the distinct bytes it touches. An instruction that
 runs but whose results nothing with an effect reads (LLVM's ADCE over
 the register SSA, `src/analysis/dead_code.rs`) counts in no total and
-no loop footprint, and is listed as unused: ptxas emits no SASS for
+no loop footprint, and is marked `unused`: ptxas emits no SASS for
 any of the 954 such instructions in kernels with an Nsight Compute
-record (`tests/dead_code_corpus.rs`). Where these and the instructions
-under a guard no thread passes are left out, an instruction total
-reads `live of` the count with them (rmsnorm: `1041 live of 1146`).
-Text and JSON views of the same tree. Counts are static: per-thread
-unless labeled per-CTA or per-warp, as requested by the PTX; nothing
-is measured (README). Each instruction has one category and independent
-contributions; text expands instructions with multiple contributions and JSON
-retains variants for differing immediate sizes in `contribution_variants`, whose
-issued counts sum to the opcode's
-(`same_opcode_preserves_copy_size_variants_and_address_associations`); an
+record (`tests/dead_code_corpus.rs`). Counts are static; nothing is
+measured (README). Each instruction has one category and independent
+contributions, and
+copies of one opcode with differing immediate sizes each count their own bytes
+at their own addresses
+(`copies_of_one_opcode_count_their_own_source_sizes_and_addresses`); an
 ignored instruction has no contribution and
 an unsupported one an unknown contribution
 (`ignored_unknown_and_unquantified_contributions_stay_distinct`). A
 warp-collective instruction (the tensor families) contributes its warp total
 over the 32 lanes (`src/analysis/instruction_counts/measurement.rs`). Atomic FP
 arithmetic contributes one flop per scalar element, packed and vector elements
-included (`atomics_keep_byte_policy_and_count_fp_elements`), to `atomic_flops`
-and AI, with the existing atom read+write / red write-only byte convention
+included (`atomics_keep_byte_policy_and_count_fp_elements`), to the atomic
+FLOPs, with the existing atom read+write / red write-only byte convention
 (`tests/instruction_contributions.rs`). A `cp.async` with immediate
 source size zero has zero global sectors per request and over the loop;
 its shared writes and instruction counts remain counted
 (`zero_source_copy_has_no_global_sectors_but_keeps_shared_writes` in that test).
 A `cp.async` reads its source only on the threads whose ignore-src
 predicate is false (PTX ISA §9.7.9.26.3.1), read as a guard is: its
-global row, sectors per warp, loop footprint, global load bytes and
-sector comparison count those threads, and its shared store the
-threads that execute it (`micro/cp_async_ignore_src.ptx`, RTX 4090:
-2176 B over the launch, its four lines' 68 measured L2 sectors). With a
-src-size register it reads at most cp-size: `global load <= 16 B`.
+sectors per warp, loop footprint, global load bytes and sector
+comparison count those threads, and its shared store the threads that
+execute it (`micro/cp_async_ignore_src.ptx`, RTX 4090: 2176 B over the
+launch, its four lines' 68 measured L2 sectors). With a src-size
+register it reads at most cp-size: `sectors/req <= 17 (ideal <= 16)`
+(`micro/cp_async_src_size.ptx`).
+
+Each
+block's annotation, on its label's line or else on its first
+instruction's after `[<block name>]` (`micro-vector-register.test`): a loop header's `loop: trips` and
+the trip count, or `?` and why (`tests/lit/k5-annotate.test`), and
+the global bytes one CTA requests over one run of the loop's own
+blocks, the distinct bytes and the bytes of the sectors they touch,
+`<=` for a bound, `?` where an address is not read
+(`k5-annotate.test`, `k1-annotate.test`,
+`micro-loop-bytes-annotate.test`), then,
+given the block shape, the threads that run it as `warp <W> × lane
+<L>` per group of warps with the same lanes, `<=` where the lanes are
+a bound (`micro-guards-annotate.test`,
+`gluon-attn-fwd-ws-annotate.test`); with the grid, where they read
+the CTA index, the conjuncts that read it, the `not` of an `or` taken
+as the `and` of its parts' negations, each as `runs when` prints a
+comparison, and the CTAs that run it, `| CTAs %ctaid.x < 64
+(64/128)`, `| CTAs %ctaid.x ≥ 1 (3/4)` (`micro-cta-trips-annotate.test`,
+`b200-cta-condition-annotate.test`), or where the lanes differ by CTA
+the most CTAs' lanes, `in 3844/3969 CTAs, other 125 CTAs differ`
+(`k1-annotate.test`); and without the block shape the condition
+that selects them, a loop's iteration k printed as
+`(iv[<header>] + 1)`
+(`without_a_block_shape_a_block_names_its_condition`). Then, where
+past its immediate dominator the block runs under conditions each the
+same for the whole CTA or a warp, `runs when` and each, a comparison
+as `lhs cmp rhs`, the terms of negative coefficient and the constant
+on the right,
+an unknown value by its register and line (`%r1880@$L__BB0_39`), its
+known multiple as the value, with the branch's polarity, joined by
+`and`, one under an `or` or a `not` with every part, the `not` of an
+`and` or an `or` by De Morgan's laws, an `and` under an `or` and an
+`or` under an `and` parenthesized, a thread-index
+comparison too; then `CTA-uniform` where each is the same for the
+CTA, else `warp-uniform`, and the lines of the branches deciding them
+(`gluon-attn-fwd-ws-annotate.test`, `micro-or-entry-annotate.test`,
+`a_block_names_the_uniform_conditions_it_runs_under`); one that is
+not a comparison read within its type as `predicate <register> (line
+<L>) is true|false`: gluon attn_fwd_ws's `setp.lt.u32 %p60, %r1880,
+-190`, an unsigned comparison with a value of unknown range (the same
+test); a jump table's target as `jump table at line <L> selects this
+target` (`b200-jump-table-annotate.test`), a loop's exit as `leaves
+loop <header> toward <block>`
+(`micro-loop-guard-sibling-annotate.test`). A comparison of a loop's
+counter, the same for the CTA, joins them, `runs when iv[$L__BB0_1] ≥
+2` (`micro-counter-guard.test`). Then, where a block
+dominating it has such a condition of its own, the nearest's line: after
+`nested in` where the block has one, else after `under`
+(`gluon-attn-fwd-ws-annotate.test`). Then how many times its
+unguarded statements run, over the launch given the grid
+and the block shape, else per CTA, else per thread but where every
+thread runs them once
+(`without_a_block_shape_a_block_names_its_condition`): `exec
+32,768/launch`, `<=` for a bound, and under a loop whose trips are
+not known `exec ? (trips of <header>)` (`k5-annotate.test`,
+`gluon-attn-fwd-ws-annotate.test`); a statement whose count differs,
+but a predicated `bra`, has its own on its line, and a guarded one
+whose threads differ from its block's has theirs, as a block's, before
+it (`micro-guards-annotate.test`). A memory operand but a parameter is
+`<space> <direction> [<address>]`, a loop's iteration k printed as
+`iv[<header>]` = k - 1, or `addr ?` and why, a counter there as
+`(iv[<header>] + 1)` (`micro-guarded-exit-bound-annotate.test`),
+and `c·⌊u/d⌋` of an unknown value u whose low bits every definition
+leaves 0 up to d as `(c/d)·u` (`micro-uniform-aligned-annotate.test`),
+then a global one's `sectors/req` and a shared one's
+`wavefronts/req` with their ideal, `<=` before both where the lanes
+are a bound, or `?` and why (`k5-annotate.test`,
+`micro-vector-def-annotate.test`). An
+instruction whose results nothing with an effect reads is `unused`
+(the same test). What a statement leaves out of the totals is said on
+its line: `not classified (its FLOPs and bytes not counted)`
+(`micro-texture-outputs.test`), `not parsed (not counted)`
+(`micro-unparsed-writes.test`), `bytes ? (not counted)` where an
+access's size is not known (`micro-tensor-copies.test`), `call (its
+callee not counted)` (`micro-call-returns.test`). On the kernel's `.entry` line, what the counts take
+of the launch, those given: `grid X×Y×Z`, `block X×Y×Z` and each
+bound parameter's value (`k5-annotate.test`); then the shared memory
+each CTA declares, `shared memory 2,048 B/CTA`, `+ dynamic` where an
+`.extern .shared` array's size is set at launch
+(`gluon-attn-fwd-ws-annotate.test`); then what the counted statements
+sum to at the counts' scale, `per launch:` and each pipe's FLOPs by
+precision and each space's bytes loaded and stored, `>=` where a
+statement not counted could add to it, `?` where none is counted,
+`? B (trips of <header>)` under a loop whose trips are not known
+(`k5-annotate.test`, `micro-totals-annotate.test`). Not printed: the
+ncu comparisons, which test the analysis (`--ncu` gives the launch;
+`tests/ncu_corpus.rs` keeps them); a branch target that matches no
+label, whose edge the CFG drops
+(`unresolved_target_is_recorded_never_panics`).
 
 **Input contract.** The PTX is taken to come from a CUDA or Triton
 program run without undefined behavior, whose integer arithmetic on
@@ -106,12 +192,12 @@ contract (Codex's review of 2b2731b).
   an integer multiple of byte-count" (PTX ISA §5.4.5), but the static
   bytes are the declarations' sizes summed: a kernel declaring
   `.shared .align 4 .b8 a[4];` then `.shared .align 8 .b8 b[8];` reads
-  `shared memory [static]: 12 B per CTA`, where `ptxas -v` (13.4,
+  `shared memory 12 B/CTA`, where `ptxas -v` (13.4,
   sm_90) reports `16 bytes smem`.
 - **A vector `.shared` variable is not read.** PTX ISA §5.4.2 declares
   one as `.shared .v2 .u16 uv;`. At module scope it is dropped:
-  `--dump-ast` prints no declaration of `uv` and the report has no
-  shared memory line; in a kernel it is an unparsed statement. `ptxas
+  `--dump-ast` prints no declaration of `uv` and the `.entry` line no
+  shared memory; in a kernel it is an unparsed statement. `ptxas
   -v` (13.4, sm_90) reports `4 bytes smem` for either.
 - **A `cp.async`'s global sectors are counted as a load's.** Nsight
   Compute counts them otherwise where two lanes' shared destinations
@@ -132,10 +218,10 @@ contract (Codex's review of 2b2731b).
   multi-element `ld.param` vector rather than reading the parameter's
   bits, and does not model guarded definitions: a branch
   or guard comparing a value written under a guard is an unknown
-  selector (`micro/guarded_def.ptx`: `<= 5 sectors`, not 64 threads
+  selector (`micro/guarded_def.ptx`: `sectors/req <= 5`, not 64 threads
   exactly), even where every write agrees
   (`micro/guarded_selector.ptx`: in its second kernel 32 threads store,
-  the report says `store <= 256 B`). A form the
+  its `.entry` line says `global store <= 256 B`). A form the
   register-effects decoder does not decode, a sub-operation it does
   not list (none in the corpus,
   `tests/register_effects_corpus.rs`), is taken to write every register
@@ -166,7 +252,7 @@ contract (Codex's review of 2b2731b).
   of its own, apart from `%v`. In `micro/vector_register.ptx`, after
   `ld.global.v2.b32 %v, [%rd1]` overwrites `%v`, `%v.x` is still the
   thread index an earlier `mov.b32 %v.x, %r1` wrote: the address is
-  `[4 * %tid.x + param_0]`, where ptxas takes it from the load.
+  `[4·%tid.x + param_0]`, where ptxas takes it from the load.
 - **Integer arithmetic is taken not to wrap where its range is
   unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
   or `bfe` result, and an integer `cvt`'s source and destination, or a
@@ -212,7 +298,7 @@ contract (Codex's review of 2b2731b).
   `micro/shfl_2d_block.ptx` (`.reqntid 48, 2, 1`) every lane of a warp
   stores at lane 0's `%tid.x` (warp 2's lane 0 is thread (16, 1),
   param_0 + 64; ptxas 13.4); the store reads
-  `[128 * ⌊%tid.x/32⌋ + param_0]`, `warp: 1–2 sectors`. `%laneid` is
+  `[128·⌊%tid.x/32⌋ + param_0]`, `sectors/req 1–2`. `%laneid` is
   read only in a block of one row.
 - **`shfl.sync.idx` reads one floor or mod of `%tid.x`**: a thread
   index under more, `⌊%tid.x/8⌋ mod 16` from a `bfe.u32` or
@@ -251,7 +337,7 @@ contract (Codex's review of 2b2731b).
   division exact (k1's and k2's `K − K mod 4`, the fp8 GEMMs,
   `micro/two_register_counter.ptx`). A constant distance that is no
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
-  stepping by 2 from 0 while `!= 5`, reads `trips = unknown`, where the
+  stepping by 2 from 0 while `!= 5`, reads `loop: trips ?`, where the
   loop does not exit.
 - **A loop's count drops its max with 0 or 1 on nonnegative
   parameters.** A loop is counted max(T, 0) per execution of a guard
@@ -373,8 +459,8 @@ contract (Codex's review of 2b2731b).
 - **Offsets past 2^62 bytes are not counted**: an access whose lane
   offsets over the block, or whose loop's shifts over its trips, reach
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
-  (`micro/offsets_wide.ptx`: `warp: ? (lane offsets reach 2^62
-  bytes)`; `requested 32 B, unique unknown` for 8 distinct stores).
+  (`micro/offsets_wide.ptx`: `sectors/req ? (lane offsets reach 2^62
+  bytes)`; `requested 32 B, unique ?` for 8 distinct stores).
 - **A loop footprint takes an address holding an unknown value the
   loop computes, or one that is one value per warp only, as unread**:
   requested bytes only, unique and sector bytes unknown
@@ -391,13 +477,13 @@ contract (Codex's review of 2b2731b).
   hardware executes the load once for the lanes executing it together.
   A warp-specialized dispatch reads its state byte so
   (`micro/warp_dispatch.ptx`: the dispatched store's sectors read
-  `warp: 4–5 sectors (ideal 4)`, `micro-warp-dispatch.test`); over the
+  `sectors/req 4–5 (ideal 4)`, `micro-warp-dispatch.test`); over the
   65 records the access rows whose warp sectors or wavefronts are a
   bound go from 333 to 201, all in `gluon/attn_fwd_ws_kernel`'s two
   shapes. The records keep thread instructions only
   (`tools/ncu/measure.py`), not the warp instructions per line that
   would check it. The cross-entropy's target column, its index loaded
-  through param_1, reads `[65536 * %ctaid.x + 2 * uniform(%rd14@86) +
+  through param_1, reads `[65536·%ctaid.x + 2·uniform(%rd14@86) +
   param_0]`, 1 sector, as its record measures (`gluon-ce-chunk.test`).
   A `.volatile`, `.relaxed`, `.acquire`, `.mmio` or generic load is
   never one value (`a_global_load_at_one_address_is_one_value_per_warp`).
@@ -429,12 +515,12 @@ contract (Codex's review of 2b2731b).
   aligned: `micro/optional_align.ptx` reads `in sectors <= 192 B`, its
   16 B store at p making each byte store one sector, where with n == 0
   and p ≡ 17 mod 32 the byte stores request 256 (`micro-optional-align.test`).
-- **The sectors of an access under `elect.sync` read the lowest active
-  lane as the elected one**, where its thread count tries every active
-  lane (PTX ISA §9.7.14.15 does not say which is elected):
+- **The threads and sectors of an access under `elect.sync` read the
+  lowest active lane as the elected one**, where its count tries every
+  active lane (PTX ISA §9.7.14.15 does not say which is elected):
   `micro/elect_lane.ptx`'s store under `%tid.x == 1 and elected` runs
-  on `<= 1` thread and counts `0 sectors`, where lane 1, if elected,
-  requests one (`micro-elect-lane.test`). The census has no election
+  `exec <= 1/CTA` but reads `no thread` and `sectors/req 0`, where lane
+  1, if elected, requests one (`micro-elect-lane.test`). The census has no election
   under a condition that varies by lane.
 
 ### Reported as unknowns
@@ -444,7 +530,7 @@ contract (Codex's review of 2b2731b).
   against the type of the `add` that steps it: k5's
   `for (uint bkIdx = 0; bkIdx < K; bkIdx += BK)` steps by `add.s32`
   and compares `setp.lt.u32`, so under `--bind 2:K=2147483647` its
-  outer loop reads `trips = unknown`, "`add.s32` leaves 32 bits", where
+  outer loop reads `loop: trips ?`, "`add.s32` leaves 32 bits", where
   it runs 2^28 trips, its last value 2^31 lying in `.u32`
   (`a_count_its_counter_refuses_once_known_is_unknown_to_every_reader`).
 - **Shared wavefronts are not counted for a `cp.async` destination, a
@@ -478,9 +564,9 @@ contract (Codex's review of 2b2731b).
   product"), where every thread stores at param_0 (RTX 4090).
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
-  unroll main+remainder pair, LLVM's two-register counter and its
-  predicate-phi two-trip loop. Not recognised, reported as
-  `trips = unknown`: grid-stride loops without `--grid`, whose step is
+  unrolled main loop and its remainder, LLVM's two-register counter and
+  its predicate-phi two-trip loop. Not recognised, reported as
+  `loop: trips ?` and why: grid-stride loops without `--grid`, whose step is
   `%nctaid.x` ("induction step is not a constant"), data-dependent
   bounds, multi-exit loops, inner loops bounded by an
   enclosing loop's counter (`micro/triangular.ptx`), a latch `setp`
@@ -515,8 +601,9 @@ contract (Codex's review of 2b2731b).
   the same way through `brx.idx`, and `scan_tma_ws_best` too, whose
   worker k-loops read their bound from shared memory the default warps
   store (637, loaded at 1820 and 1917). Under the attn_fwd_ws record
-  the tensor FLOPs over the launch read `0` as a lower bound, where the
-  record's `mma.m16n8k16` lines run 3,244,032 warp instructions,
+  the FLOPs over the launch read `cuda-core, tensor, sfu flops ?`
+  (`gluon-attn-fwd-ws-annotate.test`), where the record's
+  `mma.m16n8k16` lines run 3,244,032 warp instructions,
   13,287,555,072 FLOPs.
   Over the census's 3,027 sm_100a loops (`missed-opt-census/art/sm100v3`,
   inferred arguments), 990 have a trip count: 1,445 are mbarrier
@@ -531,7 +618,8 @@ contract (Codex's review of 2b2731b).
   `src/analysis/affine/induction_variables.rs`): a register stepped by a guarded
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
   param_0) is no counter; its guard the same for every thread, it reads
-  `[4 * uniform(%r1@29) + param_0]`, varying with the loop.
+  `[4·uniform(%r1@29) + param_0]`, and the loop's unique bytes are
+  unknown (`micro-guarded-step.test`).
 - **A join's φ whose paths write one value through a loop counter is
   refused**, though both definitions and the join lie in one trip of
   the loop: `micro/join_same_value.ptx`'s `micro_join_counter`,
@@ -547,10 +635,11 @@ contract (Codex's review of 2b2731b).
   `cp.async.bulk.commit_group` and `cp.async.bulk.wait_group` in four.
 - **A tensor copy's bytes are unknown.** `cp.async.bulk.tensor` moves
   the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8),
-  not the PTX: both its sides count as ops with unknown bytes in every
-  total, its global row reads `unknown: the tensor map holds the
-  address`, and a loop holding one in its own blocks has no footprint
-  (`micro/tensor_copies.ptx`, `micro-tensor-copies.test`).
+  not the PTX: the bytes of both its sides are unknown in every total,
+  `bytes ? (not counted)` on its line, its global side reads `addr ?
+  (the tensor map holds the address)`, and a loop holding one in its
+  own blocks has no footprint (`micro/tensor_copies.ptx`,
+  `micro-tensor-copies.test`).
 - **Special registers PTX ISA §10 does not describe** — `%pm*`
   ("behavior is currently undefined"), `%envreg*` (driver-defined),
   `%globaltimer*` (target-specific), `%reserved_smem_offset_*` — read
@@ -565,8 +654,6 @@ contract (Codex's review of 2b2731b).
   instructions are counted, and a kernel calling one does not
   round-trip (`micro/call_returns.ptx`: "Call to 'zero' requires call
   prototype").
-- **Sibling loops on one source line** beyond the unroll pair are
-  reported as variants and excluded from totals.
 - **In a kernel with a cycle of more than one entry**, the uniformity
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare
@@ -589,8 +676,8 @@ contract (Codex's review of 2b2731b).
   any grid (§10.7); an `eq` or `ne` where their difference's range
   leaves (−2^width, 2^width). What it guards is then a bound
   (`micro/setp_float.ptx`, `micro/setp_f16x2.ptx`,
-  `micro/setp_unsigned.ptx`, `micro/setp_wraps.ptx`: `(predicated)`,
-  `store <= 256 B`; the unsigned kernel of
+  `micro/setp_unsigned.ptx`, `micro/setp_wraps.ptx`: `<= warp * ×
+  lane *`, `global store <= 256 B`; the unsigned kernel of
   `micro/setp_unknown_range.ptx`).
 - **A guard comparing the thread index with a CTA index needs the
   grid, and one with an unbound parameter or a loop counter is an
@@ -605,9 +692,10 @@ contract (Codex's review of 2b2731b).
   threads per CTA, as the record measures, `b200-mixed-index-guard.test`,
   `the_grid_decides_a_guard_on_the_cta_index`),
   and otherwise per CTA a bound, the lanes in at some CTA
-  (`micro/cta_mask.ptx`: under 16 CTAs `<= 64 threads`, where the last
-  stores on 40; `micro/cta_guards.ptx`). The ncu comparison sums such a
-  set's count over the CTAs (`Pred::launch`; scan_tma's line 184,
+  (`micro/cta_mask.ptx` under 16 CTAs, where the last stores on 40
+  threads: `sectors/req <= 5 (ideal <= 4)`; `micro/cta_guards.ptx`).
+  The ncu comparison sums such a set's count over the CTAs
+  (`Pred::launch`; scan_tma's line 184,
   `scan_tma_s_line_184_counts_the_ctas_that_run_it`), but not past 2^24
   CTAs on the axes its comparisons read or 2^26 lane evaluations
   (`a_launch_sums_each_cta_s_threads_and_warps`). Without a grid the masks
@@ -617,8 +705,8 @@ contract (Codex's review of 2b2731b).
   address is (`micro/guards.ptx`: the store total stays a bound, a
   request's sectors are exact). A comparison with a loop counter is counted trip by trip
   (`micro/counter_guard.ptx`: 384 barriers and 300 stores per CTA, as
-  measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `k < 511`,
-  confirmed at 12,533,760, `gluon-counter-guard.test`,
+  measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `runs when
+  iv[$L__BB0_3] < 510`, confirmed at 12,533,760, `gluon-counter-guard.test`,
   `lm_head_dx_s_counter_guard_confirms_its_block`) only where the
   block lies in that loop, the loop's trip count is a constant and the
   comparison holds that one counter with the thread index; with a
@@ -661,37 +749,26 @@ contract (Codex's review of 2b2731b).
 
 
   A src-size register is a bound on which threads read and how much
-  (`micro/cp_async_src_size.ptx`: `global load <= 16 B (predicated)
-  warp: <= 17 sectors`, `load <= 1024 B`, where 16 lanes read 8
-  sectors; `micro-cp-async-src-size.test`,
+  (`micro/cp_async_src_size.ptx`: `sectors/req <= 17 (ideal <= 16)`,
+  `global load <= 1,024 B`, where 16 lanes read 8 sectors;
+  `micro-cp-async-src-size.test`,
   `a_register_source_size_bounds_the_sectors_measured`).
 
 ### Presentation
 
 - **Floors and mods of one variable are not merged back**, so a form
   can print longer than its value: k5's second `As` store reads
-  `16 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8)`, which is `2 * %tid.x`, and
-  the B200 fused_rmsnorm's `4 * ⌊(⌊%tid.x/8⌋ mod 128)/4⌋` is
-  `4 * ⌊%tid.x/32⌋` below 1024 threads.
+  `16·⌊%tid.x/8⌋ + 2·(%tid.x mod 8)`, which is `2·%tid.x`, and
+  the B200 fused_rmsnorm's `4·⌊(⌊%tid.x/8⌋ mod 128)/4⌋` is
+  `4·⌊%tid.x/32⌋` below 1024 threads.
 - **A refused φ names the obstacle on one of its source chains**: in
   b200 `tma_best` 34 access rows say only "depends on special register
   %ctaid.x" (8 in `bmm_kernel_persistent`), not that a join of two
   values stopped the trace.
-- **A thread-index condition that holds on every thread still
-  prints.** Under its record b200 scaled_mm's copies outside the K loop
-  read their sources `on 128 threads in 4 warps (16 * (%tid.x mod 8) <
-  7936)`, every thread of the block (`b200-every-thread-condition.test`).
 - Per-thread totals of a warp-specialized kernel are `<=` the sum of
-  its partitions, since a thread runs one of them: the `threads` column
-  of the block table says which threads run each block (`128
-  (⌊%tid.x/32⌋ < 4)`), and the per-CTA totals count each block on its
-  own threads, but there is no per-role view of the per-thread numbers.
-- A kernel's `unknowns:` line lists what leaves a count incomplete
-  (unparsed statements, unclassified instructions, unknown trip
-  counts, calls), not unknown addresses, which are only on their access
-  rows: `micro/uniform_address.ptx`'s `micro_uniform_div_lanes` reads
-  `unknowns: none` beside a store whose address is `unknown`
-  (`tests/lit/micro-uniform-address.test`).
+  its partitions, since a thread runs one of them: each block's
+  annotation says which threads run it (`warp 0-3 × lane *`), and the
+  per-CTA totals count each block on its own threads, but there is no per-role view of the per-thread numbers.
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
@@ -799,20 +876,19 @@ contract (Codex's review of 2b2731b).
 - Hardware cross-check on an RTX 4090 with Nsight Compute: k5's
   counts, and the c_fc fp8 GEMM's launch (M=4096, N=3072, K=768):
   `sm__ops_path_tensor_src_fp8.sum` = 19,327,352,832 = 2·M·N·K, the
-  tool's 16384 fp8 flops per thread per K iteration times 12
-  iterations, 128 threads and 768 CTAs; `sm__inst_executed_pipe_tensor`
-  = 2,359,296 = 64 `mma` per warp-iteration likewise, the tool's
-  3072 warp `mma` per CTA at K=768 times 768 CTAs
-  (`gluon-fp8-gemm-c-fc-warps.test`); l1tex global-load
+  tool's 25,165,824 fp8 tensor flops per CTA at K=768 times 768 CTAs
+  (`gluon-fp8-gemm-c-fc-warps.test`); `sm__inst_executed_pipe_tensor`
+  = 2,359,296, that at 8,192 per `mma`; l1tex global-load
   bytes (151,191,552) = every `cp.async` byte (150,994,944: two
   prologue stages plus ten of the twelve iterations, the predicated
   prefetches off at the end) plus 256 B per CTA for the two scale
-  loads at sector granularity, under the tool's `<=` bound of
-  176,947,200. The attention launches at B=2, T=2048, H=6, D=128:
-  `sm__inst_executed_pipe_tensor` = 3,244,032 for the forward, the
-  3,264 key-block visits times the tool's 1,024 warp-`mma` per CTA
-  visit minus the 192 masked half-blocks it skips at 512; 8,110,080
-  for the backward, 6,336 visits times 160 per warp; the pre and post
+  loads at sector granularity, where the tool's 151,781,376 B counts
+  the scale loads' bytes as the threads request them, 1,024 B per CTA
+  (`gluon-fp8-gemm-c-fc.test`). The attention launches at B=2, T=2048,
+  H=6, D=128: `sm__inst_executed_pipe_tensor` = 3,244,032 for the
+  forward, whose loops' trips the tool does not know (above); 8,110,080
+  for the backward, the tool's 33,218,887,680 bf16 tensor flops at
+  4,096 per `mma` (`gluon-attn-bwd.test`); the pre and post
   kernels' cuda-core flops (2·ffma + fadd + fmul) 6,684,672 and
   3,145,728 are the tool's per-CTA 17,408 and 8,192 times 384 CTAs.
   Sectors per warp request, k5 and k1 at M=N=K=256 (`tests/lit/
@@ -935,22 +1011,21 @@ One line each, with the trigger that would start it.
   `u32` and `i32` parameters for `--grid`, `--launch` and `--bind`, and
   refuses a record whose
   lines are not the PTX's (`tests/lit/k5-ncu-stale.test`), and
-  gives each block a verdict (`kernels[].measured`): a line whose
+  gives each block a verdict (`report::build::compare`, its
+  `Comparison`'s blocks): a line whose
   `CountConstraint` is not `Free` and whose SASS is one opcode must
   equal an exact prediction or stay within a bound. A prediction is
   per-CTA threads times trips times CTAs, or, where the threads differ
   by CTA, their sum over the grid times trips. Each block also
   counts its instructions, those with SASS and those that agree, and
   lists every line whose measured count is not the predicted number,
-  with its SASS opcodes (`differing`); the text report prints them
-  under `measured`. A line whose global SASS all have the width of its
+  with its SASS opcodes (`differing`). A line whose global SASS all have the width of its
   one PTX global access also compares its L2 sectors and their ideal
   over the launch, the sectors per warp request times the warps with a
   lane that runs it, a range over the address's alignment
-  (`kernels[].measured[].sectors`, `tests/ncu_comparisons.rs`,
-  `a_line_at_its_own_width_compares_its_l2_sectors`; the
-  text report counts the lines that agree and prints those that differ,
-  in the records only the three copies above in
+  (a block's `sectors`, `tests/ncu_comparisons.rs`,
+  `a_line_at_its_own_width_compares_its_l2_sectors`; in the records
+  only the three copies above differ, in
   `micro/shared_wavefronts.cp_async.ncu.json`,
   `gluon_records_agree_on_counts_sectors_and_launch_totals`), once
   the line's global SASS executed the predicted count, or within its
@@ -958,8 +1033,7 @@ One line each, with the trigger that would start it.
   at the width each lane of its one PTX shared access covers compares
   the predicted wavefronts and ideal per warp request with the
   record's over those SASS's warp-level executions
-  (`kernels[].measured[].wavefronts`, `measured shared wavefronts` in
-  the text report, `tests/ncu_comparisons.rs`,
+  (a block's `wavefronts`, `tests/ncu_comparisons.rs`,
   `every_counted_shared_line_s_wavefronts_are_measured`): all 1,018
   such lines of the records agree, 544 of them in 25 B200 Triton
   kernels and 414 in nine Gluon kernels and k5 on the RTX 4090
@@ -975,113 +1049,23 @@ One line each, with the trigger that would start it.
   sectors, each line's prediction summed once over the record's lines
   with global SASS, are compared with the record's L1TEX counts when
   every such line but an atomic's is predicted at its recorded width
-  and executions (`kernels[].measured_totals`; the text's `measured
-  L1TEX sectors of global loads over the launch`;
+  and executions (the `Comparison`'s `launch`;
   `an_ldgsts_on_p0_keeps_no_sectors_but_counts_in_the_launch_total`,
   `lm_head_dx_s_counter_guard_confirms_its_block`: the sum includes the
-  lines the `P0` rule leaves without sectors). In 38
+  lines the `P0` rule leaves without sectors). In 39
   records both agree. 25 have a line not predicted so (ce_chunk's
   `ld.global.b64` that ptxas loads as 32-bit `LDG.E`), and the gated
   rmsnorm record has no counts. `tests/ncu_corpus.rs` keeps
   every record's block verdicts, their counts, its sector lines by
-  outcome and its launch totals in one snapshot: 137 blocks confirmed,
-  274 consistent, 499 unchecked; 1,414 sector lines agree, none differ,
-  2 not compared; 38 launches' totals agree. `ci.sh` measures every record again on the GPU it
+  outcome and its launch totals in one snapshot: 145 blocks confirmed,
+  276 consistent, 491 unchecked; 1,442 sector lines agree, 3 differ
+  (the copies above), 2 not compared; 40 launches' totals agree, the
+  39 above and `tests/lit/Inputs`' one. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed, but for the
   driver version past its first two components; a record of
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.
 - Per-line HTML view. Trigger: wanting it.
-- Annotated PTX, `analyze --annotate`, to replace the text and JSON
-  reports once their lit tests are ported: started 2026-10-31. The
-  input's lines, each followed by nothing or by ` // ` and its
-  annotation (`tests/report_invariants.rs`), two statements' joined by
-  ` ; ` (`statements_on_one_line_join_their_annotations`). So far each
-  block's annotation, on its label's line or else on its first
-  instruction's after `[<block name>]` (`micro-vector-register.test`): a loop header's `loop: trips` and
-  the trip count, or `?` and why (`tests/lit/k5-annotate.test`), and
-  the global bytes one CTA requests over one run of the loop's own
-  blocks, the distinct bytes and the bytes of the sectors they touch,
-  `<=` for a bound, `?` where an address is not read
-  (`k5-annotate.test`, `k1-annotate.test`,
-  `micro-loop-bytes-annotate.test`), then,
-  given the block shape, the threads that run it as `warp <W> × lane
-  <L>` per group of warps with the same lanes, `<=` where the lanes are
-  a bound (`micro-guards-annotate.test`,
-  `gluon-attn-fwd-ws-annotate.test`); with the grid, where they read
-  the CTA index, the conjuncts that read it, the `not` of an `or` taken
-  as the `and` of its parts' negations, each as `runs when` prints a
-  comparison, and the CTAs that run it, `| CTAs %ctaid.x < 64
-  (64/128)`, `| CTAs %ctaid.x ≥ 1 (3/4)` (`micro-cta-trips-annotate.test`,
-  `b200-cta-condition-annotate.test`), or where the lanes differ by CTA
-  the most CTAs' lanes, `in 3844/3969 CTAs, other 125 CTAs differ`
-  (`k1-annotate.test`); and without the block shape the condition
-  that selects them, a loop's iteration k printed as
-  `(iv[<header>] + 1)`
-  (`without_a_block_shape_a_block_names_its_condition`). Then, where
-  past its immediate dominator the block runs under conditions each the
-  same for the whole CTA or a warp, `runs when` and each, a comparison
-  as `lhs cmp rhs`, the terms of negative coefficient and the constant
-  on the right,
-  an unknown value by its register and line (`%r1880@$L__BB0_39`), its
-  known multiple as the value, with the branch's polarity, joined by
-  `and`, one under an `or` or a `not` with every part, the `not` of an
-  `and` or an `or` by De Morgan's laws, an `and` under an `or` and an
-  `or` under an `and` parenthesized, a thread-index
-  comparison too; then `CTA-uniform` where each is the same for the
-  CTA, else `warp-uniform`, and the lines of the branches deciding them
-  (`gluon-attn-fwd-ws-annotate.test`, `micro-or-entry-annotate.test`,
-  `a_block_names_the_uniform_conditions_it_runs_under`); one that is
-  not a comparison read within its type as `predicate <register> (line
-  <L>) is true|false`: gluon attn_fwd_ws's `setp.lt.u32 %p60, %r1880,
-  -190`, an unsigned comparison with a value of unknown range (the same
-  test); a jump table's target as `jump table at line <L> selects this
-  target` (`b200-jump-table-annotate.test`), a loop's exit as `leaves
-  loop <header> toward <block>`
-  (`micro-loop-guard-sibling-annotate.test`). A comparison of a loop's
-  counter, the same for the CTA, joins them, `runs when iv[$L__BB0_1] ≥
-  2` (`micro-counter-guard.test`). Then, where a block
-  dominating it has such a condition of its own, the nearest's line: after
-  `nested in` where the block has one, else after `under`
-  (`gluon-attn-fwd-ws-annotate.test`). Then how many times its
-  unguarded statements run, over the launch given the grid
-  and the block shape, else per CTA, else per thread but where every
-  thread runs them once
-  (`without_a_block_shape_a_block_names_its_condition`): `exec
-  32,768/launch`, `<=` for a bound, and under a loop whose trips are
-  not known `exec ? (trips of <header>)` (`k5-annotate.test`,
-  `gluon-attn-fwd-ws-annotate.test`); a statement whose count differs,
-  but a predicated `bra`, has its own on its line, and a guarded one
-  whose threads differ from its block's has theirs, as a block's, before
-  it (`micro-guards-annotate.test`). A memory operand but a parameter is
-  `<space> <direction> [<address>]`, a loop's iteration k printed as
-  `iv[<header>]` = k - 1, or `addr ?` and why, a counter there as
-  `(iv[<header>] + 1)` (`micro-guarded-exit-bound-annotate.test`),
-  and `c·⌊u/d⌋` of an unknown value u whose low bits every definition
-  leaves 0 up to d as `(c/d)·u` (`micro-uniform-aligned-annotate.test`),
-  then a global one's `sectors/req` and a shared one's
-  `wavefronts/req` with their ideal, `<=` before both where the lanes
-  are a bound, or `?` and why (`k5-annotate.test`,
-  `micro-vector-def-annotate.test`). An
-  instruction whose results nothing with an effect reads is `unused`
-  (the same test). What a statement leaves out of the totals is said on
-  its line: `not classified (its FLOPs and bytes not counted)`
-  (`micro-texture-outputs.test`), `not parsed (not counted)`
-  (`micro-unparsed-writes.test`), `bytes ? (not counted)` where an
-  access's size is not known (`micro-tensor-copies.test`), `call (its
-  callee not counted)` (`micro-call-returns.test`). On the kernel's `.entry` line, what the counts take
-  of the launch, those given: `grid X×Y×Z`, `block X×Y×Z` and each
-  bound parameter's value (`k5-annotate.test`); then the shared memory
-  each CTA declares, `shared memory 2,048 B/CTA`, `+ dynamic` where an
-  `.extern .shared` array's size is set at launch
-  (`gluon-attn-fwd-ws-annotate.test`); then what the counted statements
-  sum to at the counts' scale, `per launch:` and each pipe's FLOPs by
-  precision and each space's bytes loaded and stored, `>=` where a
-  statement not counted could add to it, `?` where none is counted,
-  `? B (trips of <header>)` under a loop whose trips are not known
-  (`k5-annotate.test`, `micro-totals-annotate.test`). Not printed: the
-  ncu comparisons, which test the analysis (`--ncu` gives the launch;
-  `tests/ncu_corpus.rs` keeps them).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures
@@ -1115,8 +1099,8 @@ Each id names a lit test, `tests/lit/s*.test`, in its first comment:
 | id | question | fixture |
 |---|---|---|
 | S1.1, S1.2 | Is k5's design point what I computed on paper, at sm_80 and sm_89? | k5 |
-| S6 | Where does the work go? (unroll pair ranked) | k2 |
-| S7.1, S7.2 | Did tiling pay off? (AI 0.5 vs 32) | k1, k5 |
+| S6 | Where does the work go? (main loop and remainder trips) | k2 |
+| S7.1, S7.2 | Did tiling pay off? (f32 FLOPs per global byte a trip, 8/16 vs 1024/32) | k1, k5 |
 | S8 | Am I on the precision path I think? (0 f16 flops) | k2 |
 | S9.1, S9.2, S9.3 | Does the tool admit what it cannot see? | micro/data_dep, branchy, no_loc |
 | S10.1, S10.2 | Is my tensor-core work visible, and only the work? | mma_demo, k14 |

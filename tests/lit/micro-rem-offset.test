@@ -5,7 +5,7 @@
 # ⌊%tid.x/64⌋ + 62 in blocks of 128, each store's address with its
 # sectors per warp request. One that passes the modulus leaves the
 # address unknown.
-RUN: %ptxroof analyze --annotate --bind 1:n=64 %fixtures/micro/rem_offset.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze --bind 1:n=64 %fixtures/micro/rem_offset.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd3], %r8; // global store [4·(⌊%tid.x/8⌋ mod 16) + param_0 + 64] sectors/req 1–2 (ideal 1){{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r8; // global store [4·⌊%tid.x/64⌋ + param_0 + 248] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r8; // global store addr ? (depends on special register %ctaid.y, in a division){{$}}

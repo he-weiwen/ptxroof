@@ -2,7 +2,7 @@
 # parameter whatever its offset, so the guard compares a value with
 # itself, is true, and the store runs on all 64 threads, as often as
 # its block: 256 B per CTA.
-RUN: %ptxroof analyze --annotate %fixtures/micro/param_fields.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/param_fields.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_param_fields( // block 64×1×1 | per CTA: global store 256 B; param load 1,024 B{{$}}
 ANN: {{^}}	ld.param.u64 	%rd1, [micro_param_fields_param_0]; // [<block 0>] warp * × lane * | exec 64/CTA{{$}}
 ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}

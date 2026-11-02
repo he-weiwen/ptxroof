@@ -20,9 +20,9 @@ Usage: gen_loops.py [--seed N] [--count N] [--bin PATH] [--keep DIR]
 """
 
 import argparse
-import json
 import operator
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -124,24 +124,23 @@ class ToolError(Exception):
 
 
 def tool_trips(binary, ptx_path, n):
-    """The tool's bound trip count as an int, or the unknown's reason."""
+    """The tool's bound trip count as an int, or the unknown's reason, from
+    the loop header's `loop: trips` annotation."""
     out = subprocess.run(
-        [str(binary), "analyze", "--json", "--bind", f"0:n={n}", str(ptx_path)],
+        [str(binary), "analyze", "--bind", f"0:n={n}", str(ptx_path)],
         capture_output=True, text=True, timeout=60,
     )
     if out.returncode != 0:
         raise ToolError(f"exit {out.returncode}: {out.stderr.strip()[:200]}")
-    report = json.loads(out.stdout)
-    loops = report["kernels"][0]["loops"]
-    if len(loops) != 1:
-        raise ToolError(f"{len(loops)} loops found")
-    trips = loops[0]["trips"]
-    if "unknown" in trips:
-        return trips["unknown"]
+    trips = re.findall(r"loop: trips (.*?)(?: \| |$)", out.stdout, re.M)
+    if len(trips) != 1:
+        raise ToolError(f"{len(trips)} loops found")
+    if trips[0].startswith("? ("):
+        return trips[0][3:-1]
     try:
-        return int(trips["expr"])
+        return int(trips[0].replace(",", ""))
     except ValueError:
-        raise ToolError(f"symbolic after binding: {trips['expr']}")
+        raise ToolError(f"symbolic after binding: {trips[0]}")
 
 
 def main():

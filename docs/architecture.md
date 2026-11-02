@@ -38,8 +38,8 @@ only declare modules and selected public entry points.
 | `analysis/affine/affine_analysis` | Register values as affine forms and one loop's trip count; their mutual recursion and the cache of both |
 | `analysis/affine/affine_analysis/loop_trip_count` | A loop's trip count from its latch, guard and predicate φ, as methods of the analysis |
 | `analysis/affine/affine_analysis/transfer` | The value each instruction writes, from the values it reads, as methods of the analysis |
-| `analysis/affine/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
-| `analysis/loop_names` | Source-derived loop identities used by unroll pairing and display |
+| `analysis/affine/trip_counts` | Every loop's trip count |
+| `analysis/loop_names` | Source-derived loop names |
 | `analysis/thread_participation` | Predicates and sets of threads executing blocks and accesses |
 | `analysis/dead_code` | Instructions with no live effect through register SSA |
 | `analysis/memory_footprint` | Warp sectors and loop requested, distinct and sector bytes |
@@ -50,10 +50,8 @@ only declare modules and selected public entry points.
 | `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs, bytes and conversions they sum to |
 | `report/bindings` | Caller parameter bindings and their text syntax |
 | `report/measured` | Import and validate NCU records; compare measured and predicted quantities, and the comparisons' results |
-| `report/schema` | Owned serializable report structures |
-| `report/build` | Orchestrate kernel analyses and aggregate their results into reports |
+| `report/build` | Orchestrate kernel analyses, trace the memory operands the annotated PTX prints, and compare a kernel with its NCU record |
 | `report/names` | Kernel demangling for display |
-| `report/text` | Render report structures as text |
 | `report/annotate` | The input PTX with each line's analysis results appended as a comment |
 | `main` | CLI arguments, file I/O, output selection and error handling |
 | `lib` | Library modules and version entry point |
@@ -70,8 +68,7 @@ checks these boundaries:
 - Support utilities depend only on support utilities.
 - PTX representation, parsing and CFG construction depend only on PTX and support.
 - Analyses and SSA do not depend on the parser or on reporting.
-- Report construction may call analyses and the parser. The schema embeds the
-  memory-footprint `CountRange`, `LoopBytes` and `ByteRange` types.
+- Report construction may call analyses and the parser.
 
 `register_member` belongs to the IR because register declarations define family
 membership; both `Kernel::register_type` and the parser use it. `measurement`
@@ -90,16 +87,15 @@ traces a value when a query reads it. `trip_counts` reads its per-loop results; 
 
 ## Per-kernel flow
 
-`main::run` calls `report::analyze`, or `report::annotate::annotate` with
-`--annotate`; both read `each_kernel`, which parses the module, checks an NCU
+`main::run` calls `report::annotate::annotate`, which reads `each_kernel`;
+`each_kernel` parses the module, checks an NCU
 record against it, and for each kernel resolves the bindings and launch shape
 and builds the CFG, the loop forest and one `KernelAnalyses`. `KernelReportBuilder`
 then:
 
 1. builds the kernel's `UniformityInfo` and one `AffineAnalysis` under those
    bindings;
-2. names loops, collects every loop's trip count from that instance, and pairs
-   unrolled loops;
+2. names loops and collects every loop's trip count from that instance;
 3. collects instruction contributions per block;
 4. computes thread participation from the same instance;
 5. takes compile-time thread sets: the same sets when the bindings are exactly
@@ -112,9 +108,9 @@ then:
    count qualifiers with the participation's dead edges;
 8. traces addresses and computes memory footprints.
 
-`report/build` aggregates the results into the schema and, given an NCU record,
-compares them; `main` renders text or JSON. `--dump-ast` reads, parses, prints
-and returns.
+`report/annotate` prints the results on the PTX's lines; `report::build::compare`
+compares them with an NCU record for the tests. `--dump-ast` reads, parses,
+prints and returns.
 
 ## Register SSA semantics
 

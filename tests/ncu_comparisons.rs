@@ -291,6 +291,16 @@ fn gluon_records_agree_on_counts_sectors_and_launch_totals() {
     }
 }
 
+/// Flash-attention backward: the loop over the query blocks at or after
+/// the CTA's runs 32 − %ctaid.x trips under the record, Σ (32 − x) · 12 =
+/// 6336 over its 32x12 CTAs, 1,622,016 thread executions, as the RTX 4090
+/// measures.
+#[test]
+fn attn_bwd_s_query_block_loop_is_confirmed_over_the_launch() {
+    let c = comparison("tests/fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json");
+    assert_eq!(verdict(&c, "$L__BB0_2"), Some(Verdict::Confirmed));
+}
+
 /// Counts over the launch, summed over the record's CTAs. In
 /// _chunk_scan_fwd_tma (grid 2x32x80, 384 threads), the load on line 184
 /// runs on the 256 threads of warps 0 to 7 in the CTAs whose %ctaid.y is
@@ -335,6 +345,43 @@ fn the_grid_decides_a_guard_on_the_cta_index() {
     };
     assert_eq!(differing(&c, 88), Some(&expected));
     assert_eq!(differing(&c, 93), None);
+}
+
+/// Triton's causal attention (tut_ll): the loop at tut_attn.py:140 runs
+/// %ctaid.x trips on warps 0-3 of the CTAs with %ctaid.x >= 1, so over
+/// the record's 16x128 CTAs each instruction of its four blocks between
+/// waits runs Σ x · 128 · 128 = 1,966,080 times, as the B200 measures.
+#[test]
+fn tut_ll_s_causal_loop_is_confirmed_over_the_launch() {
+    let c =
+        comparison("tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json");
+    for block in ["<block 12>", "<block 14>", "<block 16>", "<block 18>"] {
+        assert_eq!(verdict(&c, block), Some(Verdict::Confirmed), "{block}");
+    }
+}
+
+/// ds2 rope's loop, whose latch reads a `min` of %ctaid.y, runs 16 trips
+/// on each of the record's 512 CTAs: its 262,144 executions agree with
+/// the B200's.
+#[test]
+fn ds2_rope_s_row_loop_is_confirmed_over_the_launch() {
+    let c = comparison(
+        "tests/fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ncu.json",
+    );
+    assert_eq!(verdict(&c, "$L__BB0_2"), Some(Verdict::Confirmed));
+}
+
+/// w8a8's K loop runs max(⌈K/128⌉, 2) − 1 = 55 trips at the record's
+/// K = 7168, 259,522,560 executions over its 36,864 CTAs of 128 threads,
+/// which the B200's counts confirm on its blocks `$L__BB0_6` and
+/// `<block 7>`.
+#[test]
+fn w8a8_s_k_loop_is_confirmed_at_its_record_s_k() {
+    let c = comparison(
+        "tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ncu.json",
+    );
+    assert_eq!(verdict(&c, "$L__BB0_6"), Some(Verdict::Confirmed));
+    assert_eq!(verdict(&c, "<block 7>"), Some(Verdict::Confirmed));
 }
 
 /// fp8_gemm_kernel.lm_head_dx's K loop runs 512 trips under its record,
@@ -408,6 +455,23 @@ fn the_second_of_two_guarded_loops_stores_its_predicted_sectors() {
     let c = comparison("tests/fixtures/micro/loop_guard_sibling.ncu.json");
     assert_eq!(sectors(&c), BTreeMap::from([("exact", 1)]));
     assert_eq!(sector_lines(&c), [(44, SectorOutcome::Agrees, 10)]);
+}
+
+/// A loop of n / d trips, its latch traced under the record's bindings:
+/// at n = 20, d = 4 the quotient gives 5 trips, as on an RTX 4090, which
+/// confirms the loop.
+#[test]
+fn a_loop_of_a_quotient_s_trips_is_confirmed() {
+    let c = comparison("tests/fixtures/micro/trip_div_param.ncu.json");
+    assert_eq!(verdict(&c, "$L__BB0_2"), Some(Verdict::Confirmed));
+}
+
+/// A loop of max(n, 2) trips: micro_trip_max at n = 1 runs 2, as on an
+/// RTX 4090, which confirms the loop.
+#[test]
+fn a_loop_of_a_max_s_trips_is_confirmed() {
+    let c = comparison("tests/fixtures/micro/trip_max.ncu.json");
+    assert_eq!(verdict(&c, "$L__BB0_1"), Some(Verdict::Confirmed));
 }
 
 /// A causal loop: CTA c runs c trips. Over the launch each CTA's threads

@@ -17,8 +17,8 @@ publish = false
 anyhow = "1"          # binary-only error rendering
 clap = { version = "4", features = ["derive"] }
 cpp_demangle = "0.4"  # kernel names; fallible -> plain names pass through
-serde = { version = "1", features = ["derive"] }  # the result tree derives Serialize
-serde_json = "1"      # --json IS that derivation
+serde = { version = "1", features = ["derive"] }  # ncu records derive Deserialize
+serde_json = "1"      # reads ncu records
 thiserror = "2"       # library error types
 
 [dev-dependencies]

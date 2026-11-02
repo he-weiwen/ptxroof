@@ -2,6 +2,6 @@
 # reads it as a constant (0 == 0), the uniformity analysis finds it
 # divergent, so the store runs on a bound of the threads, not all 64,
 # and stores at most 256 B per CTA.
-RUN: %ptxroof analyze --annotate %fixtures/micro/guarded_def.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/guarded_def.ptx | FileCheck "%s"
 CHECK: {{^}}.visible .entry micro_guarded_def( // block 64×1×1 | per CTA: global store <= 256 B; param load 512 B{{$}}
 CHECK: {{^}}	@%p2 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}

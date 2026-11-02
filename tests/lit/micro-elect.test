@@ -1,12 +1,7 @@
-# elect.sync as an instruction guard, 128 threads from .reqntid: the
+# elect.sync as an instruction guard over a CTA of 128 threads: the
 # elected lane of warp 0 stores 4 B, the elected lane of each of the 4
 # warps 8 B, every other lane 2 B, and lane 0 stores 4 B only if it is
-# its warp's elected lane, which is unspecified: a thread stores at
-# most 18 B, and the CTA 284 B plus a bound of 4, besides the 512 B
-# its 128 threads load.
-RUN: %ptxroof analyze %fixtures/micro/elect.ptx | FileCheck "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/elect.ptx | FileCheck --check-prefix=ANN "%s"
-CHECK: kernel micro_elect
-CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
-CHECK: global bytes: load 4 B, store <= 18 B
+# its warp's elected lane, which is unspecified: the CTA stores 284 B
+# plus a bound of 4, besides the 512 B its 128 threads load.
+RUN: %ptxroof analyze %fixtures/micro/elect.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_elect( // block 128×1×1 | per CTA: global load 512 B, store <= 288 B; param load 2,048 B{{$}}

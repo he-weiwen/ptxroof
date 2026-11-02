@@ -5,7 +5,6 @@
 
 use ptxroof::analysis::affine::trip_counts::{TripCountResults, trip_counts};
 use ptxroof::analysis::control_flow::loop_forest;
-use ptxroof::analysis::loop_names::loop_names;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
 use std::fs;
@@ -20,8 +19,7 @@ fn info_of(fixture: &str) -> (Vec<String>, TripCountResults) {
     let k = &m.kernels[0];
     let cfg = build_cfg(&m, k);
     let f = loop_forest(&cfg);
-    let names = loop_names(&m, k, &cfg, &f);
-    let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default());
+    let info = trip_counts(&m, k, &cfg, &f, &Default::default());
     let rendered = info
         .trips
         .iter()
@@ -36,27 +34,23 @@ fn info_of(fixture: &str) -> (Vec<String>, TripCountResults) {
 #[test]
 fn ladder_trip_counts_are_pinned() {
     // k2: K is param 2; main loop (K − K mod 4)/4, nounroll remainder
-    // K mod 4, linked as one logical loop with factor 4.
-    let (trips, info) = info_of("k2/k2.sm_80.ptx");
+    // K mod 4.
+    let (trips, _) = info_of("k2/k2.sm_80.ptx");
     assert_eq!(
         trips,
         ["ok: (param_2 - param_2 mod 4) / 4", "ok: param_2 mod 4"]
     );
-    assert_eq!(info.unroll_pairs.len(), 1);
-    assert_eq!(info.unroll_pairs[0].factor, 4);
 
     // k1 is the same kernel shape.
-    let (trips, info) = info_of("k1/k1.sm_80.ptx");
+    let (trips, _) = info_of("k1/k1.sm_80.ptx");
     assert_eq!(
         trips,
         ["ok: (param_2 - param_2 mod 4) / 4", "ok: param_2 mod 4"]
     );
-    assert_eq!(info.unroll_pairs.len(), 1);
 
     // k5: outer tile loop ceildiv(K, 8); inner dot loop a constant 8.
-    let (trips, info) = info_of("k5/k5.sm_80.ptx");
+    let (trips, _) = info_of("k5/k5.sm_80.ptx");
     assert_eq!(trips, ["ok: ⌈param_2/8⌉", "ok: 8"]);
-    assert!(info.unroll_pairs.is_empty(), "different lines, no pair");
 }
 
 #[test]

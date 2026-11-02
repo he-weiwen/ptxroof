@@ -6,8 +6,8 @@
 # CTA: 1,048,576 B requested, 32,768 B unique. The guard `x < M && y <
 # N` reads only with M and the grid bound; without them which threads
 # run the loop is not known, and its footprint is a bound.
-RUN: %ptxroof analyze --annotate %fixtures/k1/k1.sm_80.ptx --bind 0:M=256 --bind 1:N=256 --bind 2:K=256 --launch 32,32,1 --grid 8,8,1 | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze --annotate %fixtures/k1/k1.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 32,32,1 | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/k1/k1.sm_80.ptx --bind 0:M=256 --bind 1:N=256 --bind 2:K=256 --launch 32,32,1 --grid 8,8,1 | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/k1/k1.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 32,32,1 | FileCheck --check-prefix=FREE "%s"
 ANN: {{^}}.visible .entry _Z11hgemm_naiveiiifPK6__halfS1_fPS_( // grid 8×8×1 | block 32×32×1 | param_0 = 256, param_1 = 256, param_2 = 256 | per launch: flops f32 33,751,040; global load 67,239,936 B, store 131,072 B; param load 2,883,584 B{{$}}
 ANN: {{^}}$L__BB0_4: // loop: trips 64 | global per CTA: requested 1,048,576 B, unique 32,768 B, sectors 786,432–1,048,576 B | warp * × lane * | exec 4,194,304/launch{{$}}
 ANN: {{^}}	ld.global.u16 	%rs1, [%rd25]; // global load [512·%tid.y + 16384·%ctaid.y + 8·iv[$L__BB0_4] + param_4] sectors/req 1 (ideal 1){{$}}

@@ -1,12 +1,7 @@
 # cp.async with a register src-size, 16 on lanes 0..15 and 0 on the
 # others: ptxas writes LDGSTS with an ignore-src predicate. The register
-# is not read, so which lanes read, and how much, is not known: the row,
-# the per-execution read and the totals are bounds.
-RUN: %ptxroof analyze --annotate %fixtures/micro/cp_async_src_size.ptx --ncu %fixtures/micro/cp_async_src_size.ncu.json | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/micro/cp_async_src_size.ptx --ncu %fixtures/micro/cp_async_src_size.ncu.json | FileCheck "%s"
+# is not read, so which lanes read, and how much, is not known: the
+# sectors per request and the totals are bounds.
+RUN: %ptxroof analyze %fixtures/micro/cp_async_src_size.ptx --ncu %fixtures/micro/cp_async_src_size.ncu.json | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_cp_async_src_size( // grid 1×1×1 | block 64×1×1 | shared memory 1,024 B/CTA | per launch: global load <= 1,024 B; shared store 1,024 B; param load 512 B{{$}}
 ANN: {{^}}	cp.async.cg.shared.global 	[%r4], [%rd3], 16, %r5; // shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | global load [16·%tid.x + param_0] sectors/req <= 17 (ideal <= 16){{$}}
-CHECK: global load <= 16 B (predicated)  warp: <= 17 sectors (ideal <= 16)
-CHECK: per thread per execution: global load <= 16 B; shared store 16 B
-CHECK: totals per CTA [static]:
-CHECK: AI(global) >= 0 flop/B

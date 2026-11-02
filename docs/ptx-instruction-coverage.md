@@ -47,9 +47,9 @@ mnemonic; the "Today" column names the arm where routing matters.
 An instruction that fails parsing inside a kernel becomes `Stmt::Unparsed`
 and never reaches the classifier. Over the committed corpus that is
 policed by CI (`tests/parse-allowlist.txt`: two micro fixtures, an array element operand and a vector register's declaration); at
-`analyze` time each one is counted in `instruction_classes.unparsed`
-and listed in the report's unknowns, the same treatment an
-unclassified instruction gets. (The ISA's `|`-separated destination
+`analyze` time each one's line says `not parsed (not counted)`
+(`unparsed_statements_say_they_are_not_counted`), as an unclassified
+instruction's says `not classified`. (The ISA's `|`-separated destination
 operands — `setp ... p|q`, `match.all.sync d|p`, `elect.sync d|p` —
 were the verified unparsed instance until the parser learned them.)
 
@@ -80,22 +80,19 @@ address while a copy retains its source and destination.
 Every count is per thread per execution: a warp-collective instruction
 contributes its warp total divided by the 32 lanes that issue it (PTX ISA
 §4.5.1). Loop-trip and launch multiplication happen at report time.
-The text report expands instructions with multiple contributions; JSON
-`instructions.by_kind.*.contribution_variants` exposes each opcode's
-contribution lists and issued counts. Different immediate sizes remain
-separate variants. Contribution annotations are per execution with a true
+Copies of one opcode with different immediate sizes each count their own bytes.
+Contribution annotations are per execution with a true
 guard, a `cp.async`'s global read on a thread that reads its source, marked
-`<=` with a src-size register, even when the report's issued counts include
-inactive threads.
+`<=` with a src-size register.
 
 Atomic/reduction FP add/min/max contribute one FLOP per scalar element,
 including packed and vector multiplicity, on the `atomic` accounting pipe.
 Integer, bitwise, exchange and CAS operations contribute no FP FLOPs.
-`atomic_flops` is separate from CUDA-core FLOPs and included in `AI(global)`.
+Atomic FLOPs are summed apart from CUDA-core FLOPs.
 The byte convention is retained: `atom` read+write, `red` write-only.
 These are requested bytes, not estimates of DRAM traffic. Tests in
-`tests/instruction_contributions.rs` cover scaling, predication, variants,
-address attribution, unknown work, and the distinct-instruction identity.
+`tests/instruction_contributions.rs` cover scaling, predication, address
+attribution, unknown work, and the distinct-instruction identity.
 
 An instruction can now combine arithmetic, memory and other contributions.
 Work owned by larger groups and quantities unavailable from PTX still
@@ -282,7 +279,7 @@ requested.
 | 9.7.9.19 | `createpolicy` | `Ignore` | OK — builds a cache-policy register, touches no memory. |
 | 9.7.9.20 | `isspacep` | `Predicate` | OK. |
 | 9.7.9.21 | `cvta` | `Move` | OK — address-space cast, not a value conversion; tested. |
-| 9.7.9.22 | `cvt` | `Conversion` | OK — and future-proof: every format including FP8/FP6/FP4 (`e4m3`, `e5m2`, `e2m1`, …) lands here with no per-format code. Conversions as their own kind is load-bearing for the S8 precision audit (8 `cvt` per k2 main-loop iteration). |
+| 9.7.9.22 | `cvt` | `Conversion` | OK — and future-proof: every format including FP8/FP6/FP4 (`e4m3`, `e5m2`, `e2m1`, …) lands here with no per-format code. |
 | 9.7.9.23 | `cvt.pack` | `Conversion` (mnemonic `cvt` + `pack` modifier) | OK. |
 | 9.7.9.24 | `mapa` | `Move` | OK — an address computation into a peer CTA's shared memory; the access it feeds is counted where it happens. |
 | 9.7.9.25 | `getctarank` | `Integer` | OK. |
@@ -296,7 +293,7 @@ remain visible, counted `Unknown` work.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.9.26.3.1 | `cp.async` | `Memory` with Global read = src-size or cp-size and Shared write = cp-size. cp-size is the third operand. A fourth, without `.L2::cache_hint`, is src-size or ignore-src. Under `.L2::cache_hint` the last operand is the cache policy, so a fourth operand alone is the policy and a fifth follows a src-size or ignore-src. The global read happens on the threads whose ignore-src is false (`ThreadSets::sources`), read as a guard is: its row, sectors per warp, loop footprint, global load totals and sector comparison count them. A src-size register reads at most cp-size (`at_most`: `global load <= 16 B`) on threads not known (PLAN.md, Reported as unknowns) | OK — the `cp` arm, pinned by k12/k14 (nvcc writes `..., 16, 16`) and the Gluon GEMMs (Triton writes `..., 0x10, 0x10`); the positions, an immediate cache policy no size, by `cp_async_is_a_global_read_and_a_shared_write`; the source rows, totals and sector comparison by `micro/cp_async_ignore_src.ptx` and its RTX 4090 record (`micro-cp-async-ignore-src.test`, `tests/ncu_comparisons.rs`'s `copies_that_ignore_their_source_read_their_predicted_sectors`) and `micro/cp_async_src_size.ptx`. `collect` records one memory instruction with two byte measurements: a global load and a shared store. Immediate source size zero has zero global bytes and sectors per request and per loop, while retaining shared writes and issued copies (`tests/instruction_contributions.rs::zero_source_copy_has_no_global_sectors_but_keeps_shared_writes`). |
+| 9.7.9.26.3.1 | `cp.async` | `Memory` with Global read = src-size or cp-size and Shared write = cp-size. cp-size is the third operand. A fourth, without `.L2::cache_hint`, is src-size or ignore-src. Under `.L2::cache_hint` the last operand is the cache policy, so a fourth operand alone is the policy and a fifth follows a src-size or ignore-src. The global read happens on the threads whose ignore-src is false (`ThreadSets::sources`), read as a guard is: its sectors per warp, loop footprint, global load totals and sector comparison count them. A src-size register reads at most cp-size (`at_most`: `sectors/req <= 17 (ideal <= 16)`) on threads not known (PLAN.md, Reported as unknowns) | OK — the `cp` arm, pinned by k12/k14 (nvcc writes `..., 16, 16`) and the Gluon GEMMs (Triton writes `..., 0x10, 0x10`); the positions, an immediate cache policy no size, by `cp_async_is_a_global_read_and_a_shared_write`; the sectors per request, totals and sector comparison by `micro/cp_async_ignore_src.ptx` and its RTX 4090 record (`micro-cp-async-ignore-src.test`, `tests/ncu_comparisons.rs`'s `copies_that_ignore_their_source_read_their_predicted_sectors`) and `micro/cp_async_src_size.ptx`. `collect` records one memory instruction with two byte measurements: a global load and a shared store. Immediate source size zero has zero global bytes and sectors per request and per loop, while retaining shared writes and issued copies (`tests/instruction_contributions.rs::zero_source_copy_has_no_global_sectors_but_keeps_shared_writes`). |
 | 9.7.9.26.3.2 | `cp.async.commit_group` | `Sync` | OK — moves no bytes. |
 | 9.7.9.26.3.3 | `cp.async.wait_group` | `Sync` | OK. |
 | 9.7.9.26.3.3 | `cp.async.wait_all` | `Sync` | OK. |
@@ -305,7 +302,7 @@ remain visible, counted `Unknown` work.
 | 9.7.9.26.4.3 | `cp.async.bulk.prefetch` | `Unknown` | OK (deferred, Tier 2) — target `Ignore`, consistent with the `prefetch` policy. |
 | 9.7.9.26.4.4 | `multimem.cp.async.bulk` | `Unknown` | OK (deferred, Tier 4) — misfit §F. |
 | 9.7.9.26.4.5 | `multimem.cp.reduce.async.bulk` | `Unknown` | OK (deferred, Tier 4) — misfit §A+§F. |
-| 9.7.9.26.5.2 | `cp.async.bulk.tensor` | `Memory`: an `UnquantifiedBytes` load from `.src` and store to `.dst`, global to shared::cta or to shared::cluster (`.multicast::cluster` included), or shared::cta to global; another pair of state spaces stays `Unknown` | OK — "an asynchronous copy operation of tensor data from the location in .src state space to the location in the .dst state space" (§9.7.9.26.5.2). `.dst` is the first state space named: the manual's own example `cp.async.bulk.tensor.3d.im2col.shared::cluster.global` and Triton put `.load_mode` before it. The bytes are the bounding box of the tensor map, "a 128-byte opaque object" that "describes the tensor properties and the access properties" (§5.5.8, §5.5.3.1), **permanently unknowable from the PTX text**: `UnquantifiedBytes` is the end state (misfit §C), unless a `--bind`-style flag supplies the map. The shared side's row traces its address; the global side's reads `unknown: the tensor map holds the address`, and a loop holding one in its own blocks has no footprint. Pinned by `a_tensor_copy_moves_the_bytes_its_tensor_map_gives` and `micro/tensor_copies.ptx`: every `.dim`, `.load_mode`, completion mechanism, `.multicast::cluster`, `.cta_group` and `.L2::cache_hint` form, which ptxas 13.4 assembles to its UTMALDG or UTMASTG, and its `--dump-ast` to the same SASS (`tests/lit/roundtrip`); its rows by `micro-tensor-copies.test`. Single-thread-issued, CTA-scale (§B): one op per issuing thread. |
+| 9.7.9.26.5.2 | `cp.async.bulk.tensor` | `Memory`: an `UnquantifiedBytes` load from `.src` and store to `.dst`, global to shared::cta or to shared::cluster (`.multicast::cluster` included), or shared::cta to global; another pair of state spaces stays `Unknown` | OK — "an asynchronous copy operation of tensor data from the location in .src state space to the location in the .dst state space" (§9.7.9.26.5.2). `.dst` is the first state space named: the manual's own example `cp.async.bulk.tensor.3d.im2col.shared::cluster.global` and Triton put `.load_mode` before it. The bytes are the bounding box of the tensor map, "a 128-byte opaque object" that "describes the tensor properties and the access properties" (§5.5.8, §5.5.3.1), **permanently unknowable from the PTX text**: `UnquantifiedBytes` is the end state (misfit §C), unless a `--bind`-style flag supplies the map. The shared side's address is traced; the global side's reads `addr ? (the tensor map holds the address)`, and a loop holding one in its own blocks has no footprint. Pinned by `a_tensor_copy_moves_the_bytes_its_tensor_map_gives` and `micro/tensor_copies.ptx`: every `.dim`, `.load_mode`, completion mechanism, `.multicast::cluster`, `.cta_group` and `.L2::cache_hint` form, which ptxas 13.4 assembles to its UTMALDG or UTMASTG, and its `--dump-ast` to the same SASS (`tests/lit/roundtrip`); its annotated lines by `micro-tensor-copies.test`. Single-thread-issued, CTA-scale (§B): one op per issuing thread. |
 | 9.7.9.26.5.3 | `cp.reduce.async.bulk.tensor` | `Unknown` | OK (deferred, Tier 2) — same, plus misfit §A (reduction). |
 | 9.7.9.26.5.4 | `cp.async.bulk.prefetch.tensor` | `Unknown` | OK (deferred, Tier 2) — target `Ignore` per the prefetch policy. |
 | 9.7.9.26.6.1 | `cp.async.bulk.commit_group` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
@@ -352,7 +349,7 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | 9.7.13.1 | `{}` | Parser-level block structure; never reaches the classifier | OK — the right layer. |
 | 9.7.13.2 | `@` | Parser-level; sets the `predicated` bit on the guarded instruction's `Measurement`, which propagates as `≤` (at-most) bounds | OK — this is the model's designed answer to divergence: bounds, not probabilities. |
 | 9.7.13.3 | `bra` | `Control` | OK. |
-| 9.7.13.4 | `brx.idx` | `Control` (mnemonic `brx`) | OK — and CFG-side, unresolved `.branchtargets` surface as a report unknown (commit `d58b305`), so indirect branches degrade honestly. Thread sets: an unguarded one sends all or none of the threads its index is one value for to a target (`a_jump_table_on_a_warp_s_index_selects_whole_warps`). |
+| 9.7.13.4 | `brx.idx` | `Control` (mnemonic `brx`) | OK. Thread sets: an unguarded one sends all or none of the threads its index is one value for to a target (`a_jump_table_on_a_warp_s_index_selects_whole_warps`). |
 | 9.7.13.5 | `call` | `Control` | OK at the classifier layer; the parser reads its `(…)` return and argument lists (`Operand::ParamList`, `micro/call_returns.ptx`), and skips `.calltargets` and `.callprototype`. ⚠ misfit §E: flops/bytes inside the callee are not attributed to the call site. Fine while the corpus is fully-inlined nvcc output; recommend a report-level named unknown when a kernel calls a function whose body the module doesn't contain (extern), so the gap is visible the day it matters. |
 | 9.7.13.6 | `ret` | `Control` | OK at the classifier layer. ⚠ The CFG reads a predicated `ret` as falling through, so what follows counts on every thread (PLAN.md; `micro/predicated_exit.ptx`). |
 | 9.7.13.7 | `exit` | `Control` | OK at the classifier layer. ⚠ The same for a predicated `exit` (`micro/predicated_exit.ptx`: the store after `@%p1 exit` counts 32 per CTA, none run at n = 20 on an RTX 4090). |
@@ -435,7 +432,7 @@ wildly wrong.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.17.7.1 | `tcgen05.alloc` | `Unknown` | OK (deferred, Tier 2) — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the resource report (alongside the `shared memory [static]` line), not an op class. Target `Sync` for the instruction itself. |
+| 9.7.17.7.1 | `tcgen05.alloc` | `Unknown` | OK (deferred, Tier 2) — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the `.entry` line beside `shared memory`, not an op class. Target `Sync` for the instruction itself. |
 | 9.7.17.7.1 | `tcgen05.dealloc` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
 | 9.7.17.7.1 | `tcgen05.relinquish_alloc_permit` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
 | 9.7.17.8.3 | `tcgen05.ld` | `Unknown` | OK (deferred, Tier 2) — ⚠ misfit §B: tensor-memory→register load, warp-collective; needs the new space and PerWarp scope. |
@@ -528,9 +525,10 @@ their separate scope and counting decisions. Rows above cite these by letter.
 **§A — one instruction, multiple contributions (arithmetic ⊗ memory): supported.**
 `ClassifiedInstruction` separates one exclusive category from its work.
 `atom` and `red` retain the memory category and byte convention while
-FP add/min/max also contribute atomic FLOPs. The report exposes each
-instruction's contributions without duplicating its instruction count.
-`tests/instruction_contributions.rs` pins this through collection and reporting.
+FP add/min/max also contribute atomic FLOPs. Each contribution is summed
+without duplicating the instruction's count.
+`tests/instruction_contributions.rs` pins this through collection and the
+annotated PTX.
 
 Bulk reduction copies, surface and multimem/fabric reductions can use this
 representation but still require their §B/§C/§F decisions. Integer reduction
@@ -612,9 +610,8 @@ The audit found no wrong numbers — nothing is counted with incorrect
 flops or bytes. In descending order of importance:
 
 1. ~~**`Unparsed` statements are invisible at analyze time.**~~ Fixed:
-   the report counts them (`instruction_classes.unparsed`) and lists
-   them under unknowns, and the `|` destination form that was the
-   verified instance now parses.
+   each one's line says `not parsed (not counted)`, and the `|`
+   destination form that was the verified instance now parses.
 2. ~~**Collateral `Unknown`s from coarse arms**~~ Fixed: integer `div` and `addc`/`subc`/`madc` have arms.
    Originally: **Collateral `Unknown`s from coarse arms**: integer `div` (caught
    by the SFU reservation); `addc`/`subc`/`madc` (miss the arm their
