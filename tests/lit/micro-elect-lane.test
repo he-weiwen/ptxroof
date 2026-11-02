@@ -1,6 +1,8 @@
 # Wrong output (PLAN.md): the thread count tries every active lane as
 # the elected one, but the sectors read the lowest: the store under
-# `%tid.x == 1 and elected` runs on at most one thread and counts no
-# sector, where lane 1, if elected, requests one.
+# `%tid.x == 1 and elected` runs on at most one thread, in at most one
+# warp, and counts no sector, where lane 1, if elected, requests one.
 RUN: %ptxroof analyze %fixtures/micro/elect_lane.ptx | FileCheck "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/elect_lane.ptx | FileCheck --check-prefix=ANN "%s"
 CHECK: st.global.b32  global store 4 B on <= 1 threads in <= 1 warps (%tid.x == 1 and elected)  warp: 0 sectors (ideal 0)
+ANN: {{^}}	@%p3 st.global.b32 	[%rd2], %r1; // no thread | exec <= 1/CTA | global store [param_0] sectors/req 0 (ideal 0){{$}}

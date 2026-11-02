@@ -3,22 +3,14 @@
 # execution of the guard, 0 at n = 5, and as the guard always runs the
 # totals are exact. micro_loop_guard_other's guard tests n < 6, another
 # condition, and its count is max(n − 10, 1) per entry, its totals a
-# bound.
-# On an RTX 4090 at n = 20 the guarded loop runs 10 trips: its store
-# requests 10 L2 sectors, as predicted.
-RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx | FileCheck --check-prefix=FREE "%s"
-RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx --bind 1:n=5 | FileCheck --check-prefix=SKIPPED "%s"
-RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx --ncu %fixtures/micro/loop_guard.ncu.json | FileCheck "%s"
-FREE-LABEL: kernel micro_loop_guard
-FREE: trips = max(param_1 - 10, 0)
-FREE: totals [static]:
-FREE: global bytes: load 0 B, store 4 * max(param_1 - 10, 0) B
-FREE-LABEL: kernel micro_loop_guard_other
-FREE: trips = max(param_1 - 10, 1)
-FREE: totals [static]:
-FREE: global bytes: load 0 B, store <= 4 * max(param_1 - 10, 1) B
-SKIPPED-LABEL: kernel micro_loop_guard
-SKIPPED: trips = 0
-CHECK-LABEL: kernel micro_loop_guard
-CHECK: trips = 10
-CHECK: measured L2 sectors of global accesses: 1 lines agree (1 exact, 0 within a range, 0 within a bound), 0 differ
+# bound. Under the RTX 4090 record, at n = 20, the guarded loop runs 10
+# trips.
+RUN: %ptxroof analyze --annotate %fixtures/micro/loop_guard.ptx | FileCheck --check-prefix=ANN-FREE "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/loop_guard.ptx --bind 1:n=5 | FileCheck --check-prefix=ANN-SKIPPED "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/loop_guard.ptx --ncu %fixtures/micro/loop_guard.ncu.json | FileCheck --check-prefix=ANN-REC "%s"
+ANN-FREE: {{^}}.visible .entry micro_loop_guard( // block 32×1×1 | per CTA: global store (128·max(param_1 - 10, 0)) B; param load 384 B{{$}}
+ANN-FREE: {{^}}$L__BB0_2: // loop: trips max(param_1 - 10, 0) | warp * × lane * | under line 31 | exec (32·max(param_1 - 10, 0))/CTA{{$}}
+ANN-FREE: {{^}}.visible .entry micro_loop_guard_other( // block 32×1×1 | per CTA: global store <= (128·max(param_1 - 10, 1)) B; param load 384 B{{$}}
+ANN-FREE: {{^}}$L__BB1_2: // loop: trips max(param_1 - 10, 1) | warp * × lane * | under line 56 | exec <= (32·max(param_1 - 10, 1))/CTA{{$}}
+ANN-SKIPPED: {{^}}$L__BB0_2: // loop: trips 0 | no thread{{$}}
+ANN-REC: {{^}}$L__BB0_2: // loop: trips 10 | global per CTA: requested 1,280 B, unique 4 B, sectors 320 B | warp * × lane * | exec 320/launch{{$}}

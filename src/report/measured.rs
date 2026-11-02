@@ -2,11 +2,7 @@ use crate::analysis::instruction_counts::count_constraint::CountConstraint;
 use crate::analysis::memory_footprint::Wavefronts;
 use crate::ptx::ir::Module;
 use crate::report::bindings::BindingSpec;
-use crate::report::schema::{
-    MeasuredBlock, MeasuredLine, MeasuredSectors, MeasuredTotal, MeasuredTotals,
-    MeasuredWavefronts, SectorCount, SectorOutcome, Verdict,
-};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Deserialize)]
@@ -288,6 +284,117 @@ fn wavefronts(p: &Prediction, measured: &NcuLine) -> Option<MeasuredWavefronts> 
         measured_ideal,
         agrees: within(measured, w.count) && within(measured_ideal, w.ideal),
     })
+}
+
+/// A kernel's predictions against its record: per block, and the
+/// launch's global sectors.
+pub struct Comparison {
+    pub blocks: Vec<MeasuredBlock>,
+    pub launch: Option<MeasuredTotals>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredBlock {
+    pub name: String,
+    pub verdict: Verdict,
+    pub instructions: u64,
+    pub with_sass: u64,
+    pub agreeing: u64,
+    pub differing: Vec<MeasuredLine>,
+    /// Lines whose global access ptxas lowered at its own width, with
+    /// their L2 sectors over the launch against Nsight Compute's.
+    pub sectors: Vec<MeasuredSectors>,
+    /// Lines whose shared access's wavefronts are predicted, against
+    /// Nsight Compute's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub wavefronts: Vec<MeasuredWavefronts>,
+}
+
+/// Predicted shared memory wavefronts per warp request against the
+/// line's over its warp-level executions.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredWavefronts {
+    pub line: u32,
+    pub predicted: crate::analysis::memory_footprint::CountRange,
+    pub ideal: crate::analysis::memory_footprint::CountRange,
+    pub at_most: bool,
+    /// The warp-level instructions its shared SASS executed.
+    pub instructions: u64,
+    pub measured: u64,
+    pub measured_ideal: u64,
+    pub agrees: bool,
+}
+
+/// The launch's global load and store sectors: the predictions summed
+/// over the record's lines against the L1TEX hardware counts.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredTotals {
+    /// The first line with global SASS whose sectors are not predicted as
+    /// recorded; then neither total is compared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incomplete: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loads: Option<MeasuredTotal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stores: Option<MeasuredTotal>,
+}
+
+/// Predicted sectors over the launch against an L1TEX hardware count.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredTotal {
+    pub predicted: SectorCount,
+    pub at_most: bool,
+    pub measured: u64,
+    pub agrees: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredSectors {
+    pub line: u32,
+    pub predicted: SectorCount,
+    pub ideal: SectorCount,
+    pub at_most: bool,
+    pub measured: u64,
+    pub measured_ideal: u64,
+    /// The predicated-on thread instructions its global SASS executed.
+    pub executions: u64,
+    pub outcome: SectorOutcome,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SectorOutcome {
+    Agrees,
+    Differs,
+    /// Its global SASS ran other than the predicted number of times, so
+    /// its sectors are not compared.
+    ExecutionsDiffer,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+pub struct SectorCount {
+    pub min: u64,
+    pub max: u64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct MeasuredLine {
+    pub line: u32,
+    pub ptx: String,
+    pub tested: bool,
+    pub predicted: u64,
+    pub at_most: bool,
+    pub executions: u64,
+    pub sass: BTreeMap<String, u32>,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Confirmed,
+    Consistent,
+    Unchecked,
+    Contradicted,
 }
 
 pub struct LineIndex(Vec<usize>);

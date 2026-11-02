@@ -1,5 +1,5 @@
 # Induction-variable discovery sees the vector load's write of %r1, so
-# %r1 is not a counter and the trip count depends on memory.
-RUN: %ptxroof analyze %fixtures/micro/counter_vector_write.ptx | FileCheck "%s"
-CHECK: kernel micro_counter_vector_write
-CHECK: trips = unknown: uniform(%r1@22) is defined in an enclosing loop: depends on a value loaded inside the loop
+# %r1 is not a counter and the trip count depends on memory: the loop's
+# header prints `trips ?` and why, and its executions `exec ?`.
+RUN: %ptxroof analyze --annotate %fixtures/micro/counter_vector_write.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__loop: // loop: trips ? (uniform(%r1@22) is defined in an enclosing loop: depends on a value loaded inside the loop) | warp * × lane * | exec ?{{$}}

@@ -1,13 +1,15 @@
-# k11 text report: the plain wmma kernel, tile loads by ordinary
-# vectorized ld/st. Same design point as k12/k14 and the same machine line;
-# ceildiv trips because the K loop is `for (k = 0; k < K; k += 16)`.
+# k11: the plain wmma kernel, tile loads by ordinary vectorized ld/st.
+# Same design point as k12/k14 and the same machine line; ceildiv trips
+# because the K loop is `for (k = 0; k < K; k += 16)`. Each CTA declares
+# 8192 B of shared memory; per thread and iteration 4096 tensor flops,
+# 320 B loaded from shared memory and 64 B stored, the kernel's totals'
+# terms in ⌈K/16⌉. The text report pins the iteration's 64 B of global
+# loads exactly, AI(global) = 64 and no unknowns.
 RUN: %ptxroof analyze %fixtures/k11/k11.sm_80.ptx | FileCheck "%s"
-CHECK: kernel void hgemm_wmma<128, 128, 16, 64, 64, 128>(
-CHECK: shared memory [static]: 8192 B per CTA
+RUN: %ptxroof analyze --annotate %fixtures/k11/k11.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 CHECK: loop 11_wmma.cuh:85 ($L__BB0_2)
-CHECK: trips = ⌈param_2/16⌉
-CHECK: tensor flops = 4096  (f16 4096)
 CHECK: global bytes: load 64 B, store 0 B
-CHECK: shared bytes: load 320 B, store 64 B
 CHECK: AI(global) = 64 flop/B
 CHECK: unknowns: none
+ANN: {{^}}.visible .entry _Z10hgemm_wmmaILi128ELi128ELi16ELi64ELi64ELi128EEviiifPK6__halfS2_fPS0_( // shared memory 8,192 B/CTA | per thread: flops f32 <= 384; tensor flops f16 4096·⌈param_2/16⌉; global load <= (64·⌈param_2/16⌉ + 256) B, store <= 512 B; shared load 320·⌈param_2/16⌉ B, store 64·⌈param_2/16⌉ B; param load <= 64 B{{$}}
+ANN: {{^}}$L__BB0_2: // loop: trips ⌈param_2/16⌉ | under line 72 | exec ⌈param_2/16⌉/thread{{$}}

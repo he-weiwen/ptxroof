@@ -4,9 +4,10 @@
 //! launch's load and store sectors against the L1TEX counts. A block that loses its verdict or a line
 //! or total that stops agreeing changes it as a contradiction would.
 
-use ptxroof::report::build::{AnalyzeOptions, analyze};
-use ptxroof::report::measured::NcuRecord;
-use ptxroof::report::schema::{MeasuredSectors, MeasuredTotal, SectorOutcome, Verdict};
+use ptxroof::report::build::{AnalyzeOptions, compare};
+use ptxroof::report::measured::{
+    Comparison, MeasuredSectors, MeasuredTotal, NcuRecord, SectorOutcome, Verdict,
+};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
@@ -51,14 +52,14 @@ fn measured_verdicts_across_the_records() {
         let record: NcuRecord = serde_json::from_str(&text).expect("record parses");
         let ptx = fields["ptx"].as_str().expect("record names its ptx");
         let src = fs::read_to_string(root.join(ptx)).expect("the record's PTX");
-        let kernel = record.kernel.clone();
         let opts = AnalyzeOptions {
             bindings: record.bindings(),
             launch: Some(record.block),
             grid: Some(record.grid),
             ncu: Some(record),
         };
-        let report = analyze(&src, ptx, &opts).expect("record analyzes");
+        let Comparison { blocks, launch } = (compare(&src, &opts).expect("record analyzes"))
+            .expect("the record's kernel, its block shape");
         let rel = path.strip_prefix(&root).expect("under the repo").display();
         let _ = writeln!(out, "{rel}");
         let outcome = |t: &Option<MeasuredTotal>| match t {
@@ -66,10 +67,7 @@ fn measured_verdicts_across_the_records() {
             Some(_) => "differs",
             None => "not compared",
         };
-        let launches = (report.kernels.iter())
-            .filter(|k| k.name == kernel)
-            .filter_map(|k| k.measured_totals.as_ref());
-        for t in launches {
+        if let Some(t) = &launch {
             let line = match t.incomplete {
                 Some(n) => format!("not compared, line {n}"),
                 None => format!("loads {}, stores {}", outcome(&t.loads), outcome(&t.stores)),
@@ -78,15 +76,12 @@ fn measured_verdicts_across_the_records() {
             *totals.entry(key).or_default() += 1;
             let _ = writeln!(out, "  launch sectors\t{line}");
         }
-        let blocks = (report.kernels.iter())
-            .filter(|k| k.name == kernel)
-            .flat_map(|k| k.measured.iter().flatten());
         let mut lines: BTreeMap<&str, u64> = BTreeMap::new();
         let mut differing = Vec::new();
         let mut uncompared = Vec::new();
         let mut waves: BTreeMap<&str, u64> = BTreeMap::new();
         let mut waves_differ = Vec::new();
-        for b in blocks {
+        for b in &blocks {
             let verdict = format!("{:?}", b.verdict).to_lowercase();
             *verdicts.entry(verdict.clone()).or_default() += 1;
             let _ = writeln!(

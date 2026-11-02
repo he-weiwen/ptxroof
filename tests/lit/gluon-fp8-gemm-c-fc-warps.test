@@ -1,23 +1,29 @@
 # The c_fc fp8 GEMM at its launch's K = 768: 12 K iterations, 64 mma
-# per warp-iteration, 4 warps, so 3072 warp mma per CTA; times the
-# launch's 768 CTAs that is 2,359,296, Nsight Compute's
-# sm__inst_executed_pipe_tensor for this launch (PLAN.md, hardware
-# cross-check). At K = 768 the branch around the K loop is decided, so
-# the loop is always entered and the counts are exact.
+# per warp-iteration, 4 warps, so 3072 warp mma per CTA, 25,165,824 fp8
+# tensor flops; times the launch's 768 CTAs that is 2,359,296, Nsight
+# Compute's sm__inst_executed_pipe_tensor for this launch (PLAN.md,
+# hardware cross-check). At K = 768 the branch around the K loop is
+# decided, so the loop is always entered and the counts are exact.
+# At K = 768 the path for a K too short for the loop, $L__BB0_1 (129
+# instructions), runs on no thread; the record executes it 0 times.
+# Two default-value movs nothing reads are unused and count in no total
+# either; the count with them follows the live one. The K loop's
+# prefetch block runs on its trips with `k < 11`, `runs when iv < 10`,
+# 10 of 12, counted trip by trip: 1,280 executions per CTA. The text
+# report pins the mma and instruction tallies.
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx --bind 10:K=768 | FileCheck "%s"
-CHECK: kernel fp8_gemm_kernel
-CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
+RUN: %ptxroof analyze --annotate %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx --bind 10:K=768 | FileCheck --check-prefix=ANN "%s"
 CHECK: tensor fp8                                                64
 CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     64
 CHECK: tensor fp8                                                768
 CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     768
-# At K = 768 the path for a K too short for the loop, $L__BB0_1 (129
-# instructions), runs on no thread; the record executes it 0 times.
-# Two default-value movs nothing reads count in no total either; the
-# count with them follows the live one. The K loop's prefetch block runs
-# on its trips with `k < 11`, 10 of 12, counted trip by trip.
 CHECK: totals per CTA [static]:
 CHECK: instructions = 322304 live of 322560, warp instructions = 10072 live of 10080
 CHECK: tensor fp8{{ +}}98304{{ +}}3072{{$}}
 CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32{{ +}}98304{{ +}}3072{{$}}
-CHECK: tensor flops = 25165824  (fp8 25165824)
+ANN: {{^}}.visible .entry fp8_gemm_kernel( // block 128×1×1 | param_10 = 768 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 16,512; tensor flops fp8 25,165,824; sfu flops f32 128; global load 197,632 B, store 32,768 B; shared load 458,752 B, store 262,144 B; param load 8,192 B{{$}}
+ANN: {{^}}	mov.u32 %r22, 0x0; // unused{{$}}
+ANN: {{^}}	mov.u32 %r23, 0x0; // unused{{$}}
+ANN: {{^}}$L__BB0_3:                              // =>This Inner Loop Header: Depth=1 // loop: trips 12 | global per CTA: requested 163,840 B, unique ? | warp * × lane * | exec 1,536/CTA{{$}}
+ANN: {{^}}	mul.hi.u32 	%r169, %r608, -1431655765; // [<block 4>] warp * × lane * | runs when iv[$L__BB0_3] < 10 (CTA-uniform, branch at line 895) | exec 1,280/CTA{{$}}
+ANN: {{^}}$L__BB0_1:                              // %.._crit_edge_crit_edge // no thread{{$}}

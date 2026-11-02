@@ -1,23 +1,21 @@
-# S10.1 (PLAN.md, acceptance scenarios): is my tensor-core work visible, and only the
-# work? Two loop-free kernels whose counts are hand-checkable: one
-# wmma m16n16k16 product = 2*16^3 / 32 lanes = 256 tensor flops per
-# lane, one mma.sync m16n8k16 = 2*16*8*16 / 32 = 128. The cuda-core
-# table must stay at 0: v1 credited every wmma.load with 8192 phantom
-# flops, and this is where that regression would show.
+# S10.1 (PLAN.md, acceptance scenarios): is my tensor-core work visible,
+# and only the work? Two loop-free kernels whose counts are
+# hand-checkable: one wmma m16n16k16 product = 2*16^3 / 32 lanes = 256
+# f16 tensor FLOPs per lane, one mma.sync m16n8k16 = 2*16*8*16 / 32 =
+# 128, and no cuda-core FLOPs: v1 credited every wmma.load with 8192
+# phantom flops, and this is where that regression would show. Each
+# kernel's global bytes per lane, every instruction classified, nothing
+# unknown, and AI(global).
+RUN: %ptxroof analyze --annotate %fixtures/mma_demo/mma_demo.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 RUN: %ptxroof analyze %fixtures/mma_demo/mma_demo.sm_80.ptx --json | %check-report "%s"
+ANN: {{^}}.visible .entry _Z18gemm_wmma_16x16x16PK6__halfS1_Pf( // per thread: tensor flops f16 256; global load 32 B, store 32 B; param load 24 B{{$}}
+ANN: {{^}}.visible .entry _Z16gemm_mma_16x8x16PK6__halfS1_Pf( // per thread: tensor flops f16 128; global load 24 B, store 16 B; param load 24 B{{$}}
 {
   "kernels": [
     {
       "name": "_Z18gemm_wmma_16x16x16PK6__halfS1_Pf",
       "instruction_classes": {"unknown": 0, "unparsed": 0},
       "totals": {
-        "flops": {"total": {"expr": "0", "at_most": false}},
-        "tensor_flops": {
-          "total": {"expr": "256", "at_most": false},
-          "f16": {"expr": "256", "at_most": false}
-        },
-        "bytes": {"global": {"load": {"expr": "32", "at_most": false},
-                             "store": {"expr": "32", "at_most": false}}},
         "ai_global": {"value": 4.0, "bound": "exact"}
       },
       "unknowns": []
@@ -26,13 +24,6 @@ RUN: %ptxroof analyze %fixtures/mma_demo/mma_demo.sm_80.ptx --json | %check-repo
       "name": "_Z16gemm_mma_16x8x16PK6__halfS1_Pf",
       "instruction_classes": {"unknown": 0, "unparsed": 0},
       "totals": {
-        "flops": {"total": {"expr": "0", "at_most": false}},
-        "tensor_flops": {
-          "total": {"expr": "128", "at_most": false},
-          "f16": {"expr": "128", "at_most": false}
-        },
-        "bytes": {"global": {"load": {"expr": "24", "at_most": false},
-                             "store": {"expr": "16", "at_most": false}}},
         "ai_global": {"value": 3.2, "bound": "exact"}
       },
       "unknowns": []

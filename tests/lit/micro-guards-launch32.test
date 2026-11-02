@@ -1,10 +1,16 @@
-# The same guards at a 32-thread launch: the not.pred guard selects no
-# thread, so its 16-byte store issues 32 times and contributes 0 B.
+# The same guards at a 32-thread launch, the block shape from the flag:
+# the fallthrough block runs on lanes 1-31 of the one warp, and the
+# not.pred guard selects no thread, so its 16-byte store issues 32
+# times, runs on none and contributes 0 B, of a CTA's 260 B loaded and
+# at most 706 B stored.
 RUN: %ptxroof analyze %fixtures/micro/guards.ptx --launch 32,1,1 | FileCheck "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/guards.ptx --launch 32,1,1 | FileCheck --check-prefix=ANN "%s"
 CHECK: kernel micro_guards
 CHECK: |    <block 1>  (no line info)       1  31 in 1 warp (not (%tid.x == 0 and %tid.x < 32))  $L__BB0_2
 CHECK: block size: 32 threads, 1 warp (32x1x1 from flag)
 CHECK: totals per CTA [static]:
 CHECK: global store 16 B      32
 CHECK: st.global.v4.f32     32
-CHECK: global bytes: load 260 B, store <= 706 B
+ANN: {{^}}.visible .entry micro_guards( // block 32×1×1 | per CTA: global load 260 B, store <= 706 B; param load 512 B{{$}}
+ANN: {{^}}	@%p5 st.global.v4.f32 	[%rd4+16], {%f1, %f1, %f1, %f1}; // no thread | exec 0/CTA | global store [param_1 + 16] sectors/req 0 (ideal 0){{$}}
+ANN: {{^}}	st.global.b64 	[%rd4+48], %rd5; // [<block 1>] warp * × lane 1-31 | exec 31/CTA | global store [param_1 + 48] sectors/req 1 (ideal 1){{$}}

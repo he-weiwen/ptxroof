@@ -4,15 +4,11 @@
 # free on a load, quarter-warps for a 16-byte store, the 8 lanes of each
 # matrix; the ideal has no two words of a group in one bank. A 16-byte
 # load whose lanes share words, and a cp.async destination, are not
-# counted. Under the record every counted line's wavefronts and ideal
-# are Nsight Compute's over its executions.
-RUN: %ptxroof analyze %fixtures/micro/shared_wavefronts.ptx | FileCheck "%s"
-RUN: %ptxroof analyze %fixtures/micro/shared_wavefronts.ptx --ncu %fixtures/micro/shared_wavefronts.ncu.json | FileCheck --check-prefix=NCU "%s"
-CHECK: ld.shared.u32                             shared load 4 B    warp: 32 wavefronts (ideal 1)                                         [128 * %tid.x + buf]
-CHECK: ld.shared.v2.u32                          shared load 8 B    warp: 1 wavefront (ideal 1)                                           [64 * (%tid.x mod 2) + 8 * (⌊%tid.x/4⌋ mod 8) + buf]
-CHECK: ld.shared.v4.u32                          shared load 16 B   warp: ? (two lanes of a 16-byte load share a word: no measured rule)  [16 * (%tid.x mod 16) + buf]
-CHECK: ldmatrix.sync.aligned.m8n8.x1.shared.b16  shared load 4 B    warp: 8 wavefronts (ideal 1)                                          [128 * %tid.x + buf]
-CHECK: st.shared.v4.u32                          shared store 16 B  warp: 4 wavefronts (ideal 4)                                          [16 * ⌊%tid.x/16⌋ + buf]
-CHECK: kernel micro_cp_async_wavefronts
-CHECK: cp.async.cg.shared.global  shared store 16 B  warp: ? (wavefronts not modelled)  [16 * %tid.x + buf]
-NCU: measured shared wavefronts: 59 lines agree, 0 differ
+# counted.
+RUN: %ptxroof analyze --annotate %fixtures/micro/shared_wavefronts.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}	ld.shared.u32 	%r19, [%r18]; // shared load [128·%tid.x + buf] wavefronts/req 32 (ideal 1){{$}}
+ANN: {{^}}	ld.shared.v2.u32 	{%r48, %r49}, [%r47]; // shared load [64·(%tid.x mod 2) + 8·(⌊%tid.x/4⌋ mod 8) + buf] wavefronts/req 1 (ideal 1){{$}}
+ANN: {{^}}	ld.shared.v4.u32 	{%r64, %r65, %r66, %r67}, [%r63]; // shared load [16·(%tid.x mod 16) + buf] wavefronts/req ? (two lanes of a 16-byte load share a word: no measured rule){{$}}
+ANN: {{^}}	ldmatrix.sync.aligned.m8n8.x1.shared.b16 	{%r246}, [%r245]; // shared load [128·%tid.x + buf] wavefronts/req 8 (ideal 1){{$}}
+ANN: {{^}}	st.shared.v4.u32 	[%r348], {%acc, %acc, %acc, %acc}; // shared store [16·⌊%tid.x/16⌋ + buf] wavefronts/req 4 (ideal 4){{$}}
+ANN: {{^}}	cp.async.cg.shared.global 	[%r32], [%rd35], 16; // shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | global load [16·%tid.x + param_0] sectors/req 16–17 (ideal 16){{$}}

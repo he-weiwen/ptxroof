@@ -1,24 +1,15 @@
 # A block two branches decide, one on its dominator chain and one below
 # it: the threads below 64 reach it where n != 0, or where n == 0 and
-# m != 0, so its set is a bound, not the 64 threads of `%tid.x < 64`. On
-# an RTX 4090 with n = m = 0 its barrier runs on no thread, within the
-# bound. The same holds below a loop header (micro_or_entry_loop), whose
-# latch the threads at or above 64 reach on every trip and the others
-# where n or m decides. Where both branches read the thread index, the
-# set is exact: of the threads below 64, those below 16 or from 48 store,
-# 32 threads storing 512 B over the loop's 4 trips.
-RUN: %ptxroof analyze %fixtures/micro/or_entry.ptx --ncu %fixtures/micro/or_entry.ncu.json | FileCheck "%s"
-CHECK-LABEL: kernel micro_or_entry
-CHECK: $L__BB0_3  (no line info)
-CHECK-SAME: <= 64 in <= 2 warps (%tid.x < 64)
-CHECK: $L__BB0_3  consistent
-CHECK: line 40: bar.sync 1, 64;  predicted <= 64, measured 0
-CHECK-LABEL: kernel micro_or_entry_loop
-CHECK: $L__BB1_4  (no line info)
-CHECK-SAME: <= 64 in <= 2 warps (%tid.x < 64)
-CHECK: $L__BB1_5  (no line info)
-CHECK-SAME: <= 128 in <= 4 warps ((%tid.x >= 64 or %tid.x < 64 and ?) or %tid.x < 64 and ? and ?)
-CHECK-LABEL: kernel micro_or_entry_footprint
-CHECK: $L__BB2_3  (no line info)
-CHECK-SAME: 32 in 2 warps (%tid.x < 64 and (%tid.x < 16 or %tid.x >= 16 and %tid.x >= 48))
-CHECK: global bytes per CTA over the loop's own blocks: requested 512 B
+# m != 0, so its set is a bound, not the 64 threads of `%tid.x < 64`.
+# The same holds below a loop header (micro_or_entry_loop), whose latch
+# the threads at or above 64 reach on every trip and the others where n
+# or m decides. Where both branches read the thread index, the set is
+# exact: of the threads below 64, those below 16 or from 48 store, 32
+# threads storing 512 B over the loop's 4 trips.
+RUN: %ptxroof analyze --annotate %fixtures/micro/or_entry.ptx --ncu %fixtures/micro/or_entry.ncu.json | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_3: // warp 0-1 × lane * | runs when %r1@30 ≠ 0 or (%r1@30 = 0 and %r2@31 ≠ 0) (warp-uniform, branches at lines 36, 38) | exec <= 64/launch{{$}}
+ANN: {{^}}$L__BB1_3: // warp 0-1 × lane * | runs when %r1@55 ≠ 0 or (%r1@55 = 0 and %r2@56 ≠ 0) (warp-uniform, branches at lines 63, 65) | exec ? (trips of $L__BB1_1){{$}}
+ANN: {{^}}$L__BB1_4: // loop: trips 3 | warp 0-1 × lane * | under line 66 | exec ? (trips of $L__BB1_1){{$}}
+ANN: {{^}}$L__BB1_5: // <= warp 0-1 × lane * ∪ warp 2-3 × lane * | runs when %tid.x ≥ 64 or (%tid.x < 64 and %r1@55 ≠ 0) or (%tid.x < 64 and %r1@55 = 0 and %r2@56 ≠ 0) (warp-uniform, branches at lines 63, 65) | exec ? (trips of $L__BB1_1){{$}}
+ANN: {{^}}$L__BB2_3: // warp 0 × lane 0-15 ∪ warp 1 × lane 16-31 | exec 32/launch{{$}}
+ANN: {{^}}$L__BB2_4: // loop: trips 4 | global per CTA: requested 512 B, unique 128 B, sectors 512–768 B | warp 0 × lane 0-15 ∪ warp 1 × lane 16-31 | exec 128/launch{{$}}

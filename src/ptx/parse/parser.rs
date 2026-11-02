@@ -168,6 +168,7 @@ impl<'a> Parser<'a> {
 
     fn run(mut self) -> Result<Module, ParseError> {
         while !self.at(TokenKind::EndOfFile) {
+            let offset = self.peek().offset;
             self.expect(TokenKind::Dot, "a top-level directive")?;
             let name = self.expect_ident("directive name")?;
             match self.interner.resolve(name) {
@@ -240,7 +241,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 "entry" => {
-                    let kernel = self.parse_kernel()?;
+                    let kernel = self.parse_kernel(offset)?;
                     self.kernels.push(kernel);
                 }
                 other => {
@@ -289,10 +290,11 @@ impl<'a> Parser<'a> {
 
     // -- kernels ------------------------------------------------------------
 
-    fn parse_kernel(&mut self) -> Result<Kernel, ParseError> {
+    fn parse_kernel(&mut self, offset: u32) -> Result<Kernel, ParseError> {
         let name = self.expect_ident("kernel name")?;
         let mut kernel = Kernel {
             name,
+            offset,
             params: Vec::new(),
             reg_decls: Vec::new(),
             shared_decls: Vec::new(),

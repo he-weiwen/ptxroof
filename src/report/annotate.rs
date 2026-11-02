@@ -2,14 +2,18 @@
 //! it as a ` // ` comment.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Cmp, Var};
+use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::execution_counts::{CtaSize, Participation, Per, Resolution};
+use crate::analysis::execution_counts::{
+    CountAccumulator, CtaSize, Participation, Per, Resolution,
+};
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
-use crate::analysis::memory_footprint::CountRange;
+use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
+use crate::analysis::memory_footprint::{ByteRange, CountRange};
 use crate::analysis::register_effects::writes;
-use crate::analysis::thread_participation::{Atom, AtomKey, Pred};
+use crate::analysis::thread_participation::{Atom, AtomKey, Constraint, Pred};
 use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Opcode, Register, Stmt};
@@ -45,7 +49,8 @@ pub fn annotate(source: &str, opts: &AnalyzeOptions) -> Result<String, AnalyzeEr
 
 impl KernelReportBuilder<'_> {
     /// Each block's annotation, a loop header's trip count first, on its
-    /// label's line, else on its first statement's after `[<block name>] `,
+    /// label's line, else on its first instruction's after `[<block
+    /// name>] `,
     /// then each statement's on its own line, `unused` alone where nothing
     /// with an effect reads its results. Counts are over the launch given
     /// the grid and the block shape, else per CTA given the shape, else
@@ -64,18 +69,41 @@ impl KernelReportBuilder<'_> {
             (Some(c), None) => Per::Cta(c),
             (None, _) => Per::Thread,
         };
+        if let Some(entry) = self.entry(per) {
+            let line = self.lines.line(self.kernel.offset);
+            notes.entry(line).or_default().push(entry);
+        }
         for bm in &self.blocks {
-            let (b, start) = (bm.block, self.cfg.block(bm.block).start);
+            let b = bm.block;
+            let (first, end) = (self.cfg.block(b).start, self.cfg.block(b).end);
+            let start = (first..end)
+                .find(|&s| matches!(self.kernel.stmts[s], Stmt::Label { .. } | Stmt::Instr(_)))
+                .unwrap_or(first);
             let header = self.forest.block_loop[b.0 as usize]
                 .filter(|&l| self.forest.get(l).header == b)
-                .map(|l| format!("loop: trips {}", self.trips(l)));
+                .map(|l| {
+                    let bytes = self.loop_global(l).map(|b| format!(" | {b}"));
+                    format!("loop: trips {}{}", self.trips(l), bytes.unwrap_or_default())
+                });
             let (exec, mut parts) = self.execs(bm, per);
+            let block_threads = self.threads(b, &self.counts.sets.blocks[b.0 as usize]);
             for s in bm.instructions.iter().map(|i| i.provenance) {
                 if self.counts.unused[s] {
                     parts.insert(s, vec!["unused".to_owned()]);
                 } else {
-                    parts.entry(s).or_default().extend(self.operands(s));
+                    let threads = (self.guarded(s))
+                        .then(|| self.threads(b, &self.counts.sets.of(b, s)))
+                        .flatten()
+                        .filter(|t| Some(t) != block_threads.as_ref());
+                    let part = parts.entry(s).or_default();
+                    part.splice(0..0, threads);
+                    part.extend(self.uncounted(bm, s));
+                    part.extend(self.operands(s));
                 }
+            }
+            for s in (first..end).filter(|&s| matches!(self.kernel.stmts[s], Stmt::Unparsed { .. }))
+            {
+                parts.insert(s, vec!["not parsed (not counted)".to_owned()]);
             }
             parts.retain(|_, p| !p.is_empty());
             let when = self.runs_when(b);
@@ -83,7 +111,7 @@ impl KernelReportBuilder<'_> {
             let nesting = runs.then(|| self.nesting(b, when.is_some())).flatten();
             let mut own: Vec<String> = header
                 .into_iter()
-                .chain(self.threads(b))
+                .chain(block_threads.clone())
                 .chain(when)
                 .chain(nesting)
                 .chain(exec)
@@ -104,6 +132,153 @@ impl KernelReportBuilder<'_> {
         }
     }
 
+    /// The `.entry` line's annotation: what the counts take of the
+    /// launch, those given, `grid X×Y×Z`, `block X×Y×Z` and each
+    /// parameter's value; then the shared memory each CTA declares, `+
+    /// dynamic` where an `.extern .shared` array's size is set at launch;
+    /// then the FLOPs and bytes its statements sum to at the scale `per`.
+    fn entry(&self, per: Per) -> Option<String> {
+        let dims = |d: [u32; 3]| d.map(|n| n.to_string()).join("×");
+        let shape = self.counts.shape;
+        let params: BTreeMap<usize, i64> = (self.bind_map.iter())
+            .filter_map(|(k, &v)| match k {
+                SymbolicConstant::KernelParam(i) => Some((*i, v)),
+                _ => None,
+            })
+            .collect();
+        let params: Vec<String> = (params.into_iter())
+            .map(|(i, v)| format!("{} = {v}", SymbolicConstant::KernelParam(i)))
+            .collect();
+        let parts: Vec<String> = [
+            self.counts.grid().map(|g| format!("grid {}", dims(g))),
+            (!shape.contains(&0)).then(|| format!("block {}", dims(shape))),
+            (!params.is_empty()).then(|| params.join(", ")),
+            self.shared(),
+            self.totals(per),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        (!parts.is_empty()).then(|| parts.join(" | "))
+    }
+
+    /// `shared memory N B/CTA`, its static declarations' bytes, and `+
+    /// dynamic` where the launch sets more, unless it declares none.
+    fn shared(&self) -> Option<String> {
+        let sm = self.shared_memory();
+        let bytes = self.count(&SymExpr::Const(i64::try_from(sm.static_bytes).ok()?));
+        let dynamic = if sm.dynamic { " + dynamic" } else { "" };
+        (sm.static_bytes > 0 || sm.dynamic).then(|| format!("shared memory {bytes} B/CTA{dynamic}"))
+    }
+
+    /// `per launch:`, `per CTA:` or `per thread:` and what the counted
+    /// statements sum to at that scale, `; `-separated: each pipe's FLOPs
+    /// by precision, `+ ?` where some are not counted, the pipes none of
+    /// whose are counted together, and each space's bytes loaded and
+    /// stored; the zeros left out.
+    fn totals(&self, per: Per) -> Option<String> {
+        let w = self.counts.workload(&self.blocks, None, per);
+        let mut items = Vec::new();
+        let mut uncounted = Vec::new();
+        for (pipe, flops) in &w.flops {
+            let mut parts: Vec<String> = (flops.by_precision.iter())
+                .filter(|(_, c)| c.expr() != SymExpr::Const(0))
+                .map(|(p, c)| format!("{} {}", p.key(), self.sum(c, "")))
+                .collect();
+            if parts.is_empty() && flops.total.at_least {
+                uncounted.push(pipe.key());
+                continue;
+            }
+            if flops.total.at_least {
+                parts.push("?".to_owned());
+            }
+            let name = match pipe {
+                Pipe::CudaCore => String::new(),
+                p => format!("{} ", p.key()),
+            };
+            if !parts.is_empty() {
+                items.push(format!("{name}flops {}", parts.join(" + ")));
+            }
+        }
+        match uncounted.len() {
+            0 => {}
+            n if n == Pipe::ALL.len() => items.insert(0, "flops ?".to_owned()),
+            _ => items.push(format!("{} flops ?", uncounted.join(", "))),
+        }
+        let spaces = [
+            "global",
+            "shared",
+            "shared::cluster",
+            "local",
+            "param",
+            "const",
+            "generic",
+        ];
+        for space in spaces {
+            let Some((load, store)) = w.bytes.get(space) else {
+                continue;
+            };
+            let parts: Vec<String> = [("load", load), ("store", store)]
+                .into_iter()
+                .filter(|(_, c)| c.at_least || c.expr() != SymExpr::Const(0))
+                .map(|(what, c)| format!("{what} {}", self.sum(c, " B")))
+                .collect();
+            if !parts.is_empty() {
+                items.push(format!("{space} {}", parts.join(", ")));
+            }
+        }
+        let unit = match per {
+            Per::Thread => "thread",
+            Per::Cta(_) => "CTA",
+            Per::Launch(..) => "launch",
+        };
+        (!items.is_empty()).then(|| format!("per {unit}: {}", items.join("; ")))
+    }
+
+    /// A sum and its `unit`: `<= ` before an upper bound, `>= ` before a
+    /// lower one, `?` where it is neither or nothing is counted, and `?`
+    /// and `(trips of <header>)` where it reads a loop's unknown trips.
+    fn sum(&self, c: &CountAccumulator, unit: &str) -> String {
+        let expr = c.expr();
+        let unknown = (expr.symbols().into_iter()).find_map(|s| match s {
+            SymbolicConstant::TripCount(l) => Some(l),
+            _ => None,
+        });
+        if let Some(l) = unknown {
+            let header = self.cfg.block_name(self.module, self.forest.get(l).header);
+            return format!("?{unit} (trips of {header})");
+        }
+        let n = match (c.at_most, c.at_least, expr.as_const()) {
+            (true, true, _) | (false, true, Some(0)) => "?".to_owned(),
+            (_, true, _) => format!(">= {}", self.count(&expr)),
+            (true, false, _) => format!("<= {}", self.count(&expr)),
+            (false, false, _) => self.count(&expr),
+        };
+        format!("{n}{unit}")
+    }
+
+    /// The global bytes one CTA requests over one run of loop `l`'s own
+    /// blocks, not its nested loops', the distinct bytes they touch and
+    /// the bytes of the sectors they touch, where known; `<= ` for a
+    /// bound.
+    fn loop_global(&self, l: LoopId) -> Option<String> {
+        let b = self.loop_bytes(l)?;
+        let n = |n: u64| i64::try_from(n).map_or(n.to_string(), |n| self.count(&SymExpr::Const(n)));
+        let bound = if b.at_most { "<= " } else { "" };
+        let range = |r: ByteRange| match r.min == r.max {
+            true => format!("{bound}{} B", n(r.min)),
+            false => format!("{bound}{}–{} B", n(r.min), n(r.max)),
+        };
+        let requested = if b.requested_at_most { "<= " } else { "" };
+        let unique = b.unique.map_or("?".to_owned(), range);
+        let sectors = b.sector_bytes.map(|s| format!(", sectors {}", range(s)));
+        Some(format!(
+            "global per CTA: requested {requested}{} B, unique {unique}{}",
+            n(b.requested),
+            sectors.unwrap_or_default()
+        ))
+    }
+
     /// The line of statement `s`, but a `.branchtargets` list.
     fn line(&self, s: usize) -> Option<u32> {
         match &self.kernel.stmts[s] {
@@ -116,7 +291,8 @@ impl KernelReportBuilder<'_> {
     }
 
     /// `exec` and how many times block `bm`'s unguarded statements run at
-    /// the scale `per`, `<=` for a bound, unless no thread runs it; and
+    /// the scale `per`, `<=` for a bound, unless no thread runs it or per
+    /// thread they run once; and
     /// each statement whose count differs, but a predicated `bra`. Under a
     /// loop whose trips are not known, `exec ?` and the innermost such loop.
     fn execs(&self, bm: &BlockMeasurements, per: Per) -> (Option<String>, Notes) {
@@ -180,7 +356,42 @@ impl KernelReportBuilder<'_> {
                 parts.insert(i.provenance, vec![exec]);
             }
         }
-        (Some(own), parts)
+        let once = matches!(per, Per::Thread)
+            && block.is_some_and(|p| {
+                p.threads == 1 && !p.at_most && p.trips.and_then(|t| t.as_const()) == Some(1)
+            });
+        ((!once).then_some(own), parts)
+    }
+
+    /// Statement `s` has a guard of its own, but a predicated `bra`, whose
+    /// guard picks a way out of the block.
+    fn guarded(&self, s: usize) -> bool {
+        let Stmt::Instr(instr) = &self.kernel.stmts[s] else {
+            return false;
+        };
+        self.counts.sets.guards.contains_key(&s) && instr.mnemonic != Opcode::Bra
+    }
+
+    /// What counted statement `s` of block `bm` leaves out of the totals:
+    /// its work where it is not classified, its bytes where an access's
+    /// size is not known, a call's callee.
+    fn uncounted(&self, bm: &BlockMeasurements, s: usize) -> Vec<String> {
+        let kinds: Vec<MeasureKind> = (bm.measurements.iter())
+            .filter(|m| m.provenance == s && self.counts.counted(bm.block, s))
+            .map(|m| m.kind)
+            .collect();
+        let has = |f: fn(&MeasureKind) -> bool| kinds.iter().any(f);
+        [
+            (has(|k| matches!(k, MeasureKind::UnknownOps { .. })))
+                .then_some("not classified (its FLOPs and bytes not counted)"),
+            (has(|k| matches!(k, MeasureKind::UnquantifiedBytes { .. })))
+                .then_some("bytes ? (not counted)"),
+            (self.cfg.call_sites.contains(&s)).then_some("call (its callee not counted)"),
+        ]
+        .into_iter()
+        .flatten()
+        .map(str::to_owned)
+        .collect()
     }
 
     /// Statement `s`'s memory operands but parameters, each `<space>
@@ -216,7 +427,11 @@ impl KernelReportBuilder<'_> {
             let bound = if row.sectors_at_most { "<= " } else { "" };
             let request = match (per_request, ideal, &row.footprint_unknown) {
                 (Some(n), Some(ideal), _) => {
-                    format!(" {what}/req {bound}{} (ideal {})", range(n), range(ideal))
+                    format!(
+                        " {what}/req {bound}{} (ideal {bound}{})",
+                        range(n),
+                        range(ideal)
+                    )
                 }
                 (_, _, Some(why)) => format!(" {what}/req ? ({why})"),
                 _ => String::new(),
@@ -268,12 +483,12 @@ impl KernelReportBuilder<'_> {
         }
     }
 
-    /// The threads that run block `b`, by warps and lanes; without a block
+    /// The threads in `set`, of block `b`, by warps and lanes; without a block
     /// shape, the condition that selects them, if one does. Where they
     /// read the CTA index and the grid is known: the lanes and the CTAs'
-    /// condition, or where the lanes differ by CTA the most CTAs' lanes.
-    fn threads(&self, b: BlockId) -> Option<String> {
-        let set = &self.counts.sets.blocks[b.0 as usize];
+    /// condition as `when` prints it, or where the lanes differ by CTA
+    /// the most CTAs' lanes.
+    fn threads(&self, b: BlockId, set: &Pred) -> Option<String> {
         let shape = self.counts.shape;
         if shape.contains(&0) {
             return self.condition(set);
@@ -298,8 +513,9 @@ impl KernelReportBuilder<'_> {
         let lanes = warp_lanes(masks, shape, exact);
         Some(match running.len() {
             1 => {
+                let mut tags = (BTreeSet::new(), Uniform::Cta);
                 let parts: Vec<String> = (cta_conjuncts(set).into_iter())
-                    .filter_map(|p| self.condition(p))
+                    .filter_map(|p| self.when(b, &p, true, &mut tags))
                     .collect();
                 format!("{lanes} | CTAs {} ({n}/{total})", parts.join(" and "))
             }
@@ -342,11 +558,7 @@ impl KernelReportBuilder<'_> {
     /// uniform condition of its own, after `nested in` where `b` has one,
     /// `adds`, else after `under`.
     fn nesting(&self, b: BlockId, adds: bool) -> Option<String> {
-        let sets = &self.counts.sets;
-        let has = |d: BlockId| {
-            let i = d.0 as usize;
-            sets.blocks[i] != Pred::False && !sets.relative[i].atoms().is_empty()
-        };
+        let has = |d: BlockId| self.runs_when(d).is_some();
         let mut up = self.forest.doms.idom[b.0 as usize];
         while let Some(d) = up.filter(|&d| !has(d)) {
             up = self.forest.doms.idom[d.0 as usize];
@@ -359,13 +571,15 @@ impl KernelReportBuilder<'_> {
     }
 
     /// The uniform unknowns of `p`, block `b`'s set on its immediate
-    /// dominator, by `atom`, joined by ` and `, a conjunct without one
-    /// left to the threads shown; an `or` or a `not` holding one with all
-    /// its parts (`whole`), the `not` of an `and` or an `or` as the `or` or
-    /// the `and` of its parts' negations, a thread-index comparison by
-    /// `formula` and any other unknown as `?`; an `or` among the parts of an `and`, and an
-    /// `and` among those of an `or`, parenthesized. Each unknown adds the
-    /// line of the branch deciding it and its scope to `tags`.
+    /// dominator, by `atom`, and its comparisons the same for the CTA by
+    /// `formula`, joined by ` and `, a conjunct without either left to the
+    /// threads shown; an `or` or a `not` holding one with all its parts
+    /// (`whole`), the `not` of an `and` or an `or` as the `or` or the `and`
+    /// of its parts' negations, a thread-index comparison by `formula` and
+    /// any other unknown as `?`; an `or` among the parts of an `and`, and
+    /// an `and` among those of an `or`, parenthesized. Each unknown and
+    /// comparison the same for the CTA adds the line of the branch
+    /// deciding it and its scope to `tags`.
     fn when(&self, b: BlockId, p: &Pred, whole: bool, tags: &mut Tags) -> Option<String> {
         let paren = |t: String, inner: bool| if inner { format!("({t})") } else { t };
         match p {
@@ -382,7 +596,13 @@ impl KernelReportBuilder<'_> {
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
-            Pred::Or(..) | Pred::Not(_) if !whole && p.atoms().is_empty() => None,
+            Pred::Or(..) | Pred::Not(_)
+                if !whole
+                    && p.atoms().is_empty()
+                    && !p.comparisons().into_iter().any(cta_uniform) =>
+            {
+                None
+            }
             Pred::Or(..) => {
                 let parts = (operands(p, true).into_iter())
                     .map(|q| {
@@ -405,7 +625,13 @@ impl KernelReportBuilder<'_> {
                 }
                 x => Some(format!("not ({})", self.when(b, x, true, tags)?)),
             },
-            Pred::Cmp(c) if whole => Some(self.formula(&c.form, c.cmp)),
+            Pred::Cmp(c) if whole || cta_uniform(c) => {
+                if cta_uniform(c) {
+                    let decider = self.counts.sets.comparison_deciders.get(&(b, c.clone()));
+                    tags.0.extend(decider.and_then(|&s| self.line(s)));
+                }
+                Some(self.formula(&c.form, c.cmp))
+            }
             Pred::Elect(_) if whole => Some("elected".to_owned()),
             Pred::Unknown if whole => Some("?".to_owned()),
             _ => None,
@@ -588,6 +814,12 @@ fn shifted(a: &AffineExpr) -> (AffineExpr, bool) {
     (shifted, nested)
 }
 
+/// Comparison `c` reads no thread or CTA index, so it is the same for
+/// the CTA, a loop counter's or a parameter's.
+fn cta_uniform(c: &Constraint) -> bool {
+    c.cta.is_none() && c.form.terms.iter().all(|(v, _)| !depends_on_lane(v))
+}
+
 /// The parts of `p` under the `and`s at its top, or the `or`s where `or`.
 fn operands(p: &Pred, or: bool) -> Vec<&Pred> {
     match (p, or) {
@@ -598,11 +830,20 @@ fn operands(p: &Pred, or: bool) -> Vec<&Pred> {
     }
 }
 
-/// The parts of a conjunction that read the CTA index.
-fn cta_conjuncts(set: &Pred) -> Vec<&Pred> {
+/// The parts of a conjunction that read the CTA index, the `not` of an
+/// `or` taken as the `and` of its parts' negations.
+fn cta_conjuncts(set: &Pred) -> Vec<Pred> {
+    if let Pred::Not(x) = set
+        && let Pred::Or(a, b) = &**x
+    {
+        return [!(**a).clone(), !(**b).clone()]
+            .iter()
+            .flat_map(cta_conjuncts)
+            .collect();
+    }
     match set {
         Pred::And(a, b) => [cta_conjuncts(a), cta_conjuncts(b)].concat(),
-        p if p.varies_by_cta() => vec![p],
+        p if p.varies_by_cta() => vec![p.clone()],
         _ => Vec::new(),
     }
 }
@@ -662,7 +903,8 @@ mod tests {
 
     /// Without a block shape, a block's annotation is the condition on the
     /// thread index that selects it, a loop's iteration k = iv + 1, and
-    /// its count per thread.
+    /// its count per thread but where every thread runs it once; the
+    /// kernel's, its bytes per thread, a bound under the loop's guard.
     #[test]
     fn without_a_block_shape_a_block_names_its_condition() {
         let src = "\
@@ -701,15 +943,13 @@ $L__BB0_5:
         assert_eq!(
             notes,
             [
-                "[<block 0>] exec 1/thread",
+                "per thread: global store <= 20 B; param load 8 B",
                 "loop: trips 4 | exec 4/thread",
                 "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0 | exec <= 4/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
                 "exec 4/thread",
-                "[<block 4>] exec 1/thread",
                 "[<block 5>] %tid.x <= 31 | exec <= 1/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
-                "exec 1/thread",
             ]
         );
     }

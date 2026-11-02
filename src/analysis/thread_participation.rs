@@ -266,6 +266,16 @@ impl Pred {
         out
     }
 
+    /// The comparisons it reads.
+    pub fn comparisons(&self) -> Vec<&Constraint> {
+        match self {
+            Pred::Cmp(c) => vec![c],
+            Pred::Not(p) => p.comparisons(),
+            Pred::And(a, b) | Pred::Or(a, b) => [a.comparisons(), b.comparisons()].concat(),
+            _ => Vec::new(),
+        }
+    }
+
     /// The atoms of its uniform unknowns, but those of the threads an
     /// election chose among.
     pub fn atoms(&self) -> Vec<&Atom> {
@@ -940,6 +950,7 @@ struct PredicateReader<'a> {
     blocks: Vec<Option<Pred>>,
     relative: Vec<Pred>,
     deciders: HashMap<(BlockId, AtomKey), usize>,
+    comparison_deciders: HashMap<(BlockId, Constraint), usize>,
     forms: HashMap<AtomKey, (AffineExpr, Cmp)>,
 }
 
@@ -1111,10 +1122,15 @@ impl PredicateReader<'_> {
         p
     }
 
-    /// Branch `pos` decides the atoms of `p` for block `b`.
+    /// Branch `pos` decides the atoms and comparisons of `p` for block `b`.
     fn decided(&mut self, b: BlockId, p: &Pred, pos: usize) {
         for a in p.atoms() {
             self.deciders.entry((b, a.key.clone())).or_insert(pos);
+        }
+        for c in p.comparisons() {
+            (self.comparison_deciders)
+                .entry((b, c.clone()))
+                .or_insert(pos);
         }
     }
 
@@ -1281,6 +1297,8 @@ pub struct ThreadSets {
     pub relative: Vec<Pred>,
     /// Per block and atom of its `relative` set, the branch deciding it.
     pub deciders: HashMap<(BlockId, AtomKey), usize>,
+    /// The same per comparison.
+    pub comparison_deciders: HashMap<(BlockId, Constraint), usize>,
     /// Per atom of a `setp` comparing no thread index, as `form cmp 0`.
     pub forms: HashMap<AtomKey, (AffineExpr, Cmp)>,
 }
@@ -1351,6 +1369,7 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
         blocks: vec![None; cfg.blocks.len()],
         relative: vec![Pred::True; cfg.blocks.len()],
         deciders: HashMap::new(),
+        comparison_deciders: HashMap::new(),
         forms: HashMap::new(),
     };
     let blocks: Vec<Pred> = (0..cfg.blocks.len() as u32)
@@ -1418,6 +1437,7 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
         dead_edges,
         relative: reader.relative,
         deciders: reader.deciders,
+        comparison_deciders: reader.comparison_deciders,
         forms: reader.forms,
     }
 }

@@ -1,9 +1,12 @@
 # The latch `setp.lt.ftz.f32` compares floats: the bits of the counter
 # and of 10 are subnormal and flushed to zero, so ptxas's loop runs
-# once. A floating-point latch is not a trip count.
+# once. A floating-point latch is not a trip count: a thread stores
+# 4·trips B, and the CTA's store bytes are unknown with the loop's
+# trips.
 RUN: %ptxroof analyze %fixtures/micro/latch_float.ptx | FileCheck "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/latch_float.ptx | FileCheck --check-prefix=ANN "%s"
 CHECK: kernel micro_latch_float
-CHECK: loop $L__BB0_1 ($L__BB0_1)
-CHECK-NEXT: trips = unknown: latch condition compares floating-point values
 CHECK: totals [static]:
 CHECK: global bytes: load 0 B, store 4 * trips($L__BB0_1) B
+ANN: {{^}}.visible .entry micro_latch_float( // block 32×1×1 | per CTA: global store ? B (trips of $L__BB0_1); param load 256 B{{$}}
+ANN: {{^}}$L__BB0_1: // loop: trips ? (latch condition compares floating-point values) | warp * × lane * | exec ?{{$}}

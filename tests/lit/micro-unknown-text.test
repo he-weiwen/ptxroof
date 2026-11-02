@@ -1,14 +1,15 @@
-# An instruction the classifier does not model inside a counted loop:
-# the loop's flop and global/shared byte totals carry `+ unknown`, the
-# flops' per-precision entries do not (they are what was counted), and
-# AI(global) has no direction because both sides are lower bounds.
+# An instruction the classifier does not model inside a loop of param_1
+# trips: per thread the kernel's cuda-core FLOPs are its f32 ones,
+# 2·param_1, which are what was counted, and an unknown part; its
+# tensor, sfu and atomic FLOPs and its shared bytes are unknown, and its
+# global bytes lower bounds. The loop's instructions list the
+# `wgmma.fence`, AI(global) has no direction because both sides are
+# lower bounds, and the kernel's unknowns name the instruction.
+RUN: %ptxroof analyze --annotate %fixtures/micro/unknown_in_loop.ptx | FileCheck --check-prefix=ANN "%s"
 RUN: %ptxroof analyze %fixtures/micro/unknown_in_loop.ptx | FileCheck "%s"
-CHECK: kernel micro_unknown_in_loop
-CHECK: trips = param_1
+ANN: {{^}}.visible .entry micro_unknown_in_loop( // per thread: flops f32 2·param_1 + ?; tensor, sfu, atomic flops ?; global load >= 4·param_1 B, store >= 4·param_1 B; shared load ? B, store ? B; param load 12 B{{$}}
+ANN: {{^}}$L__BB0_2: // loop: trips param_1 | under line 29 | exec param_1/thread{{$}}
 CHECK: wgmma.fence.sync.aligned  1
-CHECK: flops = 2 + unknown  (f32 2)
-CHECK: tensor flops = 0 + unknown
-CHECK: global bytes: load 4 B + unknown, store 4 B + unknown
 CHECK: AI(global): not bounded (flops are a lower bound, global bytes are a lower bound)
 CHECK: unknowns:
 CHECK: instruction `wgmma` x1 — not classified — its flops/bytes are not counted

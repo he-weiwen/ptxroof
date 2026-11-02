@@ -1,0 +1,6 @@
+# A block past `setp.lt.s32 %p1, %ctaid.x, 1; @%p1 bra` in the annotated
+# PTX, under the record's grid of 4 CTAs: its lanes are every lane in
+# each CTA that runs it, and its CTAs are those the comparison selects,
+# printed as a branch condition is, 3 of the 4.
+RUN: %ptxroof analyze --annotate --ncu %fixtures/micro/cta_trips.ncu.json %fixtures/micro/cta_trips.ptx | FileCheck "%s"
+CHECK: {{^}}	mul.wide.u32 	%rd2, %r1, 4; // [<block 1>] warp * × lane * | CTAs %ctaid.x ≥ 1 (3/4) | exec 96/launch{{$}}

@@ -1,25 +1,23 @@
-# S8 (PLAN.md, acceptance scenarios): am I on the precision path I think? k2 computes in
-# f32 cuda-core only — 0 f16 flops despite __half data — with 8 cvt
-# per main-loop iteration as conversion overhead, 8 x 2 B loads per
-# iteration, and one guarded 2 B store in the epilogue.
+# S8 (PLAN.md, acceptance scenarios): am I on the precision path I
+# think? k2 computes in f32 cuda-core only — no f16 FLOPs despite __half
+# data — with 8 f32 FLOPs and 8 cvt per main-loop iteration as
+# conversion overhead, 8 x 2 B loads per iteration, and one guarded 2 B
+# store in the epilogue: at most 2 B stored per thread, none in the
+# loop.
+RUN: %ptxroof analyze --annotate %fixtures/k2/k2.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx --json | %check-report "%s"
+ANN: {{^}}.visible .entry _Z15hgemm_coalescediiifPK6__halfS1_fPS_( // per thread: flops f32 <= (2·(param_2 mod 4) + 8·((param_2 - param_2 mod 4) / 4) + 3); global load <= (4·(param_2 mod 4) + 16·((param_2 - param_2 mod 4) / 4) + 2) B, store <= 2 B; param load 44 B{{$}}
 {
   "kernels": [
     {
       "name": "_Z15hgemm_coalescediiifPK6__halfS1_fPS_",
-      "totals": {
-        "flops": {"f16": {"expr": "0"}},
-        "bytes": {"global": {"store": {"expr": "2", "at_most": true}}}
-      },
       "loops": [
         {
           "name": "2_coalesced.cuh:14",
           "per_iteration": {
-            "flops": {"f32": {"expr": "8", "at_most": false},
-                      "f16": {"expr": "0"}},
+            "flops": {"f32": {"expr": "8", "at_most": false}},
             "conversions": {"expr": "8", "at_most": false},
-            "bytes": {"global": {"load": {"expr": "16", "at_most": false},
-                                 "store": {"expr": "0"}}}
+            "bytes": {"global": {"load": {"expr": "16", "at_most": false}}}
           }
         },
         {"name": "2_coalesced.cuh:14 (remainder)"}

@@ -1,22 +1,26 @@
 # The same kernel with a left window of 768: the key loop's lower bound
-# adds a branch; the trip count still depends on the CTA index.
+# adds a branch, block 2 grows from 55 to 63 instructions, and the block
+# past line 118's branch runs when `%r68 = ⌊%r69/64⌋`, the same for the
+# whole CTA, the two bounds' blocks. The trip counts stay unknown for
+# the same reasons, the inner key loop's still depending on the CTA
+# index through the tile loop.
 RUN: %ptxroof analyze %fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx | FileCheck "%s"
-CHECK: kernel attn_fwd_ws_kernel
+RUN: %ptxroof analyze --annotate %fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
 CHECK: /-------------  <block 1>        gluon_attn_fwd.py:79-229       93  128 in 4 warps (⌊%tid.x/32⌋ < 4)             $L__BB0_62, <block 2>
 CHECK: |  |      /---  <block 2>        gluon_attn_fwd.py:98-118       63  <= 128 in <= 4 warps (⌊%tid.x/32⌋ < 4)       $L__BB0_38, $L__tmp5
-CHECK: block size: 256 threads, 8 warps (256x1x1 from .reqntid)
-CHECK: loop gluon_attn_fwd.py:126 ($L__BB0_39)
-CHECK: trips = unknown: loop exit is not at the latch
-CHECK: loop gluon_attn_fwd.py:131 (waitLoop$scope1)
-CHECK: trips = unknown: latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison
 CHECK: loop gluon_attn_fwd.py:143 ($L__BB0_43)
-CHECK: trips = unknown: uniform(%r1979@$L__BB0_43) is defined in an enclosing loop: depends on %r1979, carried around an enclosing loop
 CHECK: mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32                                                              <= 128
 CHECK: tensor flops = <= 16384  (bf16 <= 16384)
 CHECK: global bytes: load <= 128 B, store 0 B
-CHECK: loop gluon_attn_fwd.py:213 ($L__BB0_2)
-CHECK: trips = unknown: loop has multiple latches
 CHECK: totals per CTA [static]:
 CHECK: tensor flops = <= 2097152 * trips(gluon_attn_fwd.py:126) * trips(gluon_attn_fwd.py:143) + 2097152 * trips(gluon_attn_fwd.py:213 $L__BB0_2) * trips(gluon_attn_fwd.py:213 $L__BB0_10) * trips(gluon_attn_fwd.py:213 $L__BB0_14)  (bf16 <= 2097152 * trips(gluon_attn_fwd.py:126) * trips(gluon_attn_fwd.py:143) + 2097152 * trips(gluon_attn_fwd.py:213 $L__BB0_2) * trips(gluon_attn_fwd.py:213 $L__BB0_10) * trips(gluon_attn_fwd.py:213 $L__BB0_14))
 CHECK: unknowns:
 CHECK: coverage: instructions_classified 100.0% (3024/3024)
+ANN: {{^}}.visible .entry attn_fwd_ws_kernel( // block 256×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 ? (trips of $L__BB0_39); tensor flops bf16 ? (trips of $L__BB0_39); sfu flops f32 ? (trips of $L__BB0_39); global load ? B (trips of $L__BB0_39), store ? B (trips of $L__BB0_39); shared load ? B (trips of $L__BB0_2), store ? B (trips of $L__BB0_39); param load 18,432 B{{$}}
+ANN: {{^}}	setp.eq.b32 	%p96, %r1845, 0; // [<block 1>] warp 0-3 × lane * | exec 128/CTA{{$}}
+ANN: {{^}}	add.s64 	%rd149, %rd25, %rd142; // [<block 2>] warp 0-3 × lane * | runs when %ctaid.x < param_10 (CTA-uniform, branch at line 258) | exec <= 128/CTA{{$}}
+ANN: {{^}}$L__tmp5: // warp 0-3 × lane * | runs when %r68@275 = ⌊%r69@277/64⌋ (CTA-uniform, branch at line 367) | nested in line 261 | exec <= 128/CTA{{$}}
+ANN: {{^}}$L__BB0_39:                             // =>This Loop Header: Depth=1 // loop: trips ? (loop exit is not at the latch) | warp 0-3 × lane * | under line 261 | exec ?{{$}}
+ANN: {{^}}	waitLoop: // loop: trips ? (latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison) | warp 0-3 × lane * | under line 261 | exec ?{{$}}
+ANN: {{^}}$L__BB0_43:                             //   Parent Loop BB0_39 Depth=1 // loop: trips ? (uniform(%r1979@$L__BB0_43) is defined in an enclosing loop: depends on %r1979, carried around an enclosing loop) | warp 0-3 × lane * | under line 663 | exec ?{{$}}
+ANN: {{^}}$L__BB0_2:                              // %.preheader515 // loop: trips ? (loop has multiple latches) | warp 4-7 × lane * | exec ?{{$}}

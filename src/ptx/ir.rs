@@ -362,6 +362,8 @@ pub enum SharedSize {
 #[derive(Debug, Clone)]
 pub struct Kernel {
     pub name: Symbol,
+    /// Byte offset of its `.entry`.
+    pub offset: u32,
     pub params: Vec<Param>,
     pub reg_decls: Vec<RegDecl>,
     pub shared_decls: Vec<SharedDecl>,

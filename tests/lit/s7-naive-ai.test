@@ -1,15 +1,17 @@
-# S7.1 (PLAN.md, acceptance scenarios): did tiling pay off? — the naive side. k1's main
-# loop runs at AI(global) = 0.5 flop/B, shape-independent (no --bind).
-# Contrast with S7.2 (k5 at 32 flop/B): two independent runs, two
-# comparable numbers, no diff verb. The same contrast
-# shows in shared memory: the naive kernel reserves 0 B/CTA, the tiled
-# one 2048 (both confirmed against `ptxas -v` — `bytes smem`).
+# S7.1 (PLAN.md, acceptance scenarios): did tiling pay off? — the naive
+# side. k1's main loop runs at AI(global) = 0.5 flop/B,
+# shape-independent (no --bind). Contrast with S7.2 (k5 at 32 flop/B):
+# two independent runs, two comparable numbers, no diff verb. The same
+# contrast shows in shared memory: the naive kernel declares none, the
+# tiled one 2048 B per CTA (both confirmed against `ptxas -v` — `bytes
+# smem`).
+RUN: %ptxroof analyze --annotate %fixtures/k1/k1.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 RUN: %ptxroof analyze %fixtures/k1/k1.sm_80.ptx --json | %check-report "%s"
+ANN: {{^}}.visible .entry _Z11hgemm_naiveiiifPK6__halfS1_fPS_( // per thread: flops f32 <= (2·(param_2 mod 4) + 8·((param_2 - param_2 mod 4) / 4) + 3); global load <= (4·(param_2 mod 4) + 16·((param_2 - param_2 mod 4) / 4) + 2) B, store <= 2 B; param load 44 B{{$}}
 {
   "kernels": [
     {
       "name": "_Z11hgemm_naiveiiifPK6__halfS1_fPS_",
-      "shared_memory": {"static_bytes": 0, "dynamic": false},
       "loops": [
         {"name": "1_naive.cuh:15", "per_iteration": {"ai_global": {"value": 0.5, "bound": "exact"}}},
         {"name": "1_naive.cuh:15 (remainder)", "per_iteration": {"ai_global": {"value": 0.5, "bound": "exact"}}}

@@ -8,6 +8,10 @@
 //! zero rows are skipped in flop/byte tables but unknowns are always
 //! printed, even (especially) when present.
 
+use super::measured::{
+    MeasuredBlock, MeasuredSectors, MeasuredTotals, MeasuredWavefronts, SectorCount, SectorOutcome,
+    Verdict,
+};
 use super::schema::*;
 use crate::analysis::memory_footprint::CountRange;
 use std::collections::BTreeMap;
