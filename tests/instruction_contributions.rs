@@ -61,11 +61,17 @@ L:
     assert_eq!(
         notes(&out, "L:"),
         [
-            "loop: trips 3 | global per CTA: requested 768 B, unique ? | warp * × lane * | exec 96/CTA"
+            "loop: trips 3 | global per CTA: requested 768 B, unique 4 B, sectors 192 B | warp * × lane * | exec 96/CTA"
         ]
     );
-    assert_eq!(notes(&out, "atom"), ["global load+store [output]"]);
-    assert_eq!(notes(&out, "red"), ["global store [output]"]);
+    assert_eq!(
+        notes(&out, "atom"),
+        ["global load+store [output] sectors/req 1 (ideal 1)"]
+    );
+    assert_eq!(
+        notes(&out, "red"),
+        ["global store [output] sectors/req 1 (ideal 1)"]
+    );
 }
 
 /// A predicated atom is one memory instruction: collection records its
@@ -123,7 +129,9 @@ fn predicated_atomic_is_one_memory_instruction_with_bounded_contributions() {
     );
     assert_eq!(
         notes(&out, "@%p1 atom"),
-        ["[<block 0>] exec <= 1/thread | global load+store [output]"]
+        [
+            "[<block 0>] exec <= 1/thread | global load+store [output] sectors/req ? (block shape unknown: no .reqntid; pass --launch)"
+        ]
     );
 }
 
@@ -147,9 +155,9 @@ ret;",
     assert_eq!(
         notes(&out, "cp.async"),
         [
-            "[<block 0>] shared store [destination] | global load [source]",
-            "shared store [destination] | global load [source]",
-            "shared store [destination] | global load [source]",
+            "[<block 0>] shared store [destination] wavefronts/req ? (wavefronts not modelled) | global load [source] sectors/req 0 (ideal 0)",
+            "shared store [destination] wavefronts/req ? (wavefronts not modelled) | global load [source] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
+            "shared store [destination] wavefronts/req ? (wavefronts not modelled) | global load [source] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
         ]
     );
 }

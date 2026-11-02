@@ -783,3 +783,50 @@
 	st.global.u32 	[%rdout], %acc;
 	ret;
 }
+
+// micro_subword_wavefronts: 2-byte loads and stores and 1-byte stores,
+// each lane at its own address.
+.visible .entry micro_subword_wavefronts(
+	.param .u64 micro_subword_wavefronts_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<16>;
+	.reg .b32 	%acc, %rb;
+	.reg .b64 	%rdout, %rdo;
+	.shared .align 16 .b8 buf[4096];
+
+	ld.param.u64 	%rdout, [micro_subword_wavefronts_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%rb, buf;
+	mov.u32 	%acc, %r1;
+	shl.b32 	%r2, %r1, 7;
+	add.s32 	%r3, %rb, %r2;
+	ld.shared.u16 	%r4, [%r3];
+	xor.b32 	%acc, %acc, %r4;
+	bar.sync 	0;
+	shl.b32 	%r5, %r1, 3;
+	add.s32 	%r6, %rb, %r5;
+	ld.shared.u16 	%r7, [%r6];
+	xor.b32 	%acc, %acc, %r7;
+	bar.sync 	0;
+	st.shared.u16 	[%r3], %acc;
+	bar.sync 	0;
+	st.shared.u16 	[%r6], %acc;
+	bar.sync 	0;
+	add.s32 	%r8, %rb, %r1;
+	st.shared.u8 	[%r8], %acc;
+	bar.sync 	0;
+	shl.b32 	%r9, %r1, 2;
+	add.s32 	%r10, %rb, %r9;
+	st.shared.u8 	[%r10], %acc;
+	bar.sync 	0;
+	st.shared.u8 	[%r6], %acc;
+	bar.sync 	0;
+	st.shared.u8 	[%r3], %acc;
+	bar.sync 	0;
+	mul.wide.u32 	%rdo, %r1, 4;
+	add.s64 	%rdout, %rdout, %rdo;
+	st.global.u32 	[%rdout], %acc;
+	ret;
+}

@@ -72,6 +72,37 @@ impl XorSwizzle {
         }
     }
 
+    /// The bits a value may set: its columns' and its constant's.
+    fn may_set(&self) -> u64 {
+        self.columns.iter().fold(self.constant, |a, &c| a | c)
+    }
+
+    /// `c` times the value, when `c` times each bit it may set shares no
+    /// bit with another, so the product carries nothing and is the xor of
+    /// `c` times each column; below 2^62.
+    fn times(&self, c: u64) -> Option<XorSwizzle> {
+        let mut parts = [0u64; 64];
+        let mut seen = 0;
+        for j in (0..64).filter(|&j| self.may_set() >> j & 1 == 1) {
+            let part = u64::try_from(u128::from(c) << j)
+                .ok()
+                .filter(|&p| p >> 62 == 0)?;
+            if seen & part != 0 {
+                return None;
+            }
+            (parts[j], seen) = (part, seen | part);
+        }
+        let scale = |x: u64| {
+            (0..64)
+                .filter(|&j| x >> j & 1 == 1)
+                .fold(0, |a, j| a | parts[j])
+        };
+        Some(XorSwizzle {
+            columns: self.columns.map(scale),
+            constant: scale(self.constant),
+        })
+    }
+
     pub fn eval(&self, tid: i64) -> i64 {
         let set = (0..10).filter(|&i| tid >> i & 1 == 1);
         set.fold(self.constant, |x, i| x ^ self.columns[i]) as i64
@@ -629,9 +660,9 @@ impl Var {
 
 impl AffineExpr {
     /// The form as an xor of `%tid.x`'s bits: a constant base and terms
-    /// `Var::xor_swizzle` reads with power-of-two coefficients, no two of
-    /// which, nor the base, may set one bit, so that their sum is their
-    /// xor; below 2^62.
+    /// `Var::xor_swizzle` reads, each times a constant it carries nothing
+    /// under (`XorSwizzle::times`), no two of which, nor the base, may set
+    /// one bit, so that their sum is their xor; below 2^62.
     pub fn xor_swizzle(&self) -> Option<XorSwizzle> {
         let constant = u64::try_from(self.base.as_const()?).ok()?;
         let mut out = XorSwizzle {
@@ -640,20 +671,16 @@ impl AffineExpr {
         };
         let mut used = constant;
         for (v, c) in &self.terms {
-            let c = u64::try_from(c.as_const()?)
-                .ok()
-                .filter(|c| c.is_power_of_two())?;
-            let b = v.xor_swizzle()?;
-            let image = b.columns.iter().fold(b.constant, |a, &c| a | c);
-            let shifted = image.checked_mul(c).filter(|&s| s >> 62 == 0)?;
+            let b = v.xor_swizzle()?.times(u64::try_from(c.as_const()?).ok()?)?;
+            let shifted = b.may_set();
             if used & shifted != 0 {
                 return None;
             }
             used |= shifted;
             for (to, from) in out.columns.iter_mut().zip(b.columns) {
-                *to |= from * c;
+                *to |= from;
             }
-            out.constant |= b.constant * c;
+            out.constant |= b.constant;
         }
         (used >> 62 == 0).then_some(out)
     }
@@ -695,9 +722,11 @@ impl AffineExpr {
 /// The bits a sum of `terms` and `base` may set, when the base is
 /// nonnegative and each term a positive constant times a variable that
 /// is never negative and has a greatest value: a term's from its
-/// coefficient's lowest set bit to its greatest value's highest. Where
-/// no two terms' bits meet the sum carries nothing and sets their
-/// union; else from the lowest bit any sets up to the greatest sum's.
+/// coefficient's lowest set bit to its greatest value's highest, and of
+/// an xor of `%tid.x`'s bits only those its product sets
+/// (`XorSwizzle::times`). Where no two terms' bits meet the sum carries
+/// nothing and sets their union; else from the lowest bit any sets up to
+/// the greatest sum's.
 fn bits(
     terms: &[(&Var, &SymExpr)],
     base: i64,
@@ -713,7 +742,8 @@ fn bits(
         let c = u64::try_from(c.as_const()?).ok().filter(|&c| c > 0)?;
         let top = u128::from(c) * u128::from(u64::try_from(greatest(v, largest)?).ok()?);
         total = total.checked_add(top)?;
-        masks.push(upto(top) & (u64::MAX << c.trailing_zeros()));
+        let product = (v.xor_swizzle().and_then(|b| b.times(c))).map_or(u64::MAX, |b| b.may_set());
+        masks.push(upto(top) & (u64::MAX << c.trailing_zeros()) & product);
     }
     let union = masks.iter().fold(0, |a, m| a | m);
     if masks.iter().map(|m| m.count_ones()).sum::<u32>() == union.count_ones() {
@@ -893,6 +923,21 @@ mod tests {
             (AffineExpr::var(bits) + AffineExpr::from_base(c(16))).xor_swizzle(),
             None
         );
+        // A constant of several bits times a field it carries nothing
+        // under (census 02431.ptx:1769's 8208 times bit 3), unless it
+        // carries into the base or past 2^62.
+        let reads = |a: &AffineExpr, want: &dyn Fn(i64) -> i64| {
+            let b = a.xor_swizzle().unwrap();
+            (0..1024).all(|t| b.eval(t) == want(t))
+        };
+        assert!(reads(&field(8, 2, 8208), &|t| 8208 * (t >> 3 & 1)));
+        assert!(reads(&rem(4, 544), &|t| 544 * (t % 4)));
+        assert_eq!(rem(4, 3).xor_swizzle(), None);
+        assert_eq!(
+            (rem(2, 3) + AffineExpr::from_base(c(2))).xor_swizzle(),
+            None
+        );
+        assert_eq!(rem(4, 1 << 61).xor_swizzle(), None);
     }
 
     #[test]
@@ -963,6 +1008,20 @@ mod tests {
         // 128·⌊%tid.x/32⌋ and 16·%tid.x below 128 share bits 7 and 8.
         assert_eq!(floor(32).scale(c(128)).may_set(&block), 0x180);
         assert_eq!(AffineExpr::var(tid()).scale(c(16)).may_set(&block), 0x7f0);
+        // A product sets its constant's bits; an xor of fields its columns'
+        // (census 02218.ptx:446's swizzle sets bits 4–6 and 11–12).
+        assert_eq!(modulo(2).scale(c(2080)).may_set(&block), 0x820);
+        let field = |d, m, k| {
+            AffineExpr::var(Var::Mod(Box::new(Var::FloorDiv(Box::new(tid()), d)), m)).scale(c(k))
+        };
+        let swizzle = (field(16, 2, 64).xor_swizzle().unwrap())
+            .xor(&modulo(8).scale(c(16)).xor_swizzle().unwrap())
+            .xor(&field(32, 4, 2048).xor_swizzle().unwrap());
+        let wide = |v: &Var| matches!(v, Var::Tid(_)).then_some(1023);
+        assert_eq!(
+            AffineExpr::var(Var::Swizzle(swizzle)).may_set(&wide),
+            0x1870
+        );
         // A parameter's bits are unknown, a negative constant's all high.
         assert_eq!(
             AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(0))).may_set(&block),

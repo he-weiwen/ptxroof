@@ -1,6 +1,6 @@
 # Shared memory wavefronts per warp request, by how an RTX 4090 serves
-# a request's lanes (micro/shared_wavefronts.ptx): the warp for a 4-byte
-# access, half-warps for 8-byte, sharing banks the other half leaves
+# a request's lanes (micro/shared_wavefronts.ptx): the warp for a 1- to
+# 4-byte access, half-warps for 8-byte, sharing banks the other half leaves
 # free on a load, quarter-warps for a 16-byte store, the 8 lanes of each
 # matrix; the ideal has no two words of a group in one bank. A 16-byte
 # load whose lanes share words, and a cp.async destination, are not
@@ -12,3 +12,7 @@ ANN: {{^}}	ld.shared.v4.u32 	{%r64, %r65, %r66, %r67}, [%r63]; // shared load [1
 ANN: {{^}}	ldmatrix.sync.aligned.m8n8.x1.shared.b16 	{%r246}, [%r245]; // shared load [128·%tid.x + buf] wavefronts/req 8 (ideal 1){{$}}
 ANN: {{^}}	st.shared.v4.u32 	[%r348], {%acc, %acc, %acc, %acc}; // shared store [16·⌊%tid.x/16⌋ + buf] wavefronts/req 4 (ideal 4){{$}}
 ANN: {{^}}	cp.async.cg.shared.global 	[%r32], [%rd35], 16; // shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | global load [16·%tid.x + param_0] sectors/req 16–17 (ideal 16){{$}}
+ANN: {{^}}	ld.shared.u16 	%r4, [%r3]; // shared load [128·%tid.x + buf] wavefronts/req 32 (ideal 1){{$}}
+ANN: {{^}}	st.shared.u16 	[%r6], %acc; // shared store [8·%tid.x + buf] wavefronts/req 2 (ideal 1){{$}}
+ANN: {{^}}	st.shared.u8 	[%r8], %acc; // shared store [%tid.x + buf] wavefronts/req 1 (ideal 1){{$}}
+ANN: {{^}}	st.shared.u8 	[%r3], %acc; // shared store [128·%tid.x + buf] wavefronts/req 32 (ideal 1){{$}}

@@ -19,10 +19,10 @@ need, over the lanes that execute it, once the block shape and the parameters in
 coefficients are bound, and for a shared operand the wavefronts one
 warp's request takes and the number with no bank conflict, by how a
 request's lanes were measured to be served on an RTX 4090
-(`micro/shared_wavefronts.ptx`: the warp for 4-byte accesses,
+(`micro/shared_wavefronts.ptx`: the warp for 1- to 4-byte accesses,
 half-warps for 8-byte, quarter-warps for a 16-byte store, the 8 lanes
-of each matrix of an `ldmatrix`; on the census, 41,145 shared rows,
-6,684 of them in 96 kernels above their ideal); per
+of each matrix of an `ldmatrix`; on the census, 54,950 shared rows,
+7,880 of them in 100 kernels above their ideal); per
 block and per guarded instruction, which threads of the CTA run it
 when the branches it is control dependent on in one trip of its loop
 and the guard are thread-index comparisons
@@ -363,35 +363,28 @@ contract (Codex's review of 2b2731b).
   remainder loop reading the main loop's final k;
   `micro/uniform_address.ptx`). An xor reads when each side is an xor
   of thread index fields, `%tid.x` or a floor or remainder of it by a
-  power of two, times a power of two, no two of a side's fields setting
-  one bit, and constants: one variable, the xor of its runs of thread
-  bits (`micro/xor_swizzle.ptx`, Triton's swizzle as
+  power of two, times a constant it carries nothing under, no two of a
+  side's fields setting one bit, and constants: one variable, the xor of
+  its runs of thread bits (`micro/xor_swizzle.ptx`, Triton's swizzle as
   `(16 * (⌊%tid.x/8⌋ mod 4) ⊕ 16 * (%tid.x mod 128))`, its offsets read
-  back on the RTX 4090; 22,336 census rows). Not read: an xor with a
-  side that is no such xor, "behind `xor.b32`" (14,081 of the census's
-  36,283 unknown address rows, in 527 kernels, all but three shared, of
-  its 15,825 shared rows with no address): a sum whose fields
-  share a bit (`micro_xor_overlap`), one thread bit times a constant
-  with more bits than one, as the Gluon GEMM's epilogue stores' 2064
-  times bit 2, which comes there from a signed `bfe` past bit 0, itself
-  unread (`bfe at 2 of 1 bits`). Run on every `%tid.x` below its
-  `.reqntid`, 1,348 of the 1,436 xors not read in those kernels are an
-  xor of `%tid.x`'s bits, 70 are one only within each warp, its bits
-  differing by warp, and 18 read a register written more than once or a
-  `prmt`, which the evaluation does not follow. The first instruction
-  not read on an xor's operand chains is a one-bit signed `bfe` masked
-  by a constant, bit i times it (728 xors, 389 kernels; census kernel
-  `02431.ptx`'s lines 1768–1769, `bfe.s32 %r2591, %r2069, 3, 1` and `&
-  8208`), a `selp` of 0 or a constant by a thread bit (162, 77;
-  `03874.ptx`'s line 2057, `selp.b32 %r829, 0, 2112, %p61`), an `or`
-  whose sides may both set a bit (301, 118; of its 148 `or`s 91 set no
-  bit both on any thread, as `02284.ptx`'s line 1906 of `132·(%tid.x mod
-  2)` and bits 3–6 of `4·%tid.x`, 56 do, as `00196.ptx`'s line 934 a
+  back on the RTX 4090; census 02431.ptx:1769's 8208 times bit 3, a
+  one-bit signed `bfe` masked, and 03874.ptx:2057's 2112 times bit 0, a
+  `selp` of 0 or 2112 by it; 36,725 census rows). Not read: an xor with
+  a side that is no such xor, "behind `xor.b32`" (237 of the census's
+  21,154 unknown address rows, in 49 kernels, all but three shared, of
+  its 800 shared rows with no address): a sum whose fields share a bit
+  (`micro_xor_overlap`). Run on every `%tid.x` below its `.reqntid`, 12
+  of the 88 xors not read in those kernels are an xor of `%tid.x`'s
+  bits, 70 are one only within each warp, its bits differing by warp,
+  and 6 read a register written more than once, a `prmt` or a load,
+  which the evaluation does not follow. The first instruction not read
+  on an xor's operand chains is an `or` whose sides set one bit on some
+  thread (77 xors, 43 kernels; 56 `or`s, as `00196.ptx`'s line 934 a
   warp bit or'd onto a lane bit, `%tid.x | (⌊%tid.x/4⌋ & 8)` in 64
-  threads, and one has a side the evaluation does not read), or the xor
-  itself, of a side with a thread field times a constant with more bits
-  than one (279, 158; `192·(%tid.x mod 2)`, `544·(%tid.x mod 4)`); an
-  xor may stop at more than one. Not read either: divisions of the
+  threads) or a `selp` by no equality of a read thread bit (8, 8: an
+  `lt`, a register chosen, a bit an unread `or` sets); an xor may stop
+  at more than one.
+  Not read either: divisions of the
   thread index by a runtime value (`micro/uniform_address.ptx`'s
   `micro_uniform_div_lanes`; 1,622 census rows "div by a non-constant
   divisor" and 3,525 "rem by a non-constant divisor": of 40 sampled,
@@ -412,11 +405,15 @@ contract (Codex's review of 2b2731b).
   (`micro/and_bit_select.ptx`; refused with the sign bit,
   `micro_and_select_sign`, and for −(%tid.x & 3),
   `micro_and_select_two_bits`), or a 64-bit mask's run that starts at
-  bit 63 (`micro/and_runs.ptx`'s `micro_and_bit63`); the bit select by a
-  signed `bfe` of one bit (`micro/and_bit_select.ptx`'s
-  `micro_and_select_bfe`: "bfe at 2 of 1 bits"; 586 census rows stop
-  at a one-bit signed `bfe`, 658 at a mod or shift of one read as a
-  variable, "depends on ⌊uniform(…)/2^k⌋, in a mod"); values loaded
+  bit 63 (`micro/and_runs.ptx`'s `micro_and_bit63`); a mod or shift of
+  a value read as a variable (898 census rows, "depends on
+  ⌊uniform(…)/2^k⌋, in a mod" or "depends on uniform(…), in a
+  shift"); a signed `bfe` whose field starts past the msb, which ptxas
+  13.4 folds to −1 on every thread where the hardware takes the sign
+  bit (`micro/bfe_fields.ptx`: "bfe at 32 of 1 bits", line 41's store
+  1 L2 sector in `micro/bfe_fields.ncu.json`, line 46's, its position
+  given at run time, 2), or of two bits or more from past bit 0 (no
+  census `bfe`); values loaded
   from memory that may differ between threads (the fused MoE kernel's
   `cp.async` of the rows `sorted_token_ids` selects, its source line
   262, `moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel`:
@@ -429,11 +426,7 @@ contract (Codex's review of 2b2731b).
   (`micro/or_negative.ptx`) or a value every thread reads alike with a
   definition other than an unguarded `shl` or `and` by a constant
   (`micro/uniform_aligned.ptx`'s `micro_uniform_aligned_guarded` and
-  `micro_uniform_aligned_count`), or bounded by more bits than it sets: a
-  term c·v with v of 0 or 1 sets c's bits, `may_set` all from c's lowest
-  to its highest (`micro/and_bit_select.ptx`'s `micro_and_select_or`,
-  `2080·(%tid.x mod 2) | 128·⌊(%tid.x mod 16)/8⌋`: "or whose sides may
-  both set bit 7", where ptxas adds them); a division by a constant that is no power
+  `micro_uniform_aligned_count`); a division by a constant that is no power
   of two, which LLVM writes as `mul.hi` by a magic number and a shift
   (`micro/magic_div.ptx`: "`mul.hi.u32` keeps a product's upper half";
   sglang `bmm_kernel_persistent`'s `/ 148` leaves its trip count
@@ -535,12 +528,31 @@ contract (Codex's review of 2b2731b).
   (`a_count_its_counter_refuses_once_known_is_unknown_to_every_reader`).
 - **Shared wavefronts are not counted for a `cp.async` destination, a
   shared atomic, or a 16-byte load two of whose lanes share a word**
-  (11,639 and 5,825 census rows). A copy's wavefronts follow its global
-  source as well as its destination: to `16·%tid.x` 4 from
-  `16·%tid.x`, 8 from eight 64-byte rows, 16 from sixteen 32-byte rows,
-  and to `32·%tid.x` 32 by `.cg`, 8 by `.ca`
-  (`micro/shared_wavefronts.ptx`'s `micro_cp_async_wavefronts`, RTX
-  4090). The 16-byte loads' measured counts follow no grouping found:
+  (13,489 and 6,723 census rows, 832 of the loads by name, every lane
+  at one address). No NVIDIA document gives a copy's
+  rule: the Nsight Compute Profiling Guide does not name LDGSTS, and
+  the CUDA Programming Guide's LDGSTS section says only that 4- and
+  8-byte copies go through L1, that 16-byte ones can bypass it, and
+  that both addresses aligned to 128 bytes perform best. A copy's
+  wavefronts follow its global source as well as its destination: to
+  `16·%tid.x` 4 from `16·%tid.x`, 8 from
+  eight 64-byte rows, 16 from sixteen 32-byte rows, 32 from
+  `128·%tid.x`, and to `32·%tid.x` 32 from `16·%tid.x` by `.cg`; no
+  record copies 16 bytes by `.ca` (`micro/shared_wavefronts.ptx`'s
+  `micro_cp_async_wavefronts`, RTX 4090). One wavefront per 128-byte
+  line the lanes' sources fall in, times the bank conflicts of those
+  lanes' destinations, lanes writing one destination counted once
+  (line 685: 8 L2 sectors, 2 wavefronts), gives 19 of that record's 20
+  copies and 288 of the 312 copies whose two addresses read in the 22
+  records, every term but the thread index's taken as 0 (the
+  destination alone as a store: 240). It misses line 633, 32 where it
+  gives 8, taking 32 L2 sectors where its 512 bytes span 16; a copy
+  with an ignore-src predicate or a src-size register
+  (`micro/cp_async_ignore_src.ptx` line 36,
+  `micro/cp_async_src_size.ptx` line 30: 5 where 4); and 21 averages
+  that are no integer, as the Gluon `attn_bwd_kernel`'s line 1914,
+  5.70 per request with an ideal of 4.0, from 128-byte source rows.
+  The 16-byte loads' measured counts follow no grouping found:
   `16·(%tid.x mod 8)` takes 4, `256·⌊%tid.x/16⌋` 2
   (`micro_shared_wavefronts`).
 - **A block under a loop whose trip count is not read is unknown in

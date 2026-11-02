@@ -3,7 +3,8 @@
 # a block under `%ctaid.x < 64` runs so in 64 of the 128 CTAs. A block
 # under a loop whose trips are not known runs an unknown number of
 # times, the innermost such loop named; on that loop's header, `exec ?`.
-# An `ldmatrix` address behind an xor of the thread index is unknown.
+# An `ldmatrix` address is an xor of thread index fields, `%tid.x mod 8`
+# at bits 4 and 8 at once, in four wavefronts.
 # Its shared memory is all `.extern .shared`, set at launch. Its main
 # loop's trips are not known, so the FLOPs of every pipe that runs in it
 # are not counted, and the bytes of its loads and stores are at least
@@ -30,7 +31,7 @@ CHECK: {{^}}	or.b32 	%r100, %r1880, 63; // [<block 11>] warp 0-3 × lane * | run
 CHECK: {{^}}$L__BB0_55:{{ +}}//   in Loop: Header=BB0_43 Depth=2 // warp 0-3 × lane * | under line 664 | exec ? (trips of $L__BB0_43){{$}}
 CHECK: {{^}}$L__BB0_43:{{ +}}// %.lr.ph601 // loop: trips ? (uniform(%r1884@$L__BB0_43) is defined in an enclosing loop: depends on %r1884, carried around an enclosing loop) | warp 0-3 × lane * | under line 664 | exec ?{{$}}
 CHECK: {{^}}	shl.b32 	%r1228, %r101, 15; // [<block 16>] warp 0-3 × lane * | runs when 64·iv[$L__BB0_43] ≤ %r1880@$L__BB0_39 + 63 (CTA-uniform, branch at line 822) | nested in line 664 | exec ? (trips of $L__BB0_43){{$}}
-CHECK: {{^}}	ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1040, %r1041, %r1064, %r1065}, [%r1230]; // shared load addr ? (depends on special register %tid.x, behind `xor.b32`){{$}}
+CHECK: {{^}}	ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1040, %r1041, %r1064, %r1065}, [%r1230]; // shared load [16384·iv[$L__BB0_43] - 32768·uniform(%r101@781) + 16384·uniform(%r1986@$L__BB0_39) + (16·(⌊%tid.x/8⌋ mod 4) ⊕ 16·(%tid.x mod 8) ⊕ 256·(%tid.x mod 8)) + global_smem] wavefronts/req 4 (ideal 4){{$}}
 CHECK: {{^}}	add.s32 	%r1234, %r61, %r1883; // [<block 17>] warp 0-3 × lane * | runs when 64·iv[$L__BB0_43] > %r1880@$L__BB0_39 - 63 (CTA-uniform, branch at line 1219) | nested in line 825 | exec ? (trips of $L__BB0_43){{$}}
 CHECK: {{^}}$L__BB0_46:{{ +}}// %__nv_exp2f.exit336 // warp 0-3 × lane * | under line 825 | exec ? (trips of $L__BB0_43){{$}}
 CHECK: {{^}}$L__BB0_47:{{ +}}//   in Loop: Header=BB0_43 Depth=2 // warp 0-3 × lane * | under line 664 | exec ? (trips of $L__BB0_43){{$}}
