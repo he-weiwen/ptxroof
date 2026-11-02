@@ -1,7 +1,8 @@
 # One address written as m + n and as n + m is one base: the loop's two
-# stores touch 128 distinct bytes. With the sums' terms in the order
-# written the two read as different bases, `unique 128–256 B`.
-RUN: %ptxroof analyze %fixtures/micro/commuted_sum.ptx | FileCheck "%s"
-CHECK: st.global.u32 {{.*}} [4 * %tid.x + param_0 + 4 * param_1 + 4 * param_2]
-CHECK: st.global.u32 {{.*}} [4 * %tid.x + param_0 + 4 * param_1 + 4 * param_2]
-CHECK: requested 256 B, unique 128 B,
+# stores, at the same address, touch 128 distinct bytes of the 256 B its
+# CTA requests. With the sums' terms in the order written the two read
+# as different bases, `unique 128–256 B`.
+RUN: %ptxroof analyze --annotate %fixtures/micro/commuted_sum.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_1: // loop: trips 1 | global per CTA: requested 256 B, unique 128 B, sectors 256–320 B | warp * × lane * | exec 32/CTA{{$}}
+ANN: {{^}}	st.global.u32 	[%rd3], %r9; // global store [4·%tid.x + param_0 + 4·param_1 + 4·param_2] sectors/req 4–5 (ideal 4){{$}}
+ANN: {{^}}	st.global.u32 	[%rd5], %r9; // global store [4·%tid.x + param_0 + 4·param_1 + 4·param_2] sectors/req 4–5 (ideal 4){{$}}
