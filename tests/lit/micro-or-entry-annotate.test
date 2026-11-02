@@ -1,0 +1,6 @@
+# A block entered from two branches on values each warp loads alike, in
+# the annotated PTX: it runs when the first holds or, the first failing,
+# the second does, the `and` under the `or` parenthesized, both
+# branches' lines named once after the conditions.
+RUN: %ptxroof analyze --annotate %fixtures/micro/or_entry.ptx | FileCheck "%s"
+CHECK: {{^}}$L__BB0_3: // warp 0-1 × lane * | runs when %r1@30 ≠ 0 or (%r1@30 = 0 and %r2@31 ≠ 0) (warp-uniform, branches at lines 36, 38) | exec <= 64/CTA{{$}}

@@ -996,8 +996,31 @@ One line each, with the trigger that would start it.
   (`k1-annotate.test`); and without the block shape the condition
   that selects them, a loop's iteration k printed as
   `(iv[<header>] + 1)`
-  (`without_a_block_shape_a_block_names_its_condition`). Then how many
-  times its unguarded statements run, over the launch given the grid
+  (`without_a_block_shape_a_block_names_its_condition`). Then, where
+  past its immediate dominator the block runs under conditions each the
+  same for the whole CTA or a warp, `runs when` and each, a comparison
+  as `lhs cmp rhs`, the terms of negative coefficient and the constant
+  on the right,
+  an unknown value by its register and line (`%r1880@$L__BB0_39`), its
+  known multiple as the value, with the branch's polarity, joined by
+  `and`, one under an `or` or a `not` with every part, the `not` of an
+  `and` or an `or` by De Morgan's laws, an `and` under an `or` and an
+  `or` under an `and` parenthesized, a thread-index
+  comparison too; then `CTA-uniform` where each is the same for the
+  CTA, else `warp-uniform`, and the lines of the branches deciding them
+  (`gluon-attn-fwd-ws-annotate.test`, `micro-or-entry-annotate.test`,
+  `a_block_names_the_uniform_conditions_it_runs_under`); one that is
+  not a comparison read within its type as `predicate <register> (line
+  <L>) is true|false`: gluon attn_fwd_ws's `setp.lt.u32 %p60, %r1880,
+  -190`, an unsigned comparison with a value of unknown range (the same
+  test); a jump table's target as `jump table at line <L> selects this
+  target` (`b200-jump-table-annotate.test`), a loop's exit as `leaves
+  loop <header> toward <block>`
+  (`micro-loop-guard-sibling-annotate.test`). Then, where a block
+  dominating it has such a condition of its own, the nearest's line: after
+  `nested in` where the block has one, else after `under`
+  (`gluon-attn-fwd-ws-annotate.test`). Then how many times its
+  unguarded statements run, over the launch given the grid
   and the block shape, else per CTA, else per thread: `exec
   32,768/launch`, `<=` for a bound, and under a loop whose trips are
   not known `exec ? (trips of <header>)` (`k5-annotate.test`,
@@ -1014,7 +1037,7 @@ One line each, with the trigger that would start it.
   (`k5-annotate.test`, `micro-vector-def-annotate.test`). An
   instruction whose results nothing with an effect reads is `unused`
   (the same test). Not yet: the kernel's launch on its `.entry` line;
-  the ncu comparisons, branch conditions as formulas and FLOPs.
+  the ncu comparisons and FLOPs.
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures

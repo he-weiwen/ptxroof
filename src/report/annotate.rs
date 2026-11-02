@@ -1,22 +1,29 @@
 //! The input PTX with what the analysis says of each line appended to
 //! it as a ` // ` comment.
 
-use crate::analysis::affine::affine_expr::{AffineExpr, Var};
+use crate::analysis::affine::affine_expr::{AffineExpr, Cmp, Var};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::execution_counts::{CtaSize, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
 use crate::analysis::memory_footprint::CountRange;
-use crate::analysis::thread_participation::Pred;
+use crate::analysis::register_effects::writes;
+use crate::analysis::thread_participation::{Atom, AtomKey, Pred};
+use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{Opcode, Stmt};
+use crate::ptx::ir::{Opcode, Register, Stmt};
 use crate::report::build::{AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel};
 use crate::report::schema::Access;
-use std::collections::{BTreeMap, HashMap};
+use crate::ssa::Value;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Per statement, the parts of its annotation.
 type Notes = BTreeMap<usize, Vec<String>>;
+
+/// The lines of the branches deciding a condition's uniform unknowns, and
+/// the larger of the threads each is the same for.
+type Tags = (BTreeSet<u32>, Uniform);
 
 /// `source` with ` // ` and the annotation after each line that has one,
 /// the annotations of its statements joined by ` ; `.
@@ -71,9 +78,14 @@ impl KernelReportBuilder<'_> {
                 }
             }
             parts.retain(|_, p| !p.is_empty());
+            let when = self.runs_when(b);
+            let runs = self.counts.sets.blocks[b.0 as usize] != Pred::False;
+            let nesting = runs.then(|| self.nesting(b, when.is_some())).flatten();
             let mut own: Vec<String> = header
                 .into_iter()
                 .chain(self.threads(b))
+                .chain(when)
+                .chain(nesting)
                 .chain(exec)
                 .collect();
             own.extend(parts.remove(&start).unwrap_or_default());
@@ -84,16 +96,22 @@ impl KernelReportBuilder<'_> {
             let block =
                 (!own.is_empty()).then(|| (start, vec![format!("{prefix}{}", own.join(" | "))]));
             for (s, parts) in block.into_iter().chain(parts) {
-                let offset = match &self.kernel.stmts[s] {
-                    Stmt::Label { offset, .. } | Stmt::Unparsed { offset, .. } => *offset,
-                    Stmt::Instr(i) => i.offset,
-                    Stmt::BranchTargets(_) => continue,
+                let Some(line) = self.line(s) else {
+                    continue;
                 };
-                notes
-                    .entry(self.lines.line(offset))
-                    .or_default()
-                    .push(parts.join(" | "));
+                notes.entry(line).or_default().push(parts.join(" | "));
             }
+        }
+    }
+
+    /// The line of statement `s`, but a `.branchtargets` list.
+    fn line(&self, s: usize) -> Option<u32> {
+        match &self.kernel.stmts[s] {
+            Stmt::Label { offset, .. } | Stmt::Unparsed { offset, .. } => {
+                Some(self.lines.line(*offset))
+            }
+            Stmt::Instr(i) => Some(self.lines.line(i.offset)),
+            Stmt::BranchTargets(_) => None,
         }
     }
 
@@ -212,14 +230,7 @@ impl KernelReportBuilder<'_> {
     /// `c·k`'s c in the constant, or as `(iv + 1)` where a floor or a
     /// remainder holds it.
     fn form(&self, a: &AffineExpr) -> String {
-        let nested =
-            (a.terms.keys()).any(|v| v.counter().is_some() && !matches!(v, Var::Iteration(_)));
-        let k = (a.terms.iter()).filter(|(v, _)| matches!(v, Var::Iteration(_)) && !nested);
-        let base = k.fold(a.base.clone(), |base, (_, c)| SymExpr::add(base, c.clone()));
-        let shifted = AffineExpr {
-            terms: a.terms.clone(),
-            base,
-        };
+        let (shifted, nested) = shifted(a);
         self.shorten(shifted.render(|v| self.var(v, nested)))
     }
 
@@ -299,6 +310,209 @@ impl KernelReportBuilder<'_> {
         })
     }
 
+    /// `runs when` and the unknowns, each the same for the CTA or a warp,
+    /// that block `b`'s threads meet past its immediate dominator's, then
+    /// `CTA-uniform` where all are the same for the CTA, else
+    /// `warp-uniform`, and the lines of the branches deciding them; unless
+    /// no thread runs it.
+    fn runs_when(&self, b: BlockId) -> Option<String> {
+        let sets = &self.counts.sets;
+        let runs = sets.blocks[b.0 as usize] != Pred::False;
+        let mut tags = (BTreeSet::new(), Uniform::Cta);
+        let when = self.when(
+            b,
+            runs.then_some(&sets.relative[b.0 as usize])?,
+            false,
+            &mut tags,
+        )?;
+        let scope = match tags.1 {
+            Uniform::Cta => "CTA-uniform",
+            Uniform::Warp => "warp-uniform",
+        };
+        let lines: Vec<String> = tags.0.iter().map(u32::to_string).collect();
+        let branch = match &lines[..] {
+            [] => String::new(),
+            [line] => format!(", branch at line {line}"),
+            _ => format!(", branches at lines {}", lines.join(", ")),
+        };
+        Some(format!("runs when {when} ({scope}{branch})"))
+    }
+
+    /// The line of the nearest block dominating `b` that runs under a
+    /// uniform condition of its own, after `nested in` where `b` has one,
+    /// `adds`, else after `under`.
+    fn nesting(&self, b: BlockId, adds: bool) -> Option<String> {
+        let sets = &self.counts.sets;
+        let has = |d: BlockId| {
+            let i = d.0 as usize;
+            sets.blocks[i] != Pred::False && !sets.relative[i].atoms().is_empty()
+        };
+        let mut up = self.forest.doms.idom[b.0 as usize];
+        while let Some(d) = up.filter(|&d| !has(d)) {
+            up = self.forest.doms.idom[d.0 as usize];
+        }
+        let line = self.line(self.cfg.block(up?).start)?;
+        Some(match adds {
+            true => format!("nested in line {line}"),
+            false => format!("under line {line}"),
+        })
+    }
+
+    /// The uniform unknowns of `p`, block `b`'s set on its immediate
+    /// dominator, by `atom`, joined by ` and `, a conjunct without one
+    /// left to the threads shown; an `or` or a `not` holding one with all
+    /// its parts (`whole`), the `not` of an `and` or an `or` as the `or` or
+    /// the `and` of its parts' negations, a thread-index comparison by
+    /// `formula` and any other unknown as `?`; an `or` among the parts of an `and`, and an
+    /// `and` among those of an `or`, parenthesized. Each unknown adds the
+    /// line of the branch deciding it and its scope to `tags`.
+    fn when(&self, b: BlockId, p: &Pred, whole: bool, tags: &mut Tags) -> Option<String> {
+        let paren = |t: String, inner: bool| if inner { format!("({t})") } else { t };
+        match p {
+            Pred::Uniform(u, a) => Some(self.atom(b, *u, a, tags)),
+            Pred::And(..) => {
+                let parts: Vec<(String, bool)> = (operands(p, false).into_iter())
+                    .filter_map(|q| {
+                        Some((self.when(b, q, whole, tags)?, matches!(q, Pred::Or(..))))
+                    })
+                    .collect();
+                let several = parts.len() > 1;
+                let parts: Vec<String> = (parts.into_iter())
+                    .map(|(t, or)| paren(t, or && several))
+                    .collect();
+                (!parts.is_empty()).then(|| parts.join(" and "))
+            }
+            Pred::Or(..) | Pred::Not(_) if !whole && p.atoms().is_empty() => None,
+            Pred::Or(..) => {
+                let parts = (operands(p, true).into_iter())
+                    .map(|q| {
+                        Some(paren(
+                            self.when(b, q, true, tags)?,
+                            matches!(q, Pred::And(..)),
+                        ))
+                    })
+                    .collect::<Option<Vec<String>>>()?;
+                Some(parts.join(" or "))
+            }
+            Pred::Not(x) => match &**x {
+                Pred::And(y, z) | Pred::Or(y, z) => {
+                    let (y, z) = (Box::new(!(**y).clone()), Box::new(!(**z).clone()));
+                    let dual = match **x {
+                        Pred::And(..) => Pred::Or(y, z),
+                        _ => Pred::And(y, z),
+                    };
+                    self.when(b, &dual, whole, tags)
+                }
+                x => Some(format!("not ({})", self.when(b, x, true, tags)?)),
+            },
+            Pred::Cmp(c) if whole => Some(self.formula(&c.form, c.cmp)),
+            Pred::Elect(_) if whole => Some("elected".to_owned()),
+            Pred::Unknown if whole => Some("?".to_owned()),
+            _ => None,
+        }
+    }
+
+    /// Atom `a` of block `b`'s set, the same for the threads `u` names:
+    /// its comparison, negated where `a` is, or what it reads; the line of
+    /// the branch deciding it but a jump table, and `u`, added to `tags`.
+    fn atom(&self, b: BlockId, u: Uniform, a: &Atom, tags: &mut Tags) -> String {
+        let sets = &self.counts.sets;
+        let cmp = |c: Cmp| if a.negated { c.inverse() } else { c };
+        let not = |t: String| if a.negated { format!("not ({t})") } else { t };
+        let name = |b: BlockId| self.cfg.block_name(self.module, b);
+        let what = match (&a.key, sets.forms.get(&a.key)) {
+            (_, Some((form, c))) => self.formula(form, cmp(*c)),
+            (AtomKey::OutOfLoop(k), _) => self.formula(&k.form, cmp(k.cmp)),
+            (AtomKey::Def(op), _) => {
+                let reg = writes(self.module, &self.kernel.stmts[*op])
+                    .first()
+                    .copied();
+                self.predicate(reg.map(|reg| Value::Result { op: *op, reg }), a.negated)
+            }
+            (AtomKey::Value(v), _) => self.predicate(Some(*v), a.negated),
+            (AtomKey::Jump { stmt, .. }, _) => {
+                let line = self.line(*stmt).unwrap_or_default();
+                not(format!("jump table at line {line} selects this target"))
+            }
+            (AtomKey::Leave { header, target }, _) => not(format!(
+                "leaves loop {} toward {}",
+                name(*header),
+                name(*target)
+            )),
+        };
+        let line = (sets.deciders.get(&(b, a.key.clone())))
+            .filter(|_| !matches!(a.key, AtomKey::Jump { .. }))
+            .and_then(|&s| self.line(s));
+        tags.0.extend(line);
+        tags.1 = tags.1.max(u);
+        what
+    }
+
+    /// `predicate <register> (line <L>) is true`, or `false` where
+    /// `negated`; a φ or an undefined value by its name.
+    fn predicate(&self, v: Option<Value>, negated: bool) -> String {
+        let truth = if negated { "false" } else { "true" };
+        let name = match v {
+            Some(Value::Result {
+                op,
+                reg: Register::Named(r),
+            }) => {
+                let line = self.line(op).unwrap_or_default();
+                format!("{} (line {line})", self.module.interner.resolve(r))
+            }
+            Some(v) => Self::value_name(self.module, self.kernel, self.cfg, self.lines, v),
+            None => "?".to_owned(),
+        };
+        format!("predicate {name} is {truth}")
+    }
+
+    /// `form cmp 0` as `lhs cmp rhs`, a loop's iteration as `shifted`
+    /// gives it and an unknown value by its register and line: the terms
+    /// and symbols of negative coefficient and the constant moved right,
+    /// the comparison swapped where nothing would stay left.
+    fn formula(&self, form: &AffineExpr, cmp: Cmp) -> String {
+        let (form, nested) = shifted(form);
+        let negative = |c: &SymExpr| SymExpr::split_const(c.clone()).0 < 0;
+        let zero = || AffineExpr::from_base(SymExpr::Const(0));
+        let split = |f: &AffineExpr| {
+            let summands = match &f.base {
+                SymExpr::Sum(ts) => ts.clone(),
+                base => vec![base.clone()],
+            };
+            let right = |t: &SymExpr| negative(t) || matches!(t, SymExpr::Const(_));
+            (f.terms.iter())
+                .map(|(v, c)| (negative(c), AffineExpr::term(v.clone(), c.clone())))
+                .chain(
+                    summands
+                        .into_iter()
+                        .map(|t| (right(&t), AffineExpr::from_base(t))),
+                )
+                .fold((zero(), zero()), |(l, r), (right, x)| match right {
+                    true => (l, r + x),
+                    false => (l + x, r),
+                })
+        };
+        let ((lhs, rhs), cmp) = match split(&form) {
+            (lhs, _) if lhs == zero() => (split(&form.scale(SymExpr::Const(-1))), cmp.swapped()),
+            sides => (sides, cmp),
+        };
+        let op = match cmp {
+            Cmp::Lt => "<",
+            Cmp::Le => "≤",
+            Cmp::Gt => ">",
+            Cmp::Ge => "≥",
+            Cmp::Eq => "=",
+            Cmp::Ne => "≠",
+        };
+        let name = |v: &Var| match v {
+            Var::Unknown(u) => Self::value_name(self.module, self.kernel, self.cfg, self.lines, *u),
+            v => self.var(v, nested),
+        };
+        let side = |s: AffineExpr| s.render(name).replace(" * ", "·");
+        let rhs = side(rhs.scale(SymExpr::Const(-1)));
+        self.shorten(format!("{} {op} {rhs}", side(lhs)))
+    }
+
     /// The condition on the thread and CTA indices that selects `set`, a
     /// loop's iteration k as `iv + 1`.
     fn condition(&self, set: &Pred) -> Option<String> {
@@ -357,6 +571,30 @@ fn warp_lanes(masks: &[(u32, u32)], shape: [u32; 3], exact: bool) -> String {
     match groups.is_empty() {
         true => "no thread".to_owned(),
         false => groups.iter().map(group).collect::<Vec<_>>().join(" ∪ "),
+    }
+}
+
+/// `a` with each `c·k` of a loop's iteration k = iv + 1 as `c·iv`, its c
+/// in the constant, unless a floor or a remainder holds a counter
+/// (`true`): then k stays, to print as `(iv + 1)`.
+fn shifted(a: &AffineExpr) -> (AffineExpr, bool) {
+    let nested = (a.terms.keys()).any(|v| v.counter().is_some() && !matches!(v, Var::Iteration(_)));
+    let k = (a.terms.iter()).filter(|(v, _)| matches!(v, Var::Iteration(_)) && !nested);
+    let base = k.fold(a.base.clone(), |base, (_, c)| SymExpr::add(base, c.clone()));
+    let shifted = AffineExpr {
+        terms: a.terms.clone(),
+        base,
+    };
+    (shifted, nested)
+}
+
+/// The parts of `p` under the `and`s at its top, or the `or`s where `or`.
+fn operands(p: &Pred, or: bool) -> Vec<&Pred> {
+    match (p, or) {
+        (Pred::And(x, y), false) | (Pred::Or(x, y), true) => {
+            [operands(x, or), operands(y, or)].concat()
+        }
+        _ => vec![p],
     }
 }
 
@@ -472,6 +710,64 @@ $L__BB0_5:
                 "[<block 5>] %tid.x <= 31 | exec <= 1/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
                 "exec 1/thread",
+            ]
+        );
+    }
+
+    /// A block under uniform conditions names them past its immediate
+    /// dominator's: each as its comparison with the branch's polarity,
+    /// the sides swapped where every term would move right, two in a
+    /// conjunction joined by `and`, the `not` of an `or` as the `and` of
+    /// its parts' negations, its thread-index part left to the threads
+    /// shown; then `CTA-uniform` and the deciding branch's line.
+    #[test]
+    fn a_block_names_the_uniform_conditions_it_runs_under() {
+        let src = "\
+.version 8.0
+.target sm_80
+.address_size 64
+.visible .entry k(.param .u64 p, .param .u32 n, .param .u32 m)
+.reqntid 64, 1, 1
+{
+	.reg .pred %p<8>;
+	.reg .b32 %r<4>;
+	.reg .b64 %rd<2>;
+	ld.param.u64 %rd1, [p];
+	ld.param.u32 %r1, [n];
+	ld.param.u32 %r2, [m];
+	mov.u32 %r3, %tid.x;
+	setp.lt.s32 %p1, %r1, 1;
+	setp.ne.s32 %p2, %r3, 0;
+	or.pred %p3, %p1, %p2;
+	@%p3 bra $L__BB0_2;
+	st.global.u32 [%rd1], %r3;
+$L__BB0_2:
+	setp.gt.s32 %p4, %r2, 3;
+	and.pred %p5, %p4, %p1;
+	@!%p5 bra $L__BB0_4;
+	st.global.u32 [%rd1], %r1;
+$L__BB0_4:
+	@%p1 bra $L__BB0_6;
+	st.global.u32 [%rd1], %r2;
+$L__BB0_6:
+	setp.lt.s32 %p6, 5, %r2;
+	@%p6 bra $L__BB0_8;
+	st.global.u32 [%rd1], %r3;
+$L__BB0_8:
+	ret;
+}
+";
+        let out = annotate(src, &AnalyzeOptions::default()).expect("annotates");
+        let when: Vec<&str> = (out.lines())
+            .filter_map(|l| l.split_once("runs when ")?.1.split(" | ").next())
+            .collect();
+        assert_eq!(
+            when,
+            [
+                "param_1 ≥ 1 (CTA-uniform, branch at line 17)",
+                "param_2 > 3 and param_1 < 1 (CTA-uniform, branch at line 22)",
+                "param_1 ≥ 1 (CTA-uniform, branch at line 25)",
+                "param_2 ≤ 5 (CTA-uniform, branch at line 29)",
             ]
         );
     }

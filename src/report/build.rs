@@ -865,7 +865,10 @@ impl<'a> KernelReportBuilder<'a> {
             display[r] = format!("{} (remainder)", display[r]);
         }
 
-        let sets = thread_sets(&affine);
+        let mut sets = thread_sets(&affine);
+        for (form, _) in sets.forms.values_mut() {
+            *form = affine.known_multiples(form);
+        }
         let compile_time: HashMap<SymbolicConstant, i64> =
             (SpecialVector::Ntid.components().into_iter())
                 .zip(kernel.reqntid.into_iter().flatten())
@@ -918,7 +921,7 @@ impl<'a> KernelReportBuilder<'a> {
     /// `%r83@106`: a value's register and the PTX line of its statement,
     /// with the statement's index on the line when it shares it;
     /// `%r34@$L__BB0_5` for a φ, its block.
-    fn value_name(
+    pub(super) fn value_name(
         module: &Module,
         kernel: &Kernel,
         cfg: &ControlFlowGraph,
