@@ -832,9 +832,10 @@ contract (Codex's review of 2b2731b).
   DSL, flashinfer's trtllm-gen attention, PyTorch's elementwise).
 - `--ncu` compares no counts in a kernel with irreducible control
   flow, whose blocks' executions the tool does not know
-  (`tests/lit/ncu-irreducible.test`: every block `unchecked`), nor
-  on a PTX line holding more than one instruction, which a record
-  counts together (`tests/lit/ncu-two-per-line.test`).
+  (`tests/ncu_comparisons.rs`,
+  `an_irreducible_cycle_leaves_every_block_unchecked`), nor on a PTX
+  line holding more than one instruction, which a record counts
+  together (`two_instructions_on_one_line_are_not_compared`).
 - No machine model. AI is printed without a ceiling; the PTX `.target`
   names a family, not a part.
 
@@ -937,7 +938,8 @@ One line each, with the trigger that would start it.
   one PTX global access also compares its L2 sectors and their ideal
   over the launch, the sectors per warp request times the warps with a
   lane that runs it, a range over the address's alignment
-  (`kernels[].measured[].sectors`, `tests/lit/ncu-sectors.test`; the
+  (`kernels[].measured[].sectors`, `tests/ncu_comparisons.rs`,
+  `a_line_at_its_own_width_compares_its_l2_sectors`; the
   text report counts the lines that agree and prints those that differ,
   in the records only the three copies above in
   `micro/shared_wavefronts.cp_async.ncu.json`, `tests/lit/gluon-ncu.test`), once
