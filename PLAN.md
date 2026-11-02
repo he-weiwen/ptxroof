@@ -998,7 +998,7 @@ One line each, with the trigger that would start it.
   annotation (`tests/report_invariants.rs`), two statements' joined by
   ` ; ` (`statements_on_one_line_join_their_annotations`). So far each
   block's annotation, on its label's line or else on its first
-  statement's after `[<block name>]`: a loop header's `loop: trips` and
+  instruction's after `[<block name>]` (`micro-vector-register.test`): a loop header's `loop: trips` and
   the trip count, or `?` and why (`tests/lit/k5-annotate.test`), and
   the global bytes one CTA requests over one run of the loop's own
   blocks, the distinct bytes and the bytes of the sectors they touch,

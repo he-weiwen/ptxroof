@@ -48,7 +48,8 @@ pub fn annotate(source: &str, opts: &AnalyzeOptions) -> Result<String, AnalyzeEr
 
 impl KernelReportBuilder<'_> {
     /// Each block's annotation, a loop header's trip count first, on its
-    /// label's line, else on its first statement's after `[<block name>] `,
+    /// label's line, else on its first instruction's after `[<block
+    /// name>] `,
     /// then each statement's on its own line, `unused` alone where nothing
     /// with an effect reads its results. Counts are over the launch given
     /// the grid and the block shape, else per CTA given the shape, else
@@ -72,7 +73,11 @@ impl KernelReportBuilder<'_> {
             notes.entry(line).or_default().push(entry);
         }
         for bm in &self.blocks {
-            let (b, start) = (bm.block, self.cfg.block(bm.block).start);
+            let b = bm.block;
+            let (first, end) = (self.cfg.block(b).start, self.cfg.block(b).end);
+            let start = (first..end)
+                .find(|&s| matches!(self.kernel.stmts[s], Stmt::Label { .. } | Stmt::Instr(_)))
+                .unwrap_or(first);
             let header = self.forest.block_loop[b.0 as usize]
                 .filter(|&l| self.forest.get(l).header == b)
                 .map(|l| {
