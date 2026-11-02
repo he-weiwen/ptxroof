@@ -1,36 +1,30 @@
-# The nanochat c_fc GEMM (both operands e4m3, 4 warps). Pinned as the
-# tool reads it today; the limitations it shows are PLAN.md's: the fp8
-# `mma` is unclassified, the hex-sized `cp.async` bytes are unknown, the
-# trip count is not folded to a ceiling, and the byte total next to the
-# unknown copies is printed as an upper bound. The global copies'
-# addresses hold the grouped tile schedule's quotients by runtime
-# values as uniform variables; the ldmatrix rows' swizzle reads as an
-# xor of thread index fields, conflict free.
+# The nanochat c_fc GEMM (both operands e4m3, 4 warps of the 128 threads
+# `.reqntid` sets, its shared memory all set at launch). Its K loop runs
+# ⌈K/64⌉ trips behind a guard on K > 0, so the kernel's tensor flops,
+# 16384 per thread per trip, and its global loads, at most 128 B per
+# thread per trip, are bounds per CTA; per thread 129 f32 flops and
+# 256 B stored. The global copies' addresses hold the grouped tile
+# schedule's quotients by runtime values as uniform variables, their
+# sectors unknown until param_11 is bound; the ldmatrix rows' swizzle
+# reads as an xor of thread index fields, conflict free, 4 wavefronts.
+# The text report pins the loop's instruction tally, its exact
+# per-iteration tensor flops and shared loads, AI(global), no unknowns
+# and full coverage.
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx | FileCheck "%s"
-CHECK: kernel fp8_gemm_kernel
-CHECK: block size: 128 threads, 4 warps (128x1x1 from .reqntid)
-CHECK: shared memory [static]: 0 B per CTA + dynamic (set at launch)
+RUN: %ptxroof analyze --annotate %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
 CHECK: loop gluon_fp8.py:173 ($L__BB0_3)
-CHECK: trips = ⌈param_10/64⌉
 CHECK: tensor fp8                                                64
 CHECK: mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32     64
 CHECK: ldmatrix.sync.aligned.m8n8.x4.shared.b16                16
 CHECK: global -> shared copy 16 B                              <= 8
 CHECK: cp.async.cg.shared.global                             <= 8
 CHECK: tensor flops = 16384  (fp8 16384)
-CHECK: global bytes: load <= 128 B, store 0 B
 CHECK: shared bytes: load 256 B, store <= 128 B
 CHECK: AI(global) >= 128 flop/B
-CHECK: accesses:
-CHECK: gluon_fp8.py:188  ldmatrix.sync.aligned.m8n8.x4.shared.b16  shared load 16 B
-CHECK-SAME: warp: 4 wavefronts (ideal 4)
-CHECK-SAME: (16 * (⌊%tid.x/16⌋ mod 2) ⊕ 16 * (⌊%tid.x/2⌋ mod 4) ⊕ 64 * (%tid.x mod 16)) + global_smem - 8192]
-CHECK: gluon_fp8.py:199  cp.async.cg.shared.global                 global load 16 B   warp: ? (the coefficient of (⌊%tid.x/4⌋ mod 32) is param_11; bind it)
-CHECK-SAME: * uniform(%r54@90) - (128 * param_11) * uniform(%r64@106) + param_0 + 64]
-CHECK: totals [static]:
-CHECK: flops = 129  (f32 129)
-CHECK: tensor flops = <= 16384 * ⌈param_10/64⌉  (fp8 <= 16384 * ⌈param_10/64⌉)
-CHECK: global bytes: load <= 128 * ⌈param_10/64⌉ + 264 B, store 256 B
 CHECK: unknowns: none
 CHECK: coverage: instructions_classified 100.0% (966/966)
 CHECK: coverage: loop_trips_resolved 100.0% (1/1)
+ANN: {{^}}.visible .entry fp8_gemm_kernel( // block 128×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 16,512; tensor flops fp8 <= 2097152·⌈param_10/64⌉; sfu flops f32 128; global load <= (16384·⌈param_10/64⌉ + 33792) B, store 32,768 B; shared load <= (32768·⌈param_10/64⌉ + 65536) B, store <= (16384·⌈param_10/64⌉ + 98304) B; param load 8,192 B{{$}}
+ANN: {{^}}$L__BB0_3:                              // =>This Inner Loop Header: Depth=1 // loop: trips ⌈param_10/64⌉ | warp * × lane * | under line 336 | exec <= 128·⌈param_10/64⌉/CTA{{$}}
+ANN: {{^}}	ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r104, %r105, %r106, %r107}, [%r186]; // shared load [8192·iv[$L__BB0_3] + 1024·⌊(%tid.x mod 128)/64⌋ - 24576·⌊uniform(%r172@515)/2⌋ + (16·(⌊%tid.x/16⌋ mod 2) ⊕ 16·(⌊%tid.x/2⌋ mod 4) ⊕ 64·(%tid.x mod 16)) + global_smem] wavefronts/req 4 (ideal 4){{$}}
+ANN: {{^}}	cp.async.cg.shared.global [ %r205 + 0 ], [ %rd50 + 0 ], 0x10, 0x10; // shared store [8192·iv[$L__BB0_3] - 24576·⌊uniform(%r169@898)/2⌋ + (16·(⌊%tid.x/8⌋ mod 4) ⊕ 16·(%tid.x mod 128)) + global_smem + 16384] wavefronts/req ? (wavefronts not modelled) | global load [(128·param_11)·%ctaid.x + param_10·%ctaid.y + 64·iv[$L__BB0_3] + 16·(%tid.x mod 4) + param_11·(⌊%tid.x/4⌋ mod 32) + (param_11·(1024 - 1024·⌈param_9/128⌉))·uniform(%r54@90) - (128·param_11)·uniform(%r64@106) + param_0 + 128] sectors/req ? (the coefficient of (⌊%tid.x/4⌋ mod 32) is param_11; bind it){{$}}
