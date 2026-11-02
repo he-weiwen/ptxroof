@@ -5,8 +5,9 @@
 //! or total that stops agreeing changes it as a contradiction would.
 
 use ptxroof::report::build::{AnalyzeOptions, analyze};
-use ptxroof::report::measured::NcuRecord;
-use ptxroof::report::schema::{MeasuredSectors, MeasuredTotal, SectorOutcome, Verdict};
+use ptxroof::report::measured::{
+    MeasuredSectors, MeasuredTotal, NcuRecord, SectorOutcome, Verdict,
+};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;

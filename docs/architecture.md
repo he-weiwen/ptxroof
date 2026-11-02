@@ -49,7 +49,7 @@ only declare modules and selected public entry points.
 | `analysis/instruction_counts/collect` | Attach block/loop execution context to instruction contributions |
 | `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs, bytes and conversions they sum to |
 | `report/bindings` | Caller parameter bindings and their text syntax |
-| `report/measured` | Import and validate NCU records; compare measured and predicted quantities |
+| `report/measured` | Import and validate NCU records; compare measured and predicted quantities, and the comparisons' results |
 | `report/schema` | Owned serializable report structures |
 | `report/build` | Orchestrate kernel analyses and aggregate their results into reports |
 | `report/names` | Kernel demangling for display |

@@ -52,7 +52,10 @@ use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SharedSize, Specia
 use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::bindings::BindingSpec;
-use crate::report::measured::{LineIndex, NcuRecord, Prediction, Sectors, SharedWaves};
+use crate::report::measured::{
+    LineIndex, MeasuredBlock, MeasuredTotals, NcuRecord, Prediction, SectorCount, Sectors,
+    SharedWaves,
+};
 use crate::report::names::demangle;
 use crate::report::schema::*;
 use crate::ssa::Value;

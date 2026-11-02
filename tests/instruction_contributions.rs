@@ -8,10 +8,8 @@ use ptxroof::analysis::instruction_counts::measurement::{
 use ptxroof::analysis::memory_footprint::CountRange;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::parse::parser::parse;
-use ptxroof::report::measured::{NcuLine, NcuRecord};
-use ptxroof::report::schema::{
-    ByteRange, ContributionDetails, Count, InstructionVariant, SectorOutcome,
-};
+use ptxroof::report::measured::{NcuLine, NcuRecord, SectorOutcome};
+use ptxroof::report::schema::{ByteRange, ContributionDetails, Count, InstructionVariant};
 use ptxroof::report::{AnalyzeOptions, analyze, text};
 
 fn source(body: &str) -> String {
