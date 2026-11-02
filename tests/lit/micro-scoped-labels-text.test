@@ -1,11 +1,13 @@
 # The same label in two sibling asm scopes: two separate self-loops,
-# named by their scope-unique labels, each with its own trip count.
+# named by their scope-unique labels spin$scope1 and spin$scope2, at
+# source lines 5 and 9, each with its own trip count.
 RUN: %ptxroof analyze %fixtures/micro/scoped_labels.ptx | FileCheck "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/scoped_labels.ptx | FileCheck --check-prefix=ANN "%s"
 CHECK: kernel micro_scoped_labels
 CHECK: <->  spin$scope1  scoped_labels.cu:5        3  spin$scope1, <block 2>  scoped_labels.cu:5 (header, latch)
 CHECK: <->  spin$scope2  scoped_labels.cu:9        3  spin$scope2, <block 4>  scoped_labels.cu:9 (header, latch)
 CHECK: loop scoped_labels.cu:5 (spin$scope1)
-CHECK: trips = max(param_0, 1)
 CHECK: loop scoped_labels.cu:9 (spin$scope2)
-CHECK: trips = max(param_1, 1)
 CHECK: unknowns: none
+ANN: {{^}}	spin: // loop: trips max(param_0, 1) | exec (max(param_0, 1))/thread{{$}}
+ANN: {{^}}	spin: // loop: trips max(param_1, 1) | exec (max(param_1, 1))/thread{{$}}
