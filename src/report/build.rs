@@ -1578,7 +1578,7 @@ impl<'a> KernelReportBuilder<'a> {
     /// `.shared` declarations of `element_count × element_width`, a
     /// scalar's count being 1, plus whether it declares a launch-sized
     /// `.extern .shared` array. See [`SharedMemory`].
-    fn shared_memory(&self) -> SharedMemory {
+    pub(super) fn shared_memory(&self) -> SharedMemory {
         let mut static_bytes = 0u64;
         let mut dynamic = false;
         for decl in self

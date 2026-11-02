@@ -51,9 +51,9 @@ impl KernelReportBuilder<'_> {
     /// the grid and the block shape, else per CTA given the shape, else
     /// per thread.
     fn annotations(&self, notes: &mut BTreeMap<u32, Vec<String>>) {
-        if let Some(launch) = self.launch() {
+        if let Some(entry) = self.entry() {
             let line = self.lines.line(self.kernel.offset);
-            notes.entry(line).or_default().push(launch);
+            notes.entry(line).or_default().push(entry);
         }
         let threads: u64 = self.counts.shape.iter().map(|&n| u64::from(n)).product();
         let cta = (threads > 0).then(|| CtaSize {
@@ -108,9 +108,11 @@ impl KernelReportBuilder<'_> {
         }
     }
 
-    /// What the counts take of the launch, those given: `grid X×Y×Z`,
-    /// `block X×Y×Z` and each parameter's value.
-    fn launch(&self) -> Option<String> {
+    /// The `.entry` line's annotation: what the counts take of the
+    /// launch, those given, `grid X×Y×Z`, `block X×Y×Z` and each
+    /// parameter's value; then the shared memory each CTA declares, `+
+    /// dynamic` where an `.extern .shared` array's size is set at launch.
+    fn entry(&self) -> Option<String> {
         let dims = |d: [u32; 3]| d.map(|n| n.to_string()).join("×");
         let shape = self.counts.shape;
         let params: BTreeMap<usize, i64> = (self.bind_map.iter())
@@ -126,11 +128,21 @@ impl KernelReportBuilder<'_> {
             self.counts.grid().map(|g| format!("grid {}", dims(g))),
             (!shape.contains(&0)).then(|| format!("block {}", dims(shape))),
             (!params.is_empty()).then(|| params.join(", ")),
+            self.shared(),
         ]
         .into_iter()
         .flatten()
         .collect();
         (!parts.is_empty()).then(|| parts.join(" | "))
+    }
+
+    /// `shared memory N B/CTA`, its static declarations' bytes, and `+
+    /// dynamic` where the launch sets more, unless it declares none.
+    fn shared(&self) -> Option<String> {
+        let sm = self.shared_memory();
+        let bytes = self.count(&SymExpr::Const(i64::try_from(sm.static_bytes).ok()?));
+        let dynamic = if sm.dynamic { " + dynamic" } else { "" };
+        (sm.static_bytes > 0 || sm.dynamic).then(|| format!("shared memory {bytes} B/CTA{dynamic}"))
     }
 
     /// The line of statement `s`, but a `.branchtargets` list.

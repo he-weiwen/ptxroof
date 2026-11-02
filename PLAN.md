@@ -1043,7 +1043,10 @@ One line each, with the trigger that would start it.
   instruction whose results nothing with an effect reads is `unused`
   (the same test). On the kernel's `.entry` line, what the counts take
   of the launch, those given: `grid X×Y×Z`, `block X×Y×Z` and each
-  bound parameter's value (`k5-annotate.test`). Not printed: the ncu
+  bound parameter's value (`k5-annotate.test`); then the shared memory
+  each CTA declares, `shared memory 2,048 B/CTA`, `+ dynamic` where an
+  `.extern .shared` array's size is set at launch
+  (`gluon-attn-fwd-ws-annotate.test`). Not printed: the ncu
   comparisons, which test the analysis (`--ncu` gives the launch;
   `tests/ncu_corpus.rs` keeps them); FLOPs.
 - `capabilities` verb that generates the audit doc's tables.
