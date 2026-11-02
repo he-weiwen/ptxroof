@@ -1,22 +1,15 @@
 # Thread t of CTA c stores when t + 64·c < 1000. With no grid, %ctaid is
 # unbounded and the mask an unknown selector: per CTA the store is a
 # bound. Under 15 CTAs every thread of every CTA stores, so the guard
-# holds, 256 B per CTA; under 16 the last CTA stores on its first 40
-# threads, so per CTA the store is a bound, and over the launch it is
-# 1000 threads' 4000 B. Under the largest grid CUDA allows, 2^31-1 by
-# 65535 by 65535 CTAs, a count over the launch leaves i64 and is
-# unknown.
-RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 16 | FileCheck --check-prefix=PARTIAL "%s"
-RUN: %ptxroof analyze %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 2147483647,65535,65535 | FileCheck --check-prefix=HUGE "%s"
+# holds, 3,840 B over the launch; under 16 the last CTA stores on its
+# first 40 threads, so the store's sectors per request are a bound, and
+# over the launch it is 1000 threads' 4000 B. Under the largest grid
+# CUDA allows, 2^31-1 by 65535 by 65535 CTAs, a count over the launch
+# leaves i64 and is unknown.
 RUN: %ptxroof analyze --annotate %fixtures/micro/cta_mask.ptx --bind 1:n=1000 | FileCheck --check-prefix=FREE "%s"
 RUN: %ptxroof analyze --annotate %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 15 | FileCheck --check-prefix=FULL "%s"
 RUN: %ptxroof analyze --annotate %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 16 | FileCheck --check-prefix=ANNPARTIAL "%s"
 RUN: %ptxroof analyze --annotate %fixtures/micro/cta_mask.ptx --bind 1:n=1000 --grid 2147483647,65535,65535 | FileCheck --check-prefix=ANNHUGE "%s"
-PARTIAL: st.global.u32  global store 4 B on <= 64 threads in 2 warps (%tid.x + 64 * %ctaid.x < 1000)  warp: <= 5 sectors (ideal <= 4)
-PARTIAL: totals per CTA [static]:
-PARTIAL: global bytes: load 0 B, store <= 256 B
-HUGE: totals per launch [static]:
-HUGE: instructions = 0 + unknown
 FREE: {{^}}.visible .entry micro_cta_mask( // block 64×1×1 | param_1 = 1000 | per CTA: global store <= 256 B; param load 768 B{{$}}
 FREE: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + 256·%ctaid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
 FULL: {{^}}.visible .entry micro_cta_mask( // grid 15×1×1 | block 64×1×1 | param_1 = 1000 | per launch: global store 3,840 B; param load 11,520 B{{$}}

@@ -73,11 +73,12 @@ its shared writes and instruction counts remain counted
 (`zero_source_copy_has_no_global_sectors_but_keeps_shared_writes` in that test).
 A `cp.async` reads its source only on the threads whose ignore-src
 predicate is false (PTX ISA §9.7.9.26.3.1), read as a guard is: its
-global row, sectors per warp, loop footprint, global load bytes and
-sector comparison count those threads, and its shared store the
-threads that execute it (`micro/cp_async_ignore_src.ptx`, RTX 4090:
-2176 B over the launch, its four lines' 68 measured L2 sectors). With a
-src-size register it reads at most cp-size: `global load <= 16 B`.
+sectors per warp, loop footprint, global load bytes and sector
+comparison count those threads, and its shared store the threads that
+execute it (`micro/cp_async_ignore_src.ptx`, RTX 4090: 2176 B over the
+launch, its four lines' 68 measured L2 sectors). With a src-size
+register it reads at most cp-size: `sectors/req <= 17 (ideal <= 16)`
+(`micro/cp_async_src_size.ptx`).
 
 **Input contract.** The PTX is taken to come from a CUDA or Triton
 program run without undefined behavior, whose integer arithmetic on
@@ -607,9 +608,10 @@ contract (Codex's review of 2b2731b).
   threads per CTA, as the record measures, `b200-mixed-index-guard.test`,
   `the_grid_decides_a_guard_on_the_cta_index`),
   and otherwise per CTA a bound, the lanes in at some CTA
-  (`micro/cta_mask.ptx`: under 16 CTAs `<= 64 threads`, where the last
-  stores on 40; `micro/cta_guards.ptx`). The ncu comparison sums such a
-  set's count over the CTAs (`Pred::launch`; scan_tma's line 184,
+  (`micro/cta_mask.ptx` under 16 CTAs, where the last stores on 40
+  threads: `sectors/req <= 5 (ideal <= 4)`; `micro/cta_guards.ptx`).
+  The ncu comparison sums such a set's count over the CTAs
+  (`Pred::launch`; scan_tma's line 184,
   `scan_tma_s_line_184_counts_the_ctas_that_run_it`), but not past 2^24
   CTAs on the axes its comparisons read or 2^26 lane evaluations
   (`a_launch_sums_each_cta_s_threads_and_warps`). Without a grid the masks
@@ -663,9 +665,9 @@ contract (Codex's review of 2b2731b).
 
 
   A src-size register is a bound on which threads read and how much
-  (`micro/cp_async_src_size.ptx`: `global load <= 16 B (predicated)
-  warp: <= 17 sectors`, `load <= 1024 B`, where 16 lanes read 8
-  sectors; `micro-cp-async-src-size.test`,
+  (`micro/cp_async_src_size.ptx`: `sectors/req <= 17 (ideal <= 16)`,
+  `global load <= 1,024 B`, where 16 lanes read 8 sectors;
+  `micro-cp-async-src-size.test`,
   `a_register_source_size_bounds_the_sectors_measured`).
 
 ### Presentation
