@@ -51,6 +51,10 @@ impl KernelReportBuilder<'_> {
     /// the grid and the block shape, else per CTA given the shape, else
     /// per thread.
     fn annotations(&self, notes: &mut BTreeMap<u32, Vec<String>>) {
+        if let Some(launch) = self.launch() {
+            let line = self.lines.line(self.kernel.offset);
+            notes.entry(line).or_default().push(launch);
+        }
         let threads: u64 = self.counts.shape.iter().map(|&n| u64::from(n)).product();
         let cta = (threads > 0).then(|| CtaSize {
             threads,
@@ -102,6 +106,31 @@ impl KernelReportBuilder<'_> {
                 notes.entry(line).or_default().push(parts.join(" | "));
             }
         }
+    }
+
+    /// What the counts take of the launch, those given: `grid X×Y×Z`,
+    /// `block X×Y×Z` and each parameter's value.
+    fn launch(&self) -> Option<String> {
+        let dims = |d: [u32; 3]| d.map(|n| n.to_string()).join("×");
+        let shape = self.counts.shape;
+        let params: BTreeMap<usize, i64> = (self.bind_map.iter())
+            .filter_map(|(k, &v)| match k {
+                SymbolicConstant::KernelParam(i) => Some((*i, v)),
+                _ => None,
+            })
+            .collect();
+        let params: Vec<String> = (params.into_iter())
+            .map(|(i, v)| format!("{} = {v}", SymbolicConstant::KernelParam(i)))
+            .collect();
+        let parts: Vec<String> = [
+            self.counts.grid().map(|g| format!("grid {}", dims(g))),
+            (!shape.contains(&0)).then(|| format!("block {}", dims(shape))),
+            (!params.is_empty()).then(|| params.join(", ")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        (!parts.is_empty()).then(|| parts.join(" | "))
     }
 
     /// The line of statement `s`, but a `.branchtargets` list.
