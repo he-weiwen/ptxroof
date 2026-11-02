@@ -378,7 +378,11 @@ impl KernelReportBuilder<'_> {
             let bound = if row.sectors_at_most { "<= " } else { "" };
             let request = match (per_request, ideal, &row.footprint_unknown) {
                 (Some(n), Some(ideal), _) => {
-                    format!(" {what}/req {bound}{} (ideal {})", range(n), range(ideal))
+                    format!(
+                        " {what}/req {bound}{} (ideal {bound}{})",
+                        range(n),
+                        range(ideal)
+                    )
                 }
                 (_, _, Some(why)) => format!(" {what}/req ? ({why})"),
                 _ => String::new(),

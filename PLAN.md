@@ -1043,8 +1043,9 @@ One line each, with the trigger that would start it.
   and `c·⌊u/d⌋` of an unknown value u whose low bits every definition
   leaves 0 up to d as `(c/d)·u` (`micro-uniform-aligned-annotate.test`),
   then a global one's `sectors/req` and a shared one's
-  `wavefronts/req` with their ideal, `<=` for a bound, or `?` and why
-  (`k5-annotate.test`, `micro-vector-def-annotate.test`). An
+  `wavefronts/req` with their ideal, `<=` before both where the lanes
+  are a bound, or `?` and why (`k5-annotate.test`,
+  `micro-vector-def-annotate.test`). An
   instruction whose results nothing with an effect reads is `unused`
   (the same test). On the kernel's `.entry` line, what the counts take
   of the launch, those given: `grid X×Y×Z`, `block X×Y×Z` and each

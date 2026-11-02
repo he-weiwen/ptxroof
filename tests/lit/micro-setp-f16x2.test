@@ -5,4 +5,4 @@
 # store bytes are bounds.
 RUN: %ptxroof analyze --annotate %fixtures/micro/setp_f16x2.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_setp_f16x2( // block 64×1×1 | per CTA: global store <= 256 B; param load 512 B{{$}}
-ANN: {{^}}	@%p2 st.global.u32 	[%rd3], %r1; // exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal 4){{$}}
+ANN: {{^}}	@%p2 st.global.u32 	[%rd3], %r1; // exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
