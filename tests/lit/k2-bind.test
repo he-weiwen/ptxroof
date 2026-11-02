@@ -1,11 +1,9 @@
-# Numeric columns via --bind 2:K=4096 (PR 12): the binding is echoed
-# in the header, every K-dependent expression collapses to a number
-# (trips 1024 / 0, totals 8 x 1024 + 3 = 8195 flops), and the
-# remainder loop's 4096 mod 4 = 0 trips read as exactly that.
-RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx --bind 2:K=4096 | FileCheck "%s"
-CHECK: bindings: param 2 (K) = 4096
-CHECK: loop 2_coalesced.cuh:14 ($L__BB0_4)
-CHECK: trips = 1024
-CHECK: loop 2_coalesced.cuh:14 (remainder)
-CHECK: trips = 0
-CHECK: flops = <= 8195
+# Numeric counts via --bind 2:K=4096 (PR 12): the binding is echoed on
+# the `.entry` line, every K-dependent expression collapses to a number
+# (trips 1024 / 0, per thread 8 x 1024 + 3 = 8195 flops at most, behind
+# the bounds guard), and the remainder loop's 4096 mod 4 = 0 trips read
+# as exactly that, its blocks on no thread.
+RUN: %ptxroof analyze --annotate %fixtures/k2/k2.sm_80.ptx --bind 2:K=4096 | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}.visible .entry _Z15hgemm_coalescediiifPK6__halfS1_fPS_( // param_2 = 4096 | per thread: flops f32 <= 8,195; global load <= 16,386 B, store <= 2 B; param load 44 B{{$}}
+ANN: {{^}}$L__BB0_4: // loop: trips 1024 | exec <= 1,024/thread{{$}}
+ANN: {{^}}$L__BB0_7: // loop: trips 0 | no thread{{$}}

@@ -1,26 +1,23 @@
 # Totals per launch under a record's grid. norope's store runs on 72
-# threads of each of its 8192 CTAs, 16 B each: 9437184 B. ds2 rope's
-# loads and stores sit in a loop whose latch reads a `min` of %ctaid.y,
-# a row range of 16 rows per CTA: per CTA 16640 B per trip, over the
-# record's 512 CTAs 136,314,880 B, and the loop's executions agree with
-# the B200's. ssd_pass's copies read their sources only where their
-# ignore-src is false (PTX ISA §9.7.9.26.3.1): in 3 stages before its
-# loop and on 29 of the loop's 32 trips, `k < 30`, 8200 B each per CTA,
-# 262,400 B, over the record's 320 CTAs 83,968,000 B.
-RUN: %ptxroof analyze %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json | FileCheck --check-prefix=NOROPE "%s"
+# threads of each of its 8192 CTAs, 16 B each: 9,437,184 B, and its
+# loads 2176 B per CTA, 17,825,792 B. ds2 rope's loads and stores sit
+# in a loop whose latch reads a `min` of %ctaid.y, a row range of 16
+# rows per CTA: per CTA 16640 B per trip, over the record's 512 CTAs
+# 136,314,880 B, and the loop's executions agree with the B200's.
+# ssd_pass's copies read their sources only where their ignore-src is
+# false (PTX ISA §9.7.9.26.3.1): in 3 stages before its loop and on 29
+# of the loop's 32 trips, `k < 30`, 8200 B each per CTA, 262,400 B, over
+# the record's 320 CTAs 83,968,000 B.
+RUN: %ptxroof analyze --annotate %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json | FileCheck --check-prefix=NOROPE "%s"
 RUN: %ptxroof analyze %fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ncu.json | FileCheck --check-prefix=DS2 "%s"
-RUN: %ptxroof analyze %fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ptx --ncu %fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ncu.json | FileCheck --check-prefix=SSD "%s"
-NOROPE: totals per CTA [static]:
-NOROPE: global bytes: load 2176 B, store 1152 B
-NOROPE: totals per launch [static]:
-NOROPE: global bytes: load 17825792 B, store 9437184 B
-DS2: trips = max(min(16 * %ctaid.y + 16, 8192) - 16 * %ctaid.y, 1)
+RUN: %ptxroof analyze --annotate %fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ncu.json | FileCheck --check-prefix=ANNDS2 "%s"
+RUN: %ptxroof analyze --annotate %fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ptx --ncu %fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ncu.json | FileCheck --check-prefix=SSD "%s"
+NOROPE: {{^}}.visible .entry set_mla_kv_buffer_kernel_norope( // grid 8192×1×1 | block 128×1×1 | per launch: global load 17,825,792 B, store 9,437,184 B; param load 25,165,824 B{{$}}
+NOROPE: {{^}}	@%p1 st.global.v4.b32 [ %rd4 + 0 ], { %r1, %r2, %r3, %r4 }; // exec 589,824/launch | global store [2048·%ctaid.y + 16·(%tid.x mod 128) + 1152·uniform(%rd1@66) + param_0] sectors/req 4–17 (ideal 4–16){{$}}
 DS2: totals per CTA [static]:
 DS2: global bytes: load 16640 * max(min(16 * %ctaid.y + 16, 8192) - 16 * %ctaid.y, 1) B
-DS2: totals per launch [static]:
-DS2: global bytes: load 136314880 B, store 135266304 B
 DS2: $L__BB0_2{{ +}}confirmed
-SSD: totals per CTA [static]:
-SSD: global bytes: load 262400 B, store 270336 B
-SSD: totals per launch [static]:
-SSD: global bytes: load 83968000 B, store 86507520 B
+ANNDS2: {{^}}.visible .entry _rotary_kernel( // grid 1×512×1 | block 32×1×1 | param_4 = 24576, param_5 = 192, param_6 = 2112, param_7 = 576, param_8 = 32, param_9 = 32, param_10 = 8192 | per launch: flops bf16 202,899,456; global load 136,314,880 B, store 135,266,304 B; param load 851,968 B{{$}}
+ANNDS2: {{^}}$L__BB0_2:                              // %.lr.ph // loop: trips max(min(16·%ctaid.y + 16, 8192) - 16·%ctaid.y, 1) | warp * × lane * | exec 262,144/launch{{$}}
+SSD: {{^}}.visible .entry _state_passing_fwd_kernel( // grid 4×1×80 | block 128×1×1 | param_5 = 0, param_6 = 8192, param_7 = 32, param_8 = 8192, param_9 = 256, param_10 = 20971520, param_11 = 655360, param_12 = 8192, param_13 = 20971520, param_14 = 655360, param_15 = 8192, param_16 = 655360, param_17 = 8192, param_18 = 655360, param_19 = 256, param_20 = 8192, param_21 = 0, param_22 = 0, param_23 = 0, param_24 = 8192 | shared memory 0 B/CTA + dynamic | per launch: flops f32 43,253,760; sfu flops f32 1,310,720; global load 83,968,000 B, store 86,507,520 B; shared load 94,371,840 B, store 91,840,000 B; param load 4,259,840 B{{$}}
+SSD: {{^}}$L__BB0_2:                              // =>This Inner Loop Header: Depth=1 // loop: trips 32 | global per CTA: requested 499,944 B, unique ? | warp * × lane * | exec 1,310,720/launch{{$}}

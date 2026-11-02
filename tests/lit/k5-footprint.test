@@ -3,13 +3,13 @@
 # is sector-aligned), the B tile load 32 consecutive halves (2), and the
 # epilogue's C accesses 8 lanes 16 B apart per row (16). Nsight Compute
 # on this launch: 18,432 load requests over 81,920 sectors and 2,048
-# store requests over 32,768, exactly these rows times their counts.
-RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 | FileCheck "%s"
-CHECK: kernel void hgemm_2d_blocktiling<64, 64, 8, 8, 8>(int, int, int, float, __half const*, __half const*, float, __half*)
-CHECK: loop 5_2d_blocktiling.cuh:39 ($L__BB0_2)
-CHECK: 5_2d_blocktiling.cuh:42  ld.global.u16  global load 2 B   warp: 4–8 sectors (ideal 2)    [32768 * %ctaid.y + 16 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8) + param_4 - 16]          k[5_2d_blocktiling.cuh:39]: +16 B/iter
-CHECK: 5_2d_blocktiling.cuh:46  ld.global.u16  global load 2 B   warp: 2–3 sectors (ideal 2)    [128 * %ctaid.x + 4096 * k[5_2d_blocktiling.cuh:39] + 512 * ⌊%tid.x/64⌋ + 2 * (%tid.x mod 64) + param_5 - 4096]      k[5_2d_blocktiling.cuh:39]: +4096 B/iter
-CHECK: global bytes per CTA over the loop's own blocks: requested 65536 B, unique 65536 B, in sectors 98304–147456 B
-CHECK: accesses outside loops:
-CHECK: 5_2d_blocktiling.cuh:69  ld.global.u16  global load 2 B   warp: 16–20 sectors (ideal 2)    [128 * %ctaid.x + 32768 * %ctaid.y + 4096 * ⌊%tid.x/8⌋ + 16 * (%tid.x mod 8) + param_7]
-CHECK: 5_2d_blocktiling.cuh:68  st.global.u16  global store 2 B  warp: 16–20 sectors (ideal 2)    [128 * %ctaid.x + 32768 * %ctaid.y + 4096 * ⌊%tid.x/8⌋ + 16 * (%tid.x mod 8) + param_7]
+# store requests over 32,768, exactly these lines' sectors per request
+# times their counts. The K loop's global bytes per CTA: 65,536 B
+# requested, 65,536 B unique, in sectors 98,304–147,456 B.
+RUN: %ptxroof analyze --annotate %fixtures/k5/k5.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}.visible .entry _Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0_( // block 64×1×1 | param_1 = 256, param_2 = 256 | shared memory 2,048 B/CTA | per CTA: flops f32 2,109,440; global load 73,728 B, store 8,192 B; shared load 524,288 B, store 65,536 B; param load 2,560 B{{$}}
+ANN: {{^}}$L__BB0_2: // loop: trips 32 | global per CTA: requested 65,536 B, unique 65,536 B, sectors 98,304–147,456 B | warp * × lane * | exec 2,048/CTA{{$}}
+ANN: {{^}}	ld.global.u16 	%rs1, [%rd15]; // global load [32768·%ctaid.y + 16·iv[$L__BB0_2] + 512·⌊%tid.x/8⌋ + 2·(%tid.x mod 8) + param_4] sectors/req 4–8 (ideal 2){{$}}
+ANN: {{^}}	ld.global.u16 	%rs9, [%rd31]; // global load [128·%ctaid.x + 4096·iv[$L__BB0_2] + 512·⌊%tid.x/64⌋ + 2·(%tid.x mod 64) + param_5] sectors/req 2–3 (ideal 2){{$}}
+ANN: {{^}}	ld.global.u16 	%rs33, [%rd52]; // global load [128·%ctaid.x + 32768·%ctaid.y + 4096·⌊%tid.x/8⌋ + 16·(%tid.x mod 8) + param_7] sectors/req 16–20 (ideal 2){{$}}
+ANN: {{^}}	st.global.u16 	[%rd52], %rs34; // global store [128·%ctaid.x + 32768·%ctaid.y + 4096·⌊%tid.x/8⌋ + 16·(%tid.x mod 8) + param_7] sectors/req 16–20 (ideal 2){{$}}
