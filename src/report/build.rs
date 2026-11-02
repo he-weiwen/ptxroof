@@ -53,8 +53,8 @@ use crate::ptx::literal::parse_int;
 use crate::ptx::parse::parser::{ParseError, parse};
 use crate::report::bindings::BindingSpec;
 use crate::report::measured::{
-    LineIndex, MeasuredBlock, MeasuredTotals, NcuRecord, Prediction, SectorCount, Sectors,
-    SharedWaves,
+    Comparison, LineIndex, MeasuredBlock, MeasuredTotals, NcuRecord, Prediction, SectorCount,
+    Sectors, SharedWaves,
 };
 use crate::report::names::demangle;
 use crate::report::schema::*;
@@ -126,6 +126,31 @@ pub fn analyze(
 
 /// Parse `source` and run `each` on every kernel's report builder, under
 /// the options' bindings, block shape and grid; the bindings it applied.
+/// The record's kernel against the record: per block, its predicted
+/// counts, sectors and wavefronts and the measured ones, and the launch's
+/// global sectors and L1TEX's; `None` without a record, a block shape or
+/// that kernel.
+pub fn compare(source: &str, opts: &AnalyzeOptions) -> Result<Option<Comparison>, AnalyzeError> {
+    let mut out = None;
+    each_kernel(source, opts, |builder| {
+        let Some(record) = &opts.ncu else {
+            return;
+        };
+        let threads: u64 = builder.counts.shape.iter().map(|&n| u64::from(n)).product();
+        if builder.module.interner.resolve(builder.kernel.name) != record.kernel || threads == 0 {
+            return;
+        }
+        let cta = CtaSize {
+            threads,
+            warps: threads.div_ceil(32),
+            exact: true,
+        };
+        let (blocks, launch) = builder.measured(record, builder.lines, &cta);
+        out = Some(Comparison { blocks, launch });
+    })?;
+    Ok(out)
+}
+
 pub(super) fn each_kernel(
     source: &str,
     opts: &AnalyzeOptions,

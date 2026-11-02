@@ -286,6 +286,13 @@ fn wavefronts(p: &Prediction, measured: &NcuLine) -> Option<MeasuredWavefronts> 
     })
 }
 
+/// A kernel's predictions against its record: per block, and the
+/// launch's global sectors.
+pub struct Comparison {
+    pub blocks: Vec<MeasuredBlock>,
+    pub launch: Option<MeasuredTotals>,
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct MeasuredBlock {
     pub name: String,
