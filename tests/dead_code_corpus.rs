@@ -28,11 +28,11 @@ fn unused(source: &str, opts: &AnalyzeOptions) -> Vec<(String, u32, String)> {
     let out = annotate(source, opts).expect("fixture analyzes");
     let mut kernel = String::new();
     let mut found = Vec::new();
-    for (line, text) in (1..).zip(out.lines()) {
-        if let Some(rest) = text.split(".entry ").nth(1) {
+    for ((line, ptx), text) in (1..).zip(source.lines()).zip(out.lines()) {
+        if let Some(rest) = ptx.split(".entry ").nth(1) {
             kernel = rest.split('(').next().unwrap_or_default().trim().to_owned();
         }
-        let Some((ptx, note)) = text.split_once(" // ") else {
+        let Some(note) = text.strip_prefix(ptx).and_then(|t| t.strip_prefix(" // ")) else {
             continue;
         };
         if note
