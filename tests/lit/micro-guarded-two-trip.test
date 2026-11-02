@@ -3,6 +3,6 @@
 # 32-63, storing at param_0 + 8 or + 4. The trip count refuses the
 # guarded write, and the store's address is unknown: the loop's
 # counter, iv + 1, differs by lane.
-RUN: %ptxroof analyze --annotate %fixtures/micro/guarded_two_trip.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/guarded_two_trip.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips ? (%p3 is written under a guard) | warp * × lane * | exec ?{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], 0; // global store addr ? ((iv[$L__BB0_1] + 1) differs between lanes after its loop, whose exit depends on %tid.x){{$}}

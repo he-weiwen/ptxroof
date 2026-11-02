@@ -4,5 +4,5 @@
 # 32 * floor(%tid.x / 32), so those warps read two addresses: the
 # store's address is 128·⌊%tid.x/32⌋ + param_0, 1 to 2 sectors per warp
 # request, ideal 1.
-RUN: %ptxroof analyze --annotate %fixtures/micro/shfl_2d_block.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/shfl_2d_block.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [128·⌊%tid.x/32⌋ + param_0] sectors/req 1–2 (ideal 1){{$}}

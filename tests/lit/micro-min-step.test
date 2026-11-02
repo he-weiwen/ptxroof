@@ -1,4 +1,4 @@
 # A latch whose counter steps by −2^63 has no trip count: the solver
 # negates the step, which −2^63 does not have in 64 bits.
-RUN: %ptxroof analyze --annotate %fixtures/micro/min_step.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/min_step.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__loop: // loop: trips ? (induction step is −2^63, which has no negation) | warp * × lane * | exec ?{{$}}

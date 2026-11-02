@@ -4,5 +4,5 @@
 # 0.5. Tiling's cost shows in shared memory: 2048 B per CTA (As 1024 +
 # Bs 1024), the `2048 bytes smem` ptxas reports for this fixture, none
 # sized at launch, vs S7.1's none.
-RUN: %ptxroof analyze --annotate %fixtures/k5/k5.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0_( // shared memory 2,048 B/CTA | per thread: flops f32 (1024·⌈param_2/8⌉ + 192); global load (32·⌈param_2/8⌉ + 128) B, store 128 B; shared load 256·⌈param_2/8⌉ B, store 32·⌈param_2/8⌉ B; param load 40 B{{$}}

@@ -985,8 +985,9 @@ One line each, with the trigger that would start it.
   another GPU is skipped, and fails the run under
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.
 - Per-line HTML view. Trigger: wanting it.
-- Annotated PTX, `analyze --annotate`, to replace the text and JSON
-  reports once their lit tests are ported: started 2026-10-31. The
+- Annotated PTX, what `analyze` prints since its lit tests were ported;
+  the text and JSON reports it replaces are still built by
+  `report::analyze`, which the CLI no longer calls. The
   input's lines, each followed by nothing or by ` // ` and its
   annotation (`tests/report_invariants.rs`), two statements' joined by
   ` ; ` (`statements_on_one_line_join_their_annotations`). So far each

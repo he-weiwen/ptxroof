@@ -3,5 +3,5 @@
 # warps 8 B, every other lane 2 B, and lane 0 stores 4 B only if it is
 # its warp's elected lane, which is unspecified: the CTA stores 284 B
 # plus a bound of 4, besides the 512 B its 128 threads load.
-RUN: %ptxroof analyze --annotate %fixtures/micro/elect.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/elect.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_elect( // block 128×1×1 | per CTA: global load 512 B, store <= 288 B; param load 2,048 B{{$}}

@@ -5,7 +5,7 @@
 # changes with the outer counter), nor where threads left the loop
 # defining it at different trips (max(uniform(%r5@61), 1), where each
 # thread has its own). Each unknown count names why.
-RUN: %ptxroof analyze --annotate %fixtures/micro/trip_uniform.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_uniform.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips 4 | warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}$L__BB0_2: // loop: trips ? (uniform(%r5@31) is defined in an enclosing loop: div by a non-constant divisor) | warp * × lane * | exec ?{{$}}
 ANN: {{^}}$L__BB1_1: // loop: trips ? (latch condition depends on special register %tid.x) | warp * × lane * | exec ?{{$}}

@@ -3,5 +3,5 @@
 # gives the warp lane 0's counter, one value, but each lane's own
 # counter, iv + 1, differs after the loop, so the address is unknown
 # rather than param_0 for every lane.
-RUN: %ptxroof analyze --annotate %fixtures/micro/escaped_shfl.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/escaped_shfl.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd3], %r2; // global store addr ? ((iv[$L__BB0_1] + 1) differs between lanes after its loop, whose exit depends on %tid.x){{$}}

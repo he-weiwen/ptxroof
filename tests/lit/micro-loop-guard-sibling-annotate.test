@@ -4,6 +4,6 @@
 # latch leaves to runs when the threads leave the loop that way, the
 # same for every thread. Each is nested in the block before it with a
 # condition of its own: the guard's, then the first exit's.
-RUN: %ptxroof analyze --annotate %fixtures/micro/loop_guard_sibling.ptx | FileCheck "%s"
+RUN: %ptxroof analyze %fixtures/micro/loop_guard_sibling.ptx | FileCheck "%s"
 CHECK: {{^}}	bar.sync 	0; // [<block 3>] warp * × lane * | runs when iv[$L__BB1_2] ≠ param_1 - 1 (CTA-uniform, branch at line 70) | nested in line 66 | exec ? (trips of $L__BB1_2){{$}}
 CHECK: {{^}}	mov.u32 	%r2, 10; // [<block 4>] warp * × lane * | runs when leaves loop $L__BB1_2 toward <block 4> (CTA-uniform) | nested in line 71 | exec <= 32/CTA{{$}}

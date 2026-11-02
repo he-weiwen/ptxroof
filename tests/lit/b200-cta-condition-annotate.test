@@ -4,5 +4,5 @@
 # where neither holds, so its threads are warp 10's lanes and its CTAs
 # those where 128·%ctaid.x ≥ 1: the warp-index half of the condition is
 # left to the warps shown.
-RUN: %ptxroof analyze --annotate --ncu %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx | FileCheck "%s"
+RUN: %ptxroof analyze --ncu %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx | FileCheck "%s"
 CHECK: {{^}}	elect.sync 	%r457|%p57, -1; // [<block 63>] <= warp 10 × lane * | CTAs 128·%ctaid.x ≥ 1 (1920/2048) | under line 2012 | exec ? (trips of $L__BB0_2){{$}}

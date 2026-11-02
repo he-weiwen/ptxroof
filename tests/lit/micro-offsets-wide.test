@@ -3,6 +3,6 @@
 # past 2^62 bytes is now left uncounted: the warp's sectors are unknown,
 # and the loop's unique bytes, though ptxas stores 4 B on each of 8
 # distinct addresses.
-RUN: %ptxroof analyze --annotate %fixtures/micro/offsets_wide.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/offsets_wide.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd4], %r1; // global store [18014398509481984·%tid.x + param_0] sectors/req ? (lane offsets reach 2^62 bytes){{$}}
 ANN: {{^}}$L__BB1_1: // loop: trips 8 | global per CTA: requested 32 B, unique ? | warp * × lane * | exec 8/CTA{{$}}

@@ -4,7 +4,7 @@
 # at most 4 f32 a trip. The guarded fma sits in an unlabelled block
 # inside the loop, which runs where a predicate the loop computes is
 # false.
-RUN: %ptxroof analyze --annotate %fixtures/micro/branchy.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/branchy.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_branchy( // per thread: flops f32 <= 4·param_1; global load 4·param_1 B, store 4·param_1 B; param load 12 B{{$}}
 ANN: {{^}}$L__BB0_2: // loop: trips param_1 | under line 28 | exec param_1/thread{{$}}
 ANN: {{^}}	fma.rn.f32 	%f4, %f4, %f1, 0f40000000; // [<block 3>] runs when predicate %p2 (line 36) is false (warp-uniform, branch at line 37) | nested in line 28 | exec <= param_1/thread{{$}}

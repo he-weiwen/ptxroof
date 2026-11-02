@@ -1,8 +1,7 @@
 //! Thin CLI shell over the `ptxroof` library.
 //!
-//! One verb: `analyze` — text report by default, `--json` for the
-//! serialized result tree, `--annotate` for the PTX with each line's
-//! results as a comment, `--dump-ast` for the parsed-module debug
+//! One verb: `analyze` — the PTX with what the analysis says of each
+//! line appended as a comment, `--dump-ast` for the parsed-module debug
 //! view. Further verbs join the `Command` enum additively as their
 //! features land.
 
@@ -32,12 +31,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Analyze a PTX file: per-loop flops/bytes/AI and verdicts
+    /// Analyze a PTX file: print it with what the analysis says of each
+    /// line appended as a `//` comment
     Analyze {
         input: PathBuf,
-        /// Emit the result tree as JSON instead of the text report
-        #[arg(long)]
-        json: bool,
         /// Bind a kernel parameter for numeric columns:
         /// `name=value` or `idx:name=value` (params are positional)
         #[arg(long)]
@@ -56,10 +53,6 @@ enum Command {
         /// Print the parsed module in canonical PTX form and exit
         #[arg(long)]
         dump_ast: bool,
-        /// Print the PTX with what the analysis says of each line
-        /// appended as a `//` comment
-        #[arg(long, conflicts_with_all = ["json", "dump_ast"])]
-        annotate: bool,
     },
 }
 
@@ -77,13 +70,11 @@ fn run() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse();
     let Command::Analyze {
         input,
-        json,
         bind,
         launch,
         grid,
         ncu,
         dump_ast,
-        annotate,
     } = cli.command;
     let source =
         std::fs::read_to_string(&input).with_context(|| format!("reading {}", input.display()))?;
@@ -118,18 +109,9 @@ fn run() -> anyhow::Result<ExitCode> {
         grid: ncu.as_ref().map(|r| r.grid).or(grid),
         ncu,
     };
-    if annotate {
-        let text = ptxroof::report::annotate::annotate(&source, &opts)
-            .with_context(|| format!("analyzing {}", input.display()))?;
-        return emit(&text);
-    }
-    let report = ptxroof::report::analyze(&source, &input.display().to_string(), &opts)
+    let text = ptxroof::report::annotate::annotate(&source, &opts)
         .with_context(|| format!("analyzing {}", input.display()))?;
-
-    match json {
-        true => emit(&(serde_json::to_string_pretty(&report)? + "\n")),
-        false => emit(&ptxroof::report::text::render(&report)),
-    }
+    emit(&text)
 }
 
 fn emit(text: &str) -> anyhow::Result<ExitCode> {

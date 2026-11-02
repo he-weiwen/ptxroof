@@ -90,8 +90,8 @@ traces a value when a query reads it. `trip_counts` reads its per-loop results; 
 
 ## Per-kernel flow
 
-`main::run` calls `report::analyze`, or `report::annotate::annotate` with
-`--annotate`; both read `each_kernel`, which parses the module, checks an NCU
+`main::run` calls `report::annotate::annotate`, which reads `each_kernel`;
+`each_kernel` parses the module, checks an NCU
 record against it, and for each kernel resolves the bindings and launch shape
 and builds the CFG, the loop forest and one `KernelAnalyses`. `KernelReportBuilder`
 then:
@@ -112,9 +112,9 @@ then:
    count qualifiers with the participation's dead edges;
 8. traces addresses and computes memory footprints.
 
-`report/build` aggregates the results into the schema and, given an NCU record,
-compares them; `main` renders text or JSON. `--dump-ast` reads, parses, prints
-and returns.
+`report/annotate` prints the results on the PTX's lines; `report::build::compare`
+compares them with an NCU record for the tests. `--dump-ast` reads, parses,
+prints and returns.
 
 ## Register SSA semantics
 

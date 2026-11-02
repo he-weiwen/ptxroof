@@ -8,7 +8,7 @@
 # offset stay unknown. Each kernel's store, past its `.entry` line,
 # prints its address, or `addr ?` and why, and its sectors per warp
 # request.
-RUN: %ptxroof analyze --annotate %fixtures/micro/and_runs.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/and_runs.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_and_dc( // block 256×1×1 | per CTA: global store 1,024 B; param load 2,048 B{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [16·⌊(%tid.x mod 32)/4⌋ + 256·⌊(%tid.x mod 256)/64⌋ + param_0] sectors/req 4–5 (ideal 1){{$}}
 ANN: {{^}}.visible .entry micro_and_46( // block 128×1×1 | per CTA: global store 256 B; param load 1,024 B{{$}}

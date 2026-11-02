@@ -2,6 +2,6 @@
 # a query traces each value its trace was cut at on its own first, so
 # the address through 300 additions reads, and the loop whose bound is
 # reached through 40 counts 40 trips.
-RUN: %ptxroof analyze --annotate %fixtures/micro/long_chain.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/long_chain.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + param_0 + 1200] sectors/req 4–5 (ideal 4){{$}}
 ANN: {{^}}$L__BB1_1: // loop: trips 40 | global per CTA: requested 10,240 B, unique 160 B, sectors 2,560 B | warp * × lane * | exec 2,560/CTA{{$}}

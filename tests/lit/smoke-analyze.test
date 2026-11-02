@@ -1,7 +1,7 @@
 # Smoke test for the analyze verb on a minimal kernel: the loop's trip
 # count, param_1, a global access's sectors per request, unknown without
 # the block shape, and the kernel's FLOPs and bytes per thread.
-RUN: %ptxroof analyze --annotate "%S/Inputs/smoke-analyze.ptx" | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze "%S/Inputs/smoke-analyze.ptx" | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_smoke( // per thread: flops f32 2·param_1; global load 4·param_1 B, store 4·param_1 B; param load 12 B{{$}}
 ANN: {{^}}$L__BB0_2: // loop: trips param_1 | under line 25 | exec param_1/thread{{$}}
 ANN: {{^}}	ld.global.f32 	%f1, [%rd3]; // global load [4·iv[$L__BB0_2] + param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch){{$}}

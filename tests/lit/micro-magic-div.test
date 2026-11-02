@@ -2,5 +2,5 @@
 # power of two, the upper half of a product by a magic number and a
 # shift: the tracer reads no mul.hi, and the store's address is unknown
 # (PLAN, "Addresses the tracer cannot read").
-RUN: %ptxroof analyze --annotate %fixtures/micro/magic_div.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/magic_div.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (`mul.hi.u32` keeps a product's upper half){{$}}

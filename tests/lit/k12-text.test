@@ -5,6 +5,6 @@
 # of shared memory. The loop's guard `K + 15 > 30` tests its latch at
 # k = 0, ⌊K/16⌋ > 0, so the loop is counted per execution of the guard:
 # its tensor flops over the kernel, 4096·(K/16) per thread, are exact.
-RUN: %ptxroof analyze --annotate %fixtures/k12/k12.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/k12/k12.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z19hgemm_double_bufferILi128ELi128ELi16ELi64ELi64ELi128EEviiifPK6__halfS2_fPS0_( // shared memory 16,384 B/CTA | per thread: flops f32 <= 384; tensor flops f16 (4096·(param_2 / 16)); global load <= (64·(param_2 / 16) + 384) B, store <= 512 B; shared load (320·(param_2 / 16)) B, store <= (64·(param_2 / 16) + 128) B; param load <= 48 B{{$}}
 ANN: {{^}}$L__BB0_5: // loop: trips param_2 / 16 | under line 225 | exec (param_2 / 16)/thread{{$}}

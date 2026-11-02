@@ -3,6 +3,6 @@
 # recurrence's step; the guard is the same for every thread, so the
 # register is a uniform variable, and the loop's footprint requests 16 B
 # and its unique bytes are unknown.
-RUN: %ptxroof analyze --annotate %fixtures/micro/guarded_step.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/guarded_step.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 16 B, unique ? | warp * × lane * | exec 4/CTA{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], 0; // global store [4·uniform(%r1@29) + param_0] sectors/req 1 (ideal 1){{$}}

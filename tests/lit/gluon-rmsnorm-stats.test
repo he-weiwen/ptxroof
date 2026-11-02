@@ -7,7 +7,7 @@
 # Per CTA the live loads and stores measure 37888 B and 12320 B (the
 # ncu record's LDG and STG executions); the 4 B more are the `atom` one
 # thread of each CTA runs (512 executions over 512 CTAs).
-RUN: %ptxroof analyze --annotate %fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/gluon/rmsnorm_stats_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry rmsnorm_stats_kernel( // block 128×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 68,352; sfu flops f32 512; global load 37,892 B, store 12,324 B; shared load 512 B, store 512 B; param load 8,704 B{{$}}
 ANN: {{^}}$L__func_begin0: // warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}	@%p1 ld.global.v4.b32 { %r3, %r4, %r5, %r6 }, [ %rd3 + 0 ]; // global load [12288·%ctaid.x + 16·(%tid.x mod 32) + 1536·(⌊%tid.x/32⌋ mod 4) + param_0] sectors/req 16–17 (ideal 16){{$}}

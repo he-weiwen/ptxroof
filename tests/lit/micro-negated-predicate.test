@@ -2,6 +2,6 @@
 # parsed and counted, its line saying nothing is left out: a comparison
 # combined with a predicate, no trip count. It was unparsed, "latch
 # predicate is not defined in the latch block", and not counted.
-RUN: %ptxroof analyze --annotate %fixtures/micro/negated_predicate.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/negated_predicate.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__loop: // loop: trips ? (latch condition combines a comparison with a predicate) | warp * × lane * | exec ?{{$}}
 ANN: {{^}}	setp.lt.and.s32 	%p1, %r2, 10, !%p2;{{$}}

@@ -3,5 +3,5 @@
 # Hand-derivation: main loop 8 flops/16 B per iteration x
 # (K - K mod 4)/4 trips, remainder 2/4 x (K mod 4), epilogue 3 flops +
 # 2 B load + 2 B store.
-RUN: %ptxroof analyze --annotate %fixtures/k2/k2.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z15hgemm_coalescediiifPK6__halfS1_fPS_( // per thread: flops f32 <= (2·(param_2 mod 4) + 8·((param_2 - param_2 mod 4) / 4) + 3); global load <= (4·(param_2 mod 4) + 16·((param_2 - param_2 mod 4) / 4) + 2) B, store <= 2 B; param load 44 B{{$}}

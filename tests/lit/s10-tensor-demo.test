@@ -5,6 +5,6 @@
 # 128, and no cuda-core FLOPs: v1 credited every wmma.load with 8192
 # phantom flops, and this is where that regression would show. Each
 # kernel's global bytes per lane are exact.
-RUN: %ptxroof analyze --annotate %fixtures/mma_demo/mma_demo.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/mma_demo/mma_demo.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z18gemm_wmma_16x16x16PK6__halfS1_Pf( // per thread: tensor flops f16 256; global load 32 B, store 32 B; param load 24 B{{$}}
 ANN: {{^}}.visible .entry _Z16gemm_mma_16x8x16PK6__halfS1_Pf( // per thread: tensor flops f16 128; global load 24 B, store 16 B; param load 24 B{{$}}

@@ -3,7 +3,7 @@
 # where ptxas stores at param_0 + 16; binary 0b10000 and 16U read as
 # symbols; 0xfffffffffffffff0, −16, is no integer, and the address a
 # uniform variable. Each store requests one sector per warp.
-RUN: %ptxroof analyze --annotate %fixtures/micro/int_literals.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/int_literals.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd2], %r1; // global store [param_0 + 20] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	st.global.u32 	[%rd2], %r1; // global store [param_0 + 0b10000] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	st.global.u32 	[%rd2], %r1; // global store [param_0 + 16U] sectors/req 1 (ideal 1){{$}}

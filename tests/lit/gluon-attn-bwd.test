@@ -7,8 +7,8 @@
 # gives 33,218,887,680 bf16 tensor flops per launch. The loop's `red`
 # under `mov.pred %p20, -1` runs on every thread, so the stores over the
 # launch are exact.
-RUN: %ptxroof analyze --annotate %fixtures/gluon/attn_bwd_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze --annotate %fixtures/gluon/attn_bwd_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json | FileCheck --check-prefix=ANNREC "%s"
+RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/gluon/attn_bwd_kernel.sm_89.ptx --ncu %fixtures/gluon/attn_bwd_kernel.sm_89.ncu.json | FileCheck --check-prefix=ANNREC "%s"
 ANN: {{^}}.visible .entry attn_bwd_kernel( // block 256×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 <= (20480·(param_13 / 64) + 8192 - 20480·%ctaid.x); tensor flops bf16 <= (5242880·(param_13 / 64) - 5242880·%ctaid.x); sfu flops f32 <= (4096·(param_13 / 64) - 4096·%ctaid.x); atomic flops f32 <= (8192·(param_13 / 64) - 8192·%ctaid.x); global load <= (49152·(param_13 / 64) + 65536 - 49152·%ctaid.x) B, store <= (32768·(param_13 / 64) + 32768 - 32768·%ctaid.x) B; shared load <= (475136·(param_13 / 64) - 475136·%ctaid.x) B, store <= (90112·(param_13 / 64) + 65536 - 90112·%ctaid.x) B; param load <= 25,600 B{{$}}
 ANN: {{^}}$L__BB0_2:                              // %__nv_exp2f.exit // loop: trips param_13 / 64 - %ctaid.x | warp * × lane * | under line 333 | exec <= (256·(param_13 / 64) - 256·%ctaid.x)/CTA{{$}}
 ANNREC: {{^}}.visible .entry attn_bwd_kernel( // grid 32×12×1 | block 256×1×1 | param_9 = 1572864, param_10 = 768, param_11 = 128, param_12 = 6, param_13 = 2048, param_16 = -1 | shared memory 0 B/CTA + dynamic | per launch: flops f32 132,907,008; tensor flops bf16 33,218,887,680; sfu flops f32 25,952,256; atomic flops f32 51,904,512; global load <= 336,592,896 B, store 220,200,960 B; shared load 3,010,461,696 B, store <= 596,115,456 B; param load 9,830,400 B{{$}}

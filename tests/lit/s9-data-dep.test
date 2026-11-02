@@ -3,6 +3,6 @@
 # a reason, the kernel's FLOPs and bytes name the loop whose trips they
 # need (never a silent zero), and the exit code is still 0 — unknowns
 # are results, not errors.
-RUN: %ptxroof analyze --annotate %fixtures/micro/data_dep.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/data_dep.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_data_dep( // per thread: flops f32 ? (trips of $L__BB0_1); global load ? B (trips of $L__BB0_1), store ? B (trips of $L__BB0_1); param load 8 B{{$}}
 ANN: {{^}}$L__BB0_1: // loop: trips ? (latch condition compares floating-point values) | exec ?{{$}}

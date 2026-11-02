@@ -4,5 +4,5 @@
 # condition decides which threads enter the loop, so over the record's
 # 16x128 CTAs each CTA's threads count its trips, Σ x · 128 · 128 =
 # 1,966,080 executions per instruction.
-RUN: %ptxroof analyze --annotate %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx --ncu %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx --ncu %fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_42:                             // %__nv_exp2f.exit535 // loop: trips %ctaid.x | warp 0-3 × lane * | CTAs 128·%ctaid.x ≥ 1 (1920/2048) | exec 1,966,080/launch{{$}}

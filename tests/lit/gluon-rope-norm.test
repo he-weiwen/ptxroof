@@ -2,6 +2,6 @@
 # threads; flops exact, 432 f32 per thread, masked loads and stores
 # bounded, at most 256 B loaded and 128 B stored per thread, 128 times
 # that per CTA.
-RUN: %ptxroof analyze --annotate %fixtures/gluon/rope_norm_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/gluon/rope_norm_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry rope_norm_kernel( // block 128×1×1 | per CTA: flops f32 55,296; sfu flops f32 1,024; global load <= 32,768 B, store <= 16,384 B; param load 6,656 B{{$}}
 ANN: {{^}}$L__func_begin0: // warp * × lane * | exec 128/CTA{{$}}

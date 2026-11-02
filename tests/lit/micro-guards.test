@@ -6,7 +6,7 @@
 # count and the CTA's store bytes bounds. That value, loaded at an
 # address the lanes of a warp read alike, is one for the warp: a warp
 # stores on all its lanes or on none, so a request's sectors are exact.
-RUN: %ptxroof analyze --annotate %fixtures/micro/guards.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/guards.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_guards( // block 64×1×1 | per CTA: global load 516 B, store <= 1,734 B; param load 1,024 B{{$}}
 ANN: {{^}}	ld.global.f32 	%f1, [%rd6]; // global load [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
 ANN: {{^}}	@%p3 ld.global.f32 	%f2, [%rd6+512]; // warp 0 × lane 0 | exec 1/CTA | global load [4·%tid.x + param_0 + 512] sectors/req 1 (ideal 1){{$}}

@@ -2,5 +2,5 @@
 # always even, so the loop does not exit (ptxas keeps it, comparing
 # with 5). The constant distance 5 is no multiple of the step 2, so the
 # trip count is refused.
-RUN: %ptxroof analyze --annotate %fixtures/micro/ne_latch_unreached.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/ne_latch_unreached.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips ? (latch condition never meets its `!=` bound) | warp * × lane * | exec ?{{$}}

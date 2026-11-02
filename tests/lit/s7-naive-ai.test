@@ -5,5 +5,5 @@
 # two independent runs, two comparable numbers, no diff verb. The same
 # contrast shows in shared memory: the naive kernel declares none, the
 # tiled one 2048 B per CTA (as `ptxas -v` reports, `bytes smem`).
-RUN: %ptxroof analyze --annotate %fixtures/k1/k1.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/k1/k1.sm_80.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z11hgemm_naiveiiifPK6__halfS1_fPS_( // per thread: flops f32 <= (2·(param_2 mod 4) + 8·((param_2 - param_2 mod 4) / 4) + 3); global load <= (4·(param_2 mod 4) + 16·((param_2 - param_2 mod 4) / 4) + 2) B, store <= 2 B; param load 44 B{{$}}

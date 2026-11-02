@@ -4,6 +4,6 @@
 # (micro/xor_swizzle.ptx, whose stored offsets an RTX 4090 reads back as
 # its header gives). One side of micro_xor_overlap's xor is a sum whose
 # fields share a bit, which is no xor of them, and stays unknown.
-RUN: %ptxroof analyze --annotate %fixtures/micro/xor_swizzle.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/xor_swizzle.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.shared.u32 	[%r8+64], %r1; // shared store [(16·(⌊%tid.x/8⌋ mod 4) ⊕ 16·(%tid.x mod 128)) + buf + 64] wavefronts/req 4 (ideal 1){{$}}
 ANN: {{^}}	st.shared.u32 	[%r9], %r1; // shared store addr ? (depends on special register %tid.x, behind `xor.b32`){{$}}

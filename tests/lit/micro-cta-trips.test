@@ -5,9 +5,9 @@
 # with 4 CTAs. Without the guard CTA 0 runs once, the count is
 # max(%ctaid.x, 1), and its sum over the grid, 7, gives 224
 # (micro/cta_trips.unguarded.ncu.json).
-RUN: %ptxroof analyze --annotate %fixtures/micro/cta_trips.ptx | FileCheck --check-prefix=ANN-FREE "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/cta_trips.ptx --ncu %fixtures/micro/cta_trips.ncu.json | FileCheck --check-prefix=ANN-REC "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/cta_trips.ptx --ncu %fixtures/micro/cta_trips.unguarded.ncu.json | FileCheck --check-prefix=ANN-SUM "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_trips.ptx | FileCheck --check-prefix=ANN-FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_trips.ptx --ncu %fixtures/micro/cta_trips.ncu.json | FileCheck --check-prefix=ANN-REC "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_trips.ptx --ncu %fixtures/micro/cta_trips.unguarded.ncu.json | FileCheck --check-prefix=ANN-SUM "%s"
 ANN-FREE: {{^}}$L__BB0_2: // loop: trips %ctaid.x | warp * × lane * | under line 30 | exec 32·%ctaid.x/CTA{{$}}
 ANN-REC: {{^}}$L__BB0_2: // loop: trips %ctaid.x | warp * × lane * | CTAs %ctaid.x ≥ 1 (3/4) | exec 192/launch{{$}}
 ANN-SUM: {{^}}$L__BB1_1: // loop: trips max(%ctaid.x, 1) | warp * × lane * | exec 224/launch{{$}}

@@ -6,7 +6,7 @@
 # requests the 1200 B the totals store, trip by trip; its distinct and
 # sector bytes count every thread the mask admits at some trip on every
 # trip (PLAN.md).
-RUN: %ptxroof analyze --annotate %fixtures/micro/counter_guard.ptx --bind 1:n=300 | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/counter_guard.ptx --bind 1:n=300 | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_counter_guard( // block 64×1×1 | param_1 = 300 | per CTA: global store 1,200 B; param load 768 B{{$}}
 ANN: {{^}}$L__BB0_1: // loop: trips 8 | global per CTA: requested 1,200 B, unique <= 256 B, sectors <= 2,048–2,560 B | warp * × lane * | exec 512/CTA{{$}}
 ANN: {{^}}	bar.sync 	0; // [<block 2>] warp * × lane * | runs when iv[$L__BB0_1] ≥ 2 (CTA-uniform, branch at line 35) | exec 384/CTA{{$}}

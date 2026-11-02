@@ -6,9 +6,9 @@
 # lane. With a grid, a lane is in at every CTA, at none, or at some, the
 # counts over the launch are exact, and a comparison the grid decides
 # folds.
-RUN: %ptxroof analyze --annotate %fixtures/micro/cta_guards.ptx | FileCheck --check-prefix=ANNFREE "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/cta_guards.ptx --grid 2 | FileCheck --check-prefix=ANNTWO "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/cta_guards.ptx --grid 8 | FileCheck --check-prefix=ANNEIGHT "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_guards.ptx | FileCheck --check-prefix=ANNFREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_guards.ptx --grid 2 | FileCheck --check-prefix=ANNTWO "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_guards.ptx --grid 8 | FileCheck --check-prefix=ANNEIGHT "%s"
 
 ANNFREE: {{^}}.visible .entry micro_cta_compare( // block 32×1×1 | per CTA: global store <= 768 B; param load 256 B{{$}}
 ANNFREE: {{^}}	@%p1 st.global.u32 	[%rd3], 1; // <= warp * × lane * | exec <= 32/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}

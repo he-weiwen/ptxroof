@@ -1,4 +1,4 @@
 # `nanosleep` reads its operand, so %r1 after it is still the thread
 # index and the store's address is read.
-RUN: %ptxroof analyze --annotate %fixtures/micro/nanosleep_reads.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/nanosleep_reads.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}

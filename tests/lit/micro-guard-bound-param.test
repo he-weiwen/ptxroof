@@ -3,8 +3,8 @@
 # threads, 256 B per CTA; bound to 48, the comparison reads under the
 # binding and the store runs on 48 threads in 2 warps, all of warp 0 and
 # lanes 0-15 of warp 1, 192 B per CTA.
-RUN: %ptxroof analyze --annotate %fixtures/micro/guard_bound_param.ptx | FileCheck --check-prefix=FREE "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/guard_bound_param.ptx --bind 1:n=48 | FileCheck --check-prefix=BOUND "%s"
+RUN: %ptxroof analyze %fixtures/micro/guard_bound_param.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/guard_bound_param.ptx --bind 1:n=48 | FileCheck --check-prefix=BOUND "%s"
 FREE: {{^}}.visible .entry micro_guard_bound_param( // block 64×1×1 | per CTA: global store <= 256 B; param load 768 B{{$}}
 FREE: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
 BOUND: {{^}}.visible .entry micro_guard_bound_param( // block 64×1×1 | param_1 = 48 | per CTA: global store 192 B; param load 768 B{{$}}

@@ -1,5 +1,5 @@
 # `bar.red.popc` writes its first operand: the address through it is
 # not the value before the reduction, `[param_0]`, but `addr ?`, the
 # thread index behind the reduction.
-RUN: %ptxroof analyze --annotate %fixtures/micro/barrier_red.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/barrier_red.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (depends on special register %tid.x, behind `bar.red.popc.u32`){{$}}

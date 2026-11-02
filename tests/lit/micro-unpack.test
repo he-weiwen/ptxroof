@@ -7,7 +7,7 @@
 # refused, and a guard on its element is a bound: the store it guards
 # runs on at most the CTA's 64 threads, and the CTA's global store bytes
 # are a bound.
-RUN: %ptxroof analyze --annotate %fixtures/micro/unpack.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/unpack.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd6], %r1; // global store [16·%tid.x + 512·%ctaid.x + param_0] sectors/req 16–17 (ideal 4){{$}}
 ANN: {{^}}	st.global.u32 	[%rd8], %r1; // global store [16·%tid.x + param_1] sectors/req 16–17 (ideal 4){{$}}
 ANN: {{^}}	st.global.u32 	[%rd4], %r1; // global store addr ? (%r3 is one of `mov.b64`'s vector destinations){{$}}

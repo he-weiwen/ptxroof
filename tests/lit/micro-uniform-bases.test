@@ -6,7 +6,7 @@
 # uniform base have no known pointer and give a range; under a guard
 # both ends are upper bounds; a uniform value an outer loop computes is
 # fixed in the inner, whose store steps 128 B a trip.
-RUN: %ptxroof analyze --annotate %fixtures/micro/uniform_bases.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/uniform_bases.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 1,024 B, unique 512–1,024 B, sectors 1,024–1,280 B | warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}$L__BB1_1: // loop: trips 4 | global per CTA: requested <= 1,024 B, unique <= 512–1,024 B, sectors <= 1,024–1,280 B | warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}$L__BB2_1: // loop: trips 4 | global per CTA: requested 1,024 B, unique 1,024 B, sectors 1,024–1,280 B | warp * × lane * | exec 128/CTA{{$}}

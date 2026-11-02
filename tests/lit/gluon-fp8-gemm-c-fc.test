@@ -8,7 +8,7 @@
 # uniform variables, their sectors unknown until param_11 is bound; the
 # ldmatrix rows' swizzle reads as an xor of thread index fields,
 # conflict free, 4 wavefronts.
-RUN: %ptxroof analyze --annotate %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry fp8_gemm_kernel( // block 128×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 16,512; tensor flops fp8 <= 2097152·⌈param_10/64⌉; sfu flops f32 128; global load <= (16384·⌈param_10/64⌉ + 33792) B, store 32,768 B; shared load <= (32768·⌈param_10/64⌉ + 65536) B, store <= (16384·⌈param_10/64⌉ + 98304) B; param load 8,192 B{{$}}
 ANN: {{^}}$L__BB0_3:                              // =>This Inner Loop Header: Depth=1 // loop: trips ⌈param_10/64⌉ | warp * × lane * | under line 336 | exec <= 128·⌈param_10/64⌉/CTA{{$}}
 ANN: {{^}}	ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r104, %r105, %r106, %r107}, [%r186]; // shared load [8192·iv[$L__BB0_3] + 1024·⌊(%tid.x mod 128)/64⌋ - 24576·⌊uniform(%r172@515)/2⌋ + (16·(⌊%tid.x/16⌋ mod 2) ⊕ 16·(⌊%tid.x/2⌋ mod 4) ⊕ 64·(%tid.x mod 16)) + global_smem] wavefronts/req 4 (ideal 4){{$}}

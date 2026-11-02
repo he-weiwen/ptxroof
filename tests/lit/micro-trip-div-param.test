@@ -3,13 +3,13 @@
 # one value for every thread, as a symbol before. On an RTX 4090 at
 # n = 20, d = 4 the loop's barrier runs 5 times on each of 32 threads:
 # the record's launch gives 5 trips, 160 runs of the loop's statements.
-RUN: %ptxroof analyze --annotate %fixtures/micro/trip_div_param.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/trip_div_param.ptx --bind 2:d=4 | FileCheck --check-prefix=BOUNDANN "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/trip_div_param.ptx --ncu %fixtures/micro/trip_div_param.ncu.json | FileCheck --check-prefix=NCUANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_div_param.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_div_param.ptx --bind 2:d=4 | FileCheck --check-prefix=BOUNDANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_div_param.ptx --ncu %fixtures/micro/trip_div_param.ncu.json | FileCheck --check-prefix=NCUANN "%s"
 # The quotient is one value per CTA, not per launch: over 4 CTAs the
 # loop's count and the bytes it stores are unknown, where the barrier
 # read `128 * uniform(%r3@30)`.
-RUN: %ptxroof analyze --annotate %fixtures/micro/trip_div_param.ptx --grid 4,1,1 | FileCheck --check-prefix=GRIDANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/trip_div_param.ptx --grid 4,1,1 | FileCheck --check-prefix=GRIDANN "%s"
 ANN: {{^}}$L__BB0_2: // loop: trips uniform(%r3@30) | warp * × lane * | under line 33 | exec 32·uniform(%r3@30)/CTA{{$}}
 BOUNDANN: {{^}}$L__BB0_2: // loop: trips param_1 / 4 | warp * × lane * | under line 33 | exec (32·(param_1 / 4))/CTA{{$}}
 NCUANN: {{^}}$L__BB0_2: // loop: trips 5 | global per CTA: requested 640 B, unique 4 B, sectors 160 B | warp * × lane * | exec 160/launch{{$}}

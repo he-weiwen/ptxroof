@@ -5,9 +5,9 @@
 # condition, and its count is max(n − 10, 1) per entry, its totals a
 # bound. Under the RTX 4090 record, at n = 20, the guarded loop runs 10
 # trips.
-RUN: %ptxroof analyze --annotate %fixtures/micro/loop_guard.ptx | FileCheck --check-prefix=ANN-FREE "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/loop_guard.ptx --bind 1:n=5 | FileCheck --check-prefix=ANN-SKIPPED "%s"
-RUN: %ptxroof analyze --annotate %fixtures/micro/loop_guard.ptx --ncu %fixtures/micro/loop_guard.ncu.json | FileCheck --check-prefix=ANN-REC "%s"
+RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx | FileCheck --check-prefix=ANN-FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx --bind 1:n=5 | FileCheck --check-prefix=ANN-SKIPPED "%s"
+RUN: %ptxroof analyze %fixtures/micro/loop_guard.ptx --ncu %fixtures/micro/loop_guard.ncu.json | FileCheck --check-prefix=ANN-REC "%s"
 ANN-FREE: {{^}}.visible .entry micro_loop_guard( // block 32×1×1 | per CTA: global store (128·max(param_1 - 10, 0)) B; param load 384 B{{$}}
 ANN-FREE: {{^}}$L__BB0_2: // loop: trips max(param_1 - 10, 0) | warp * × lane * | under line 31 | exec (32·max(param_1 - 10, 0))/CTA{{$}}
 ANN-FREE: {{^}}.visible .entry micro_loop_guard_other( // block 32×1×1 | per CTA: global store <= (128·max(param_1 - 10, 1)) B; param load 384 B{{$}}

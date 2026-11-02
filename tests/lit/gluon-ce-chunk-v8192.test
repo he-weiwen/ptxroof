@@ -4,6 +4,6 @@
 # in the latch). The matcher reads that as two trips. The default values
 # Triton moves into loads it then issues unguarded are unused (no SASS in
 # the kernel's ncu record).
-RUN: %ptxroof analyze --annotate %fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/gluon/ce_chunk_kernel.v8192.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_3:                              // =>This Inner Loop Header: Depth=1 // loop: trips 2 | global per CTA: requested 32,768 B, unique ? | warp * × lane * | exec 1,024/CTA{{$}}
 ANN: {{^}}	mov.u32 %r340, 0x0; // unused{{$}}

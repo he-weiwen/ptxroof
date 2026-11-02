@@ -1,7 +1,7 @@
 # A floor and a mod of a loop counter: ptxas stores to three words of a,
 # 12 B, and two of b, 8 B; the footprint reads each address at every
 # trip, ⌊(iv + 1)/2⌋ and (iv + 1) mod 2 of the counter.
-RUN: %ptxroof analyze --annotate %fixtures/micro/counter_floor_mod.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/counter_floor_mod.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 16 B, unique 12 B, sectors 128 B | warp * × lane * | exec 4/CTA{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], 0; // global store [4·⌊(iv[$L__BB0_1] + 1)/2⌋ + param_0] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}$L__BB0_3: // loop: trips 4 | global per CTA: requested 16 B, unique 8 B, sectors 128 B | warp * × lane * | exec 4/CTA{{$}}

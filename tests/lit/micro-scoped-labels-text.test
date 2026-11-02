@@ -1,5 +1,5 @@
 # The same label in two sibling asm scopes: two separate self-loops,
 # each with its own trip count, max(param_0, 1) and max(param_1, 1).
-RUN: %ptxroof analyze --annotate %fixtures/micro/scoped_labels.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/scoped_labels.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	spin: // loop: trips max(param_0, 1) | exec (max(param_0, 1))/thread{{$}}
 ANN: {{^}}	spin: // loop: trips max(param_1, 1) | exec (max(param_1, 1))/thread{{$}}
