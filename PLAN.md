@@ -1002,10 +1002,12 @@ One line each, with the trigger that would start it.
   as `lhs cmp rhs`, the terms of negative coefficient and the constant
   on the right,
   an unknown value by its register and line (`%r1880@$L__BB0_39`), its
-  known multiple as the value, with the branch's
-  polarity, its line and for whom it is the same, joined by `and`, one
-  under an `or` or a `not` with every part, a thread-index comparison
-  too (`gluon-attn-fwd-ws-annotate.test`,
+  known multiple as the value, with the branch's polarity, joined by
+  `and`, one under an `or` or a `not` with every part, an `and` under
+  an `or` and an `or` under an `and` parenthesized, a thread-index
+  comparison too; then `CTA-uniform` where each is the same for the
+  CTA, else `warp-uniform`, and the lines of the branches deciding them
+  (`gluon-attn-fwd-ws-annotate.test`, `micro-or-entry-annotate.test`,
   `a_block_names_the_uniform_conditions_it_runs_under`); one that is
   not a comparison read within its type as `predicate <register> (line
   <L>) is true|false`: gluon attn_fwd_ws's `setp.lt.u32 %p60, %r1880,

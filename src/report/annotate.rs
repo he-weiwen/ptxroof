@@ -16,10 +16,14 @@ use crate::ptx::ir::{Opcode, Register, Stmt};
 use crate::report::build::{AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel};
 use crate::report::schema::Access;
 use crate::ssa::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Per statement, the parts of its annotation.
 type Notes = BTreeMap<usize, Vec<String>>;
+
+/// The lines of the branches deciding a condition's uniform unknowns, and
+/// the larger of the threads each is the same for.
+type Tags = (BTreeSet<u32>, Uniform);
 
 /// `source` with ` // ` and the annotation after each line that has one,
 /// the annotations of its statements joined by ` ; `.
@@ -307,18 +311,31 @@ impl KernelReportBuilder<'_> {
     }
 
     /// `runs when` and the unknowns, each the same for the CTA or a warp,
-    /// that block `b`'s threads meet past its immediate dominator's, unless
+    /// that block `b`'s threads meet past its immediate dominator's, then
+    /// `CTA-uniform` where all are the same for the CTA, else
+    /// `warp-uniform`, and the lines of the branches deciding them; unless
     /// no thread runs it.
     fn runs_when(&self, b: BlockId) -> Option<String> {
         let sets = &self.counts.sets;
         let runs = sets.blocks[b.0 as usize] != Pred::False;
+        let mut tags = (BTreeSet::new(), Uniform::Cta);
         let when = self.when(
             b,
             runs.then_some(&sets.relative[b.0 as usize])?,
             false,
-            false,
+            &mut tags,
         )?;
-        Some(format!("runs when {when}"))
+        let scope = match tags.1 {
+            Uniform::Cta => "CTA-uniform",
+            Uniform::Warp => "warp-uniform",
+        };
+        let lines: Vec<String> = tags.0.iter().map(u32::to_string).collect();
+        let branch = match &lines[..] {
+            [] => String::new(),
+            [line] => format!(", branch at line {line}"),
+            _ => format!(", branches at lines {}", lines.join(", ")),
+        };
+        Some(format!("runs when {when} ({scope}{branch})"))
     }
 
     /// The line of the nearest block dominating `b` that runs under a
@@ -345,23 +362,38 @@ impl KernelReportBuilder<'_> {
     /// dominator, by `atom`, joined by ` and `, a conjunct without one
     /// left to the threads shown; an `or` or a `not` holding one with all
     /// its parts (`whole`), a thread-index comparison by `formula` and any
-    /// other unknown as `?`. A disjunction is parenthesized when `nested`.
-    fn when(&self, b: BlockId, p: &Pred, whole: bool, nested: bool) -> Option<String> {
-        let all = |q: &Pred, nested| self.when(b, q, true, nested);
+    /// other unknown as `?`; an `or` among the parts of an `and`, and an
+    /// `and` among those of an `or`, parenthesized. Each unknown adds the
+    /// line of the branch deciding it and its scope to `tags`.
+    fn when(&self, b: BlockId, p: &Pred, whole: bool, tags: &mut Tags) -> Option<String> {
+        let paren = |t: String, inner: bool| if inner { format!("({t})") } else { t };
         match p {
-            Pred::Uniform(u, a) => Some(self.atom(b, *u, a)),
-            Pred::And(x, y) => {
-                let parts: Vec<String> = ([x, y].into_iter())
-                    .filter_map(|q| self.when(b, q, whole, true))
+            Pred::Uniform(u, a) => Some(self.atom(b, *u, a, tags)),
+            Pred::And(..) => {
+                let parts: Vec<(String, bool)> = (operands(p, false).into_iter())
+                    .filter_map(|q| {
+                        Some((self.when(b, q, whole, tags)?, matches!(q, Pred::Or(..))))
+                    })
+                    .collect();
+                let several = parts.len() > 1;
+                let parts: Vec<String> = (parts.into_iter())
+                    .map(|(t, or)| paren(t, or && several))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
             Pred::Or(..) | Pred::Not(_) if !whole && p.atoms().is_empty() => None,
-            Pred::Or(x, y) => {
-                let text = format!("{} or {}", all(x, true)?, all(y, true)?);
-                Some(if nested { format!("({text})") } else { text })
+            Pred::Or(..) => {
+                let parts = (operands(p, true).into_iter())
+                    .map(|q| {
+                        Some(paren(
+                            self.when(b, q, true, tags)?,
+                            matches!(q, Pred::And(..)),
+                        ))
+                    })
+                    .collect::<Option<Vec<String>>>()?;
+                Some(parts.join(" or "))
             }
-            Pred::Not(x) => Some(format!("not ({})", all(x, false)?)),
+            Pred::Not(x) => Some(format!("not ({})", self.when(b, x, true, tags)?)),
             Pred::Cmp(c) if whole => Some(self.formula(&c.form, c.cmp)),
             Pred::Elect(_) if whole => Some("elected".to_owned()),
             Pred::Unknown if whole => Some("?".to_owned()),
@@ -370,9 +402,9 @@ impl KernelReportBuilder<'_> {
     }
 
     /// Atom `a` of block `b`'s set, the same for the threads `u` names:
-    /// its comparison, negated where `a` is, or what it reads, then the
-    /// branch deciding it but a jump table and for whom it is the same.
-    fn atom(&self, b: BlockId, u: Uniform, a: &Atom) -> String {
+    /// its comparison, negated where `a` is, or what it reads; the line of
+    /// the branch deciding it but a jump table, and `u`, added to `tags`.
+    fn atom(&self, b: BlockId, u: Uniform, a: &Atom, tags: &mut Tags) -> String {
         let sets = &self.counts.sets;
         let cmp = |c: Cmp| if a.negated { c.inverse() } else { c };
         let not = |t: String| if a.negated { format!("not ({t})") } else { t };
@@ -397,12 +429,12 @@ impl KernelReportBuilder<'_> {
                 name(*target)
             )),
         };
-        let scope = if u == Uniform::Cta { "CTA" } else { "warp" };
-        let branch = (sets.deciders.get(&(b, a.key.clone())))
+        let line = (sets.deciders.get(&(b, a.key.clone())))
             .filter(|_| !matches!(a.key, AtomKey::Jump { .. }))
-            .and_then(|&s| Some(format!("branch at line {}, ", self.line(s)?)));
-        let branch = branch.unwrap_or_default();
-        format!("{what} ({branch}same for the whole {scope})")
+            .and_then(|&s| self.line(s));
+        tags.0.extend(line);
+        tags.1 = tags.1.max(u);
+        what
     }
 
     /// `predicate <register> (line <L>) is true`, or `false` where
@@ -545,6 +577,16 @@ fn shifted(a: &AffineExpr) -> (AffineExpr, bool) {
     (shifted, nested)
 }
 
+/// The parts of `p` under the `and`s at its top, or the `or`s where `or`.
+fn operands(p: &Pred, or: bool) -> Vec<&Pred> {
+    match (p, or) {
+        (Pred::And(x, y), false) | (Pred::Or(x, y), true) => {
+            [operands(x, or), operands(y, or)].concat()
+        }
+        _ => vec![p],
+    }
+}
+
 /// The parts of a conjunction that read the CTA index.
 fn cta_conjuncts(set: &Pred) -> Vec<&Pred> {
     match set {
@@ -665,7 +707,7 @@ $L__BB0_5:
     /// dominator's: each as its comparison with the branch's polarity,
     /// the sides swapped where every term would move right, two in a
     /// conjunction joined by `and`, one under an `or` or a `not` with
-    /// every part.
+    /// every part; then `CTA-uniform` and the deciding branch's line.
     #[test]
     fn a_block_names_the_uniform_conditions_it_runs_under() {
         let src = "\
@@ -710,11 +752,10 @@ $L__BB0_8:
         assert_eq!(
             when,
             [
-                "not (param_1 < 1 (branch at line 17, same for the whole CTA) or %tid.x ≠ 0)",
-                "param_2 > 3 (branch at line 22, same for the whole CTA) and \
-                 param_1 < 1 (branch at line 22, same for the whole CTA)",
-                "param_1 ≥ 1 (branch at line 25, same for the whole CTA)",
-                "param_2 ≤ 5 (branch at line 29, same for the whole CTA)",
+                "not (param_1 < 1 or %tid.x ≠ 0) (CTA-uniform, branch at line 17)",
+                "param_2 > 3 and param_1 < 1 (CTA-uniform, branch at line 22)",
+                "param_1 ≥ 1 (CTA-uniform, branch at line 25)",
+                "param_2 ≤ 5 (CTA-uniform, branch at line 29)",
             ]
         );
     }
