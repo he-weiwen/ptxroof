@@ -1061,7 +1061,12 @@ One line each, with the trigger that would start it.
   are a bound, or `?` and why (`k5-annotate.test`,
   `micro-vector-def-annotate.test`). An
   instruction whose results nothing with an effect reads is `unused`
-  (the same test). On the kernel's `.entry` line, what the counts take
+  (the same test). What a statement leaves out of the totals is said on
+  its line: `not classified (its FLOPs and bytes not counted)`
+  (`micro-texture-outputs.test`), `not parsed (not counted)`
+  (`micro-unparsed-writes.test`), `bytes ? (not counted)` where an
+  access's size is not known (`micro-tensor-copies.test`), `call (its
+  callee not counted)` (`micro-call-returns.test`). On the kernel's `.entry` line, what the counts take
   of the launch, those given: `grid X×Y×Z`, `block X×Y×Z` and each
   bound parameter's value (`k5-annotate.test`); then the shared memory
   each CTA declares, `shared memory 2,048 B/CTA`, `+ dynamic` where an

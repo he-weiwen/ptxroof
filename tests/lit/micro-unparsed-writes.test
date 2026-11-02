@@ -1,6 +1,7 @@
 # `ld.local.u32 %r2, lbuf[1]` is unparsed, but it is taken to write the
 # registers it names, so the address after it is not read as the thread
 # index's, `4 * %tid.x + param_0`, but unknown; ptxas stores to
-# param_0 + 20.
+# param_0 + 20. The unparsed statement is in no total.
 RUN: %ptxroof analyze --annotate %fixtures/micro/unparsed_writes.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}	ld.local.u32 	%r2, lbuf[1]; // not parsed (not counted){{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (value defined by a statement the parser could not read){{$}}

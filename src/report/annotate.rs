@@ -9,7 +9,7 @@ use crate::analysis::execution_counts::{
     CountAccumulator, CtaSize, Participation, Per, Resolution,
 };
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
-use crate::analysis::instruction_counts::measurement::Pipe;
+use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::memory_footprint::{ByteRange, CountRange};
 use crate::analysis::register_effects::writes;
 use crate::analysis::thread_participation::{Atom, AtomKey, Pred};
@@ -89,8 +89,14 @@ impl KernelReportBuilder<'_> {
                 if self.counts.unused[s] {
                     parts.insert(s, vec!["unused".to_owned()]);
                 } else {
-                    parts.entry(s).or_default().extend(self.operands(s));
+                    let part = parts.entry(s).or_default();
+                    part.extend(self.uncounted(bm, s));
+                    part.extend(self.operands(s));
                 }
+            }
+            for s in (first..end).filter(|&s| matches!(self.kernel.stmts[s], Stmt::Unparsed { .. }))
+            {
+                parts.insert(s, vec!["not parsed (not counted)".to_owned()]);
             }
             parts.retain(|_, p| !p.is_empty());
             let when = self.runs_when(b);
@@ -348,6 +354,28 @@ impl KernelReportBuilder<'_> {
                 p.threads == 1 && !p.at_most && p.trips.and_then(|t| t.as_const()) == Some(1)
             });
         ((!once).then_some(own), parts)
+    }
+
+    /// What counted statement `s` of block `bm` leaves out of the totals:
+    /// its work where it is not classified, its bytes where an access's
+    /// size is not known, a call's callee.
+    fn uncounted(&self, bm: &BlockMeasurements, s: usize) -> Vec<String> {
+        let kinds: Vec<MeasureKind> = (bm.measurements.iter())
+            .filter(|m| m.provenance == s && self.counts.counted(bm.block, s))
+            .map(|m| m.kind)
+            .collect();
+        let has = |f: fn(&MeasureKind) -> bool| kinds.iter().any(f);
+        [
+            (has(|k| matches!(k, MeasureKind::UnknownOps { .. })))
+                .then_some("not classified (its FLOPs and bytes not counted)"),
+            (has(|k| matches!(k, MeasureKind::UnquantifiedBytes { .. })))
+                .then_some("bytes ? (not counted)"),
+            (self.cfg.call_sites.contains(&s)).then_some("call (its callee not counted)"),
+        ]
+        .into_iter()
+        .flatten()
+        .map(str::to_owned)
+        .collect()
     }
 
     /// Statement `s`'s memory operands but parameters, each `<space>
