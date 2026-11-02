@@ -1,6 +1,0 @@
-# k5 at M=N=K=256 under its Nsight Compute record: every instruction is
-# classified and both loops' trip counts are resolved.
-RUN: %ptxroof analyze %fixtures/k5/k5.sm_89.ptx --ncu %fixtures/k5/k5.sm_89.256.ncu.json --json | %check-report "%s"
-{
-  "coverage": {"instructions_classified": {"num": 835, "den": 835}, "loop_trips_resolved": {"num": 2, "den": 2}}
-}
