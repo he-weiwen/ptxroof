@@ -91,6 +91,20 @@ fn sectors(c: &Comparison) -> BTreeMap<&'static str, usize> {
     out
 }
 
+/// Each line whose L2 sectors are compared, its outcome and the measured
+/// sectors.
+fn sector_lines(c: &Comparison) -> Vec<(u32, SectorOutcome, u64)> {
+    (c.blocks.iter().flat_map(|b| &b.sectors))
+        .map(|s| (s.line, s.outcome, s.measured))
+        .collect()
+}
+
+fn verdict(c: &Comparison, block: &str) -> Option<Verdict> {
+    (c.blocks.iter())
+        .find(|b| b.name == block)
+        .map(|b| b.verdict)
+}
+
 fn total(min: u64, max: u64, measured: u64) -> Option<MeasuredTotal> {
     Some(MeasuredTotal {
         predicted: SectorCount { min, max },
@@ -354,16 +368,84 @@ fn lm_head_dx_s_counter_guard_confirms_its_block() {
 fn an_ldgsts_on_p0_keeps_no_sectors_but_counts_in_the_launch_total() {
     let c = comparison("tests/fixtures/micro/ldgsts_p0.ncu.json");
     assert_eq!(c.blocks.len(), 1);
-    let compared: Vec<(u32, SectorOutcome, u64)> = (c.blocks[0].sectors.iter())
-        .map(|s| (s.line, s.outcome, s.measured))
-        .collect();
     use SectorOutcome::Agrees;
     assert_eq!(
-        compared,
+        sector_lines(&c),
         [(39, Agrees, 24), (41, Agrees, 8), (42, Agrees, 24)]
     );
     let launch = c.launch.expect("the record's L1TEX counts");
     assert_eq!(launch.incomplete, None);
     assert_eq!(launch.loads, total(48, 86, 64));
     assert_eq!(launch.stores, total(0, 0, 0));
+}
+
+/// A do-while loop whose latch is false at its first evaluation runs once
+/// (ptxas, and on an RTX 4090): the record at n = 5 agrees with
+/// micro_latch_exits_first_param's count of 1 on both stores' L2 sectors.
+#[test]
+fn a_loop_whose_latch_fails_first_stores_its_predicted_sectors() {
+    let c = comparison("tests/fixtures/micro/latch_exits_first.ncu.json");
+    assert_eq!(sectors(&c), BTreeMap::from([("exact", 2)]));
+}
+
+/// LLVM's loop guard branch: micro_loop_guard skips its loop when n < 11,
+/// the latch condition at k = 0, so the count is max(n − 10, 0) per
+/// execution of the guard. On an RTX 4090 at n = 20 the guarded loop runs
+/// 10 trips: its store requests 10 L2 sectors, as predicted.
+#[test]
+fn a_guarded_loop_s_store_requests_its_predicted_sectors() {
+    let c = comparison("tests/fixtures/micro/loop_guard.ncu.json");
+    assert_eq!(sectors(&c), BTreeMap::from([("exact", 1)]));
+    assert_eq!(sector_lines(&c), [(34, SectorOutcome::Agrees, 10)]);
+}
+
+/// A guard skipping two consecutive loops is the second loop's entry when
+/// the first leaves only through its latch, so micro_loop_guard_sibling
+/// counts the second loop per execution of the guard. On an RTX 4090 at
+/// n = 20 the second loop's store requests 10 L2 sectors, as predicted.
+#[test]
+fn the_second_of_two_guarded_loops_stores_its_predicted_sectors() {
+    let c = comparison("tests/fixtures/micro/loop_guard_sibling.ncu.json");
+    assert_eq!(sectors(&c), BTreeMap::from([("exact", 1)]));
+    assert_eq!(sector_lines(&c), [(44, SectorOutcome::Agrees, 10)]);
+}
+
+/// A causal loop: CTA c runs c trips. Over the launch each CTA's threads
+/// count its trips, 0 + 1 + 2 + 3, so the barrier runs 192 times, as on an
+/// RTX 4090 with 4 CTAs, which confirms the loop. Without the guard
+/// skipping CTA 0, CTA 0 runs once, and the sum over the grid, 7, gives
+/// the 224 barriers the RTX 4090 runs. In both the store's L2 sectors are
+/// as predicted.
+#[test]
+fn a_loop_of_cta_index_trips_is_confirmed_over_the_launch() {
+    let exact = BTreeMap::from([("exact", 1)]);
+    let guarded = comparison("tests/fixtures/micro/cta_trips.ncu.json");
+    assert_eq!(verdict(&guarded, "$L__BB0_2"), Some(Verdict::Confirmed));
+    assert_eq!(sectors(&guarded), exact);
+    let unguarded = comparison("tests/fixtures/micro/cta_trips.unguarded.ncu.json");
+    assert_eq!(verdict(&unguarded, "$L__BB1_1"), Some(Verdict::Confirmed));
+    assert_eq!(sectors(&unguarded), exact);
+}
+
+/// Guards on a loop counter, read per trip: the barrier's `k >= 3`
+/// compares the counter alone, though the loop also holds a branch on the
+/// thread index. Per CTA each trip counts its own threads: 6 trips of 64
+/// barriers, as the RTX 4090 measures, which confirms the barrier's block.
+#[test]
+fn a_barrier_under_a_counter_guard_is_confirmed() {
+    let c = comparison("tests/fixtures/micro/counter_guard.ncu.json");
+    let block = (blocks(&c).into_iter()).find(|b| b.0 == "<block 2>");
+    assert_eq!(block, Some(("<block 2>", Verdict::Confirmed, 1, 1, 1)));
+}
+
+/// A loop counter's range under the bindings: the store's `or` of 4·k and
+/// %tid.x << 8 is an add only while 4·k < 256. With n bound to 32 by the
+/// record the counter runs 1..32, the address reads, and on an RTX 4090
+/// the store's 4,096 L2 sectors (32 per warp request) agree with the
+/// prediction.
+#[test]
+fn a_counter_bound_by_the_record_reads_the_store_s_sectors() {
+    let c = comparison("tests/fixtures/micro/counter_range_bound.ncu.json");
+    assert_eq!(sectors(&c), BTreeMap::from([("exact", 1)]));
+    assert_eq!(sector_lines(&c), [(37, SectorOutcome::Agrees, 4096)]);
 }
