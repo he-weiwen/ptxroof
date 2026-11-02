@@ -835,7 +835,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, bindings);
+        let info = trip_counts(&m, k, &cfg, &f, bindings);
         names
             .into_iter()
             .zip(info.trips)
@@ -872,7 +872,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, &HashMap::new());
+        let info = trip_counts(&m, k, &cfg, &f, &HashMap::new());
         (names.into_iter().zip(info.trips).zip(info.entries))
             .map(|((n, t), e)| {
                 let t = t.map(|t| by_register(&m, t).to_string());

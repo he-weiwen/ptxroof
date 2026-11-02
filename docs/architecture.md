@@ -38,8 +38,8 @@ only declare modules and selected public entry points.
 | `analysis/affine/affine_analysis` | Register values as affine forms and one loop's trip count; their mutual recursion and the cache of both |
 | `analysis/affine/affine_analysis/loop_trip_count` | A loop's trip count from its latch, guard and predicate φ, as methods of the analysis |
 | `analysis/affine/affine_analysis/transfer` | The value each instruction writes, from the values it reads, as methods of the analysis |
-| `analysis/affine/trip_counts` | Every loop's trip count, and unrolled main/remainder pairs |
-| `analysis/loop_names` | Source-derived loop identities used by unroll pairing and display |
+| `analysis/affine/trip_counts` | Every loop's trip count |
+| `analysis/loop_names` | Source-derived loop names |
 | `analysis/thread_participation` | Predicates and sets of threads executing blocks and accesses |
 | `analysis/dead_code` | Instructions with no live effect through register SSA |
 | `analysis/memory_footprint` | Warp sectors and loop requested, distinct and sector bytes |
@@ -95,8 +95,7 @@ then:
 
 1. builds the kernel's `UniformityInfo` and one `AffineAnalysis` under those
    bindings;
-2. names loops, collects every loop's trip count from that instance, and pairs
-   unrolled loops;
+2. names loops and collects every loop's trip count from that instance;
 3. collects instruction contributions per block;
 4. computes thread participation from the same instance;
 5. takes compile-time thread sets: the same sets when the bindings are exactly

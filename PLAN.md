@@ -564,9 +564,9 @@ contract (Codex's review of 2b2731b).
   product"), where every thread stores at param_0 (RTX 4090).
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
-  unroll main+remainder pair, LLVM's two-register counter and its
-  predicate-phi two-trip loop. Not recognised, reported as
-  `trips = unknown`: grid-stride loops without `--grid`, whose step is
+  unrolled main loop and its remainder, LLVM's two-register counter and
+  its predicate-phi two-trip loop. Not recognised, reported as
+  `loop: trips ?` and why: grid-stride loops without `--grid`, whose step is
   `%nctaid.x` ("induction step is not a constant"), data-dependent
   bounds, multi-exit loops, inner loops bounded by an
   enclosing loop's counter (`micro/triangular.ptx`), a latch `setp`
@@ -654,8 +654,6 @@ contract (Codex's review of 2b2731b).
   instructions are counted, and a kernel calling one does not
   round-trip (`micro/call_returns.ptx`: "Call to 'zero' requires call
   prototype").
-- **Sibling loops on one source line** beyond the unroll pair are
-  reported as variants and excluded from totals.
 - **In a kernel with a cycle of more than one entry**, the uniformity
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare

@@ -554,14 +554,10 @@ impl<'a> KernelReportBuilder<'a> {
             ),
             other => other.to_string(),
         };
-        let trip_info = trip_counts_from(&affine, &names, &name);
+        let trip_info = trip_counts_from(&affine, &name);
         let mut blocks = collect(module, kernel, cfg, forest);
 
-        let mut display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
-        for pair in &trip_info.unroll_pairs {
-            let r = pair.remainder.0 as usize;
-            display[r] = format!("{} (remainder)", display[r]);
-        }
+        let display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
 
         let mut sets = thread_sets(&affine);
         for (form, _) in sets.forms.values_mut() {

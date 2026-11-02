@@ -19,7 +19,6 @@ use ptxroof::analysis::control_flow::loop_forest;
 use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
 use ptxroof::analysis::instruction_counts::measurement::Precision;
-use ptxroof::analysis::loop_names::loop_names;
 use ptxroof::ptx::cfg::build_cfg;
 use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
@@ -138,8 +137,7 @@ fn bound_flop_totals_agree_with_an_independent_evaluation() {
         let k = &m.kernels[0];
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
-        let names = loop_names(&m, k, &cfg, &f);
-        let info = trip_counts(&m, k, &cfg, &f, &names, &Default::default());
+        let info = trip_counts(&m, k, &cfg, &f, &Default::default());
         let bind_map: HashMap<SymbolicConstant, i64> =
             [(SymbolicConstant::KernelParam(param), value)]
                 .into_iter()
