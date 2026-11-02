@@ -29,12 +29,14 @@ use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loop_forest;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::dead_code::unused;
-use crate::analysis::execution_counts::{CtaSize, ExecutionCounts, Participation, Per, Resolution};
+use crate::analysis::execution_counts::{
+    CountAccumulator, CtaSize, ExecutionCounts, FlopAccumulator, Participation, Per, Resolution,
+};
 use crate::analysis::instruction_counts::classify::{ClassifiedInstruction, InstructionCategory};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::analysis::instruction_counts::count_constraint::count_constraint;
 use crate::analysis::instruction_counts::measurement::{
-    ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision, Space,
+    ArithKind, Contribution, Direction, MeasureKind, Pipe, Space,
 };
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::{LoopName, loop_names};
@@ -574,61 +576,25 @@ fn ratio_bound(flops: Option<Bound>, bytes: Option<Bound>) -> Option<Bound> {
     }
 }
 
-/// Symbolic sum that collects like terms: contributions are grouped
-/// by their constant-free multiplier, so two blocks under the same
-/// trip chain merge into one term ("4 * param_1", never
-/// "2 * param_1 + 2 * param_1"). `at_most` is the OR over
-/// contributions — an upper bound on any term makes the sum one.
-#[derive(Default)]
-struct CountAccumulator {
-    groups: Vec<(SymExpr, i64)>,
-    at_most: bool,
-    at_least: bool,
-    touched: bool,
+/// `acc`'s sum as the report's count, each symbol named by `name`.
+fn count(acc: &CountAccumulator, name: &dyn Fn(&SymbolicConstant) -> String) -> Count {
+    Count {
+        expr: acc.expr().render(name),
+        at_most: acc.at_most,
+        at_least: acc.at_least,
+    }
 }
 
-impl CountAccumulator {
-    /// `count` times `mult`; `None` when the count is not known, and
-    /// unknown when it, or the sum, does not fit in `i64`.
-    fn add(&mut self, count: i64, mult: Option<&SymExpr>, at_most: bool) {
-        let Some(mult) = mult else {
-            return self.add_unknown();
-        };
-        let (coeff, rest) = SymExpr::split_const(mult.clone());
-        let Some(term) = coeff.checked_mul(count) else {
-            return self.add_unknown();
-        };
-        match self.groups.iter_mut().find(|(m, _)| *m == rest) {
-            Some((_, n)) => match n.checked_add(term) {
-                Some(sum) => *n = sum,
-                None => return self.add_unknown(),
-            },
-            None => self.groups.push((rest, term)),
-        }
-        self.at_most |= at_most;
-        self.touched = true;
-    }
-
-    fn add_unknown(&mut self) {
-        self.at_least = true;
-        self.touched = true;
-    }
-
-    fn expr(&self) -> SymExpr {
-        self.groups
-            .iter()
-            .fold(SymExpr::Const(0), |acc, (mult, n)| {
-                SymExpr::add(acc, SymExpr::mul(SymExpr::Const(*n), mult.clone()))
-            })
-    }
-
-    fn count(&self, name: &dyn Fn(&SymbolicConstant) -> String) -> Count {
-        Count {
-            expr: self.expr().render(name),
-            at_most: self.at_most,
-            at_least: self.at_least,
-        }
-    }
+/// `acc`'s FLOPs by precision and in total, as the report's counts.
+fn flop_counts(
+    acc: &FlopAccumulator,
+    name: &dyn Fn(&SymbolicConstant) -> String,
+) -> BTreeMap<String, Count> {
+    let mut out: BTreeMap<String, Count> = (acc.by_precision.iter())
+        .map(|(p, v)| (p.key().to_owned(), count(v, name)))
+        .collect();
+    out.insert("total".to_owned(), count(&acc.total, name));
+    out
 }
 
 /// The report's name for an instruction class (see
@@ -758,7 +724,7 @@ impl IssueAccumulator {
     }
 
     fn warps(&self, name: &dyn Fn(&SymbolicConstant) -> String) -> Option<Count> {
-        self.warps.touched.then(|| self.warps.count(name))
+        self.warps.touched.then(|| count(&self.warps, name))
     }
 }
 
@@ -767,45 +733,6 @@ struct InstructionAccumulator {
     total: IssueAccumulator,
     opcodes: BTreeMap<String, IssueAccumulator>,
     variants: BTreeMap<(String, Vec<Contribution>), IssueAccumulator>,
-}
-
-struct FlopAccumulator {
-    by_precision: BTreeMap<Precision, CountAccumulator>,
-    total: CountAccumulator,
-}
-
-impl FlopAccumulator {
-    fn new() -> Self {
-        FlopAccumulator {
-            by_precision: Precision::ALL
-                .iter()
-                .map(|&p| (p, CountAccumulator::default()))
-                .collect(),
-            total: CountAccumulator::default(),
-        }
-    }
-
-    fn add(&mut self, precision: Precision, n: i64, mult: Option<&SymExpr>, at_most: bool) {
-        self.by_precision
-            .get_mut(&precision)
-            .expect("every precision pre-inserted")
-            .add(n, mult, at_most);
-        self.total.add(n, mult, at_most);
-    }
-
-    fn add_unknown(&mut self) {
-        self.total.add_unknown();
-    }
-
-    fn counts(&self, name: &dyn Fn(&SymbolicConstant) -> String) -> BTreeMap<String, Count> {
-        let mut out: BTreeMap<String, Count> = self
-            .by_precision
-            .iter()
-            .map(|(p, v)| (p.key().to_owned(), v.count(name)))
-            .collect();
-        out.insert("total".to_owned(), self.total.count(name));
-        out
-    }
 }
 
 /// `(constant coefficient, the rest)` of a product.
@@ -1250,8 +1177,8 @@ impl<'a> KernelReportBuilder<'a> {
                 (
                     k.to_string(),
                     DirectionCounts {
-                        load: l.count(&name),
-                        store: s.count(&name),
+                        load: count(l, &name),
+                        store: count(s, &name),
                     },
                 )
             })
@@ -1276,22 +1203,22 @@ impl<'a> KernelReportBuilder<'a> {
         };
 
         Aggregates {
-            flops: flops[&Pipe::CudaCore].counts(&name),
-            tensor_flops: flops[&Pipe::Tensor].counts(&name),
-            sfu_flops: flops[&Pipe::Sfu].counts(&name),
-            atomic_flops: flops[&Pipe::Atomic].counts(&name),
+            flops: flop_counts(&flops[&Pipe::CudaCore], &name),
+            tensor_flops: flop_counts(&flops[&Pipe::Tensor], &name),
+            sfu_flops: flop_counts(&flops[&Pipe::Sfu], &name),
+            atomic_flops: flop_counts(&flops[&Pipe::Atomic], &name),
             bytes: bytes_out,
-            conversions: conversions.count(&name),
+            conversions: count(&conversions, &name),
             ai_global,
             unrolled_source_lines: self.unrolled_lines(below),
             instructions: InstructionCounts {
-                all: Some(instruction_all.threads.count(&name))
-                    .filter(|all| *all != instruction_total.threads.count(&name)),
-                all_warps: (instruction_all.threads.count(&name)
-                    != instruction_total.threads.count(&name))
+                all: Some(count(&instruction_all.threads, &name))
+                    .filter(|all| *all != count(&instruction_total.threads, &name)),
+                all_warps: (count(&instruction_all.threads, &name)
+                    != count(&instruction_total.threads, &name))
                 .then(|| instruction_all.warps(&name))
                 .flatten(),
-                total: instruction_total.threads.count(&name),
+                total: count(&instruction_total.threads, &name),
                 warps: instruction_total.warps(&name),
                 by_kind: instructions
                     .iter()
@@ -1303,7 +1230,7 @@ impl<'a> KernelReportBuilder<'a> {
                                 .entry(opcode.clone())
                                 .or_default()
                                 .push(InstructionVariant {
-                                    issued: issued.threads.count(&name),
+                                    issued: count(&issued.threads, &name),
                                     warps: issued.warps(&name),
                                     contributions_per_execution: contributions
                                         .iter()
@@ -1314,12 +1241,12 @@ impl<'a> KernelReportBuilder<'a> {
                         (
                             k.clone(),
                             KindCounts {
-                                total: acc.total.threads.count(&name),
+                                total: count(&acc.total.threads, &name),
                                 warps: acc.total.warps(&name),
                                 opcodes: acc
                                     .opcodes
                                     .iter()
-                                    .map(|(o, v)| (o.clone(), v.threads.count(&name)))
+                                    .map(|(o, v)| (o.clone(), count(&v.threads, &name)))
                                     .collect(),
                                 opcode_warps: acc
                                     .opcodes

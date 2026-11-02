@@ -6,11 +6,96 @@ use crate::analysis::affine::trip_counts::TripCountResults;
 use crate::analysis::control_flow::dominators;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier};
+use crate::analysis::instruction_counts::measurement::Precision;
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::thread_participation::{CTA_BUDGET, Pred, ThreadSets};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Kernel, SpecialReg, SpecialVector, Stmt};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+
+/// Symbolic sum that collects like terms: contributions are grouped
+/// by their constant-free multiplier, so two blocks under the same
+/// trip chain merge into one term ("4 * param_1", never
+/// "2 * param_1 + 2 * param_1"). `at_most` is the OR over
+/// contributions — an upper bound on any term makes the sum one.
+#[derive(Default)]
+pub(crate) struct CountAccumulator {
+    groups: Vec<(SymExpr, i64)>,
+    pub(crate) at_most: bool,
+    pub(crate) at_least: bool,
+    pub(crate) touched: bool,
+}
+
+impl CountAccumulator {
+    /// `count` times `mult`; `None` when the count is not known, and
+    /// unknown when it, or the sum, does not fit in `i64`.
+    pub(crate) fn add(&mut self, count: i64, mult: Option<&SymExpr>, at_most: bool) {
+        let Some(mult) = mult else {
+            return self.add_unknown();
+        };
+        let (coeff, rest) = SymExpr::split_const(mult.clone());
+        let Some(term) = coeff.checked_mul(count) else {
+            return self.add_unknown();
+        };
+        match self.groups.iter_mut().find(|(m, _)| *m == rest) {
+            Some((_, n)) => match n.checked_add(term) {
+                Some(sum) => *n = sum,
+                None => return self.add_unknown(),
+            },
+            None => self.groups.push((rest, term)),
+        }
+        self.at_most |= at_most;
+        self.touched = true;
+    }
+
+    pub(crate) fn add_unknown(&mut self) {
+        self.at_least = true;
+        self.touched = true;
+    }
+
+    pub(crate) fn expr(&self) -> SymExpr {
+        self.groups
+            .iter()
+            .fold(SymExpr::Const(0), |acc, (mult, n)| {
+                SymExpr::add(acc, SymExpr::mul(SymExpr::Const(*n), mult.clone()))
+            })
+    }
+}
+
+pub(crate) struct FlopAccumulator {
+    pub(crate) by_precision: BTreeMap<Precision, CountAccumulator>,
+    pub(crate) total: CountAccumulator,
+}
+
+impl FlopAccumulator {
+    pub(crate) fn new() -> Self {
+        FlopAccumulator {
+            by_precision: Precision::ALL
+                .iter()
+                .map(|&p| (p, CountAccumulator::default()))
+                .collect(),
+            total: CountAccumulator::default(),
+        }
+    }
+
+    pub(crate) fn add(
+        &mut self,
+        precision: Precision,
+        n: i64,
+        mult: Option<&SymExpr>,
+        at_most: bool,
+    ) {
+        self.by_precision
+            .get_mut(&precision)
+            .expect("every precision pre-inserted")
+            .add(n, mult, at_most);
+        self.total.add(n, mult, at_most);
+    }
+
+    pub(crate) fn add_unknown(&mut self) {
+        self.total.add_unknown();
+    }
+}
 
 pub(crate) struct CtaSize {
     pub(crate) threads: u64,
