@@ -300,7 +300,8 @@ impl KernelReportBuilder<'_> {
     /// The threads that run block `b`, by warps and lanes; without a block
     /// shape, the condition that selects them, if one does. Where they
     /// read the CTA index and the grid is known: the lanes and the CTAs'
-    /// condition, or where the lanes differ by CTA the most CTAs' lanes.
+    /// condition as `when` prints it, or where the lanes differ by CTA
+    /// the most CTAs' lanes.
     fn threads(&self, b: BlockId) -> Option<String> {
         let set = &self.counts.sets.blocks[b.0 as usize];
         let shape = self.counts.shape;
@@ -327,8 +328,9 @@ impl KernelReportBuilder<'_> {
         let lanes = warp_lanes(masks, shape, exact);
         Some(match running.len() {
             1 => {
+                let mut tags = (BTreeSet::new(), Uniform::Cta);
                 let parts: Vec<String> = (cta_conjuncts(set).into_iter())
-                    .filter_map(|p| self.condition(p))
+                    .filter_map(|p| self.when(b, p, true, &mut tags))
                     .collect();
                 format!("{lanes} | CTAs {} ({n}/{total})", parts.join(" and "))
             }
