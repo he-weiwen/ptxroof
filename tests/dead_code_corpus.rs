@@ -1,9 +1,10 @@
-//! The instructions the dead-code analysis finds unused, across the
-//! fixtures, in one reviewable snapshot; and against every Nsight Compute
+//! The instructions the dead-code analysis finds unused, the annotated
+//! PTX's `unused`, across the fixtures, in one reviewable snapshot; and against every Nsight Compute
 //! record, that ptxas emitted no SASS for any of them, the evidence that
 //! leaving them out of every total matches what runs.
 
-use ptxroof::report::build::{AnalyzeOptions, analyze};
+use ptxroof::report::annotate::annotate;
+use ptxroof::report::build::AnalyzeOptions;
 use ptxroof::report::measured::NcuRecord;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -21,6 +22,32 @@ fn collect(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Each line of `source`'s annotated PTX that holds an unused
+/// instruction: its kernel, its line and the instruction's opcode.
+fn unused(source: &str, opts: &AnalyzeOptions) -> Vec<(String, u32, String)> {
+    let out = annotate(source, opts).expect("fixture analyzes");
+    let mut kernel = String::new();
+    let mut found = Vec::new();
+    for (line, text) in (1..).zip(out.lines()) {
+        if let Some(rest) = text.split(".entry ").nth(1) {
+            kernel = rest.split('(').next().unwrap_or_default().trim().to_owned();
+        }
+        let Some((ptx, note)) = text.split_once(" // ") else {
+            continue;
+        };
+        if note
+            .split(" ; ")
+            .any(|n| n.split(" | ").any(|p| p == "unused"))
+        {
+            let words = ptx.split_whitespace();
+            let mut words = words.skip_while(|w| w.starts_with('@'));
+            let opcode = words.next().unwrap_or_default().to_owned();
+            found.push((kernel.clone(), line, opcode));
+        }
+    }
+    found
+}
+
 #[test]
 fn unused_instructions_across_the_corpus() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -36,12 +63,9 @@ fn unused_instructions_across_the_corpus() {
             .expect("under the repo")
             .display()
             .to_string();
-        let report = analyze(&src, &rel, &AnalyzeOptions::default()).expect("fixture analyzes");
-        for kernel in &report.kernels {
-            for u in &kernel.unused {
-                *by_opcode.entry(u.opcode.clone()).or_default() += 1;
-                let _ = writeln!(out, "{rel}:{}\t{}\t{}", u.line, kernel.name, u.opcode);
-            }
+        for (kernel, line, opcode) in unused(&src, &AnalyzeOptions::default()) {
+            *by_opcode.entry(opcode.clone()).or_default() += 1;
+            let _ = writeln!(out, "{rel}:{line}\t{kernel}\t{opcode}");
         }
     }
     let mut head = String::new();
@@ -78,20 +102,19 @@ fn no_unused_instruction_has_sass_in_any_record() {
             grid: Some(record.grid),
             ncu: Some(record),
         };
-        let report = analyze(&src, &ptx.display().to_string(), &opts).expect("fixture analyzes");
         let record = opts.ncu.as_ref().expect("set above");
-        for kernel in report.kernels.iter().filter(|k| k.name == record.kernel) {
-            for u in &kernel.unused {
-                checked += 1;
-                if let Some(line) = record.lines.get(&u.line) {
-                    kept.push(format!(
-                        "{}:{} {} {:?}",
-                        ptx.display(),
-                        u.line,
-                        line.ptx,
-                        line.sass
-                    ));
-                }
+        for (_, n, _) in unused(&src, &opts)
+            .into_iter()
+            .filter(|u| u.0 == record.kernel)
+        {
+            checked += 1;
+            if let Some(line) = record.lines.get(&n) {
+                kept.push(format!(
+                    "{}:{n} {} {:?}",
+                    ptx.display(),
+                    line.ptx,
+                    line.sass
+                ));
             }
         }
     }
