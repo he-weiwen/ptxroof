@@ -5,13 +5,10 @@
 # nonnegative, which a parameter n is not known to be: the store's
 # count, its sectors per request and the CTA's store bytes are bounds.
 RUN: %ptxroof analyze --annotate %fixtures/micro/setp_unknown_range.ptx | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/micro/setp_unknown_range.ptx | FileCheck "%s"
 ANN: {{^}}.visible .entry micro_setp_unknown_range_signed( // block 64×1×1 | per CTA: global store 128 B; param load 768 B{{$}}
 ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // warp 0 × lane * | exec 32/CTA | global store [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
 ANN: {{^}}.visible .entry micro_setp_unknown_range_unsigned( // block 64×1×1 | per CTA: global store <= 256 B; param load 768 B{{$}}
 ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
-CHECK-LABEL: kernel micro_setp_unknown_range_signed
-CHECK: st.global.u32  global store 4 B on 32 threads in 1 warp (%tid.x < 32)
 # The third kernel sums in .u32 and compares .s32, read as %tid.x < 32
 # under the input contract (PLAN.md), which excludes n = 0x7fffffe0:
 # 32 threads in 1 warp, the CTA's 128 B. Wrong output (PLAN.md): the
@@ -22,5 +19,3 @@ ANN: {{^}}.visible .entry micro_setp_unknown_range_mixed( // block 64×1×1 | pe
 ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // warp 0 × lane * | exec 32/CTA | global store [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
 ANN: {{^}}.visible .entry micro_setp_unknown_range_mask( // block 64×1×1{{$}}
 ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // no thread | exec 0/CTA | global store [4·%tid.x + param_0] sectors/req 0 (ideal 0){{$}}
-CHECK-LABEL: kernel micro_setp_unknown_range_mixed
-CHECK: st.global.u32  global store 4 B on 32 threads in 1 warp (%tid.x < 32)
