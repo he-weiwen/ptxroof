@@ -1,6 +1,7 @@
-# Presentation (PLAN.md): a thread-index condition that holds on every
-# thread of the block still prints. Under its record scaled_mm's copies
-# outside the K loop read their sources where 16·(%tid.x mod 8) < 7936,
-# all 128 threads.
-RUN: %ptxroof analyze %fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx --ncu %fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ncu.json | FileCheck "%s"
-CHECK: global load 16 B on 128 threads in 4 warps (16 * (%tid.x mod 8) < 7936)
+# Under its record scaled_mm's copies outside the K loop read their
+# sources where 16·(%tid.x mod 8) < 7936, which holds on every thread of
+# their block: a warp's request reads 16 sectors ideally, 32 lanes of
+# 16 B.
+RUN: %ptxroof analyze --annotate %fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx --ncu %fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ncu.json | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_2: // warp * × lane * | exec 3,670,016/launch{{$}}
+ANN: {{^}}	cp.async.cg.shared.global [ %r97 + 0 ], [ %rd129 + 0 ], 0x10, %p129; // shared store [(16·(⌊%tid.x/8⌋ mod 8) ⊕ 16·(%tid.x mod 128)) + global_smem + 32768] wavefronts/req ? (wavefronts not modelled) | global load [1048576·⌊%ctaid.x/448⌋ + 16·(%tid.x mod 8) + 8192·(⌊%tid.x/8⌋ mod 16) + param_0 + 256] sectors/req 16–20 (ideal 16){{$}}

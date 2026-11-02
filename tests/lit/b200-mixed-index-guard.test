@@ -5,7 +5,5 @@
 # threads of each CTA, 589824 times over the launch, and each of the
 # 8192 CTAs loads 2176 B and stores 1152 B.
 RUN: %ptxroof analyze --annotate %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json | FileCheck --check-prefix=ANN "%s"
-RUN: %ptxroof analyze %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ptx --ncu %fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json | FileCheck "%s"
 ANN: {{^}}.visible .entry set_mla_kv_buffer_kernel_norope( // grid 8192×1×1 | block 128×1×1 | per launch: global load 17,825,792 B, store 9,437,184 B; param load 25,165,824 B{{$}}
 ANN: {{^}}	@%p1 st.global.v4.b32 [ %rd4 + 0 ], { %r1, %r2, %r3, %r4 }; // warp 0-1 × lane * ∪ warp 2 × lane 0-7 | exec 589,824/launch | global store [2048·%ctaid.y + 16·(%tid.x mod 128) + 1152·uniform(%rd1@66) + param_0] sectors/req 4–17 (ideal 4–16){{$}}
-CHECK: st.global.v4.b32  global store 16 B on 72 threads in 3 warps (8 * (%tid.x mod 128) < 576)

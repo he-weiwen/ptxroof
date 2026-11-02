@@ -679,10 +679,6 @@ contract (Codex's review of 2b2731b).
   b200 `tma_best` 34 access rows say only "depends on special register
   %ctaid.x" (8 in `bmm_kernel_persistent`), not that a join of two
   values stopped the trace.
-- **A thread-index condition that holds on every thread still
-  prints.** Under its record b200 scaled_mm's copies outside the K loop
-  read their sources `on 128 threads in 4 warps (16 * (%tid.x mod 8) <
-  7936)`, every thread of the block (`b200-every-thread-condition.test`).
 - Per-thread totals of a warp-specialized kernel are `<=` the sum of
   its partitions, since a thread runs one of them: the `threads` column
   of the block table says which threads run each block (`128

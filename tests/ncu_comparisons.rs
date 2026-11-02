@@ -337,6 +337,43 @@ fn the_grid_decides_a_guard_on_the_cta_index() {
     assert_eq!(differing(&c, 93), None);
 }
 
+/// Triton's causal attention (tut_ll): the loop at tut_attn.py:140 runs
+/// %ctaid.x trips on warps 0-3 of the CTAs with %ctaid.x >= 1, so over
+/// the record's 16x128 CTAs each instruction of its four blocks between
+/// waits runs Σ x · 128 · 128 = 1,966,080 times, as the B200 measures.
+#[test]
+fn tut_ll_s_causal_loop_is_confirmed_over_the_launch() {
+    let c =
+        comparison("tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json");
+    for block in ["<block 12>", "<block 14>", "<block 16>", "<block 18>"] {
+        assert_eq!(verdict(&c, block), Some(Verdict::Confirmed), "{block}");
+    }
+}
+
+/// ds2 rope's loop, whose latch reads a `min` of %ctaid.y, runs 16 trips
+/// on each of the record's 512 CTAs: its 262,144 executions agree with
+/// the B200's.
+#[test]
+fn ds2_rope_s_row_loop_is_confirmed_over_the_launch() {
+    let c = comparison(
+        "tests/fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ncu.json",
+    );
+    assert_eq!(verdict(&c, "$L__BB0_2"), Some(Verdict::Confirmed));
+}
+
+/// w8a8's K loop runs max(⌈K/128⌉, 2) − 1 = 55 trips at the record's
+/// K = 7168, 259,522,560 executions over its 36,864 CTAs of 128 threads,
+/// which the B200's counts confirm on its blocks `$L__BB0_6` and
+/// `<block 7>`.
+#[test]
+fn w8a8_s_k_loop_is_confirmed_at_its_record_s_k() {
+    let c = comparison(
+        "tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ncu.json",
+    );
+    assert_eq!(verdict(&c, "$L__BB0_6"), Some(Verdict::Confirmed));
+    assert_eq!(verdict(&c, "<block 7>"), Some(Verdict::Confirmed));
+}
+
 /// fp8_gemm_kernel.lm_head_dx's K loop runs 512 trips under its record,
 /// and its <block 4> only on those whose counter passes line 957's
 /// `setp.ge.u64 %p3, %rd55, %rd2`, read per trip as `k < 511`: 510 trips
