@@ -145,7 +145,8 @@ impl KernelReportBuilder<'_> {
     }
 
     /// `exec` and how many times block `bm`'s unguarded statements run at
-    /// the scale `per`, `<=` for a bound, unless no thread runs it; and
+    /// the scale `per`, `<=` for a bound, unless no thread runs it or per
+    /// thread they run once; and
     /// each statement whose count differs, but a predicated `bra`. Under a
     /// loop whose trips are not known, `exec ?` and the innermost such loop.
     fn execs(&self, bm: &BlockMeasurements, per: Per) -> (Option<String>, Notes) {
@@ -209,7 +210,11 @@ impl KernelReportBuilder<'_> {
                 parts.insert(i.provenance, vec![exec]);
             }
         }
-        (Some(own), parts)
+        let once = matches!(per, Per::Thread)
+            && block.is_some_and(|p| {
+                p.threads == 1 && !p.at_most && p.trips.and_then(|t| t.as_const()) == Some(1)
+            });
+        ((!once).then_some(own), parts)
     }
 
     /// Statement `s`'s memory operands but parameters, each `<space>
@@ -702,7 +707,7 @@ mod tests {
 
     /// Without a block shape, a block's annotation is the condition on the
     /// thread index that selects it, a loop's iteration k = iv + 1, and
-    /// its count per thread.
+    /// its count per thread but where every thread runs it once.
     #[test]
     fn without_a_block_shape_a_block_names_its_condition() {
         let src = "\
@@ -741,15 +746,12 @@ $L__BB0_5:
         assert_eq!(
             notes,
             [
-                "[<block 0>] exec 1/thread",
                 "loop: trips 4 | exec 4/thread",
                 "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0 | exec <= 4/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
                 "exec 4/thread",
-                "[<block 4>] exec 1/thread",
                 "[<block 5>] %tid.x <= 31 | exec <= 1/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
-                "exec 1/thread",
             ]
         );
     }

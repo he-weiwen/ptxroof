@@ -1024,7 +1024,9 @@ One line each, with the trigger that would start it.
   `nested in` where the block has one, else after `under`
   (`gluon-attn-fwd-ws-annotate.test`). Then how many times its
   unguarded statements run, over the launch given the grid
-  and the block shape, else per CTA, else per thread: `exec
+  and the block shape, else per CTA, else per thread but where every
+  thread runs them once
+  (`without_a_block_shape_a_block_names_its_condition`): `exec
   32,768/launch`, `<=` for a bound, and under a loop whose trips are
   not known `exec ? (trips of <header>)` (`k5-annotate.test`,
   `gluon-attn-fwd-ws-annotate.test`); a statement whose count differs,
