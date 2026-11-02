@@ -12,5 +12,5 @@ CHECK: totals per CTA [static]:
 CHECK: global store 16 B      32
 CHECK: st.global.v4.f32     32
 ANN: {{^}}.visible .entry micro_guards( // block 32×1×1 | per CTA: global load 260 B, store <= 706 B; param load 512 B{{$}}
-ANN: {{^}}	@%p5 st.global.v4.f32 	[%rd4+16], {%f1, %f1, %f1, %f1}; // exec 0/CTA | global store [param_1 + 16] sectors/req 0 (ideal 0){{$}}
+ANN: {{^}}	@%p5 st.global.v4.f32 	[%rd4+16], {%f1, %f1, %f1, %f1}; // no thread | exec 0/CTA | global store [param_1 + 16] sectors/req 0 (ideal 0){{$}}
 ANN: {{^}}	st.global.b64 	[%rd4+48], %rd5; // [<block 1>] warp * × lane 1-31 | exec 31/CTA | global store [param_1 + 48] sectors/req 1 (ideal 1){{$}}

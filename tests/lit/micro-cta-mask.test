@@ -18,9 +18,9 @@ PARTIAL: global bytes: load 0 B, store <= 256 B
 HUGE: totals per launch [static]:
 HUGE: instructions = 0 + unknown
 FREE: {{^}}.visible .entry micro_cta_mask( // block 64×1×1 | param_1 = 1000 | per CTA: global store <= 256 B; param load 768 B{{$}}
-FREE: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // exec <= 64/CTA | global store [4·%tid.x + 256·%ctaid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
+FREE: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + 256·%ctaid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
 FULL: {{^}}.visible .entry micro_cta_mask( // grid 15×1×1 | block 64×1×1 | param_1 = 1000 | per launch: global store 3,840 B; param load 11,520 B{{$}}
 FULL: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // global store [4·%tid.x + 256·%ctaid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
 ANNPARTIAL: {{^}}.visible .entry micro_cta_mask( // grid 16×1×1 | block 64×1×1 | param_1 = 1000 | per launch: global store 4,000 B; param load 12,288 B{{$}}
-ANNPARTIAL: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // exec 1,000/launch | global store [4·%tid.x + 256·%ctaid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
+ANNPARTIAL: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // warp * × lane * in 15/16 CTAs, other 1 CTAs differ | exec 1,000/launch | global store [4·%tid.x + 256·%ctaid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
 ANNHUGE: {{^}}.visible .entry micro_cta_mask( // grid 2147483647×65535×65535 | block 64×1×1 | param_1 = 1000 | per launch: global store ? B; param load ? B{{$}}

@@ -25,5 +25,5 @@ CHECK: coverage: instructions_classified 100.0% (1146/1146)
 ANN: {{^}}.visible .entry rmsnorm_stats_kernel( // block 128×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 68,352; sfu flops f32 512; global load 37,892 B, store 12,324 B; shared load 512 B, store 512 B; param load 8,704 B{{$}}
 ANN: {{^}}$L__func_begin0: // warp * × lane * | exec 128/CTA{{$}}
 ANN: {{^}}	@%p1 ld.global.v4.b32 { %r3, %r4, %r5, %r6 }, [ %rd3 + 0 ]; // global load [12288·%ctaid.x + 16·(%tid.x mod 32) + 1536·(⌊%tid.x/32⌋ mod 4) + param_0] sectors/req 16–17 (ideal 16){{$}}
-ANN: {{^}}	@%p2 ld.global.v4.b32 { %r16, %r17, %r18, %r19 }, [ %rd6 + 0 ]; // exec 0/CTA | global load [12288·%ctaid.x + 16·(%tid.x mod 32) + 1536·(⌊%tid.x/32⌋ mod 4) + param_0 + 1536] sectors/req 0 (ideal 0){{$}}
-ANN: {{^}}	@%p4 atom.global.gpu.acq_rel.max.s32 %r134, [ %rd37 + 0 ], %r135; // exec 1/CTA | global load+store [param_5] sectors/req 1 (ideal 1){{$}}
+ANN: {{^}}	@%p2 ld.global.v4.b32 { %r16, %r17, %r18, %r19 }, [ %rd6 + 0 ]; // no thread | exec 0/CTA | global load [12288·%ctaid.x + 16·(%tid.x mod 32) + 1536·(⌊%tid.x/32⌋ mod 4) + param_0 + 1536] sectors/req 0 (ideal 0){{$}}
+ANN: {{^}}	@%p4 atom.global.gpu.acq_rel.max.s32 %r134, [ %rd37 + 0 ], %r135; // warp 0 × lane 0 | exec 1/CTA | global load+store [param_5] sectors/req 1 (ideal 1){{$}}

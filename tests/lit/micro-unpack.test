@@ -19,4 +19,4 @@ ANN: {{^}}	st.global.u32 	[%rd7], %r1; // global store [param_0 + 64] sectors/re
 ANN: {{^}}	st.global.u32 	[%rd4], %r2; // global store [16·%tid.x + param_0] sectors/req 16–17 (ideal 4){{$}}
 ANN: {{^}}.visible .entry micro_unpack_guarded( // block 64×1×1 | per CTA: global store <= 512 B; param load 512 B{{$}}
 ANN: {{^}}	st.global.u32 	[%rd4], %r1; // global store addr ? (%rd2 is written under a guard){{$}}
-ANN: {{^}}	@%p2 st.global.u32 	[%rd1], %r1; // exec <= 64/CTA | global store [param_0] sectors/req <= 1 (ideal <= 1){{$}}
+ANN: {{^}}	@%p2 st.global.u32 	[%rd1], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [param_0] sectors/req <= 1 (ideal <= 1){{$}}

@@ -6,7 +6,7 @@ RUN: %ptxroof analyze --annotate %fixtures/micro/guard_bound_param.ptx | FileChe
 RUN: %ptxroof analyze --annotate %fixtures/micro/guard_bound_param.ptx --bind 1:n=48 | FileCheck --check-prefix=BOUND "%s"
 RUN: %ptxroof analyze %fixtures/micro/guard_bound_param.ptx --bind 1:n=48 | FileCheck --check-prefix=WARPS "%s"
 FREE: {{^}}.visible .entry micro_guard_bound_param( // block 64×1×1 | per CTA: global store <= 256 B; param load 768 B{{$}}
-FREE: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
+FREE: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
 BOUND: {{^}}.visible .entry micro_guard_bound_param( // block 64×1×1 | param_1 = 48 | per CTA: global store 192 B; param load 768 B{{$}}
-BOUND: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // exec 48/CTA | global store [4·%tid.x + param_0] sectors/req 2–5 (ideal 2–4){{$}}
+BOUND: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // warp 0 × lane * ∪ warp 1 × lane 0-15 | exec 48/CTA | global store [4·%tid.x + param_0] sectors/req 2–5 (ideal 2–4){{$}}
 WARPS: st.global.u32  global store 4 B on 48 threads in 2 warps (%tid.x < 48)

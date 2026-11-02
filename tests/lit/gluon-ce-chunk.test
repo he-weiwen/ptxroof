@@ -33,4 +33,4 @@ ANN: {{^}}	ld.global.b64 { %rd7 }, [ %rd8 + 0 ]; // global load [8·%ctaid.x + p
 ANN: {{^}}	ld.global.b16 { %rs1 }, [ %rd10 + 0 ]; // global load [65536·%ctaid.x + 2·uniform(%rd14@86) + param_0] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}$L__BB0_1:                              // =>This Inner Loop Header: Depth=1 // loop: trips 8 | global per CTA: requested 65,536 B, unique 65,536 B, sectors 65,536–69,632 B | warp * × lane * | exec 4,096/CTA{{$}}
 ANN: {{^}}$L__BB0_5:                              // =>This Inner Loop Header: Depth=1 // loop: trips 8 | global per CTA: requested 131,072 B, unique 131,072 B, sectors 131,072–139,264 B | warp * × lane * | exec 4,096/CTA{{$}}
-ANN: {{^}}	@%p33 atom.global.gpu.acq_rel.max.s32 %r408, [ %rd30 + 0 ], %r409; // exec 1/CTA | global load+store [param_4] sectors/req 1 (ideal 1){{$}}
+ANN: {{^}}	@%p33 atom.global.gpu.acq_rel.max.s32 %r408, [ %rd30 + 0 ], %r409; // warp 0 × lane 0 | exec 1/CTA | global load+store [param_4] sectors/req 1 (ideal 1){{$}}

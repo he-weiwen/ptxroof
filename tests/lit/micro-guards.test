@@ -19,6 +19,6 @@ CHECK: global store 8 B      127
 CHECK: st.global.b64        63
 ANN: {{^}}.visible .entry micro_guards( // block 64×1×1 | per CTA: global load 516 B, store <= 1,734 B; param load 1,024 B{{$}}
 ANN: {{^}}	ld.global.f32 	%f1, [%rd6]; // global load [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
-ANN: {{^}}	@%p3 ld.global.f32 	%f2, [%rd6+512]; // exec 1/CTA | global load [4·%tid.x + param_0 + 512] sectors/req 1 (ideal 1){{$}}
+ANN: {{^}}	@%p3 ld.global.f32 	%f2, [%rd6+512]; // warp 0 × lane 0 | exec 1/CTA | global load [4·%tid.x + param_0 + 512] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	@%p6 st.global.u32 	[%rd4+40], %r2; // exec <= 64/CTA | global store [param_1 + 40] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	st.global.b64 	[%rd4+48], %rd5; // [<block 1>] warp 0 × lane 1-31 ∪ warp 1 × lane * | exec 63/CTA | global store [param_1 + 48] sectors/req 1 (ideal 1){{$}}

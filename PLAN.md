@@ -1049,8 +1049,9 @@ One line each, with the trigger that would start it.
   32,768/launch`, `<=` for a bound, and under a loop whose trips are
   not known `exec ? (trips of <header>)` (`k5-annotate.test`,
   `gluon-attn-fwd-ws-annotate.test`); a statement whose count differs,
-  but a predicated `bra`, has its own on its line
-  (`micro-guards-annotate.test`). A memory operand but a parameter is
+  but a predicated `bra`, has its own on its line, and a guarded one
+  whose threads differ from its block's has theirs, as a block's, before
+  it (`micro-guards-annotate.test`). A memory operand but a parameter is
   `<space> <direction> [<address>]`, a loop's iteration k printed as
   `iv[<header>]` = k - 1, or `addr ?` and why, a counter there as
   `(iv[<header>] + 1)` (`micro-guarded-exit-bound-annotate.test`),

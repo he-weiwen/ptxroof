@@ -2,4 +2,4 @@
 # thread index and the store's lanes are a bound: only thread 0 runs it,
 # where they were taken to be a whole warp or none, `warp: 4–5 sectors`.
 RUN: %ptxroof analyze --annotate %fixtures/micro/bare_registers.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}

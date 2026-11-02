@@ -85,11 +85,17 @@ impl KernelReportBuilder<'_> {
                     format!("loop: trips {}{}", self.trips(l), bytes.unwrap_or_default())
                 });
             let (exec, mut parts) = self.execs(bm, per);
+            let block_threads = self.threads(b, &self.counts.sets.blocks[b.0 as usize]);
             for s in bm.instructions.iter().map(|i| i.provenance) {
                 if self.counts.unused[s] {
                     parts.insert(s, vec!["unused".to_owned()]);
                 } else {
+                    let threads = (self.guarded(s))
+                        .then(|| self.threads(b, &self.counts.sets.of(b, s)))
+                        .flatten()
+                        .filter(|t| Some(t) != block_threads.as_ref());
                     let part = parts.entry(s).or_default();
+                    part.splice(0..0, threads);
                     part.extend(self.uncounted(bm, s));
                     part.extend(self.operands(s));
                 }
@@ -104,7 +110,7 @@ impl KernelReportBuilder<'_> {
             let nesting = runs.then(|| self.nesting(b, when.is_some())).flatten();
             let mut own: Vec<String> = header
                 .into_iter()
-                .chain(self.threads(b))
+                .chain(block_threads.clone())
                 .chain(when)
                 .chain(nesting)
                 .chain(exec)
@@ -356,6 +362,15 @@ impl KernelReportBuilder<'_> {
         ((!once).then_some(own), parts)
     }
 
+    /// Statement `s` has a guard of its own, but a predicated `bra`, whose
+    /// guard picks a way out of the block.
+    fn guarded(&self, s: usize) -> bool {
+        let Stmt::Instr(instr) = &self.kernel.stmts[s] else {
+            return false;
+        };
+        self.counts.sets.guards.contains_key(&s) && instr.mnemonic != Opcode::Bra
+    }
+
     /// What counted statement `s` of block `bm` leaves out of the totals:
     /// its work where it is not classified, its bytes where an access's
     /// size is not known, a call's callee.
@@ -467,13 +482,12 @@ impl KernelReportBuilder<'_> {
         }
     }
 
-    /// The threads that run block `b`, by warps and lanes; without a block
+    /// The threads in `set`, of block `b`, by warps and lanes; without a block
     /// shape, the condition that selects them, if one does. Where they
     /// read the CTA index and the grid is known: the lanes and the CTAs'
     /// condition as `when` prints it, or where the lanes differ by CTA
     /// the most CTAs' lanes.
-    fn threads(&self, b: BlockId) -> Option<String> {
-        let set = &self.counts.sets.blocks[b.0 as usize];
+    fn threads(&self, b: BlockId, set: &Pred) -> Option<String> {
         let shape = self.counts.shape;
         if shape.contains(&0) {
             return self.condition(set);

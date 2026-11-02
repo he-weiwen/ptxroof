@@ -8,4 +8,4 @@ CHECK: global bytes: load 256 B, store <= 16 B
 CHECK: unknowns: none
 ANN: {{^}}.visible .entry attn_bwd_pre_kernel( // block 128×1×1 | per CTA: flops f32 17,408; global load 32,768 B, store 256 B; param load 5,632 B{{$}}
 ANN: {{^}}$L__func_begin0: // warp * × lane * | exec 128/CTA{{$}}
-ANN: {{^}}	@%p1 st.global.b32 [ %rd17 + 0 ], { %r65 }; // exec 16/CTA | global store [256·%ctaid.x + (4·param_7)·%ctaid.y + 4·(⌊%tid.x/8⌋ mod 16) + param_2] sectors/req 1–2 (ideal 1){{$}}
+ANN: {{^}}	@%p1 st.global.b32 [ %rd17 + 0 ], { %r65 }; // warp * × lane 0-24:8 | exec 16/CTA | global store [256·%ctaid.x + (4·param_7)·%ctaid.y + 4·(⌊%tid.x/8⌋ mod 16) + param_2] sectors/req 1–2 (ideal 1){{$}}

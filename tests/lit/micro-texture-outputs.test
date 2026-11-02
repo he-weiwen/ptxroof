@@ -4,4 +4,4 @@
 # not classified, so its work is in no total.
 RUN: %ptxroof analyze --annotate %fixtures/micro/texture_outputs.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	tex.1d.v4.s32.s32 	{%r1, %r2, %r3, %r4}|%p1, [micro_texture_outputs_tex, {%r1}]; // not classified (its FLOPs and bytes not counted){{$}}
-ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // exec <= 32/CTA | global store addr ? (value defined by unsupported instruction `tex`){{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r2; // <= warp * × lane * | exec <= 32/CTA | global store addr ? (value defined by unsupported instruction `tex`){{$}}
