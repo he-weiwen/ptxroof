@@ -53,7 +53,6 @@ only declare modules and selected public entry points.
 | `report/schema` | Owned serializable report structures |
 | `report/build` | Orchestrate kernel analyses and aggregate their results into reports |
 | `report/names` | Kernel demangling for display |
-| `report/text` | Render report structures as text |
 | `report/annotate` | The input PTX with each line's analysis results appended as a comment |
 | `main` | CLI arguments, file I/O, output selection and error handling |
 | `lib` | Library modules and version entry point |

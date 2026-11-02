@@ -52,10 +52,11 @@ any of the 954 such instructions in kernels with an Nsight Compute
 record (`tests/dead_code_corpus.rs`). Where these and the instructions
 under a guard no thread passes are left out, an instruction total
 reads `live of` the count with them (rmsnorm: `1041 live of 1146`).
-Text and JSON views of the same tree. Counts are static: per-thread
+The report tree is built but no longer printed (the annotated PTX,
+Missing features). Counts are static: per-thread
 unless labeled per-CTA or per-warp, as requested by the PTX; nothing
 is measured (README). Each instruction has one category and independent
-contributions; text expands instructions with multiple contributions, and
+contributions, and
 copies of one opcode with differing immediate sizes each count their own bytes
 at their own addresses
 (`copies_of_one_opcode_count_their_own_source_sizes_and_addresses`); an
