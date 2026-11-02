@@ -1,7 +1,11 @@
 # micro/irreducible under its record at param 1 = 32: every instruction
 # is classified, and its cycle, which belongs to no natural loop, has no
-# trip count to resolve.
+# trip count to resolve. Wrong output (PLAN.md): the cycle's block
+# $L__BB0_A counts as running once per thread, `<= 32` over the launch,
+# where the record measures its fma 320 times.
 RUN: %ptxroof analyze %fixtures/micro/irreducible.ptx --ncu %fixtures/micro/irreducible.32.ncu.json --json | %check-report "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/irreducible.ptx --ncu %fixtures/micro/irreducible.32.ncu.json | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_A: // warp * × lane * | runs when %r3@$L__BB0_B < 30 (CTA-uniform, branch at line 38) | exec <= 32/launch{{$}}
 {
   "coverage": {"instructions_classified": {"num": 15, "den": 15}, "loop_trips_resolved": {"num": 0, "den": 0}}
 }

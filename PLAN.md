@@ -155,6 +155,12 @@ contract (Codex's review of 2b2731b).
   on every thread, exactly (`micro/predicated_exit.ptx`: the store
   after `@%p1 exit` counts 32 per CTA, where on an RTX 4090 at n = 20
   it runs on none).
+- **A block in an irreducible cycle counts as running once.** A cycle
+  entered at two blocks is no natural loop, so no trip count multiplies
+  its blocks: `micro/irreducible.ptx`'s `$L__BB0_A` reads `exec <=
+  32/launch` where its record measures its `fma.rn.f32` 320 times
+  (`ncu-irreducible.test`). None of the census's 2,837 kernels has such
+  a cycle.
 - **Vector registers are not modelled** (PTX ISA §6.4.3): the parser
   does not read `.reg .v2 .b32 %v;`, and an element `%v.x` is a register
   of its own, apart from `%v`. In `micro/vector_register.ptx`, after
