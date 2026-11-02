@@ -429,12 +429,12 @@ contract (Codex's review of 2b2731b).
   aligned: `micro/optional_align.ptx` reads `in sectors <= 192 B`, its
   16 B store at p making each byte store one sector, where with n == 0
   and p ≡ 17 mod 32 the byte stores request 256 (`micro-optional-align.test`).
-- **The sectors of an access under `elect.sync` read the lowest active
-  lane as the elected one**, where its thread count tries every active
-  lane (PTX ISA §9.7.14.15 does not say which is elected):
+- **The threads and sectors of an access under `elect.sync` read the
+  lowest active lane as the elected one**, where its count tries every
+  active lane (PTX ISA §9.7.14.15 does not say which is elected):
   `micro/elect_lane.ptx`'s store under `%tid.x == 1 and elected` runs
-  on `<= 1` thread and counts `0 sectors`, where lane 1, if elected,
-  requests one (`micro-elect-lane.test`). The census has no election
+  `exec <= 1/CTA` but reads `no thread` and `sectors/req 0`, where lane
+  1, if elected, requests one (`micro-elect-lane.test`). The census has no election
   under a condition that varies by lane.
 
 ### Reported as unknowns
