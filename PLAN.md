@@ -1046,9 +1046,14 @@ One line each, with the trigger that would start it.
   bound parameter's value (`k5-annotate.test`); then the shared memory
   each CTA declares, `shared memory 2,048 B/CTA`, `+ dynamic` where an
   `.extern .shared` array's size is set at launch
-  (`gluon-attn-fwd-ws-annotate.test`). Not printed: the ncu
-  comparisons, which test the analysis (`--ncu` gives the launch;
-  `tests/ncu_corpus.rs` keeps them); FLOPs.
+  (`gluon-attn-fwd-ws-annotate.test`); then what the counted statements
+  sum to at the counts' scale, `per launch:` and each pipe's FLOPs by
+  precision and each space's bytes loaded and stored, `>=` where a
+  statement not counted could add to it, `?` where none is counted,
+  `? B (trips of <header>)` under a loop whose trips are not known
+  (`k5-annotate.test`, `micro-totals-annotate.test`). Not printed: the
+  ncu comparisons, which test the analysis (`--ncu` gives the launch;
+  `tests/ncu_corpus.rs` keeps them).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures

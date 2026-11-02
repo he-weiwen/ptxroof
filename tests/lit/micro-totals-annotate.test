@@ -1,0 +1,10 @@
+# The `.entry` line's sums where statements are not counted. An
+# unclassified `vadd` may do any work, so no pipe's FLOPs are counted
+# and its global and shared bytes are at least those counted, the store
+# its 32 threads' 4 B each. A loop whose counter the vector load
+# overwrites has no trip count, so the bytes it loads are not known and
+# the sum names it.
+RUN: %ptxroof analyze --annotate %fixtures/micro/video_selector.ptx | FileCheck --check-prefix=VIDEO "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/counter_vector_write.ptx | FileCheck --check-prefix=LOOP "%s"
+VIDEO: {{^}}.visible .entry micro_video_selector( // block 32×1×1 | per CTA: flops ?; global load ? B, store >= 128 B; shared load ? B, store ? B; param load 256 B{{$}}
+LOOP: {{^}}.visible .entry micro_counter_vector_write( // block 64×1×1 | per CTA: global load ? B (trips of $L__loop); param load 512 B{{$}}

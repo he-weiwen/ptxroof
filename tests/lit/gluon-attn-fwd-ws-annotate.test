@@ -4,7 +4,10 @@
 # under a loop whose trips are not known runs an unknown number of
 # times, the innermost such loop named; on that loop's header, `exec ?`.
 # An `ldmatrix` address behind an xor of the thread index is unknown.
-# Its shared memory is all `.extern .shared`, set at launch.
+# Its shared memory is all `.extern .shared`, set at launch. Its main
+# loop's trips are not known, so the FLOPs of every pipe that runs in it
+# are not counted, and the bytes of its loads and stores are at least
+# those outside it.
 # A block under a branch the same for the whole CTA or warp runs when its
 # comparison holds, with the branch's polarity: block 11 past
 # `setp.lt.s32 %p63, %r1884, 1; @%p63 bra $L__BB0_56` when `%r1884 ≥ 1`,
@@ -19,7 +22,7 @@
 # `$L__BB0_46` under block 16, `$L__BB0_47` under block 11. Past block
 # 11's region, `$L__BB0_56` has neither.
 RUN: %ptxroof analyze --annotate --ncu %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck "%s"
-CHECK: {{^}}.visible .entry attn_fwd_ws_kernel( // grid 128×1×1 | block 256×1×1 | param_5 = 1572864, param_6 = 768, param_7 = 128, param_8 = 6, param_9 = 2048, param_10 = 192, param_12 = -1 | shared memory 0 B/CTA + dynamic{{$}}
+CHECK: {{^}}.visible .entry attn_fwd_ws_kernel( // grid 128×1×1 | block 256×1×1 | param_5 = 1572864, param_6 = 768, param_7 = 128, param_8 = 6, param_9 = 2048, param_10 = 192, param_12 = -1 | shared memory 0 B/CTA + dynamic | per launch: cuda-core, tensor, sfu flops ?; global load >= 4,194,304 B, store ? B; shared load ? B, store >= 4,325,376 B; param load 2,228,224 B{{$}}
 CHECK: {{^}}	setp.eq.b32 	%p58, %r1753, 0; // [<block 1>] warp 0-3 × lane * | exec 16,384/launch{{$}}
 CHECK: {{^}}$L__tmp5: // warp 0-3 × lane * | runs when predicate %p60 (line 350) is false (CTA-uniform, branch at line 357) | exec <= 16,384/launch{{$}}
 CHECK: {{^}}$L__tmp7: // warp 0-3 × lane * | CTAs %ctaid.x < 64 (64/128) | under line 359 | exec <= 16,384/launch{{$}}

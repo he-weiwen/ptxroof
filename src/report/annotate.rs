@@ -5,8 +5,11 @@ use crate::analysis::affine::affine_expr::{AffineExpr, Cmp, Var};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::execution_counts::{CtaSize, Participation, Per, Resolution};
+use crate::analysis::execution_counts::{
+    CountAccumulator, CtaSize, Participation, Per, Resolution,
+};
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
+use crate::analysis::instruction_counts::measurement::Pipe;
 use crate::analysis::memory_footprint::CountRange;
 use crate::analysis::register_effects::writes;
 use crate::analysis::thread_participation::{Atom, AtomKey, Pred};
@@ -51,10 +54,6 @@ impl KernelReportBuilder<'_> {
     /// the grid and the block shape, else per CTA given the shape, else
     /// per thread.
     fn annotations(&self, notes: &mut BTreeMap<u32, Vec<String>>) {
-        if let Some(entry) = self.entry() {
-            let line = self.lines.line(self.kernel.offset);
-            notes.entry(line).or_default().push(entry);
-        }
         let threads: u64 = self.counts.shape.iter().map(|&n| u64::from(n)).product();
         let cta = (threads > 0).then(|| CtaSize {
             threads,
@@ -68,6 +67,10 @@ impl KernelReportBuilder<'_> {
             (Some(c), None) => Per::Cta(c),
             (None, _) => Per::Thread,
         };
+        if let Some(entry) = self.entry(per) {
+            let line = self.lines.line(self.kernel.offset);
+            notes.entry(line).or_default().push(entry);
+        }
         for bm in &self.blocks {
             let (b, start) = (bm.block, self.cfg.block(bm.block).start);
             let header = self.forest.block_loop[b.0 as usize]
@@ -111,8 +114,9 @@ impl KernelReportBuilder<'_> {
     /// The `.entry` line's annotation: what the counts take of the
     /// launch, those given, `grid X×Y×Z`, `block X×Y×Z` and each
     /// parameter's value; then the shared memory each CTA declares, `+
-    /// dynamic` where an `.extern .shared` array's size is set at launch.
-    fn entry(&self) -> Option<String> {
+    /// dynamic` where an `.extern .shared` array's size is set at launch;
+    /// then the FLOPs and bytes its statements sum to at the scale `per`.
+    fn entry(&self, per: Per) -> Option<String> {
         let dims = |d: [u32; 3]| d.map(|n| n.to_string()).join("×");
         let shape = self.counts.shape;
         let params: BTreeMap<usize, i64> = (self.bind_map.iter())
@@ -129,6 +133,7 @@ impl KernelReportBuilder<'_> {
             (!shape.contains(&0)).then(|| format!("block {}", dims(shape))),
             (!params.is_empty()).then(|| params.join(", ")),
             self.shared(),
+            self.totals(per),
         ]
         .into_iter()
         .flatten()
@@ -143,6 +148,92 @@ impl KernelReportBuilder<'_> {
         let bytes = self.count(&SymExpr::Const(i64::try_from(sm.static_bytes).ok()?));
         let dynamic = if sm.dynamic { " + dynamic" } else { "" };
         (sm.static_bytes > 0 || sm.dynamic).then(|| format!("shared memory {bytes} B/CTA{dynamic}"))
+    }
+
+    /// `per launch:`, `per CTA:` or `per thread:` and what the counted
+    /// statements sum to at that scale, `; `-separated: each pipe's FLOPs
+    /// by precision, `+ ?` where some are not counted, the pipes none of
+    /// whose are counted together, and each space's bytes loaded and
+    /// stored; the zeros left out.
+    fn totals(&self, per: Per) -> Option<String> {
+        let w = self.counts.workload(&self.blocks, None, per);
+        let mut items = Vec::new();
+        let mut uncounted = Vec::new();
+        for (pipe, flops) in &w.flops {
+            let mut parts: Vec<String> = (flops.by_precision.iter())
+                .filter(|(_, c)| c.expr() != SymExpr::Const(0))
+                .map(|(p, c)| format!("{} {}", p.key(), self.sum(c, "")))
+                .collect();
+            if parts.is_empty() && flops.total.at_least {
+                uncounted.push(pipe.key());
+                continue;
+            }
+            if flops.total.at_least {
+                parts.push("?".to_owned());
+            }
+            let name = match pipe {
+                Pipe::CudaCore => String::new(),
+                p => format!("{} ", p.key()),
+            };
+            if !parts.is_empty() {
+                items.push(format!("{name}flops {}", parts.join(" + ")));
+            }
+        }
+        match uncounted.len() {
+            0 => {}
+            n if n == Pipe::ALL.len() => items.insert(0, "flops ?".to_owned()),
+            _ => items.push(format!("{} flops ?", uncounted.join(", "))),
+        }
+        let spaces = [
+            "global",
+            "shared",
+            "shared::cluster",
+            "local",
+            "param",
+            "const",
+            "generic",
+        ];
+        for space in spaces {
+            let Some((load, store)) = w.bytes.get(space) else {
+                continue;
+            };
+            let parts: Vec<String> = [("load", load), ("store", store)]
+                .into_iter()
+                .filter(|(_, c)| c.at_least || c.expr() != SymExpr::Const(0))
+                .map(|(what, c)| format!("{what} {}", self.sum(c, " B")))
+                .collect();
+            if !parts.is_empty() {
+                items.push(format!("{space} {}", parts.join(", ")));
+            }
+        }
+        let unit = match per {
+            Per::Thread => "thread",
+            Per::Cta(_) => "CTA",
+            Per::Launch(..) => "launch",
+        };
+        (!items.is_empty()).then(|| format!("per {unit}: {}", items.join("; ")))
+    }
+
+    /// A sum and its `unit`: `<= ` before an upper bound, `>= ` before a
+    /// lower one, `?` where it is neither or nothing is counted, and `?`
+    /// and `(trips of <header>)` where it reads a loop's unknown trips.
+    fn sum(&self, c: &CountAccumulator, unit: &str) -> String {
+        let expr = c.expr();
+        let unknown = (expr.symbols().into_iter()).find_map(|s| match s {
+            SymbolicConstant::TripCount(l) => Some(l),
+            _ => None,
+        });
+        if let Some(l) = unknown {
+            let header = self.cfg.block_name(self.module, self.forest.get(l).header);
+            return format!("?{unit} (trips of {header})");
+        }
+        let n = match (c.at_most, c.at_least, expr.as_const()) {
+            (true, true, _) | (false, true, Some(0)) => "?".to_owned(),
+            (_, true, _) => format!(">= {}", self.count(&expr)),
+            (true, false, _) => format!("<= {}", self.count(&expr)),
+            (false, false, _) => self.count(&expr),
+        };
+        format!("{n}{unit}")
     }
 
     /// The line of statement `s`, but a `.branchtargets` list.
@@ -719,7 +810,8 @@ mod tests {
 
     /// Without a block shape, a block's annotation is the condition on the
     /// thread index that selects it, a loop's iteration k = iv + 1, and
-    /// its count per thread but where every thread runs it once.
+    /// its count per thread but where every thread runs it once; the
+    /// kernel's, its bytes per thread, a bound under the loop's guard.
     #[test]
     fn without_a_block_shape_a_block_names_its_condition() {
         let src = "\
@@ -758,6 +850,7 @@ $L__BB0_5:
         assert_eq!(
             notes,
             [
+                "per thread: global store <= 20 B; param load 8 B",
                 "loop: trips 4 | exec 4/thread",
                 "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0 | exec <= 4/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
