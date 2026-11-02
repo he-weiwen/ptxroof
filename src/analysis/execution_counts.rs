@@ -1,5 +1,24 @@
 //! How many threads and warps run a block or a statement, and how many
 //! times: per thread, per CTA or over the launch, exact or a bound.
+//!
+//! A block's contribution to a sum is its per-execution tally times the
+//! product of the trip counts of the loops between it and the scale's
+//! root (exclusive). A loop with unresolved trips contributes through a
+//! named opaque symbol, `trips(<loop>)`, never silently zero, which the
+//! annotated PTX prints as `?` and the loop.
+//!
+//! `at_least` propagation: a scope holding an instruction the classifier
+//! does not model marks every pipe's FLOPs and the global and shared byte
+//! totals as lower bounds (an unmodelled family may compute on any pipe
+//! or move bytes in either space); an unquantified byte count marks its
+//! own space and direction.
+//!
+//! `at_most` propagation: a tally is an upper bound if any contributing
+//! block is conditional within its innermost scope (PR 09 rule), any
+//! contributing instruction is predicated, or any loop on the
+//! multiplier chain is *conditionally entered* (its header does not
+//! dominate the enclosing scope's latch/exits — e.g. the whole k2 body
+//! behind the bounds guard).
 
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::trip_counts::TripCountResults;
@@ -98,11 +117,10 @@ impl FlopAccumulator {
 }
 
 /// What counted statements contribute, summed: FLOPs by pipe and
-/// precision, bytes by space, loaded and stored, and conversions.
+/// precision and bytes by space, loaded and stored.
 pub(crate) struct Workload {
     pub(crate) flops: BTreeMap<Pipe, FlopAccumulator>,
     pub(crate) bytes: BTreeMap<&'static str, (CountAccumulator, CountAccumulator)>,
-    pub(crate) conversions: CountAccumulator,
 }
 
 pub(crate) struct CtaSize {
@@ -681,7 +699,6 @@ impl<'a> ExecutionCounts<'a> {
             (["global", "shared", "local"].into_iter())
                 .map(|s| (s, Default::default()))
                 .collect();
-        let mut conversions = CountAccumulator::default();
         for bm in blocks {
             let Some((multiplier, block)) = self.scaled(bm, below, per) else {
                 continue;
@@ -719,7 +736,6 @@ impl<'a> ExecutionCounts<'a> {
                             Direction::Store => entry.1.add(n, mult, at_most),
                         }
                     }
-                    MeasureKind::Conversions => conversions.add(n, mult, at_most),
                     MeasureKind::UnquantifiedBytes { space, direction } => {
                         let entry = bytes.entry(space.key()).or_default();
                         match direction {
@@ -735,19 +751,14 @@ impl<'a> ExecutionCounts<'a> {
                             s.add_unknown();
                         }
                     }
-                    // Op-count kinds appear in unknowns/classes, not in
-                    // the workload aggregates.
-                    MeasureKind::NonFlopOps { .. }
+                    MeasureKind::Conversions
+                    | MeasureKind::NonFlopOps { .. }
                     | MeasureKind::SyncOps
                     | MeasureKind::CommunicationOps
                     | MeasureKind::ControlOps => {}
                 }
             }
         }
-        Workload {
-            flops,
-            bytes,
-            conversions,
-        }
+        Workload { flops, bytes }
     }
 }

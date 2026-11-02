@@ -50,8 +50,7 @@ only declare modules and selected public entry points.
 | `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs, bytes and conversions they sum to |
 | `report/bindings` | Caller parameter bindings and their text syntax |
 | `report/measured` | Import and validate NCU records; compare measured and predicted quantities, and the comparisons' results |
-| `report/schema` | Owned serializable report structures |
-| `report/build` | Orchestrate kernel analyses and aggregate their results into reports |
+| `report/build` | Orchestrate kernel analyses, trace the memory operands the annotated PTX prints, and compare a kernel with its NCU record |
 | `report/names` | Kernel demangling for display |
 | `report/annotate` | The input PTX with each line's analysis results appended as a comment |
 | `main` | CLI arguments, file I/O, output selection and error handling |
@@ -69,8 +68,7 @@ checks these boundaries:
 - Support utilities depend only on support utilities.
 - PTX representation, parsing and CFG construction depend only on PTX and support.
 - Analyses and SSA do not depend on the parser or on reporting.
-- Report construction may call analyses and the parser. The schema embeds the
-  memory-footprint `CountRange`, `LoopBytes` and `ByteRange` types.
+- Report construction may call analyses and the parser.
 
 `register_member` belongs to the IR because register declarations define family
 membership; both `Kernel::register_type` and the parser use it. `measurement`

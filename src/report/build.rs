@@ -1,25 +1,6 @@
-//! Build the result tree for one module.
-//!
-//! Aggregation model: a block's contribution to an aggregate is its
-//! per-execution tally times the product of the trip counts of the
-//! loops between it and the aggregation root (exclusive). A loop with
-//! unresolved trips contributes through a *named opaque symbol*
-//! `trips(<loop>)` — totals stay symbolic, never silently zero (S9.1).
-//!
-//! `at_least` propagation: a scope holding an instruction the classifier
-//! does not model marks every flop table and the global and shared byte
-//! totals as lower bounds (an unmodelled family may compute on any pipe
-//! or move bytes in either space); an unquantified byte count marks its
-//! own space and direction.
-//!
-//! `at_most` propagation: a tally is an upper bound if any contributing
-//! block is conditional within its innermost scope (PR 09 rule), any
-//! contributing instruction is predicated, or any loop on the
-//! multiplier chain is *conditionally entered* (its header does not
-//! dominate the enclosing scope's latch/exits — e.g. the whole k2 body
-//! behind the bounds guard). Per-iteration views of a loop only look
-//! below that loop, which is why a guarded kernel still has exact
-//! per-iteration numbers — the altitude where the verdict lives.
+//! Each kernel's analyses under the caller's bindings and launch, the
+//! memory operands' rows the annotated PTX prints, and a kernel's
+//! predictions against its ncu record.
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
@@ -29,24 +10,19 @@ use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loop_forest;
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::dead_code::unused;
-use crate::analysis::execution_counts::{
-    CountAccumulator, CtaSize, ExecutionCounts, FlopAccumulator, Participation, Per, Resolution,
-    Workload,
-};
-use crate::analysis::instruction_counts::classify::{ClassifiedInstruction, InstructionCategory};
+use crate::analysis::execution_counts::{CtaSize, ExecutionCounts, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
 use crate::analysis::instruction_counts::count_constraint::count_constraint;
-use crate::analysis::instruction_counts::measurement::{
-    ArithKind, Contribution, Direction, MeasureKind, Pipe, Space,
-};
+use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Space};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{
-    AccessForm, CountRange, SharedRequest, Wavefronts, loop_bytes, warp_footprint, warp_wavefronts,
+    AccessForm, CountRange, LoopBytes, SharedRequest, Wavefronts, loop_bytes, warp_footprint,
+    warp_wavefronts,
 };
 use crate::analysis::thread_participation::{Pred, thread_sets};
 use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
-use crate::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
+use crate::ptx::cfg::{ControlFlowGraph, build_cfg};
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SharedSize, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;
@@ -57,7 +33,7 @@ use crate::report::measured::{
     Sectors, SharedWaves,
 };
 use crate::report::names::demangle;
-use crate::report::schema::*;
+
 use crate::ssa::Value;
 use std::collections::{BTreeMap, HashMap};
 
@@ -82,46 +58,6 @@ pub struct AnalyzeOptions {
     /// `--grid x,y,z`, the launch's CTAs per axis.
     pub grid: Option<[u32; 3]>,
     pub ncu: Option<NcuRecord>,
-}
-
-pub fn analyze(
-    source: &str,
-    input_name: &str,
-    opts: &AnalyzeOptions,
-) -> Result<Report, AnalyzeError> {
-    let mut kernels = Vec::new();
-    let mut classified = Fraction { num: 0, den: 0 };
-    let mut trips_resolved = Fraction { num: 0, den: 0 };
-    let bindings = each_kernel(source, opts, |builder| {
-        let ncu = opts.ncu.as_ref().map(|r| (r, builder.lines));
-        let k = builder.build(opts.launch, ncu);
-        classified.num += k.instruction_classes.total - k.instruction_classes.unknown;
-        classified.den += k.instruction_classes.total;
-        let mut count_loops = |nodes: &[LoopNode]| {
-            fn walk(nodes: &[LoopNode], f: &mut Fraction) {
-                for n in nodes {
-                    f.den += 1;
-                    f.num += u64::from(n.trips.expr.is_some());
-                    walk(&n.loops, f);
-                }
-            }
-            walk(nodes, &mut trips_resolved);
-        };
-        count_loops(&k.loops);
-        kernels.push(k);
-    })?;
-
-    let mut coverage = BTreeMap::new();
-    coverage.insert("instructions_classified".to_owned(), classified);
-    coverage.insert("loop_trips_resolved".to_owned(), trips_resolved);
-
-    Ok(Report {
-        input: input_name.to_owned(),
-        bindings,
-        grid: opts.grid,
-        kernels,
-        coverage,
-    })
 }
 
 /// Parse `source` and run `each` on every kernel's report builder, under
@@ -151,19 +87,57 @@ pub fn compare(source: &str, opts: &AnalyzeOptions) -> Result<Option<Comparison>
     Ok(out)
 }
 
+/// One memory operand of one instruction: where it points, as an
+/// affine form over thread and CTA indices (`%tid.x`), loop counters
+/// (`k[loop name]`, the iteration number from 1) and the parameters,
+/// plus the instruction's constant offset; or why that is unknown.
+#[derive(Clone)]
+pub(super) struct Access {
+    pub(super) space: String,
+    /// `load`, `store`, or `load+store` for an atomic on one location.
+    pub(super) direction: String,
+    pub(super) address: Option<String>,
+    pub(super) unknown: Option<String>,
+    /// The 32-byte sectors one warp's request touches, as a range
+    /// over the alignment of the address's uniform part; global and
+    /// generic spaces with a known address only. When the executing
+    /// threads are a bound, so is this: the most any warp touches.
+    pub(super) sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
+    /// `sectors_per_request` and `ideal_sectors_per_request`, or the
+    /// wavefronts, are each the most any warp takes.
+    pub(super) sectors_at_most: bool,
+    /// The fewest sectors the distinct bytes the executing lanes touch
+    /// could occupy if packed: the request's coalesced ideal.
+    pub(super) ideal_sectors_per_request: Option<crate::analysis::memory_footprint::CountRange>,
+    /// The shared memory wavefronts one warp's request takes, as a range
+    /// over the warps and the alignment of the address's uniform part;
+    /// shared space with a known address only, a bound like the sectors.
+    pub(super) wavefronts_per_request: Option<crate::analysis::memory_footprint::CountRange>,
+    /// The wavefronts if each group of lanes had its words in the fewest;
+    /// fewer than `wavefronts_per_request` is a bank conflict.
+    pub(super) ideal_wavefronts_per_request: Option<crate::analysis::memory_footprint::CountRange>,
+    pub(super) footprint_unknown: Option<String>,
+}
+
+pub(super) struct SharedMemory {
+    /// Statically-declared shared memory per CTA, in bytes.
+    pub(super) static_bytes: u64,
+    /// An `.extern .shared` array is present; its size is set at launch.
+    pub(super) dynamic: bool,
+}
+
 pub(super) fn each_kernel(
     source: &str,
     opts: &AnalyzeOptions,
     mut each: impl FnMut(KernelReportBuilder<'_>),
-) -> Result<Vec<Binding>, AnalyzeError> {
+) -> Result<(), AnalyzeError> {
     let module = parse(source)?;
     if let Some(record) = &opts.ncu {
         record.check(&module, source).map_err(AnalyzeError::Ncu)?;
     }
     let lines = LineIndex::new(source);
-    let mut bindings = Vec::new();
     for kernel in &module.kernels {
-        let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings, &mut bindings)?;
+        let mut bind_map = resolve_bindings(&module, kernel, &opts.bindings)?;
         // The block shape, when it is the launch's: --launch, else
         // .reqntid; the grid, when given.
         let shapes = [
@@ -184,14 +158,13 @@ pub(super) fn each_kernel(
         let data = KernelAnalyses::new(&module, kernel, &cfg, &forest);
         each(KernelReportBuilder::new(&data, &bind_map, &lines));
     }
-    Ok(bindings)
+    Ok(())
 }
 
 fn resolve_bindings(
     module: &Module,
     kernel: &Kernel,
     binds: &[BindingSpec],
-    echo: &mut Vec<Binding>,
 ) -> Result<HashMap<SymbolicConstant, i64>, AnalyzeError> {
     let mut map = HashMap::new();
     for spec in binds {
@@ -227,13 +200,6 @@ fn resolve_bindings(
             )));
         }
         map.insert(SymbolicConstant::KernelParam(index), spec.value);
-        if !echo.iter().any(|b: &Binding| b.param == index) {
-            echo.push(Binding {
-                param: index,
-                name: spec.name.clone(),
-                value: spec.value,
-            });
-        }
     }
     Ok(map)
 }
@@ -255,7 +221,6 @@ impl KernelReportBuilder<'_> {
         Operands,
     ) {
         let (module, kernel, cfg, forest) = (self.module, self.kernel, self.cfg, self.forest);
-        let display = &self.display;
         let mut forms: ByScope<AccessForm> = HashMap::new();
         let mut operands = Operands::new();
         let mut per_request = PerRequests::new();
@@ -331,7 +296,6 @@ impl KernelReportBuilder<'_> {
                         == CountQualifier::AtMost
                         || !set.lane_exact())
                         && set.count(shape).is_none_or(|c| c.certain != c.possible);
-                    let threads = guard.is_some().then(|| self.threads_info(&set)).flatten();
                     let Operand::Memory {
                         base, offset, rest, ..
                     } = module.operand(mem_ops[i])
@@ -468,44 +432,9 @@ impl KernelReportBuilder<'_> {
                             unknown_varies,
                         });
                     }
-                    let mut reuse = Vec::new();
-                    if let Some(a) = &form {
-                        let mut cur = scope;
-                        while let Some(l) = cur {
-                            let stepped = (a.terms.keys()).any(|v| {
-                                (*v != Var::Iteration(l) && v.counter() == Some(l))
-                                    || v.unknown().is_some_and(|u| affine.data.defined_in(u, l))
-                            });
-                            reuse.push(Reuse {
-                                r#loop: display[l.0 as usize].clone(),
-                                stride: match stepped {
-                                    true => Some("varies".to_owned()),
-                                    false => {
-                                        a.terms.get(&Var::Iteration(l)).map(ToString::to_string)
-                                    }
-                                },
-                            });
-                            cur = forest.get(l).parent;
-                        }
-                    }
-                    let site = match instr.loc.filter(|l| l.line != 0) {
-                        Some(loc) => format!(
-                            "{}:{}",
-                            module.file_name(loc.file).unwrap_or("<unknown file>"),
-                            loc.line
-                        ),
-                        None => cfg.block_name(module, bid),
-                    };
                     let row = Access {
-                        site,
-                        opcode: module.opcode(instr),
                         space: space.key().to_owned(),
                         direction: direction.to_owned(),
-                        bytes,
-                        bytes_at_most: (classified.contributions.iter())
-                            .any(|c| c.at_most && c.memory_operand == Some(i)),
-                        predicated: guard.is_some(),
-                        threads: threads.clone(),
                         address,
                         unknown,
                         sectors_per_request,
@@ -514,7 +443,6 @@ impl KernelReportBuilder<'_> {
                         wavefronts_per_request,
                         ideal_wavefronts_per_request: ideal_wavefronts,
                         footprint_unknown: footprint_unknown.or(wavefronts_unknown),
-                        reuse,
                     };
                     let traced = traced.map(|t| t.map(|a| affine.known_multiples(&a)));
                     operands.entry(pos).or_default().push((row.clone(), traced));
@@ -578,192 +506,6 @@ type ByScope<T> = HashMap<Option<LoopId>, Vec<T>>;
 /// traced where a register holds it: the affine form, an unknown value's
 /// known multiple as the value, or why there is none.
 pub(super) type Operands = HashMap<usize, Vec<(Access, Option<Result<AffineExpr, UnknownReason>>)>>;
-
-/// The direction a count is known in; `None` when bounded in neither.
-fn direction(at_most: bool, at_least: bool) -> Option<Bound> {
-    match (at_most, at_least) {
-        (false, false) => Some(Bound::Exact),
-        (true, false) => Some(Bound::AtMost),
-        (false, true) => Some(Bound::AtLeast),
-        (true, true) => None,
-    }
-}
-
-/// Direction of `flops / bytes`: the byte bound inverts, and the two
-/// sides must agree.
-fn ratio_bound(flops: Option<Bound>, bytes: Option<Bound>) -> Option<Bound> {
-    let inverted = match bytes? {
-        Bound::Exact => Bound::Exact,
-        Bound::AtMost => Bound::AtLeast,
-        Bound::AtLeast => Bound::AtMost,
-    };
-    match (flops?, inverted) {
-        (a, Bound::Exact) => Some(a),
-        (Bound::Exact, b) => Some(b),
-        (a, b) if a == b => Some(a),
-        _ => None,
-    }
-}
-
-/// `acc`'s sum as the report's count, each symbol named by `name`.
-fn count(acc: &CountAccumulator, name: &dyn Fn(&SymbolicConstant) -> String) -> Count {
-    Count {
-        expr: acc.expr().render(name),
-        at_most: acc.at_most,
-        at_least: acc.at_least,
-    }
-}
-
-/// `acc`'s FLOPs by precision and in total, as the report's counts.
-fn flop_counts(
-    acc: &FlopAccumulator,
-    name: &dyn Fn(&SymbolicConstant) -> String,
-) -> BTreeMap<String, Count> {
-    let mut out: BTreeMap<String, Count> = (acc.by_precision.iter())
-        .map(|(p, v)| (p.key().to_owned(), count(v, name)))
-        .collect();
-    out.insert("total".to_owned(), count(&acc.total, name));
-    out
-}
-
-/// The report's name for an instruction class (see
-/// [`InstructionCounts::by_kind`]).
-fn instruction_kind(instruction: &ClassifiedInstruction) -> String {
-    match instruction.category {
-        InstructionCategory::Flop => {
-            let Some(Contribution {
-                kind: MeasureKind::Flops { pipe, precision },
-                ..
-            }) = instruction.contributions.first()
-            else {
-                return "floating-point arithmetic".to_owned();
-            };
-            format!("{} {}", pipe.key(), precision.key())
-        }
-        InstructionCategory::Memory => {
-            let memory: Vec<_> = instruction
-                .contributions
-                .iter()
-                .filter_map(|c| match c.kind {
-                    MeasureKind::Bytes { space, direction } => {
-                        Some((c, space, direction, format!("{} B", c.count)))
-                    }
-                    MeasureKind::UnquantifiedBytes { space, direction } => {
-                        Some((c, space, direction, "? B".to_owned()))
-                    }
-                    _ => None,
-                })
-                .collect();
-            match memory.as_slice() {
-                [
-                    (read, from, Direction::Load, _),
-                    (write, to, Direction::Store, width),
-                ] => {
-                    if read.memory_operand == write.memory_operand {
-                        format!("{} atomic {width}", from.key())
-                    } else {
-                        format!("{} -> {} copy {width}", from.key(), to.key())
-                    }
-                }
-                [(_, space, direction, width)] => {
-                    format!("{} {} {width}", space.key(), direction_key(*direction))
-                }
-                _ => "memory".to_owned(),
-            }
-        }
-        InstructionCategory::NonFlopArith { kind } => arith_key(kind).to_owned(),
-        InstructionCategory::Sync => "synchronization".to_owned(),
-        InstructionCategory::Communication => "warp communication".to_owned(),
-        InstructionCategory::Control => "control".to_owned(),
-        InstructionCategory::Ignore => "hint / no-op".to_owned(),
-        InstructionCategory::Unknown => "unknown".to_owned(),
-    }
-}
-
-fn direction_key(direction: Direction) -> &'static str {
-    match direction {
-        Direction::Load => "load",
-        Direction::Store => "store",
-    }
-}
-
-fn arith_key(kind: ArithKind) -> &'static str {
-    match kind {
-        ArithKind::Conversion => "conversion",
-        ArithKind::Integer => "integer arithmetic",
-        ArithKind::Predicate => "compare / select",
-        ArithKind::Move => "register move",
-    }
-}
-
-fn contribution_details(c: &Contribution) -> ContributionDetails {
-    let count = c.count;
-    match c.kind {
-        MeasureKind::Flops { pipe, precision } => ContributionDetails::Flops {
-            pipe: pipe.key().to_owned(),
-            precision: precision.key().to_owned(),
-            count,
-        },
-        MeasureKind::Bytes { space, direction } => ContributionDetails::Bytes {
-            space: space.key().to_owned(),
-            direction: direction_key(direction).to_owned(),
-            count,
-            at_most: c.at_most,
-        },
-        MeasureKind::UnquantifiedBytes { space, direction } => {
-            ContributionDetails::UnquantifiedBytes {
-                space: space.key().to_owned(),
-                direction: direction_key(direction).to_owned(),
-            }
-        }
-        MeasureKind::Conversions => ContributionDetails::Conversions { count },
-        MeasureKind::NonFlopOps { kind } => ContributionDetails::NonFlopOps {
-            operation: arith_key(kind).to_owned(),
-            count,
-        },
-        MeasureKind::SyncOps => ContributionDetails::SyncOps { count },
-        MeasureKind::CommunicationOps => ContributionDetails::CommunicationOps { count },
-        MeasureKind::ControlOps => ContributionDetails::ControlOps { count },
-        MeasureKind::UnknownOps { mnemonic } => ContributionDetails::UnknownOps {
-            mnemonic: mnemonic.name().to_owned(),
-        },
-    }
-}
-
-/// Thread-level issues, and warp-level issues when the totals are per
-/// CTA: a warp issues an instruction once for every thread it holds.
-#[derive(Default)]
-struct IssueAccumulator {
-    threads: CountAccumulator,
-    warps: CountAccumulator,
-}
-
-impl IssueAccumulator {
-    fn add(
-        &mut self,
-        threads: i64,
-        warps: Option<(i64, bool)>,
-        mult: Option<&SymExpr>,
-        at_most: bool,
-    ) {
-        self.threads.add(threads, mult, at_most);
-        if let Some((warps, warps_at_most)) = warps {
-            self.warps.add(warps, mult, warps_at_most);
-        }
-    }
-
-    fn warps(&self, name: &dyn Fn(&SymbolicConstant) -> String) -> Option<Count> {
-        self.warps.touched.then(|| count(&self.warps, name))
-    }
-}
-
-#[derive(Default)]
-struct InstructionAccumulator {
-    total: IssueAccumulator,
-    opcodes: BTreeMap<String, IssueAccumulator>,
-    variants: BTreeMap<(String, Vec<Contribution>), IssueAccumulator>,
-}
-
 /// `(constant coefficient, the rest)` of a product.
 pub(super) struct KernelReportBuilder<'a> {
     pub(super) module: &'a Module,
@@ -1006,454 +748,6 @@ impl<'a> KernelReportBuilder<'a> {
         self.kernel.register_type(self.module, reg)?.bytes()
     }
 
-    /// The threads a set selects, when a thread-index condition does.
-    fn threads_info(&self, set: &Pred) -> Option<ThreadsInfo> {
-        let counted = set.count(self.counts.shape);
-        let warps = set.warps(self.counts.shape);
-        Some(ThreadsInfo {
-            condition: set.render_named(&|v| match v {
-                Var::Iteration(l) => format!("k[{}]", self.loop_ref(*l)),
-                other => other.to_string(),
-            })?,
-            count: counted.map(|c| u64::from(c.possible)),
-            at_most: counted.map_or(!set.exact(), |c| c.certain != c.possible),
-            warps: warps.map(|w| u64::from(w.possible)),
-            warps_at_most: warps.map_or(!set.exact(), |w| w.certain != w.possible),
-        })
-    }
-
-    fn blocks(&self) -> Vec<BlockInfo> {
-        let name = |b: BlockId| self.cfg.block_name(self.module, b);
-        (0..self.cfg.blocks.len() as u32)
-            .map(BlockId)
-            .map(|b| {
-                let instrs: Vec<&Instr> = self.cfg.instrs(self.kernel, b).collect();
-                let in_loop = self.forest.block_loop[b.0 as usize].map(|l| BlockLoop {
-                    name: self.display[l.0 as usize].clone(),
-                    header: self.forest.get(l).header == b,
-                    latch: self.forest.get(l).latches.contains(&b),
-                });
-                BlockInfo {
-                    name: name(b),
-                    lines: self.line_span(&instrs),
-                    instructions: instrs.len() as u64,
-                    threads: self.threads_info(&self.counts.sets.blocks[b.0 as usize]),
-                    successors: self.cfg.block(b).succs.iter().map(|&s| name(s)).collect(),
-                    r#loop: in_loop,
-                }
-            })
-            .collect()
-    }
-
-    fn line_span(&self, instrs: &[&Instr]) -> Option<String> {
-        let first = instrs.iter().filter_map(|i| i.loc).find(|l| l.line != 0)?;
-        let (lo, hi) = instrs
-            .iter()
-            .filter_map(|i| i.loc)
-            .filter(|l| l.file == first.file && l.line != 0)
-            .fold((first.line, first.line), |(lo, hi), l| {
-                (lo.min(l.line), hi.max(l.line))
-            });
-        let file = self
-            .module
-            .file_name(first.file)
-            .unwrap_or("<unknown file>");
-        Some(if lo == hi {
-            format!("{file}:{lo}")
-        } else {
-            format!("{file}:{lo}-{hi}")
-        })
-    }
-
-    /// Aggregate over blocks; `below` = aggregate within this loop
-    /// (multipliers stop there), `None` = whole kernel. With
-    /// `cta`, every per-thread count additionally scales by the CTA's
-    /// thread count, and is an upper bound when that count is one. With
-    /// `ctas` too, over the launch: a block or guarded instruction at its
-    /// threads and warps over the grid where they are counted, else at
-    /// its count per CTA times the CTAs; one under a loop whose trip
-    /// count is not read is unknown, its trips perhaps differing by CTA.
-    /// Under loops whose counts read the CTA index, a block or guarded
-    /// instruction whose threads do not is counted per CTA times those
-    /// counts summed over the grid, and is unknown otherwise.
-    fn aggregates(&self, below: Option<LoopId>, per: Per) -> Aggregates {
-        let Workload {
-            flops,
-            bytes,
-            conversions,
-        } = self.counts.workload(&self.blocks, below, per);
-        let mut instructions: BTreeMap<String, InstructionAccumulator> = BTreeMap::new();
-        let mut instruction_total = IssueAccumulator::default();
-        let mut instruction_all = IssueAccumulator::default();
-
-        for bm in &self.blocks {
-            let Some((_, block)) = self.counts.scaled(bm, below, per) else {
-                continue;
-            };
-            let mult = (block.as_ref()).and_then(|p| p.trips.clone());
-            let mult = mult.as_ref();
-            let ((threads, warps), block_at_most) = (block.as_ref())
-                .and_then(|p| Some((p.narrow()?, p.at_most)))
-                .unwrap_or(((0, Some((0, false))), false));
-            for instruction in &bm.instructions {
-                instruction_all.add(threads, warps, mult, block_at_most);
-                if !self.counts.counted(bm.block, instruction.provenance) {
-                    continue;
-                }
-                let kind = instructions
-                    .entry(instruction_kind(&instruction.classified))
-                    .or_default();
-                kind.total.add(threads, warps, mult, block_at_most);
-                kind.opcodes
-                    .entry(instruction.opcode.clone())
-                    .or_default()
-                    .add(threads, warps, mult, block_at_most);
-                kind.variants
-                    .entry((
-                        instruction.opcode.clone(),
-                        instruction.classified.contributions.clone(),
-                    ))
-                    .or_default()
-                    .add(threads, warps, mult, block_at_most);
-                instruction_total.add(threads, warps, mult, block_at_most);
-            }
-        }
-
-        let all_flops = flops
-            .values()
-            .map(|t| t.total.expr())
-            .fold(SymExpr::Const(0), SymExpr::add);
-        let name = |l: &SymbolicConstant| self.leaf_name(l);
-        let bytes_out: BTreeMap<String, DirectionCounts> = bytes
-            .iter()
-            .map(|(k, (l, s))| {
-                (
-                    k.to_string(),
-                    DirectionCounts {
-                        load: count(l, &name),
-                        store: count(s, &name),
-                    },
-                )
-            })
-            .collect();
-
-        let flops_bound = direction(
-            flops.values().any(|t| t.total.at_most),
-            flops.values().any(|t| t.total.at_least),
-        );
-        let ai_global = match (all_flops.as_const(), bytes.get("global")) {
-            (Some(f), Some((l, s))) => match (l.expr().as_const(), s.expr().as_const()) {
-                (Some(lb), Some(sb)) if i128::from(lb) + i128::from(sb) > 0 => {
-                    let bytes_bound = direction(l.at_most || s.at_most, l.at_least || s.at_least);
-                    ratio_bound(flops_bound, bytes_bound).map(|bound| Intensity {
-                        value: f as f64 / (i128::from(lb) + i128::from(sb)) as f64,
-                        bound,
-                    })
-                }
-                _ => None,
-            },
-            _ => None,
-        };
-
-        Aggregates {
-            flops: flop_counts(&flops[&Pipe::CudaCore], &name),
-            tensor_flops: flop_counts(&flops[&Pipe::Tensor], &name),
-            sfu_flops: flop_counts(&flops[&Pipe::Sfu], &name),
-            atomic_flops: flop_counts(&flops[&Pipe::Atomic], &name),
-            bytes: bytes_out,
-            conversions: count(&conversions, &name),
-            ai_global,
-            unrolled_source_lines: self.unrolled_lines(below),
-            instructions: InstructionCounts {
-                all: Some(count(&instruction_all.threads, &name))
-                    .filter(|all| *all != count(&instruction_total.threads, &name)),
-                all_warps: (count(&instruction_all.threads, &name)
-                    != count(&instruction_total.threads, &name))
-                .then(|| instruction_all.warps(&name))
-                .flatten(),
-                total: count(&instruction_total.threads, &name),
-                warps: instruction_total.warps(&name),
-                by_kind: instructions
-                    .iter()
-                    .map(|(k, acc)| {
-                        let mut contribution_variants: BTreeMap<String, Vec<InstructionVariant>> =
-                            BTreeMap::new();
-                        for ((opcode, contributions), issued) in &acc.variants {
-                            contribution_variants
-                                .entry(opcode.clone())
-                                .or_default()
-                                .push(InstructionVariant {
-                                    issued: count(&issued.threads, &name),
-                                    warps: issued.warps(&name),
-                                    contributions_per_execution: contributions
-                                        .iter()
-                                        .map(contribution_details)
-                                        .collect(),
-                                });
-                        }
-                        (
-                            k.clone(),
-                            KindCounts {
-                                total: count(&acc.total.threads, &name),
-                                warps: acc.total.warps(&name),
-                                opcodes: acc
-                                    .opcodes
-                                    .iter()
-                                    .map(|(o, v)| (o.clone(), count(&v.threads, &name)))
-                                    .collect(),
-                                opcode_warps: acc
-                                    .opcodes
-                                    .iter()
-                                    .filter_map(|(o, v)| v.warps(&name).map(|w| (o.clone(), w)))
-                                    .collect(),
-                                contribution_variants,
-                            },
-                        )
-                    })
-                    .collect(),
-            },
-        }
-    }
-
-    /// Workload ops (flops + memory) per effective source line over the
-    /// blocks DIRECTLY in this scope — the line-aggregation view that
-    /// recovers fully-unrolled source loops. Entries with ≥ 2 copies.
-    fn unrolled_lines(&self, scope: Option<LoopId>) -> BTreeMap<String, u64> {
-        let mut per_line: BTreeMap<String, u64> = BTreeMap::new();
-        for bm in &self.blocks {
-            if self.forest.block_loop[bm.block.0 as usize] != scope {
-                continue;
-            }
-            let blk = self.cfg.block(bm.block);
-            for stmt in &self.kernel.stmts[blk.start..blk.end] {
-                let Stmt::Instr(instr) = stmt else { continue };
-                let Some(loc) = instr.loc.filter(|l| l.line != 0) else {
-                    continue;
-                };
-                let is_workload =
-                    crate::analysis::instruction_counts::classify::classify(self.module, instr)
-                        .contributions
-                        .iter()
-                        .any(|c| {
-                            matches!(
-                                c.kind,
-                                MeasureKind::Flops { .. }
-                                    | MeasureKind::Bytes { .. }
-                                    | MeasureKind::UnquantifiedBytes { .. }
-                            )
-                        });
-                if !is_workload {
-                    continue;
-                }
-                let file = self.module.file_name(loc.file).unwrap_or("<unknown file>");
-                *per_line.entry(format!("{file}:{}", loc.line)).or_default() += 1;
-            }
-        }
-        per_line.retain(|_, &mut v| v >= 2);
-        per_line
-    }
-
-    fn loop_node(&self, id: LoopId) -> LoopNode {
-        let name = &self.names[id.0 as usize];
-        let trips = match &self.counts.trip_info.trips[id.0 as usize] {
-            Ok(e) => {
-                let bound = e.bind(self.bind_map);
-                Trips {
-                    expr: Some(bound.render(&|l| self.leaf_name(l))),
-                    unknown: None,
-                }
-            }
-            Err(reason) => Trips {
-                expr: None,
-                unknown: Some(reason.clone()),
-            },
-        };
-        let unroll = self
-            .counts
-            .trip_info
-            .unroll_pairs
-            .iter()
-            .find(|p| p.main == id)
-            .map(|p| Unroll {
-                factor: p.factor,
-                remainder: self.display[p.remainder.0 as usize].clone(),
-            });
-        LoopNode {
-            name: self.display[id.0 as usize].clone(),
-            label: name.label.clone(),
-            line: name.line,
-            depth: self.forest.get(id).depth,
-            trips,
-            unroll,
-            per_iteration: self.aggregates(Some(id), Per::Thread),
-            accesses: self.accesses.get(&Some(id)).cloned().unwrap_or_default(),
-            global_bytes_per_cta: self.loop_bytes(id),
-            loops: self
-                .forest
-                .children_of(id)
-                .into_iter()
-                .map(|c| self.loop_node(c))
-                .collect(),
-        }
-    }
-
-    /// Weight = executed instructions per kernel invocation; ranking
-    /// compares weights at all-symbols = 2^20 + 3 (large, with nonzero
-    /// residues mod small powers of two so remainder loops keep their
-    /// share). Deliberately a comparison heuristic, not a claim.
-    fn ranking(&self) -> Vec<(LoopId, RankEntry)> {
-        let mut entries: Vec<(usize, String, SymExpr, i64)> = (0..self.forest.loops.len())
-            .map(|i| {
-                let l = &self.forest.loops[i];
-                let mut weight = CountAccumulator::default();
-                for &b in &l.blocks {
-                    let instrs = (self.blocks[b.0 as usize].instructions.iter())
-                        .filter(|i| self.counts.counted(b, i.provenance))
-                        .count() as i64;
-                    let mut mult = SymExpr::Const(1);
-                    for &cl in &self.counts.chain(b) {
-                        mult = SymExpr::mul(mult, self.counts.trip_exprs[cl.0 as usize].clone());
-                    }
-                    weight.add(instrs, Some(&mult), false);
-                }
-                let weight = weight.expr();
-                let approx: HashMap<SymbolicConstant, i64> = weight
-                    .symbols()
-                    .into_iter()
-                    .map(|s| (s, (1 << 20) + 3))
-                    .collect();
-                let key = weight.bind(&approx).as_const().unwrap_or(i64::MAX);
-                (i, self.display[i].clone(), weight, key)
-            })
-            .filter(|e| e.2.as_const() != Some(0))
-            .collect();
-        entries.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.1.cmp(&b.1)));
-        entries
-            .into_iter()
-            .map(|(i, name, w, _)| {
-                (
-                    LoopId(i as u32),
-                    RankEntry {
-                        loop_name: name,
-                        instructions: w.render(&|l| self.leaf_name(l)),
-                    },
-                )
-            })
-            .collect()
-    }
-
-    fn unknowns(&self) -> Vec<UnknownEntry> {
-        let mut out = Vec::new();
-        let mut unknown_ops: BTreeMap<String, u64> = BTreeMap::new();
-        let mut unquantified: BTreeMap<String, u64> = BTreeMap::new();
-        for bm in &self.blocks {
-            for m in
-                (bm.measurements.iter()).filter(|m| self.counts.counted(bm.block, m.provenance))
-            {
-                match m.kind {
-                    MeasureKind::UnknownOps { mnemonic } => {
-                        *unknown_ops.entry(mnemonic.name().to_owned()).or_default() += m.count;
-                    }
-                    MeasureKind::UnquantifiedBytes { space, direction } => {
-                        let dir = match direction {
-                            Direction::Load => "load",
-                            Direction::Store => "store",
-                        };
-                        *unquantified
-                            .entry(format!("{} {dir}", Space::key(space)))
-                            .or_default() += m.count;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        let unparsed: u64 = self
-            .blocks
-            .iter()
-            .filter(|b| self.counts.sets.blocks[b.block.0 as usize] != Pred::False)
-            .map(|b| b.class_counts.unparsed as u64)
-            .sum();
-        if unparsed > 0 {
-            out.push(UnknownEntry {
-                what: "unparsed statement".to_owned(),
-                count: Some(unparsed),
-                reason: "the parser could not read it — whatever it does is not counted".to_owned(),
-            });
-        }
-        for (mnemonic, count) in unknown_ops {
-            out.push(UnknownEntry {
-                what: format!("instruction `{mnemonic}`"),
-                count: Some(count),
-                reason: "not classified — its flops/bytes are not counted".to_owned(),
-            });
-        }
-        for (what, count) in unquantified {
-            out.push(UnknownEntry {
-                what: format!("{what} with statically unknown byte count"),
-                count: Some(count),
-                reason: "counted as an op; bytes missing from every byte total".to_owned(),
-            });
-        }
-        for (i, t) in self.counts.trip_info.trips.iter().enumerate() {
-            let header = self.forest.loops[i].header;
-            if let Err(reason) = t
-                && self.counts.sets.blocks[header.0 as usize] != Pred::False
-            {
-                out.push(UnknownEntry {
-                    what: format!("loop {}", self.display[i]),
-                    count: None,
-                    reason: reason.clone(),
-                });
-            }
-        }
-        for (src, dst) in &self.forest.irreducible_edges {
-            let label = |b: BlockId| {
-                self.cfg
-                    .block(b)
-                    .label
-                    .map(|s| self.module.interner.resolve(s).to_owned())
-                    .unwrap_or_else(|| format!("<block {}>", b.0))
-            };
-            out.push(UnknownEntry {
-                what: format!(
-                    "irreducible control flow {} -> {}",
-                    label(*src),
-                    label(*dst)
-                ),
-                count: None,
-                reason: "cycle with multiple entries — execution multiplicity unknown".to_owned(),
-            });
-        }
-        for (block, target) in &self.cfg.unresolved_branches {
-            let from = self
-                .cfg
-                .block(*block)
-                .label
-                .map(|s| self.module.interner.resolve(s).to_owned())
-                .unwrap_or_else(|| format!("<block {}>", block.0));
-            out.push(UnknownEntry {
-                what: format!(
-                    "branch to `{}` from {from}",
-                    target.map_or("?", |t| self.module.interner.resolve(t))
-                ),
-                count: None,
-                reason: "branch target matched no label in this kernel; its edge \
-                         was dropped, so the control-flow graph — and any loop \
-                         structure derived from it — may be incomplete. Unexpected \
-                         for compiler-produced PTX"
-                    .to_owned(),
-            });
-        }
-        if !self.cfg.call_sites.is_empty() {
-            out.push(UnknownEntry {
-                what: "call".to_owned(),
-                count: Some(self.cfg.call_sites.len() as u64),
-                reason: "non-inlined callee — its cost is not included".to_owned(),
-            });
-        }
-        out
-    }
-
     /// Shared memory the kernel reserves per CTA: the sum over its
     /// `.shared` declarations of `element_count × element_width`, a
     /// scalar's count being 1, plus whether it declares a launch-sized
@@ -1591,106 +885,5 @@ impl<'a> KernelReportBuilder<'a> {
             all.extend(predictions);
         }
         (blocks, record.compare_totals(&all))
-    }
-
-    fn build(
-        self,
-        launch_flag: Option<[u32; 3]>,
-        ncu: Option<(&NcuRecord, &LineIndex)>,
-    ) -> KernelReport {
-        let name = self.module.interner.resolve(self.kernel.name).to_owned();
-        let mut classes = InstructionClasses::default();
-        for bm in &self.blocks {
-            let c = bm.class_counts;
-            classes.total += c.total as u64;
-            classes.flop += c.flop as u64;
-            classes.non_flop_arith += c.non_flop_arith as u64;
-            classes.memory += c.memory as u64;
-            classes.sync += c.sync as u64;
-            classes.communication += c.communication as u64;
-            classes.control += c.control as u64;
-            classes.ignore += c.ignore as u64;
-            classes.unknown += c.unknown as u64;
-            classes.unparsed += c.unparsed as u64;
-        }
-        let ranking = self.ranking();
-
-        // Launch config: explicit flag, else the PTX's own directives.
-        let launch = launch_flag
-            .map(|block| (block, "flag"))
-            .or(self.kernel.reqntid.map(|b| (b, ".reqntid")))
-            .or(self.kernel.maxntid.map(|b| (b, ".maxntid")))
-            .map(|(block, source)| LaunchInfo {
-                block,
-                threads: block.iter().map(|&d| d as u64).product(),
-                warps: block
-                    .iter()
-                    .map(|&d| d as u64)
-                    .product::<u64>()
-                    .div_ceil(32),
-                source: source.to_owned(),
-                exact: source != ".maxntid",
-            });
-        let cta = launch.as_ref().map(|l| CtaSize {
-            threads: l.threads,
-            warps: l.warps,
-            exact: l.exact,
-        });
-        let totals_per_cta = cta.as_ref().map(|l| self.aggregates(None, Per::Cta(l)));
-        let ctas = self
-            .counts
-            .grid()
-            .and_then(|g| g.iter().try_fold(1u64, |n, &d| n.checked_mul(d.into())));
-        let totals_per_launch =
-            (cta.as_ref().zip(ctas)).map(|(l, n)| self.aggregates(None, Per::Launch(l, Some(n))));
-
-        let unknowns = self.unknowns();
-        let (measured, measured_totals) = (ncu.filter(|(r, _)| r.kernel == name).zip(cta.as_ref()))
-            .map(|((record, lines), cta)| self.measured(record, lines, cta))
-            .unzip();
-
-        KernelReport {
-            demangled: demangle(&name),
-            name,
-            params: self
-                .kernel
-                .params
-                .iter()
-                .enumerate()
-                .map(|(i, p)| ParamInfo {
-                    index: i,
-                    ty: p.ty.name().to_owned(),
-                    name: self.module.interner.resolve(p.name).to_owned(),
-                })
-                .collect(),
-            blocks: self.blocks(),
-            shared_memory: self.shared_memory(),
-            instruction_classes: classes,
-            most_instructions_loop: ranking.first().map(|(_, r)| r.loop_name.clone()),
-            launch,
-            accesses: self.accesses.get(&None).cloned().unwrap_or_default(),
-            totals_per_cta,
-            totals_per_launch,
-            ranking: ranking.into_iter().map(|(_, r)| r).collect(),
-            loops: self
-                .forest
-                .top_level()
-                .into_iter()
-                .map(|t| self.loop_node(t))
-                .collect(),
-            totals: self.aggregates(None, Per::Thread),
-            unknowns,
-            unused: (self.kernel.stmts.iter().enumerate())
-                .filter_map(|(s, stmt)| match stmt {
-                    Stmt::Instr(i) if self.counts.unused[s] => Some(UnusedInstruction {
-                        line: self.lines.line(i.offset),
-                        opcode: self.module.opcode(i),
-                    }),
-                    _ => None,
-                })
-                .collect(),
-            measured,
-            measured_totals: measured_totals.flatten(),
-        }
     }
 }

@@ -2,7 +2,7 @@ use crate::analysis::instruction_counts::count_constraint::CountConstraint;
 use crate::analysis::memory_footprint::Wavefronts;
 use crate::ptx::ir::Module;
 use crate::report::bindings::BindingSpec;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Deserialize)]
@@ -293,7 +293,7 @@ pub struct Comparison {
     pub launch: Option<MeasuredTotals>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MeasuredBlock {
     pub name: String,
     pub verdict: Verdict,
@@ -306,13 +306,12 @@ pub struct MeasuredBlock {
     pub sectors: Vec<MeasuredSectors>,
     /// Lines whose shared access's wavefronts are predicted, against
     /// Nsight Compute's.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub wavefronts: Vec<MeasuredWavefronts>,
 }
 
 /// Predicted shared memory wavefronts per warp request against the
 /// line's over its warp-level executions.
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MeasuredWavefronts {
     pub line: u32,
     pub predicted: crate::analysis::memory_footprint::CountRange,
@@ -327,20 +326,17 @@ pub struct MeasuredWavefronts {
 
 /// The launch's global load and store sectors: the predictions summed
 /// over the record's lines against the L1TEX hardware counts.
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MeasuredTotals {
     /// The first line with global SASS whose sectors are not predicted as
     /// recorded; then neither total is compared.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub incomplete: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub loads: Option<MeasuredTotal>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub stores: Option<MeasuredTotal>,
 }
 
 /// Predicted sectors over the launch against an L1TEX hardware count.
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MeasuredTotal {
     pub predicted: SectorCount,
     pub at_most: bool,
@@ -348,7 +344,7 @@ pub struct MeasuredTotal {
     pub agrees: bool,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MeasuredSectors {
     pub line: u32,
     pub predicted: SectorCount,
@@ -361,8 +357,7 @@ pub struct MeasuredSectors {
     pub outcome: SectorOutcome,
 }
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectorOutcome {
     Agrees,
     Differs,
@@ -371,13 +366,13 @@ pub enum SectorOutcome {
     ExecutionsDiffer,
 }
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SectorCount {
     pub min: u64,
     pub max: u64,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MeasuredLine {
     pub line: u32,
     pub ptx: String,
@@ -388,8 +383,7 @@ pub struct MeasuredLine {
     pub sass: BTreeMap<String, u32>,
 }
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Confirmed,
     Consistent,

@@ -80,8 +80,7 @@ address while a copy retains its source and destination.
 Every count is per thread per execution: a warp-collective instruction
 contributes its warp total divided by the 32 lanes that issue it (PTX ISA
 §4.5.1). Loop-trip and launch multiplication happen at report time.
-The text report expands instructions with multiple contributions. Copies
-of one opcode with different immediate sizes each count their own bytes.
+Copies of one opcode with different immediate sizes each count their own bytes.
 Contribution annotations are per execution with a true
 guard, a `cp.async`'s global read on a thread that reads its source, marked
 `<=` with a src-size register.

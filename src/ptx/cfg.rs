@@ -46,8 +46,8 @@ pub struct ControlFlowGraph {
     /// edge is dropped, so the CFG may be incomplete. Either the label
     /// is genuinely absent (malformed input) or the parser did not
     /// register it — and since compilers do not emit dangling branches,
-    /// the latter is the likelier cause on real input. Surfaced as a
-    /// report unknown; empty on the whole committed corpus. `None` when
+    /// the latter is the likelier cause on real input. Empty on the
+    /// whole committed corpus. `None` when
     /// the branch names no label.
     pub unresolved_branches: Vec<(BlockId, Option<Symbol>)>,
 }

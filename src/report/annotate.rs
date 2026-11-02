@@ -17,8 +17,10 @@ use crate::analysis::thread_participation::{Atom, AtomKey, Constraint, Pred};
 use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Opcode, Register, Stmt};
-use crate::report::build::{AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel};
-use crate::report::schema::Access;
+use crate::report::build::{
+    Access, AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel,
+};
+
 use crate::ssa::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
