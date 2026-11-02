@@ -1,13 +1,16 @@
 # Over 536870912x32768x32768 CTAs of 32 threads, 2^64 threads leave
-# i64: the instruction and warp instruction counts over the launch are
-# unknown, but thread 0 of each CTA stores 4 B, 2^61 B in all.
+# i64: the count of the kernel's first block over the launch is
+# unknown, and so are the instruction and warp instruction counts, but
+# thread 0 of each CTA stores 4 B, 2^61 B in all. micro_lane0_copy's
+# thread 0 loads and stores 8 B: 2^62 B each way, whose sum leaves i64
+# but is no overflow in its AI.
 RUN: %ptxroof analyze %fixtures/micro/lane0_store.ptx --grid 536870912,32768,32768 | FileCheck "%s"
+RUN: %ptxroof analyze --annotate %fixtures/micro/lane0_store.ptx --grid 536870912,32768,32768 | FileCheck --check-prefix=ANN "%s"
 CHECK: totals per launch [static]:
 CHECK: instructions = 0 + unknown, warp instructions = 0 + unknown
-CHECK: global bytes: load 0 B, store 2305843009213693952 B
-# micro_lane0_copy's thread 0 loads and stores 8 B: 2^62 B each way,
-# whose sum leaves i64 but is no overflow in its AI.
 CHECK: kernel micro_lane0_copy
 CHECK: totals per launch [static]:
-CHECK: global bytes: load 4611686018427387904 B, store 4611686018427387904 B
 CHECK: AI(global) = 0 flop/B
+ANN: {{^}}.visible .entry micro_lane0_store( // grid 536870912×32768×32768 | block 32×1×1 | per launch: global store 2,305,843,009,213,693,952 B; param load ? B{{$}}
+ANN: {{^}}	ld.param.u64 	%rd1, [micro_lane0_store_param_0]; // [<block 0>] warp * × lane * | exec ?{{$}}
+ANN: {{^}}.visible .entry micro_lane0_copy( // grid 536870912×32768×32768 | block 32×1×1 | per launch: global load 4,611,686,018,427,387,904 B, store 4,611,686,018,427,387,904 B; param load ? B{{$}}
