@@ -596,13 +596,14 @@ contract (Codex's review of 2b2731b).
   where the grid decides it, its `%ctaid` terms dropped where they take
   one value (b200 `set_mla_kv_buffer_kernel_norope`'s
   `8·(%tid.x mod 128) + 1024·%ctaid.y < 576` under 8192×1×1 CTAs: 72
-  threads per CTA, as the record measures, `b200-mixed-index-guard.test`),
+  threads per CTA, as the record measures, `b200-mixed-index-guard.test`,
+  `the_grid_decides_a_guard_on_the_cta_index`),
   and otherwise per CTA a bound, the lanes in at some CTA
   (`micro/cta_mask.ptx`: under 16 CTAs `<= 64 threads`, where the last
   stores on 40; `micro/cta_guards.ptx`). The ncu comparison sums such a
   set's count over the CTAs (`Pred::launch`; scan_tma's line 184,
-  `b200-launch-counts.test`), but not past 2^24 CTAs on the axes its
-  comparisons read or 2^26 lane evaluations
+  `scan_tma_s_line_184_counts_the_ctas_that_run_it`), but not past 2^24
+  CTAs on the axes its comparisons read or 2^26 lane evaluations
   (`a_launch_sums_each_cta_s_threads_and_warps`). Without a grid the masks
   Triton builds from `pid·BLOCK + arange` leave what they guard a bound
   (`micro/cta_mask.ptx`, `store <= 256 B`). A guard on a loaded value
@@ -611,7 +612,8 @@ contract (Codex's review of 2b2731b).
   request's sectors are exact). A comparison with a loop counter is counted trip by trip
   (`micro/counter_guard.ptx`: 384 barriers and 300 stores per CTA, as
   measured; `fp8_gemm_kernel.lm_head_dx`'s `<block 4>`, `k < 511`,
-  confirmed at 12,533,760, `gluon-counter-guard.test`) only where the
+  confirmed at 12,533,760, `gluon-counter-guard.test`,
+  `lm_head_dx_s_counter_guard_confirms_its_block`) only where the
   block lies in that loop, the loop's trip count is a constant and the
   comparison holds that one counter with the thread index; with a
   parameter not bound (`micro/counter_guard.ptx`'s mask `64·k +
@@ -942,7 +944,8 @@ One line each, with the trigger that would start it.
   `a_line_at_its_own_width_compares_its_l2_sectors`; the
   text report counts the lines that agree and prints those that differ,
   in the records only the three copies above in
-  `micro/shared_wavefronts.cp_async.ncu.json`, `tests/lit/gluon-ncu.test`), once
+  `micro/shared_wavefronts.cp_async.ncu.json`,
+  `gluon_records_agree_on_counts_sectors_and_launch_totals`), once
   the line's global SASS executed the predicted count, or within its
   bound. A line whose shared SASS that request wavefronts are one opcode
   at the width each lane of its one PTX shared access covers compares
@@ -966,8 +969,9 @@ One line each, with the trigger that would start it.
   every such line but an atomic's is predicted at its recorded width
   and executions (`kernels[].measured_totals`; the text's `measured
   L1TEX sectors of global loads over the launch`;
-  `tests/lit/micro-ldgsts-p0.test`, `gluon-counter-guard.test`: the
-  sum includes the lines the `P0` rule leaves without sectors). In 38
+  `an_ldgsts_on_p0_keeps_no_sectors_but_counts_in_the_launch_total`,
+  `lm_head_dx_s_counter_guard_confirms_its_block`: the sum includes the
+  lines the `P0` rule leaves without sectors). In 38
   records both agree. 25 have a line not predicted so (ce_chunk's
   `ld.global.b64` that ptxas loads as 32-bit `LDG.E`), and the gated
   rmsnorm record has no counts. `tests/ncu_corpus.rs` keeps

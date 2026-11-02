@@ -5,7 +5,8 @@
 
 use ptxroof::report::build::{AnalyzeOptions, compare};
 use ptxroof::report::measured::{
-    Comparison, MeasuredLine, MeasuredSectors, NcuRecord, SectorCount, SectorOutcome, Verdict,
+    Comparison, MeasuredLine, MeasuredSectors, MeasuredTotal, NcuRecord, SectorCount,
+    SectorOutcome, Verdict,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -29,6 +30,29 @@ fn comparison(record: &str) -> Comparison {
     (compare(&source, &opts).expect("record analyzes")).expect("the record's kernel")
 }
 
+/// Every record in `dir`, a path from the repository root, with its
+/// comparison.
+fn records(dir: &str) -> Vec<(String, Comparison)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut paths: Vec<String> = (fs::read_dir(root.join(dir)).expect("fixture dir readable"))
+        .map(|e| {
+            e.expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.ends_with(".ncu.json"))
+        .map(|name| format!("{dir}/{name}"))
+        .collect();
+    paths.sort();
+    (paths.into_iter())
+        .map(|path| {
+            let c = comparison(&path);
+            (path, c)
+        })
+        .collect()
+}
+
 /// Each block's name, verdict, instructions, those with SASS and those
 /// whose count agrees.
 fn blocks(c: &Comparison) -> Vec<(&str, Verdict, u64, u64, u64)> {
@@ -47,6 +71,33 @@ fn blocks(c: &Comparison) -> Vec<(&str, Verdict, u64, u64, u64)> {
 
 fn differing(c: &Comparison, line: u32) -> Option<&MeasuredLine> {
     (c.blocks.iter().flat_map(|b| &b.differing)).find(|d| d.line == line)
+}
+
+/// The lines whose L2 sectors are compared, by outcome: those that agree
+/// with an exact prediction, a range or a bound, those that differ, and
+/// those whose global SASS ran other than predicted.
+fn sectors(c: &Comparison) -> BTreeMap<&'static str, usize> {
+    let mut out = BTreeMap::new();
+    for s in c.blocks.iter().flat_map(|b| &b.sectors) {
+        let kind = match (s.outcome, s.at_most, s.predicted.min == s.predicted.max) {
+            (SectorOutcome::Differs, _, _) => "differ",
+            (SectorOutcome::ExecutionsDiffer, _, _) => "not compared",
+            (SectorOutcome::Agrees, true, _) => "within a bound",
+            (SectorOutcome::Agrees, false, true) => "exact",
+            (SectorOutcome::Agrees, false, false) => "within a range",
+        };
+        *out.entry(kind).or_default() += 1;
+    }
+    out
+}
+
+fn total(min: u64, max: u64, measured: u64) -> Option<MeasuredTotal> {
+    Some(MeasuredTotal {
+        predicted: SectorCount { min, max },
+        at_most: false,
+        measured,
+        agrees: true,
+    })
 }
 
 fn sass(opcodes: &[(&str, u32)]) -> BTreeMap<String, u32> {
@@ -183,4 +234,136 @@ fn a_line_at_its_own_width_compares_its_l2_sectors() {
     };
     assert_eq!(c.blocks.len(), 1);
     assert_eq!(c.blocks[0].sectors, [sectors(17), sectors(19)]);
+}
+
+/// Every B200 kernel against its Nsight Compute record
+/// (`fixtures/b200/regen.sh`): no block's predicted count is contradicted
+/// by the measured one.
+#[test]
+fn no_b200_block_is_contradicted() {
+    let records = records("tests/fixtures/b200");
+    assert_eq!(records.len(), 34);
+    let contradicted: Vec<String> = (records.iter())
+        .flat_map(|(path, c)| {
+            (c.blocks.iter())
+                .filter(|b| b.verdict == Verdict::Contradicted)
+                .map(move |b| format!("{path}: {}", b.name))
+        })
+        .collect();
+    assert_eq!(contradicted, Vec::<String>::new());
+}
+
+/// Every Gluon kernel against its Nsight Compute record (`regen.sh`): no
+/// block's predicted count is contradicted by the measured one, each
+/// compares the L2 sectors of some line and none differs from the
+/// measured ones, and no launch's load or store sectors differ from its
+/// L1TEX counts.
+#[test]
+fn gluon_records_agree_on_counts_sectors_and_launch_totals() {
+    let records = records("tests/fixtures/gluon");
+    assert_eq!(records.len(), 12);
+    for (path, c) in &records {
+        let verdicts: Vec<Verdict> = c.blocks.iter().map(|b| b.verdict).collect();
+        assert!(!verdicts.contains(&Verdict::Contradicted), "{path}");
+        let sectors = sectors(c);
+        let agree: usize = ["exact", "within a range", "within a bound"]
+            .map(|k| sectors.get(k).copied().unwrap_or(0))
+            .iter()
+            .sum();
+        assert!(agree > 0, "{path}");
+        assert_eq!(sectors.get("differ"), None, "{path}");
+        let totals = c.launch.iter().flat_map(|t| [&t.loads, &t.stores]);
+        assert!(totals.flatten().all(|t| t.agrees), "{path}");
+    }
+}
+
+/// Counts over the launch, summed over the record's CTAs. In
+/// _chunk_scan_fwd_tma (grid 2x32x80, 384 threads), the load on line 184
+/// runs on the 256 threads of warps 0 to 7 in the CTAs whose %ctaid.y is
+/// not 0, 31 of every 32: 2·31·80·256 = 1269760 times. ptxas attributes
+/// to the line an IMAD.MOV.U32 that runs on those 256 threads of every
+/// CTA, 1310720 times, and the record measures 1310720 + 1269760.
+#[test]
+fn scan_tma_s_line_184_counts_the_ctas_that_run_it() {
+    let c = comparison("tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ncu.json");
+    let expected = MeasuredLine {
+        line: 184,
+        ptx: "@%p17 ld.global.b32 { %r93 }, [ %rd62 + 0 ];".to_owned(),
+        tested: false,
+        predicted: 1269760,
+        at_most: false,
+        executions: 2580480,
+        sass: sass(&[("IMAD.MOV.U32", 1), ("LDG.E", 1)]),
+    };
+    assert_eq!(differing(&c, 184), Some(&expected));
+}
+
+/// A guard comparing the thread index with a CTA index, read under the
+/// record's grid. In set_mla_kv_buffer_kernel_norope
+/// `8·(%tid.x mod 128) + 1024·%ctaid.y < 576` guards a 16 B load and
+/// store. The grid is 8192x1x1, so %ctaid.y is 0: the store on line 93
+/// runs on 72 threads of each CTA, 589824 times over the launch, as the
+/// record measures. ptxas attributes two CS2R to the load's line 88, which
+/// the record measures more often.
+#[test]
+fn the_grid_decides_a_guard_on_the_cta_index() {
+    let c = comparison(
+        "tests/fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json",
+    );
+    let expected = MeasuredLine {
+        line: 88,
+        ptx: "@%p1 ld.global.v4.b32 { %r1, %r2, %r3, %r4 }, [ %rd3 + 0 ];".to_owned(),
+        tested: false,
+        predicted: 589824,
+        at_most: false,
+        executions: 2686976,
+        sass: sass(&[("CS2R", 2), ("LDG.E.128", 1)]),
+    };
+    assert_eq!(differing(&c, 88), Some(&expected));
+    assert_eq!(differing(&c, 93), None);
+}
+
+/// fp8_gemm_kernel.lm_head_dx's K loop runs 512 trips under its record,
+/// and its <block 4> only on those whose counter passes line 957's
+/// `setp.ge.u64 %p3, %rd55, %rd2`, read per trip as `k < 511`: 510 trips
+/// x 256 threads x 96 CTAs = 12,533,760, as Nsight Compute measures on its
+/// barrier, line 973. Its two `cp.async` lines, 979 and 985, are `@!P0
+/// LDGSTS`, whose L2 sectors Nsight Compute miscounts, so the record keeps
+/// none for them (micro/ldgsts_p0.ptx, PLAN.md). The launch's L1TEX load
+/// count, 62,916,096, is the least of the predictions summed with them.
+#[test]
+fn lm_head_dx_s_counter_guard_confirms_its_block() {
+    let c = comparison("tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json");
+    let block = (blocks(&c).into_iter()).find(|b| b.0 == "<block 4>");
+    assert_eq!(block, Some(("<block 4>", Verdict::Confirmed, 16, 10, 8)));
+    assert_eq!(differing(&c, 973), None);
+    let verdicts: Vec<Verdict> = c.blocks.iter().map(|b| b.verdict).collect();
+    assert!(!verdicts.contains(&Verdict::Contradicted));
+    let expected = BTreeMap::from([("exact", 10), ("within a range", 12)]);
+    assert_eq!(sectors(&c), expected);
+    let loads = c.launch.and_then(|t| t.loads);
+    assert_eq!(loads, total(62916096, 69207552, 62916096));
+}
+
+/// micro/ldgsts_p0's copy A (`@!P0 LDGSTS`, 16 threads) keeps no sectors
+/// in its record: Nsight Compute counts it as 64 where its threads request
+/// 8. Copy B (`@!P1 LDGSTS`, 48 threads) and the two loads are compared
+/// and agree. Over the launch, the four lines' predictions sum to 48–86
+/// load sectors, and the L1TEX hardware count is 64, copy A's 8 included.
+#[test]
+fn an_ldgsts_on_p0_keeps_no_sectors_but_counts_in_the_launch_total() {
+    let c = comparison("tests/fixtures/micro/ldgsts_p0.ncu.json");
+    assert_eq!(c.blocks.len(), 1);
+    let compared: Vec<(u32, SectorOutcome, u64)> = (c.blocks[0].sectors.iter())
+        .map(|s| (s.line, s.outcome, s.measured))
+        .collect();
+    use SectorOutcome::Agrees;
+    assert_eq!(
+        compared,
+        [(39, Agrees, 24), (41, Agrees, 8), (42, Agrees, 24)]
+    );
+    let launch = c.launch.expect("the record's L1TEX counts");
+    assert_eq!(launch.incomplete, None);
+    assert_eq!(launch.loads, total(48, 86, 64));
+    assert_eq!(launch.stores, total(0, 0, 0));
 }
