@@ -432,7 +432,7 @@ wildly wrong.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.17.7.1 | `tcgen05.alloc` | `Unknown` | OK (deferred, Tier 2) — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the resource report (alongside the `shared memory [static]` line), not an op class. Target `Sync` for the instruction itself. |
+| 9.7.17.7.1 | `tcgen05.alloc` | `Unknown` | OK (deferred, Tier 2) — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the `.entry` line beside `shared memory`, not an op class. Target `Sync` for the instruction itself. |
 | 9.7.17.7.1 | `tcgen05.dealloc` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
 | 9.7.17.7.1 | `tcgen05.relinquish_alloc_permit` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
 | 9.7.17.8.3 | `tcgen05.ld` | `Unknown` | OK (deferred, Tier 2) — ⚠ misfit §B: tensor-memory→register load, warp-collective; needs the new space and PerWarp scope. |

@@ -252,7 +252,7 @@ contract (Codex's review of 2b2731b).
   of its own, apart from `%v`. In `micro/vector_register.ptx`, after
   `ld.global.v2.b32 %v, [%rd1]` overwrites `%v`, `%v.x` is still the
   thread index an earlier `mov.b32 %v.x, %r1` wrote: the address is
-  `[4 * %tid.x + param_0]`, where ptxas takes it from the load.
+  `[4·%tid.x + param_0]`, where ptxas takes it from the load.
 - **Integer arithmetic is taken not to wrap where its range is
   unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
   or `bfe` result, and an integer `cvt`'s source and destination, or a
@@ -298,7 +298,7 @@ contract (Codex's review of 2b2731b).
   `micro/shfl_2d_block.ptx` (`.reqntid 48, 2, 1`) every lane of a warp
   stores at lane 0's `%tid.x` (warp 2's lane 0 is thread (16, 1),
   param_0 + 64; ptxas 13.4); the store reads
-  `[128 * ⌊%tid.x/32⌋ + param_0]`, `warp: 1–2 sectors`. `%laneid` is
+  `[128·⌊%tid.x/32⌋ + param_0]`, `sectors/req 1–2`. `%laneid` is
   read only in a block of one row.
 - **`shfl.sync.idx` reads one floor or mod of `%tid.x`**: a thread
   index under more, `⌊%tid.x/8⌋ mod 16` from a `bfe.u32` or
@@ -337,7 +337,7 @@ contract (Codex's review of 2b2731b).
   division exact (k1's and k2's `K − K mod 4`, the fp8 GEMMs,
   `micro/two_register_counter.ptx`). A constant distance that is no
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
-  stepping by 2 from 0 while `!= 5`, reads `trips = unknown`, where the
+  stepping by 2 from 0 while `!= 5`, reads `loop: trips ?`, where the
   loop does not exit.
 - **A loop's count drops its max with 0 or 1 on nonnegative
   parameters.** A loop is counted max(T, 0) per execution of a guard
@@ -459,8 +459,8 @@ contract (Codex's review of 2b2731b).
 - **Offsets past 2^62 bytes are not counted**: an access whose lane
   offsets over the block, or whose loop's shifts over its trips, reach
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
-  (`micro/offsets_wide.ptx`: `warp: ? (lane offsets reach 2^62
-  bytes)`; `requested 32 B, unique unknown` for 8 distinct stores).
+  (`micro/offsets_wide.ptx`: `sectors/req ? (lane offsets reach 2^62
+  bytes)`; `requested 32 B, unique ?` for 8 distinct stores).
 - **A loop footprint takes an address holding an unknown value the
   loop computes, or one that is one value per warp only, as unread**:
   requested bytes only, unique and sector bytes unknown
@@ -477,7 +477,7 @@ contract (Codex's review of 2b2731b).
   hardware executes the load once for the lanes executing it together.
   A warp-specialized dispatch reads its state byte so
   (`micro/warp_dispatch.ptx`: the dispatched store's sectors read
-  `warp: 4–5 sectors (ideal 4)`, `micro-warp-dispatch.test`); over the
+  `sectors/req 4–5 (ideal 4)`, `micro-warp-dispatch.test`); over the
   65 records the access rows whose warp sectors or wavefronts are a
   bound go from 333 to 201, all in `gluon/attn_fwd_ws_kernel`'s two
   shapes. The records keep thread instructions only
@@ -530,7 +530,7 @@ contract (Codex's review of 2b2731b).
   against the type of the `add` that steps it: k5's
   `for (uint bkIdx = 0; bkIdx < K; bkIdx += BK)` steps by `add.s32`
   and compares `setp.lt.u32`, so under `--bind 2:K=2147483647` its
-  outer loop reads `trips = unknown`, "`add.s32` leaves 32 bits", where
+  outer loop reads `loop: trips ?`, "`add.s32` leaves 32 bits", where
   it runs 2^28 trips, its last value 2^31 lying in `.u32`
   (`a_count_its_counter_refuses_once_known_is_unknown_to_every_reader`).
 - **Shared wavefronts are not counted for a `cp.async` destination, a
@@ -676,8 +676,8 @@ contract (Codex's review of 2b2731b).
   any grid (§10.7); an `eq` or `ne` where their difference's range
   leaves (−2^width, 2^width). What it guards is then a bound
   (`micro/setp_float.ptx`, `micro/setp_f16x2.ptx`,
-  `micro/setp_unsigned.ptx`, `micro/setp_wraps.ptx`: `(predicated)`,
-  `store <= 256 B`; the unsigned kernel of
+  `micro/setp_unsigned.ptx`, `micro/setp_wraps.ptx`: `<= warp * ×
+  lane *`, `global store <= 256 B`; the unsigned kernel of
   `micro/setp_unknown_range.ptx`).
 - **A guard comparing the thread index with a CTA index needs the
   grid, and one with an unbound parameter or a loop counter is an
@@ -758,9 +758,9 @@ contract (Codex's review of 2b2731b).
 
 - **Floors and mods of one variable are not merged back**, so a form
   can print longer than its value: k5's second `As` store reads
-  `16 * ⌊%tid.x/8⌋ + 2 * (%tid.x mod 8)`, which is `2 * %tid.x`, and
-  the B200 fused_rmsnorm's `4 * ⌊(⌊%tid.x/8⌋ mod 128)/4⌋` is
-  `4 * ⌊%tid.x/32⌋` below 1024 threads.
+  `16·⌊%tid.x/8⌋ + 2·(%tid.x mod 8)`, which is `2·%tid.x`, and
+  the B200 fused_rmsnorm's `4·⌊(⌊%tid.x/8⌋ mod 128)/4⌋` is
+  `4·⌊%tid.x/32⌋` below 1024 threads.
 - **A refused φ names the obstacle on one of its source chains**: in
   b200 `tma_best` 34 access rows say only "depends on special register
   %ctaid.x" (8 in `bmm_kernel_persistent`), not that a join of two
