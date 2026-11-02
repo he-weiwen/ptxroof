@@ -1980,4 +1980,102 @@ $L__BB0_8:
             .expect("inner loop");
         assert_eq!((inner.with_sass, inner.agreeing), (1, 1));
     }
+
+    /// A scope holding an unclassified instruction or an unquantified
+    /// byte count marks its totals, the `.entry` line's per thread, as
+    /// lower bounds: with `wgmma`, the CUDA cores' FLOPs past f32's 2,
+    /// the other pipes' and the global and shared bytes; with a
+    /// `cp.async` of a register's size alone, the global bytes it loads
+    /// and the shared bytes it stores.
+    #[test]
+    fn unknowns_in_scope_make_totals_lower_bounds() {
+        let opts = AnalyzeOptions::default();
+        let src = ".version 8.7\n.target sm_90a\n.address_size 64\n\
+                   .visible .entry k()\n{\n\
+                   ld.global.f32 %f1, [%rd1];\nfma.rn.f32 %f2, %f1, %f1, %f1;\n\
+                   st.global.f32 [%rd1], %f2;\nwgmma.fence.sync.aligned;\n\
+                   cp.async.cg.shared.global [%r1], [%rd2], %r2;\nret;\n}\n";
+        assert_eq!(
+            note(src, &opts, ".entry").as_deref(),
+            Some(
+                "per thread: flops f32 2 + ?; tensor, sfu, atomic flops ?; \
+                 global load >= 4 B, store >= 4 B; shared load ? B, store ? B"
+            )
+        );
+        let src = src.replace("wgmma.fence.sync.aligned;\n", "");
+        assert_eq!(
+            note(&src, &opts, ".entry").as_deref(),
+            Some("per thread: flops f32 2; global load >= 4 B, store 4 B; shared store ? B")
+        );
+    }
+
+    /// Static shared memory per CTA = Σ (element count × element width)
+    /// over `.shared` decls; `.extern .shared` is dynamic, not counted:
+    /// the `.entry` line's `shared memory`, `+ dynamic` where the launch
+    /// sets more, none without either.
+    #[test]
+    fn shared_memory_static_and_dynamic() {
+        let opts = AnalyzeOptions::default();
+        let body = |decls: &str| {
+            format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k()\n{{\n{decls}ret;\n}}\n"
+            )
+        };
+        let sm = |decls: &str| note(&body(decls), &opts, ".entry");
+
+        // The k5 shape: two byte arrays, 1024 + 1024 = 2048 (matches the
+        // `2048 bytes smem` ptxas reports for the k5 fixture).
+        assert_eq!(
+            sm(".shared .align 2 .b8 As[1024];\n.shared .align 2 .b8 Bs[1024];\n").as_deref(),
+            Some("shared memory 2,048 B/CTA")
+        );
+        // Typed array: per-element width applies, 256 × 4 = 1024.
+        assert_eq!(
+            sm(".shared .align 4 .f32 buf[256];\n").as_deref(),
+            Some("shared memory 1,024 B/CTA")
+        );
+        // Width coverage: b64 → 8, b128 → 16, 4 × 8 + 2 × 16.
+        assert_eq!(
+            sm(".shared .b64 w[4];\n.shared .b128 q[2];\n").as_deref(),
+            Some("shared memory 64 B/CTA")
+        );
+        // A scalar reserves its type's size.
+        assert_eq!(
+            sm(".shared .align 8 .b64 bar;\n").as_deref(),
+            Some("shared memory 8 B/CTA")
+        );
+        // The k1 shape: no shared memory at all.
+        assert_eq!(sm(""), None);
+        // Dynamic extern shared: out of the static total, flagged.
+        assert_eq!(
+            sm(".extern .shared .align 8 .b8 dsm[];\n").as_deref(),
+            Some("shared memory 0 B/CTA + dynamic")
+        );
+        // Mixed: static counted, dynamic flagged.
+        assert_eq!(
+            sm(".shared .align 2 .b8 As[1024];\n.extern .shared .align 8 .b8 dsm[];\n").as_deref(),
+            Some("shared memory 1,024 B/CTA + dynamic")
+        );
+        // LLVM's module-scope form counts for every kernel in the module.
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .extern .shared .align 16 .b8 global_smem[];\n\
+                   .visible .entry k()\n{\nret;\n}\n";
+        assert_eq!(
+            note(src, &opts, ".entry").as_deref(),
+            Some("shared memory 0 B/CTA + dynamic")
+        );
+    }
+
+    /// Each statement the parser cannot read says on its line that it is
+    /// not counted.
+    #[test]
+    fn unparsed_statements_say_they_are_not_counted() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k()\n{\n@@ not ptx;\n.bogus 1;\nret;\n}\n";
+        assert_eq!(
+            notes(src, &AnalyzeOptions::default()),
+            ["not parsed (not counted)", "not parsed (not counted)"]
+        );
+    }
 }

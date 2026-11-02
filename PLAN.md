@@ -1075,7 +1075,9 @@ One line each, with the trigger that would start it.
   `? B (trips of <header>)` under a loop whose trips are not known
   (`k5-annotate.test`, `micro-totals-annotate.test`). Not printed: the
   ncu comparisons, which test the analysis (`--ncu` gives the launch;
-  `tests/ncu_corpus.rs` keeps them).
+  `tests/ncu_corpus.rs` keeps them); a branch target that matches no
+  label, whose edge the CFG drops
+  (`unresolved_target_is_recorded_never_panics`).
 - `capabilities` verb that generates the audit doc's tables.
 - sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
   per-instruction issue scope, which the model lacks; sm_100 fixtures
