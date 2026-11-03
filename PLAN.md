@@ -761,12 +761,23 @@ output_tallies` rewrites it.
   instructions. `tcgen05` is in 12 of the B200 fixtures
   (`tests/fixtures/b200`).
 - **A tensor copy's bytes are unknown.** `cp.async.bulk.tensor` moves
-  the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8),
-  not the PTX: the bytes of both its sides are unknown in every total,
+  the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8):
+  the bytes of both its sides are unknown in every total,
   `bytes ? (not counted)` on its line, its global side reads `addr ?
-  (the tensor map holds the address)`, and a loop holding one in its
-  own blocks has no footprint (`micro/tensor_copies.ptx`,
-  `micro-tensor-copies.test`).
+  (the tensor map holds the address)`, its shared side has no
+  wavefronts and no reason, and a loop holding one in its own blocks
+  has no footprint and says nothing of it (`micro/tensor_copies.ptx`,
+  `micro-tensor-copies.test`; in the Blackwell corpus, `trap` entry,
+  78 loops with a numeric trip count in 69 files). A load's shared
+  bytes are in the PTX, as the transaction count of the
+  `mbarrier.arrive.expect_tx` on its barrier: a phase completes when
+  the copies' complete-tx, each "equal to amount of data copied in
+  bytes", meet it (§9.7.9.26.5.2, §9.7.14.16.6). b200
+  `blk_mx_128x256_s4w4.mx_block_scaled` line 202 expects 50,688 B on
+  `[%r14]`, which the four copies of lines 215–238 complete. Every one
+  of the corpus's 4,841 parsed `expect_tx` has an immediate count, and
+  20,000 of its 20,009 tensor loads follow a same-address `expect_tx`
+  that dominates them; a store (`.bulk_group`, 950) has none.
 - **Special registers PTX ISA §10 does not describe** — `%pm*`
   ("behavior is currently undefined"), `%envreg*` (driver-defined),
   `%globaltimer*` (target-specific), `%reserved_smem_offset_*` — read
@@ -1250,10 +1261,15 @@ One line each, with the trigger that would start it.
   per-instruction issue scope, which the model lacks; sm_100 fixtures
   exist (`tests/fixtures/b200`), sm_90 ones do not.
   `blk_mx_128x256_s4w4.mx_block_scaled` counts 224 `tcgen05.mma` per
-  CTA and no FLOPs for them. A TMA copy's bytes need its descriptor's
-  shape, strides, box and swizzle: the B200 records keep `tensormap:128`
-  only (`record_launches.py`), and the reports give TMA instructions no
-  access size and 0 sectors.
+  CTA and no FLOPs for them, though an MMA's M and N are in its idesc
+  (PTX ISA §9.7.17.4.2 Table 45; K by `.kind`, Table 42), a `mov.b32`
+  of an immediate before each of the Blackwell corpus's 49,606 parsed
+  `tcgen05.mma` (56 through a copy of one). A TMA store's bytes and a
+  copy's global address need its descriptor's shape, strides, box and
+  swizzle (a load's shared bytes are in its barrier's `expect_tx`,
+  **A tensor copy's bytes are unknown.**): the B200 records keep
+  `tensormap:128` only (`record_launches.py`), and the reports give TMA
+  instructions no access size and 0 sectors.
 - Values loaded from memory as inputs: a loop bounded by one has no
   count (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
   the sequence length its `ld.global` at line 64 reads); a count in a
