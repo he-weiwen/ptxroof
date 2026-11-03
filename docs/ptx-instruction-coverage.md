@@ -305,8 +305,8 @@ remain visible, counted `Unknown` work.
 | 9.7.9.26.5.2 | `cp.async.bulk.tensor` | `Memory`: an `UnquantifiedBytes` load from `.src` and store to `.dst`, global to shared::cta or to shared::cluster (`.multicast::cluster` included), or shared::cta to global; another pair of state spaces stays `Unknown` | OK — "an asynchronous copy operation of tensor data from the location in .src state space to the location in the .dst state space" (§9.7.9.26.5.2). `.dst` is the first state space named: the manual's own example `cp.async.bulk.tensor.3d.im2col.shared::cluster.global` and Triton put `.load_mode` before it. The bytes are the bounding box of the tensor map, "a 128-byte opaque object" that "describes the tensor properties and the access properties" (§5.5.8, §5.5.3.1), **permanently unknowable from the PTX text**: `UnquantifiedBytes` is the end state (misfit §C), unless a `--bind`-style flag supplies the map. The shared side's address is traced; the global side's reads `addr ? (the tensor map holds the address)`, and a loop holding one in its own blocks has no footprint. Pinned by `a_tensor_copy_moves_the_bytes_its_tensor_map_gives` and `micro/tensor_copies.ptx`: every `.dim`, `.load_mode`, completion mechanism, `.multicast::cluster`, `.cta_group` and `.L2::cache_hint` form, which ptxas 13.4 assembles to its UTMALDG or UTMASTG, and its `--dump-ast` to the same SASS (`tests/lit/roundtrip`); its annotated lines by `micro-tensor-copies.test`. Single-thread-issued, CTA-scale (§B): one op per issuing thread. |
 | 9.7.9.26.5.3 | `cp.reduce.async.bulk.tensor` | `Unknown` | OK (deferred, Tier 2) — same, plus misfit §A (reduction). |
 | 9.7.9.26.5.4 | `cp.async.bulk.prefetch.tensor` | `Unknown` | OK (deferred, Tier 2) — target `Ignore` per the prefetch policy. |
-| 9.7.9.26.6.1 | `cp.async.bulk.commit_group` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
-| 9.7.9.26.6.2 | `cp.async.bulk.wait_group` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
+| 9.7.9.26.6.1 | `cp.async.bulk.commit_group` | `Sync` | OK — moves no bytes. |
+| 9.7.9.26.6.2 | `cp.async.bulk.wait_group` | `Sync` | OK — moves no bytes. |
 | 9.7.9.27 | `tensormap.replace` | `Unknown` | Gap (harmless) — edits a tensor-map descriptor in memory; negligible traffic. Recommend `Ignore` with a comment, or a small fixed `Memory` write — decide when TMA lands (Tier 3). |
 
 ## §9.7.10 Fabric Instructions
@@ -659,7 +659,7 @@ scope-axis extension (misfit §B), which should land once, first, not
 per-family**.
 
 - `wgmma.mma_async` (+ `.sp`), with `wgmma.fence` / `commit_group` / `wait_group` as `Sync`
-- TMA: `cp.async.bulk`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`), with `cp.async.bulk.commit_group` / `wait_group` as `Sync`; tensor variants land as honest unquantified bytes (misfit §C), as `cp.async.bulk.tensor` has
+- TMA: `cp.async.bulk`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`) (`cp.async.bulk.commit_group` / `wait_group` have landed as `Sync`); tensor variants land as honest unquantified bytes (misfit §C), as `cp.async.bulk.tensor` has
 - Hopper warp-specialization boilerplate is already classified: `elect.sync` (`Communication`, with the `d|p` operand form in the parser), `setmaxnreg` (`Ignore`)
 - `red.async`, `movmatrix`, `mma.sp` (sparse policy, misfit §D), `st.async` remote-attribution review
 - `tcgen05.*` (all 14 entries) — tensor memory as a new `Space`, single-thread-issue scope

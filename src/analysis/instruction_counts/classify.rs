@@ -426,19 +426,22 @@ fn matrix_fragments(mods: &[&str], direction: Direction) -> ClassifiedInstructio
 /// in the shared state space"; `cp-size` is an immediate, and the
 /// optional immediate `src-size` is the number of bytes actually
 /// read ("remaining bytes in destination dst are filled with
-/// zeros"). The group bookkeeping instructions (§9.7.9.26.3.2–3) and
-/// the mbarrier arrive are synchronization; the bulk forms and the
-/// tensor ones but `cp.async.bulk.tensor` (§9.7.9.26.4, §9.7.9.26.5.3–4)
-/// are not modeled.
+/// zeros"). The group bookkeeping instructions (§9.7.9.26.3.2–3, and
+/// the bulk ones of §9.7.9.26.6) and the mbarrier arrive are
+/// synchronization; the bulk forms and the tensor ones but
+/// `cp.async.bulk.tensor` (§9.7.9.26.4, §9.7.9.26.5.3–4) are not modeled.
 fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     let has = |name: &str| mods.contains(&name);
     if mods.starts_with(&["async", "bulk", "tensor"]) {
         return tensor_copy(mods);
     }
+    if has("async") && (has("commit_group") || has("wait_group")) {
+        return ClassifiedInstruction::simple(InstructionCategory::Sync);
+    }
     if !has("async") || has("bulk") || has("reduce") {
         return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     }
-    if has("commit_group") || has("wait_group") || has("wait_all") || has("mbarrier") {
+    if has("wait_all") || has("mbarrier") {
         return ClassifiedInstruction::simple(InstructionCategory::Sync);
     }
     if !(has("shared") || has("shared::cta")) || !has("global") {
@@ -1011,6 +1014,9 @@ mod tests {
             "cp.async.wait_group 1;",
             "cp.async.wait_all;",
             "cp.async.mbarrier.arrive.shared.b64 [%r1];",
+            "cp.async.bulk.commit_group;",
+            "cp.async.bulk.wait_group 2;",
+            "cp.async.bulk.wait_group.read 0;",
         ] {
             assert_eq!(
                 class_of(text),
