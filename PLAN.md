@@ -776,11 +776,24 @@ output_tallies` rewrites it.
   pinned manual's Table 2 and `fabric`; a keyword a later ISA adds
   leaves its statement unparsed (`mnemonics_outside_the_isa_are_unparsed`;
   nvcc 13.4 already emits `.version 9.4`).
+- **Dynamic shared memory is not read from a record.** `--ncu` takes a
+  record's grid, block shape and integer parameters, not its `shared`
+  bytes, and no flag gives them, so a kernel declaring `.extern
+  .shared`, as every Triton kernel does, reads `shared memory 0 B/CTA
+  + dynamic`: 26 of the 34 B200 records hold a nonzero `shared`, from
+  128 B to `blk_mx_128x256_s4w4.mx_block_scaled`'s 202,800 B.
 - **Calls.** Module-scope `.func` declarations and definitions are
   discarded (`module_scope_functions_are_skipped`), so no callee's
   instructions are counted, and a kernel calling one does not
   round-trip (`micro/call_returns.ptx`: "Call to 'zero' requires call
-  prototype").
+  prototype"). A callee's work leaves the totals exact, with no `>=`
+  (`micro-call-returns.test`), and a `.func` body's lines carry no
+  note: in the Blackwell corpus 49,926 statements in 13 files
+  (sol-study's `deepdive/warpid/out/WS_NOINLINE.ptx` line 199, a
+  `tcgen05.mma`, prints nothing). A call's return value, `ld.param
+  [retval0]`, is one per thread, so a branch on it is an unknown
+  selector: 7,086 thread sets in 10 Triton concurrency-sanitizer builds
+  of sol-study's Gluon kernels are bounds so.
 - **In a kernel with a cycle of more than one entry**, the uniformity
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare
@@ -793,6 +806,37 @@ output_tallies` rewrites it.
   marks every φ of a join block (`taintAndPushPhiNodes`,
   llvm/include/llvm/ADT/GenericUniformityImpl.h:949): the step counter
   of `two_latches_select_at_the_header` is divergent.
+- **`redux.sync`'s result is divergent.** PTX ISA §9.7.14.13 gives each
+  thread of the membermask the reduction, one value for a warp whose
+  mask is full, but the uniformity analysis has no arm for it, and
+  affine analysis reads it as "value defined by unsupported instruction
+  `redux`". The Blackwell corpus (`trap` entry) holds 6,676 in 500
+  files, 1,254 of them sm_100a's `.f32` forms; reading the result as
+  one value per warp turns 313 `addr ?` into addresses and removes 536
+  `<= warp` bounds, in 98 files.
+- **An `ld.param` at a register address is divergent.** PTX ISA
+  §5.1.6.1 lets a kernel parameter's address move into a register and
+  be read by `ld.param`, as FlagGems selects one of two parameters
+  (`mov.b32` of each, `selp`, `ld.param.b64 %rd, [%r]`), but the
+  uniformity analysis reads a parameter only at its name: census
+  `00996.ptx` line 71's `ld.global.b16` reads `addr ? (depends on a
+  value loaded from memory)`. 25 such loads in 8 census kernels;
+  reading them as one value for the CTA gives 23 rows an address.
+- **A value reading a register no statement writes is divergent, and
+  a φ a path leaves unwritten is refused.** LLVM leaves registers
+  undefined (`undef`, and `// implicit-def:` for one first written in a
+  loop's first trip); PTX ISA §5.1.1 gives a register no initial value.
+  The uniformity analysis takes a value with no definition as
+  divergent, the half `mov.b64 {%r, _}` takes of a pack whose other
+  half is undefined too, so a division by it is "by a non-constant
+  divisor" (60 such rows in 5 sol-study files, `codegen_cmp/attn_extend/
+  gluon_kernels/paged_g4`). Affine analysis refuses a header φ whose
+  value on entry is undefined and names a thread-varying input instead
+  of the unwritten path: the 348 `ld.global.b32` of sol-study's 18
+  `rca_gemm` `blockfp8_tma.ptx` read `addr ? (depends on special
+  register %tid.x)`, each of the address's two terms read on its own.
+  338 files of the Blackwell corpus read a register no statement
+  writes.
 - **`setp`s not read as thread selectors.** A floating-point `setp`
   compares floats, not the traced integer forms, and `.f16x2` and
   `.bf16x2` each half on its own (PTX ISA §9.7.6.2, §9.7.7.2); an
@@ -861,7 +905,9 @@ output_tallies` rewrites it.
   selector.** A ladder whose rungs each branch both ways to the next
   doubles the steps per rung; past 32 the block's set is a bound
   (`a_ladder_past_the_reach_budget_is_an_unknown_selector`). The census
-  and fixtures take at most 17.
+  and fixtures take at most 17; sol-study's concurrency-sanitizer
+  builds take more (1,232 thread sets in 10 files), each of which also
+  reads a call's return value (**Calls.**).
 - **A `cp.async` whose ignore-src is not read counts cp-size on every
   thread that runs it, as a bound.**
   - Census (13,489 in 300 kernels, sm_100a, no bindings): 479 read
