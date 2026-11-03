@@ -180,8 +180,8 @@ decision, not just an arm).
 | 9.7.3.8 | `div` | `Flop { Sfu, type, 1 × lanes }` | OK — SFU policy (misfit §D, decided): one flop per result on the `sfu` pipe, whatever the `.approx`/`.full`/`.rnd` form expands to in SASS. |
 | 9.7.3.9 | `abs` | `Flop` ×1 | OK — with the cross-check caveat: the planned NCU measured-flops formula (`2·ffma + fmul + fadd`) excludes it, so abs-heavy kernels will show a static-vs-measured gap. Static side is defensible; document when NCU import lands. |
 | 9.7.3.10 | `neg` | `Flop` ×1 | OK — same caveat as `abs`. |
-| 9.7.3.11 | `min` | `Flop` ×1 | OK — same caveat. |
-| 9.7.3.12 | `max` | `Flop` ×1 | OK — same caveat. |
+| 9.7.3.11 | `min` | `Flop` ×1 | OK — same caveat. The three-input `.f32` form (sm_100) performs two two-input minimums and counts 1, the per-instruction rule; ptxas emits one `FMNMX3` (535 statements in 7 files of the Blackwell corpus, PLAN.md `trap` entry). |
+| 9.7.3.12 | `max` | `Flop` ×1 | OK — same caveat. The three-input `.f32` form (sm_100) performs two two-input maximums and counts 1, the per-instruction rule; ptxas emits one `FMNMX3` (46,676 statements in 1,147 files of the Blackwell corpus, `quant…_per_token_group_quant_8bit` among the b200 fixtures). |
 | 9.7.3.13 | `rcp` | `Flop { Sfu, type, 1 × lanes }` | OK — SFU policy as `div` (§9.7.3.8). |
 | 9.7.3.14 | `rcp.approx.ftz.f64` | `Flop { Sfu, f64, 1 }` (same `rcp` arm) | OK. |
 | 9.7.3.15 | `sqrt` | `Flop { Sfu, type, 1 × lanes }` | OK — SFU policy as `div` (§9.7.3.8). |
@@ -372,7 +372,7 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | 9.7.14.10 | `vote.sync` | `Communication` | OK. |
 | 9.7.14.11 | `match.sync` | `Communication` | OK for the plain form (verified). **Wart**: `match.all.sync` with the optional `d|p` destination hits the parser gap (verified `Unparsed`) — fix with the shared `d|p` operand form (Tier 2 rider). |
 | 9.7.14.12 | `activemask` | `Communication` | OK. |
-| 9.7.14.13 | `redux.sync` | `Communication` | OK, with a flag: ⚠ misfit §A (mild) — it also performs the reduction arithmetic (integer; `f32` min/max/add on the newest targets). Counted as communication, not as flops: an integer reduction has no roofline home and the f32 form has no fixture. |
+| 9.7.14.13 | `redux.sync` | `Communication` | OK, with a flag: ⚠ misfit §A (mild) — it also performs the reduction arithmetic (integer; `.f32` min/max, sm_100a). Counted as communication, not as flops: an integer reduction has no roofline home, and an `.f32` one is 31 maximums per 32 values, no whole number per thread (b200 `quant…_per_token_group_quant_8bit` line 97, `redux.sync.max.f32`; 1,254 `.f32` statements in 294 files of the Blackwell corpus). |
 | 9.7.14.14 | `griddepcontrol` | `Ignore` | OK — defensible; arguably `Sync` (it orders dependent grids), but nothing downstream distinguishes them. Cosmetic; keep. |
 | 9.7.14.15 | `elect.sync` | `Communication` (the `d|p` destination parses since the `|` operand change) | OK — warp-collective leader election. |
 | 9.7.14.16.12 | `mbarrier.init` | `Sync` (via `mbarrier`) | OK — technically writes 8 bytes of shared memory to initialize the object; negligible by construction, `Sync` is right. |
@@ -616,7 +616,7 @@ flops or bytes. In descending order of importance:
    Originally: **Collateral `Unknown`s from coarse arms**: integer `div` (caught
    by the SFU reservation); `addc`/`subc`/`madc` (miss the arm their
    `.cc` partners hit). One line each.
-3. ~~**Missing one-line arms for mnemonics real producers emit**~~ Fixed (all of the Tier 3 list below has arms).
+3. ~~**Missing one-line arms for mnemonics real producers emit**~~ Fixed but for `tensormap.*` and `clusterlaunchcontrol.*`, still in `classify`'s `Unknown` arm (406 and 6 statements in the Blackwell corpus).
    Originally: **Missing one-line arms for mnemonics real producers emit**:
    `elect.sync` (also needs the `d|p` parser form), `shf`,
    `setmaxnreg` — all three arrive with any Hopper corpus — plus the
@@ -666,8 +666,10 @@ per-family**.
 
 ### Tier 3 — cheap correctness sweep — landed; historical priorities
 
-These arms and the dead-arm cleanup have landed. The list records the
-original sweep rather than outstanding work.
+These arms and the dead-arm cleanup have landed, but for
+`tensormap.replace`, `tensormap.cp_fenceproxy` and
+`clusterlaunchcontrol.*`, which `classify` still reads as `Unknown`.
+The list records the original sweep.
 
 - To `Integer`: integer `div`, `addc`, `subc`, `madc`, `shf` (likeliest to appear first — nvcc funnel shifts), `cnot`, `fns`, `clmad`, `getctarank`
 - To `Predicate`: `istypep`
