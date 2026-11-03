@@ -56,7 +56,8 @@ impl AffineAnalysis<'_> {
             return value;
         }
         if let Some(Operand::VectorList { children }) = ops.first().map(|&o| module.operand(o))
-            && (mnemonic != Opcode::Ld || mods.contains(&"param") && children.len() > 1)
+            && (mnemonic != Opcode::Ld
+                || mods.iter().any(|m| is_param_space(m)) && children.len() > 1)
             && registers(module, ops[0]).contains(&reg)
         {
             let opcode = module.opcode(instr);
@@ -88,7 +89,7 @@ impl AffineAnalysis<'_> {
                 Ok(a)
             }
             Opcode::Ld => {
-                if mods.contains(&"param")
+                if mods.iter().any(|m| is_param_space(m))
                     && let Some(Operand::Memory { base, .. }) =
                         ops.get(1).map(|&i| module.operand(i))
                     && let Operand::SymbolRef(pname) = module.operand(*base)

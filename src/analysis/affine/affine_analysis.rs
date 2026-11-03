@@ -57,7 +57,7 @@ use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
     Element, Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialScalar, SpecialVector,
-    Stmt,
+    Stmt, is_param_space,
 };
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
@@ -216,7 +216,7 @@ impl<'a> AffineAnalysis<'a> {
                     continue;
                 }
                 let param = (module.modifiers(instr).iter())
-                    .any(|&m| module.interner.resolve(m) == "param");
+                    .any(|&m| is_param_space(module.interner.resolve(m)));
                 match instr.mnemonic {
                     Opcode::Ld if !param => found.push(UnknownReason::Load { def: op }),
                     Opcode::Atom => found.push(UnknownReason::Atomic),

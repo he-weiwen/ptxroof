@@ -27,7 +27,9 @@
 
 use super::measurement::{ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision, Space};
 
-use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId};
+use crate::ptx::ir::{
+    FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, is_param_space,
+};
 use crate::ptx::literal::parse_int;
 
 /// Exclusive instruction category. Work quantities live in contributions.
@@ -569,7 +571,7 @@ fn space_of(mods: &[&str]) -> Space {
             "shared::cluster" => return Space::SharedCluster,
             "local" => return Space::Local,
             "const" => return Space::Const,
-            "param" => return Space::Param,
+            m if is_param_space(m) => return Space::Param,
             _ => {}
         }
     }
@@ -813,6 +815,14 @@ mod tests {
         assert_eq!(
             class_of("ld.shared::cta.b32 %r1, [%r2];"),
             ClassifiedInstruction::memory(Space::Shared, Direction::Load, Some(4))
+        );
+        assert_eq!(
+            class_of("ld.param::entry.b64 %rd1, [k_param_0];"),
+            ClassifiedInstruction::memory(Space::Param, Direction::Load, Some(8))
+        );
+        assert_eq!(
+            class_of("st.param::func.b32 [param0], %r1;"),
+            ClassifiedInstruction::memory(Space::Param, Direction::Store, Some(4))
         );
     }
 

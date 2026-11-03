@@ -1,0 +1,31 @@
+//
+// HAND-WRITTEN: the store of micro/guard_bound_param.ptx with its
+// parameters read through `ld.param::entry`, the explicit form of the
+// kernel-parameter load (PTX ISA §9.7.9.8; the Gluon 2-CTA MLA kernels
+// emit it). ptxas 13.4, sm_100a, reads both from the constant bank as
+// for `ld.param`: `LDCU UR4, c[0x0][0x388]`, `ISETP.GE.U32.AND P0, PT,
+// R5, UR4, PT`, `@P0 EXIT`, `LDC.64 R2, c[0x0][0x380]`, `STG.E`.
+//
+.version 8.8
+.target sm_100a
+.address_size 64
+
+.visible .entry micro_param_entry(
+	.param .u64 micro_param_entry_param_0,
+	.param .u32 micro_param_entry_param_1
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param::entry.u64 	%rd1, [micro_param_entry_param_0];
+	ld.param::entry.u32 	%r1, [micro_param_entry_param_1];
+	mov.u32 	%r2, %tid.x;
+	setp.lt.u32 	%p1, %r2, %r1;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], %r2;
+	ret;
+}
