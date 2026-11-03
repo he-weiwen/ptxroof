@@ -347,6 +347,17 @@ output_tallies` rewrites it.
   (`micro/and_sign_remainder.ptx`'s `n & 0x7fff`: `param_1 mod 32768`;
   `micro/and_runs.ptx`'s `micro_and_sign_runs`); a 64-bit mask of more
   runs is refused (`micro_and_sign_wide_runs`: a uniform variable).
+- **A packed integer add or subtract is read as one 32-bit one.**
+  `.u16x2`, `.s16x2`, `.u8x4` and `.s8x4` add and subtract each half
+  or quarter word apart (PTX ISA §9.7.1.1, §9.7.1.2, §5.2.5.2), but
+  `transfer` reads `add` and `sub` of any type as the sum or
+  difference of their operands, and `fits`, which checks 16- and
+  32-bit types, passes them. `micro/packed_add.ptx`'s `add.s16x2` of
+  0xffff and `%tid.x` makes the store's address read
+  `[4·%tid.x + param_0 + 262140]`, where ptxas 13.4 emits `VIADD.16x2`
+  and thread t ≥ 1 stores at param_0 + 4·(t − 1) (constructed). The
+  census's 86, in 22 files, feed unpacks (`mov.b32 {…}`, 71 uses),
+  `and.b32` (19) and other packed adds (8), as at `00545.ptx:526`.
 - **`shfl.sync.idx` is read as if warps were rows of 32 `%tid.x`**,
   whatever the block shape: a warp is 32 consecutive
   `%tid.x + %tid.y·%ntid.x + %tid.z·%ntid.x·%ntid.y` (PTX ISA §3.1,
@@ -416,6 +427,19 @@ output_tallies` rewrites it.
   `micro/single_loop.ptx` reads its `ld.param.u32` n as `param_1`,
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
+- **A loop's latch or guard reads an unsigned comparison as a signed
+  one.** The input contract reads an unsigned comparison only on
+  operands known to be nonnegative, as thread selectors do
+  (`thread_participation.rs`'s `condition`), but `counted_trips` and
+  `guard_test` (`loop_trip_count.rs`) subtract the operands whatever
+  the type. `micro/latch_unsigned.ptx`'s `micro_latch_unsigned` counts
+  from 1 while `setp.lt.u32` of the counter and -4 holds, 2^32 − 4
+  trips (PTX ISA §9.7.6.2; ptxas 13.4 keeps the loop, `ISETP.GE.U32
+  … -0x4`), and reads `loop: trips 1`, its store 32 per CTA; its
+  `micro_guard_unsigned` reads the same comparison of `%tid.x` as a
+  bound (constructed). Of the census's 114 latches on an unsigned
+  `setp` (a predicated backward `bra` and the nearest `setp` writing
+  its predicate), none compares with a negative immediate.
 - **Addresses affine analysis cannot read are unknown rows**, with the
   reason, unless the lanes of a warp compute the part it cannot read
   alike: that part is then a variable, `uniform(%r54@90)`, or,
