@@ -948,7 +948,47 @@ output_tallies` rewrites it.
 - **A refused φ names the obstacle on one of its source chains**: in
   b200 `tma_best` 34 access rows say only "depends on special register
   %ctaid.x" (8 in `bmm_kernel_persistent`), not that a join of two
-  values stopped the trace.
+  values stopped the trace. A value an `ldmatrix` loads, used as an
+  index, is named as "one of `ldmatrix…`'s vector destinations", not as
+  loaded (census `00428.ptx`; 248 rows in 4 kernels), and a trip count
+  refused for a value its own top-level loop defines says "is defined
+  in an enclosing loop" (census `00143.ptx` line 40; 62 loops in 38
+  files of the Blackwell corpus, `trap` entry).
+- **A total left open by an unclassified statement does not say which,
+  and every pipe and space is open.** One unclassified statement marks
+  every pipe's FLOPs and the global and shared bytes
+  (`micro-totals-annotate.test`). In the Blackwell corpus 1,263 `.entry`
+  lines read `atomic flops ?`, 1,250 of them in files with no `atom` or
+  `red`, 338 `sfu flops ?` with no SFU instruction, and 633 files mark
+  global bytes that no unclassified statement moves.
+- **`(trips of <header>)` names one loop**, the first of a total's
+  unknown trip counts: census `01802.ptx` reads `global load ? B (trips
+  of $L__BB0_5)`, though its sibling loop `$L__BB0_2`, trips also
+  unknown, holds 15 global loads; about 1,504 of the Blackwell corpus's
+  3,953 such items, in 566 files.
+- **An unknown count of a known precision prints as two unknowns**,
+  `flops f32 >= N + ?`, and as none counted where it is the pipe's
+  only work: b200
+  `attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`
+  under its record reads `sfu flops f32 >= 262,144 + ?; cuda-core flops
+  ?` with no unclassified statement.
+- **A statement's own threads print only where their text differs
+  from its block's.** A guard narrowing a block whose set is a bound
+  prints nothing, both reading `<= warp … × lane …`: 14,003 statements
+  in 782 files of the Blackwell corpus, 13,711 of them elect-guarded
+  `tcgen05.mma`, `tcgen05.commit`, TMA and `atom`. A `cp.async`'s source
+  threads, those its ignore-src admits (PTX ISA §9.7.9.26.3.1), print
+  nowhere, though its sectors, bytes and footprint count them
+  (`micro-cp-async-ignore-src.test`): 34,604 copies in 946 files read
+  a source set other than their own.
+- **An untargeted label after a branch is a block of no instructions
+  whose line carries a block's notes**: LLVM's DWARF `$L__tmpN`
+  (b200 `tma_best_Q64N64w8s3._stage1_tma` line 517, `$L__tmp2: // no
+  thread`), 1,888 lines in 643 files of the Blackwell corpus, 663 of
+  them with threads, conditions and counts; 9 are `ncu_corpus`'s
+  `unchecked … 0 of 0 with SASS` blocks.
+- **A `.local` access prints its address and no number or reason**
+  (133 rows in 15 files of the Blackwell corpus).
 - Per-thread totals of a warp-specialized kernel are `<=` the sum of
   its partitions, since a thread runs one of them: each block's
   annotation says which threads run it (`warp 0-3 × lane *`), and the
