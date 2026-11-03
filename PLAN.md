@@ -293,7 +293,7 @@ output_tallies` rewrites it.
   family, analyzed without launch arguments) 2,628 `trap`s sit in 23
   parsed files: reading `trap` as a terminator changes 2,498 bounds of
   assert blocks in 10 of them, and dropping the edges into those blocks
-  changes 9,770 lines in 11. 20 of the corpus's 24 loops refused as
+  changes 9,923 lines in 11. 20 of the corpus's 24 loops refused as
   "loop has N exit edges", in Triton concurrency-sanitizer builds of
   sol-study's Gluon `mla_decode_1cta_kernel` and `mma_rate_kernel`,
   have every exit but one into an assert block; without those edges the
@@ -600,9 +600,9 @@ output_tallies` rewrites it.
   statement's lanes read `lane *`, not a bound; its count is right.
   b200 `attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cache`
   under its record: line 449, `@%p113 mbarrier.inval.shared::cta.b64
-  [%r968]; // warp 0 × lane *`. In the Blackwell corpus 54,706
-  elect-guarded statements in 1,333 files read so (`tcgen05.mma`
-  29,649, `cp.async.bulk(.tensor)` 11,655, `tcgen05.commit` 5,720,
+  [%r968]; // warp 0 × lane *`. In the Blackwell corpus 66,201
+  elect-guarded statements in 1,342 files read so (`tcgen05.mma`
+  39,272, `cp.async.bulk(.tensor)` 11,655, `tcgen05.commit` 7,592,
   `mbarrier.init` and `.inval` 3,841 each): 9,565 print `lane *`, and
   the rest print nothing, the block's text being the same. None has a
   sectors or wavefronts number.
@@ -823,7 +823,7 @@ output_tallies` rewrites it.
   affine analysis reads it as "value defined by unsupported instruction
   `redux`". The Blackwell corpus (`trap` entry) holds 6,676 in 500
   files, 1,254 of them sm_100a's `.f32` forms; reading the result as
-  one value per warp turns 313 `addr ?` into addresses and removes 536
+  one value per warp turns 313 `addr ?` into addresses and removes 537
   `<= warp` bounds, in 98 files.
 - **An `ld.param` at a register address is divergent.** PTX ISA
   §5.1.6.1 lets a kernel parameter's address move into a register and
@@ -953,20 +953,21 @@ output_tallies` rewrites it.
   index, is named as "one of `ldmatrix…`'s vector destinations", not as
   loaded (census `00428.ptx`; 248 rows in 4 kernels), and a trip count
   refused for a value its own top-level loop defines says "is defined
-  in an enclosing loop" (census `00143.ptx` line 40; 62 loops in 38
+  in an enclosing loop" (census `00143.ptx` line 40; 63 loops in 39
   files of the Blackwell corpus, `trap` entry).
 - **A total left open by an unclassified statement does not say which,
   and every pipe and space is open.** One unclassified statement marks
   every pipe's FLOPs and the global and shared bytes
-  (`micro-totals-annotate.test`). In the Blackwell corpus 1,263 `.entry`
-  lines read `atomic flops ?`, 1,250 of them in files with no `atom` or
-  `red`, 338 `sfu flops ?` with no SFU instruction, and 633 files mark
-  global bytes that no unclassified statement moves.
+  (`micro-totals-annotate.test`). In the Blackwell corpus 1,258 `.entry`
+  lines read `atomic flops ?`, 1,245 of them in files with no `atom` or
+  `red`, 337 `sfu flops ?` with no SFU instruction, and 626 files with
+  no tensor copy, whose unclassified statements move no global bytes,
+  mark the global bytes.
 - **`(trips of <header>)` names one loop**, the first of a total's
   unknown trip counts: census `01802.ptx` reads `global load ? B (trips
   of $L__BB0_5)`, though its sibling loop `$L__BB0_2`, trips also
-  unknown, holds 15 global loads; about 1,504 of the Blackwell corpus's
-  3,953 such items, in 566 files.
+  unknown, holds 15 global loads; about 1,460 of the Blackwell corpus's
+  3,901 such items, in 539 files.
 - **An unknown count of a known precision prints as two unknowns**,
   `flops f32 >= N + ?`, and as none counted where it is the pipe's
   only work: b200
@@ -975,13 +976,13 @@ output_tallies` rewrites it.
   ?` with no unclassified statement.
 - **A statement's own threads print only where their text differs
   from its block's.** A guard narrowing a block whose set is a bound
-  prints nothing, both reading `<= warp … × lane …`: 14,003 statements
-  in 782 files of the Blackwell corpus, 13,711 of them elect-guarded
-  `tcgen05.mma`, `tcgen05.commit`, TMA and `atom`. A `cp.async`'s source
+  prints nothing, both reading `<= warp … × lane …`: 2,098 statements
+  in 44 files of the Blackwell corpus, 1,806 of them elect-guarded. A
+  `cp.async`'s source
   threads, those its ignore-src admits (PTX ISA §9.7.9.26.3.1), print
   nowhere, though its sectors, bytes and footprint count them
-  (`micro-cp-async-ignore-src.test`): 34,604 copies in 946 files read
-  a source set other than their own.
+  (`micro-cp-async-ignore-src.test`): 35,587 copies in 959 files read
+  a source set other than their own, 34,765 of them a bound.
 - **An untargeted label after a branch is a block of no instructions
   whose line carries a block's notes**: LLVM's DWARF `$L__tmpN`
   (b200 `tma_best_Q64N64w8s3._stage1_tma` line 517, `$L__tmp2: // no
@@ -1096,8 +1097,9 @@ output_tallies` rewrites it.
   bra` to `__assertfail; trap;`) costs time and memory quadratic in
   their number: 29 sanitizer builds of sol-study's Gluon kernels
   (20,036–44,815 statements; 24 behind the cluster parse error) take
-  18–83 s and up to 1.5 GB, 88–97% of it evaluating thread sets,
-  where no other Blackwell corpus file takes 3 s. Bindings that differ
+  up to a minute and 1.5 GB each, most of it evaluating thread sets
+  (the slowest run alone: 61 s), where no other Blackwell corpus file
+  takes 3 s. Bindings that differ
   from `.reqntid` build a second set of thread sets for dead code, 40–50%
   more memory on those kernels. The output is written once, after every
   kernel, so a run stopped by a time or memory limit prints nothing.
@@ -1186,7 +1188,7 @@ output_tallies` rewrites it.
   blocks. A `tcgen05` statement or `mbarrier.init` that one elected
   thread runs is uniform-datapath SASS (`UTCHMMA`, `UTCQMMA`, `UTCCP`,
   `SYNCS.EXCH.64` after `VOTEU.ANY`), which Nsight Compute's
-  predicated-on thread count takes as the warp's 32 threads: 132 lines
+  predicated-on thread count takes as the warp's 32 threads: 139 lines
   of 9 B200 records measure 25–32 times their count
   (`blk_mx_128x256_s4w4.mx_block_scaled` line 167: 9,216 predicted,
   294,912 measured), and the records keep no warp-level count for them.
