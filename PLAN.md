@@ -216,7 +216,7 @@ output_tallies` rewrites it.
 | instruction: threads, where a guard narrows its block's | 908 | 685 (75%) | 223 (25%) |  |  |
 | instruction: exec, where it differs from its block's | 643 | 529 (82%) | 110 (17%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
-| instruction: `not classified` | 588 | | | | |
+| instruction: `not classified` | 423 | | | | |
 | instruction: `bytes ?` | 109 | | | | |
 | operand: address | 4,399 | 3,978 (90%) |  | 421 (10%) |  |
 | operand: global sectors/req | 2,221 | 1,385 (62%) | 481 (22%) |  | 355 (16%) |
@@ -681,12 +681,13 @@ output_tallies` rewrites it.
   128·i + %tid.x on both paths (words 0 to 255 on an RTX 4090), reads
   "depends on special register %tid.x", as census kernel `00376.ptx`'s
   four `st.global.v4.b32` of its source line 74 do.
-- **Instruction families.** 73 of the 232 rows in
+- **Instruction families.** 67 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
-  and block-scaled `mma`; `wgmma`; `tcgen05`; bulk copies and the
-  tensor copies but `cp.async.bulk.tensor`; textures and surfaces;
-  `multimem`; video instructions. `tcgen05` is in 12 of the B200
-  fixtures (`tests/fixtures/b200`).
+  and block-scaled `mma`; `wgmma`; `tcgen05` but its allocation,
+  waits, fences and commit; bulk copies and the tensor copies but
+  `cp.async.bulk.tensor`; textures and surfaces; `multimem`; video
+  instructions. `tcgen05` is in 12 of the B200 fixtures
+  (`tests/fixtures/b200`).
 - **A tensor copy's bytes are unknown.** `cp.async.bulk.tensor` moves
   the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8),
   not the PTX: the bytes of both its sides are unknown in every total,

@@ -202,6 +202,28 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
             ClassifiedInstruction::simple(InstructionCategory::Ignore)
         }
 
+        // PTX ISA §9.7.17.7.1, §9.7.17.8.5, §9.7.17.11.1, §9.7.17.12.1:
+        // tensor-memory allocation, waits, fences and the commit to an
+        // mbarrier; `alloc`'s write of the address to shared memory is
+        // not counted.
+        Tcgen05
+            if matches!(
+                mods.first(),
+                Some(
+                    &("alloc"
+                        | "dealloc"
+                        | "relinquish_alloc_permit"
+                        | "wait::ld"
+                        | "wait::st"
+                        | "fence::before_thread_sync"
+                        | "fence::after_thread_sync"
+                        | "commit")
+                )
+            ) =>
+        {
+            ClassifiedInstruction::simple(InstructionCategory::Sync)
+        }
+
         // -- unsupported instruction families ------------------------------
         // Counted and named by the coverage check.
         Clusterlaunchcontrol | Fabric | Movmatrix | Multimem | Tcgen05 | Tensormap | Wgmma
@@ -739,6 +761,40 @@ mod tests {
             assert_eq!(
                 class_of(text),
                 ClassifiedInstruction::simple(InstructionCategory::Ignore),
+                "{text}"
+            );
+        }
+    }
+
+    /// The forms the B200 corpus emits (`tests/fixtures/b200`).
+    #[test]
+    fn tcgen05_bookkeeping_is_synchronization_and_its_work_is_unknown() {
+        for text in [
+            "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%r1], 512;",
+            "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %r1, 512;",
+            "tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;",
+            "tcgen05.wait::ld.sync.aligned;",
+            "tcgen05.wait::st.sync.aligned;",
+            "tcgen05.fence::before_thread_sync;",
+            "tcgen05.fence::after_thread_sync;",
+            "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.b64 [%r1];",
+        ] {
+            assert_eq!(
+                class_of(text),
+                ClassifiedInstruction::simple(InstructionCategory::Sync),
+                "{text}"
+            );
+        }
+        for text in [
+            "tcgen05.mma.cta_group::1.kind::f16 [%r1], %rd1, %rd2, %r2, %p1;",
+            "tcgen05.ld.sync.aligned.32x32b.x2.b32 {%r1, %r2}, [%r3];",
+            "tcgen05.st.sync.aligned.32x32b.x2.b32 [%r3], {%r1, %r2};",
+            "tcgen05.cp.cta_group::1.warpx4.32x128b [%r1], %rd1;",
+            "tcgen05.shift.cta_group::1.down [%r1];",
+        ] {
+            assert_eq!(
+                class_of(text).category,
+                InstructionCategory::Unknown,
                 "{text}"
             );
         }

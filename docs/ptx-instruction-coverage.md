@@ -423,8 +423,8 @@ and CUTLASS emit these on H100).
 
 ## §9.7.17 TensorCore 5th Generation Family Instructions
 
-All `Unknown` today via the `tcgen05` mnemonic. Tier 2. Two
-family-wide misfits:
+Allocation, waits, fences and `commit` are `Sync`; the rest is
+`Unknown` via the `tcgen05` mnemonic. Tier 2. Two family-wide misfits:
 **tensor memory** is a fifth memory space the `Space` enum doesn't
 have (§B/§C), and most operations are issued by a *single thread* on
 behalf of a CTA or CTA pair (§B) — per-thread multiplication would be
@@ -432,20 +432,20 @@ wildly wrong.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.17.7.1 | `tcgen05.alloc` | `Unknown` | OK (deferred, Tier 2) — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the `.entry` line beside `shared memory`, not an op class. Target `Sync` for the instruction itself. |
-| 9.7.17.7.1 | `tcgen05.dealloc` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
-| 9.7.17.7.1 | `tcgen05.relinquish_alloc_permit` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
+| 9.7.17.7.1 | `tcgen05.alloc` | `Sync` | OK — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the `.entry` line beside `shared memory`, not an op class. Its 4-byte write of the address to `[dst]` is not counted. |
+| 9.7.17.7.1 | `tcgen05.dealloc` | `Sync` | OK — moves no bytes. |
+| 9.7.17.7.1 | `tcgen05.relinquish_alloc_permit` | `Sync` | OK — moves no bytes. |
 | 9.7.17.8.3 | `tcgen05.ld` | `Unknown` | OK (deferred, Tier 2) — ⚠ misfit §B: tensor-memory→register load, warp-collective; needs the new space and PerWarp scope. |
 | 9.7.17.8.4 | `tcgen05.st` | `Unknown` | OK (deferred, Tier 2) — same, store side. |
-| 9.7.17.8.5 | `tcgen05.wait` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
+| 9.7.17.8.5 | `tcgen05.wait` | `Sync` | OK — moves no bytes. |
 | 9.7.17.9.2 | `tcgen05.cp` | `Unknown` | OK (deferred, Tier 2) — ⚠ misfit §B+§C: single-thread-issued shared→tensor-memory copy, and the optional decompression modes (4-bit/6-bit → 8-bit) make bytes-read ≠ bytes-written; pick a side per space and document. |
 | 9.7.17.9.3 | `tcgen05.shift` | `Unknown` | OK (deferred, Tier 2) — tensor-memory row shift; data movement within the new space. |
 | 9.7.17.10.9.1 | `tcgen05.mma` | `Unknown` | OK (deferred, Tier 2) — ⚠⚠ misfit §B at its most extreme: a single thread issues an MMA executed for a CTA (or CTA *pair* with `cta_group::2`); no current scope expresses "per-CTA-pair, issued once". Also §E (descriptor-sourced smem/tmem operands) and §D (block-scaled `mxf4`/`mxf8f6f4` kinds). The flop math itself is still 2·M·N·K — the model question is *whose* flops. |
 | 9.7.17.10.9.2 | `tcgen05.mma.sp` | `Unknown` | OK (deferred, Tier 2) — plus the sparse convention (§D). |
 | 9.7.17.10.9.3 | `tcgen05.mma.ws` | `Unknown` | OK (deferred, Tier 2) — weight-stationary variant; same misfits. |
 | 9.7.17.10.9.4 | `tcgen05.mma.ws.sp` | `Unknown` | OK (deferred, Tier 2) — same. |
-| 9.7.17.11.1 | `tcgen05.fence` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
-| 9.7.17.12.1 | `tcgen05.commit` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
+| 9.7.17.11.1 | `tcgen05.fence` | `Sync` | OK — moves no bytes. |
+| 9.7.17.12.1 | `tcgen05.commit` | `Sync` | OK — makes an mbarrier track prior tcgen05 operations; moves no bytes. |
 
 ## §9.7.18 Stack Manipulation Instructions
 
@@ -662,7 +662,7 @@ per-family**.
 - TMA: `cp.async.bulk`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`) (`cp.async.bulk.commit_group` / `wait_group` have landed as `Sync`); tensor variants land as honest unquantified bytes (misfit §C), as `cp.async.bulk.tensor` has
 - Hopper warp-specialization boilerplate is already classified: `elect.sync` (`Communication`, with the `d|p` operand form in the parser), `setmaxnreg` (`Ignore`)
 - `red.async`, `movmatrix`, `mma.sp` (sparse policy, misfit §D), `st.async` remote-attribution review
-- `tcgen05.*` (all 14 entries) — tensor memory as a new `Space`, single-thread-issue scope
+- `tcgen05.*` (the 8 entries but allocation, wait, fence and commit) — tensor memory as a new `Space`, single-thread-issue scope
 
 ### Tier 3 — cheap correctness sweep — landed; historical priorities
 
