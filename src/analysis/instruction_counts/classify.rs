@@ -508,8 +508,12 @@ fn tensor_copy(mods: &[&str]) -> ClassifiedInstruction {
 }
 
 /// `classify`, with a `cp.async` read whose src-size is a register, not
-/// an ignore-src predicate, marked as at most its cp-size.
+/// an ignore-src predicate, marked as at most its cp-size, and the
+/// device-function parameters a call passes a move.
 pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> ClassifiedInstruction {
+    if device_function_param(module, kernel, instr) {
+        return ClassifiedInstruction::non_flop(ArithKind::Move);
+    }
     let mut c = classify(module, instr);
     if let Some(op) = cp_async_size_operand(module, instr)
         && let Operand::Register(r) = module.operand(op)
@@ -526,6 +530,25 @@ pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> Classifie
         }
     }
     c
+}
+
+/// A kernel's `st.param` or `ld.param` of a `.param` variable not among
+/// its parameters: kernel parameters are read-only (PTX ISA §5.1.6.1), a
+/// `.param` store in a kernel is `.param::func` (§9.7.9.11), and the
+/// variables a call sequence declares hold its arguments and return
+/// value (§5.1.6.4).
+fn device_function_param(module: &Module, kernel: &Kernel, instr: &Instr) -> bool {
+    let param =
+        (module.modifiers(instr).iter()).any(|&m| is_param_space(module.interner.resolve(m)));
+    match instr.mnemonic {
+        Opcode::St => param,
+        Opcode::Ld if param => module.operand_ids(instr.operands).iter().any(|&o| {
+            matches!(module.operand(o), Operand::Memory { base, .. }
+                if matches!(module.operand(*base), Operand::SymbolRef(s)
+                    if !kernel.params.iter().any(|p| p.name == *s)))
+        }),
+        _ => false,
+    }
 }
 
 /// A `cp.async`'s src-size or ignore-src operand, the one after cp-size;
