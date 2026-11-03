@@ -205,16 +205,16 @@ output_tallies` rewrites it.
 | `.entry`: global store bytes | 47 | 26 (55%) | 6 (13%) | 15 (32%) |  |
 | `.entry`: shared load bytes | 36 | 16 (44%) | 8 (22%) | 12 (33%) |  |
 | `.entry`: shared store bytes | 36 | 13 (36%) | 13 (36%) | 10 (28%) |  |
-| loop: trips | 194 | 30 (15%) |  | 164 (85%), 135 mbarrier waits |  |
+| loop: trips | 194 | 31 (16%) |  | 163 (84%), 135 mbarrier waits |  |
 | loop: global bytes requested per CTA | 16 | 13 (81%) | 3 (19%) |  |  |
 | loop: global bytes unique per CTA | 16 | 6 (38%) | 4 (25%) | 6 (38%) |  |
 | loop: global sector bytes per CTA | 16 | 6 (38%) | 4 (25%) |  | 6 (38%) |
 | block: threads | 854 | 819 (96%) | 35 (4%) |  |  |
 | block: CTAs | 87 | 87 (100%) |  |  |  |
 | block: `runs when` | 154 | 154 (100%) |  |  |  |
-| block: exec | 824 | 269 (33%) | 124 (15%) | 431 (52%) |  |
+| block: exec | 824 | 278 (34%) | 124 (15%) | 422 (51%) |  |
 | instruction: threads, where a guard narrows its block's | 908 | 685 (75%) | 223 (25%) |  |  |
-| instruction: exec, where it differs from its block's | 643 | 529 (82%) | 110 (17%) | 4 (1%) |  |
+| instruction: exec, where it differs from its block's | 661 | 547 (83%) | 110 (17%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
 | instruction: `not classified` | 423 | | | | |
 | instruction: `bytes ?` | 109 | | | | |
@@ -620,7 +620,11 @@ output_tallies` rewrites it.
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unrolled main loop and its remainder, LLVM's two-register counter and
-  its predicate-phi two-trip loop. Not recognised, reported as
+  its predicate-phi two-trip loop, and a latch branching on a `setp` in
+  a block of its loop that dominates it, as Triton's pipelined loops
+  do (`tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd`'s
+  `$L__BB0_8`: 31 trips, five of its blocks confirmed by its record).
+  Not recognised, reported as
   `loop: trips ?` and why: grid-stride loops without `--grid`, whose step is
   `%nctaid.x` ("induction step is not a constant"), data-dependent
   bounds, multi-exit loops, inner loops bounded by an

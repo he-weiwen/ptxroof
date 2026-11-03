@@ -1305,9 +1305,9 @@ tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1378	warp 0 × lane 0
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1382	warp 0 × lane 0
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1385	warp * × lane *
-tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1409	warp * × lane * | runs when predicate %p51 (line 1392) is true (CTA-uniform, branch at line 1406)
+tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1409	warp * × lane * | runs when 64·iv[$L__BB0_8] < 1920 (CTA-uniform, branch at line 1406)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1414	warp * × lane *
-tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1428	<= warp 0 × lane * | runs when predicate %p52 (line 1391) is false (CTA-uniform, branch at line 1425)
+tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1428	<= warp 0 × lane * | runs when 64·iv[$L__BB0_8] ≤ 1919 (CTA-uniform)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1490	warp * × lane *
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1542	warp * × lane *
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1551	warp * × lane *

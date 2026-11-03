@@ -2,7 +2,7 @@
 source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nwavefront lines {wavefronts:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
-blocks {"confirmed": 146, "consistent": 278, "unchecked": 491}
+blocks {"confirmed": 151, "consistent": 282, "unchecked": 482}
 sector lines {"differ": 3, "exact": 1224, "not compared, its SASS ran otherwise": 2, "within a bound": 181, "within a range": 43}
 wavefront lines {"agree": 1486}
 launch sectors {"loads agrees, stores agrees": 40, "loads differs, stores agrees": 1, "not compared": 27}
@@ -713,19 +713,19 @@ tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_
   <block 15>	consistent	17 of 18 with SASS, 16 agreeing
   $L__BB0_6	consistent	42 of 48 with SASS, 31 agreeing
   $L__BB0_7	confirmed	10 of 43 with SASS, 6 agreeing
-  $L__BB0_12	unchecked	21 of 42 with SASS, 0 agreeing
-  $L__BB0_8	unchecked	17 of 34 with SASS, 0 agreeing
+  $L__BB0_12	confirmed	21 of 42 with SASS, 10 agreeing
+  $L__BB0_8	confirmed	17 of 34 with SASS, 16 agreeing
   waitLoop$scope6	unchecked	2 of 2 with SASS, 0 agreeing
-  <block 21>	unchecked	123 of 123 with SASS, 0 agreeing
+  <block 21>	confirmed	123 of 123 with SASS, 121 agreeing
   waitLoop$scope7	unchecked	2 of 2 with SASS, 0 agreeing
-  <block 23>	unchecked	2 of 3 with SASS, 0 agreeing
+  <block 23>	consistent	2 of 3 with SASS, 1 agreeing
   waitLoop$scope8	unchecked	2 of 2 with SASS, 0 agreeing
-  <block 25>	unchecked	88 of 90 with SASS, 0 agreeing
-  <block 26>	unchecked	16 of 20 with SASS, 0 agreeing
-  $L__BB0_10	unchecked	11 of 14 with SASS, 0 agreeing
+  <block 25>	confirmed	88 of 90 with SASS, 86 agreeing
+  <block 26>	consistent	16 of 20 with SASS, 10 agreeing
+  $L__BB0_10	confirmed	11 of 14 with SASS, 9 agreeing
   waitLoop$scope9	unchecked	2 of 2 with SASS, 0 agreeing
-  skipWait$scope9	unchecked	3 of 6 with SASS, 0 agreeing
-  <block 30>	unchecked	27 of 34 with SASS, 0 agreeing
+  skipWait$scope9	consistent	3 of 6 with SASS, 1 agreeing
+  <block 30>	consistent	27 of 34 with SASS, 17 agreeing
   $L__BB0_13	confirmed	18 of 36 with SASS, 17 agreeing
   waitLoop$scope10	unchecked	2 of 2 with SASS, 0 agreeing
   <block 33>	confirmed	26 of 62 with SASS, 13 agreeing
