@@ -840,8 +840,9 @@ output_tallies` rewrites it.
   The uniformity analysis takes a value with no definition as
   divergent, the half `mov.b64 {%r, _}` takes of a pack whose other
   half is undefined too, so a division by it is "by a non-constant
-  divisor" (60 such rows in 5 sol-study files, `codegen_cmp/attn_extend/
-  gluon_kernels/paged_g4`). Affine analysis refuses a header φ whose
+  divisor" (60 such rows in 5 sol-study files, among them
+  `codegen_cmp/attn_extend/gluon_kernels/paged_g4`). Affine analysis
+  refuses a header φ whose
   value on entry is undefined and names a thread-varying input instead
   of the unwritten path: the 348 `ld.global.b32` of sol-study's 18
   `rca_gemm` `blockfp8_tma.ptx` read `addr ? (depends on special
@@ -1067,6 +1068,39 @@ output_tallies` rewrites it.
 - **Opaque kernel parameters are a parse error.** `.texref`,
   `.samplerref` and `.surfref` parameters (PTX ISA §11.2.1) are not
   fundamental types (`opaque_params_are_a_parse_error`).
+- **Cluster launches are a parse error, and the model has no
+  cluster.** `.explicitcluster` and `.reqnctapercluster` (PTX ISA
+  §11.7.1–2; `.maxclusterrank` and `.blocksareclusters` take the same
+  path) between a kernel's signature and its body stop the parse,
+  "expected '{' starting kernel body", and the file prints nothing:
+  158 files of the Blackwell corpus (`trap` entry), every Gluon 2-CTA
+  kernel of sol-study (`mla_decode_2cta_kernel`, the 2-CTA GEMMs),
+  holding every `cta_group::2` `tcgen05` and TMA form, `barrier.cluster`,
+  `mapa`, `ld.shared::cluster`, `clusterlaunchcontrol` and
+  `ld.param::entry` of the corpus. With the two lines deleted they
+  analyze, but no cluster shape is kept: `%cluster_ctarank` is a symbol
+  per CTA, so a block under `runs when %cluster_ctarank = 0` (5,903
+  notes in 143 of them) counts as a bound per launch, where a cluster
+  of n CTAs gives each rank to grid/n of them (§2.2.2, §10.16), and a
+  successful `clusterlaunchcontrol.try_cancel` (§9.7.14.18) leaves
+  CTAs of the grid unlaunched (sol-study's `gemm_g2clc.ptx`). No record
+  holds a cluster launch: `tools/ncu/launch.c` sets no cluster
+  dimension and `record_launches.py` keeps Triton's program grid, while
+  sol-study's reports hold 23 cluster launches of Gluon kernels with
+  PTX.
+- **Thread sets grow with the checks along a dominator chain, and a
+  file prints nothing until every kernel is done.** A block's set is
+  its immediate dominator's and its own condition, which every
+  consumer evaluates thread by thread, so a chain of checks whose
+  failing side does not rejoin (Triton's concurrency sanitizer: `@%p
+  bra` to `__assertfail; trap;`) costs time and memory quadratic in
+  their number: 29 sanitizer builds of sol-study's Gluon kernels
+  (20,036–44,815 statements; 24 behind the cluster parse error) take
+  18–83 s and up to 1.5 GB, 88–97% of it evaluating thread sets,
+  where no other Blackwell corpus file takes 3 s. Bindings that differ
+  from `.reqntid` build a second set of thread sets for dead code, 40–50%
+  more memory on those kernels. The output is written once, after every
+  kernel, so a run stopped by a time or memory limit prints nothing.
 
 - Fixture corpus: nvcc output for one CUDA header ladder (k1, k2, k5,
   k11, k12, k14, mma_demo), Triton 3.8.0 (Gluon) output for five
@@ -1087,7 +1121,11 @@ output_tallies` rewrites it.
   `.local` declaration is discarded (`Unknown symbol
   '__local_depot0'`, `'lbuf'`). k1's and k2's assemble to different
   SASS because `.pragma "nounroll";` is discarded, so ptxas unrolls
-  the loop it annotated. `micro/texture_outputs.ptx`,
+  the loop it annotated. `.pragma "used_bytes_mask"` (PTX ISA §12.2;
+  138 in 43 files of the Blackwell corpus) is discarded too: of 369
+  corpus files reassembled, 356 give identical SASS, and census
+  `03035.ptx`'s masked loads come back wider (916 `LDS.128` and 35
+  `LDS` from the original, 940 and 3 from the dump). `micro/texture_outputs.ptx`,
   `call_returns.ptx`, `unparsed_writes.ptx` and `vector_register.ptx`
   lose what the parser drops (above). These are allowlisted in
   `tests/roundtrip-allowlist.txt`. One lit test per fixture
@@ -1140,8 +1178,18 @@ output_tallies` rewrites it.
   (`tools/ncu/launch.c`), so a branch on loaded data takes its
   zero-data side. A line of a loop that branches back on an mbarrier
   wait's result runs a timing-dependent number of times: such lines
-  are marked `timing_dependent` and not checked (the attention forward
-  records: 30 lines each).
+  are marked `timing_dependent` (18 in each Gluon attention forward
+  record, 238 in 12 B200 records). The comparison does not read the
+  mark; such a line goes unchecked where its count is not known, and
+  `tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd`'s `mbarrier.try_wait`
+  lines 1494, 2724 and 3365, predicted and measured 0, confirm their
+  blocks. A `tcgen05` statement or `mbarrier.init` that one elected
+  thread runs is uniform-datapath SASS (`UTCHMMA`, `UTCQMMA`, `UTCCP`,
+  `SYNCS.EXCH.64` after `VOTEU.ANY`), which Nsight Compute's
+  predicated-on thread count takes as the warp's 32 threads: 132 lines
+  of 9 B200 records measure 25–32 times their count
+  (`blk_mx_128x256_s4w4.mx_block_scaled` line 167: 9,216 predicted,
+  294,912 measured), and the records keep no warp-level count for them.
 - Kernels that ship only SASS have no PTX to read: 18 of the 149
   launches in sol-study's B200 reports (cuBLAS, cuDNN, CUTLASS and CuTe
   DSL, flashinfer's trtllm-gen attention, PyTorch's elementwise).
