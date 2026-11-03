@@ -11,7 +11,7 @@ ANN: {{^}}	ld.shared.v2.u32 	{%r48, %r49}, [%r47]; // shared load [64·(%tid.x m
 ANN: {{^}}	ld.shared.v4.u32 	{%r64, %r65, %r66, %r67}, [%r63]; // shared load [16·(%tid.x mod 16) + buf] wavefronts/req ? (two lanes of a 16-byte load share a word: no measured rule){{$}}
 ANN: {{^}}	ldmatrix.sync.aligned.m8n8.x1.shared.b16 	{%r246}, [%r245]; // shared load [128·%tid.x + buf] wavefronts/req 8 (ideal 1){{$}}
 ANN: {{^}}	st.shared.v4.u32 	[%r348], {%acc, %acc, %acc, %acc}; // shared store [16·⌊%tid.x/16⌋ + buf] wavefronts/req 4 (ideal 4){{$}}
-ANN: {{^}}	cp.async.cg.shared.global 	[%r32], [%rd35], 16; // shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | global load [16·%tid.x + param_0] sectors/req 16–17 (ideal 16){{$}}
+ANN: {{^}}	cp.async.cg.shared.global 	[%r32], [%rd35], 16; // shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | global load [16·%tid.x + param_0] sectors/req 16 (ideal 16){{$}}
 ANN: {{^}}	ld.shared.u16 	%r4, [%r3]; // shared load [128·%tid.x + buf] wavefronts/req 32 (ideal 1){{$}}
 ANN: {{^}}	st.shared.u16 	[%r6], %acc; // shared store [8·%tid.x + buf] wavefronts/req 2 (ideal 1){{$}}
 ANN: {{^}}	st.shared.u8 	[%r8], %acc; // shared store [%tid.x + buf] wavefronts/req 1 (ideal 1){{$}}

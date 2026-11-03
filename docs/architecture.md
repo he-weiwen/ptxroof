@@ -56,9 +56,10 @@ only declare modules and selected public entry points.
 | `main` | CLI arguments, file I/O, output selection and error handling |
 | `lib` | Library modules and version entry point |
 
-One crate. `report::analyze`, `report::AnalyzeOptions`, `report::AnalyzeError`,
-`report::BindingSpec`, `report::parse_bind` and `report::Report` are the public
-report entry points; internal callers use canonical modules directly.
+One crate. `report::annotate::annotate`, `report::build::compare`,
+`report::AnalyzeOptions`, `report::AnalyzeError`, `report::PTR_ALIGN`,
+`report::BindingSpec` and `report::parse_bind` are the public report entry
+points; internal callers use canonical modules directly.
 
 ## Dependency boundaries
 

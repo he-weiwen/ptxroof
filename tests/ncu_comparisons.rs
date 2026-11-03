@@ -26,6 +26,7 @@ fn comparison(record: &str) -> Comparison {
         launch: Some(record.block),
         grid: Some(record.grid),
         ncu: Some(record),
+        ..Default::default()
     };
     (compare(&source, &opts).expect("record analyzes")).expect("the record's kernel")
 }
@@ -391,7 +392,7 @@ fn w8a8_s_k_loop_is_confirmed_at_its_record_s_k() {
 /// barrier, line 973. Its two `cp.async` lines, 979 and 985, are `@!P0
 /// LDGSTS`, whose L2 sectors Nsight Compute miscounts, so the record keeps
 /// none for them (micro/ldgsts_p0.ptx, PLAN.md). The launch's L1TEX load
-/// count, 62,916,096, is the least of the predictions summed with them.
+/// count, 62,916,096, is the predictions summed with them.
 #[test]
 fn lm_head_dx_s_counter_guard_confirms_its_block() {
     let c = comparison("tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ncu.json");
@@ -400,16 +401,16 @@ fn lm_head_dx_s_counter_guard_confirms_its_block() {
     assert_eq!(differing(&c, 973), None);
     let verdicts: Vec<Verdict> = c.blocks.iter().map(|b| b.verdict).collect();
     assert!(!verdicts.contains(&Verdict::Contradicted));
-    let expected = BTreeMap::from([("exact", 10), ("within a range", 12)]);
+    let expected = BTreeMap::from([("exact", 14), ("within a range", 8)]);
     assert_eq!(sectors(&c), expected);
     let loads = c.launch.and_then(|t| t.loads);
-    assert_eq!(loads, total(62916096, 69207552, 62916096));
+    assert_eq!(loads, total(62916096, 62916096, 62916096));
 }
 
 /// micro/ldgsts_p0's copy A (`@!P0 LDGSTS`, 16 threads) keeps no sectors
 /// in its record: Nsight Compute counts it as 64 where its threads request
 /// 8. Copy B (`@!P1 LDGSTS`, 48 threads) and the two loads are compared
-/// and agree. Over the launch, the four lines' predictions sum to 48–86
+/// and agree. Over the launch, the four lines' predictions sum to 48–80
 /// load sectors, and the L1TEX hardware count is 64, copy A's 8 included.
 #[test]
 fn an_ldgsts_on_p0_keeps_no_sectors_but_counts_in_the_launch_total() {
@@ -422,7 +423,7 @@ fn an_ldgsts_on_p0_keeps_no_sectors_but_counts_in_the_launch_total() {
     );
     let launch = c.launch.expect("the record's L1TEX counts");
     assert_eq!(launch.incomplete, None);
-    assert_eq!(launch.loads, total(48, 86, 64));
+    assert_eq!(launch.loads, total(48, 80, 64));
     assert_eq!(launch.stores, total(0, 0, 0));
 }
 
@@ -557,12 +558,11 @@ fn a_store_after_a_predicated_exit_runs_on_no_thread() {
 /// the cache-hinted copy, whose ignore-src compares the CTA index with a
 /// parameter, reads on 64 lanes of CTA 0 and 16 of CTA 1, within its
 /// bound; the four lines' 68 measured L2 sectors agree with the
-/// predictions, three within a range and the cache-hinted copy's within a
-/// bound.
+/// predictions, three exact and the cache-hinted copy's within a bound.
 #[test]
 fn copies_that_ignore_their_source_read_their_predicted_sectors() {
     let c = comparison("tests/fixtures/micro/cp_async_ignore_src.ncu.json");
-    let expected = BTreeMap::from([("within a range", 3), ("within a bound", 1)]);
+    let expected = BTreeMap::from([("exact", 3), ("within a bound", 1)]);
     assert_eq!(sectors(&c), expected);
     use SectorOutcome::Agrees;
     assert_eq!(

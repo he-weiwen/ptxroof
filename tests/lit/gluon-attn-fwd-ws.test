@@ -10,7 +10,7 @@
 # partition (PLAN.md); so the kernel's FLOPs and bytes per CTA are
 # unknown, each naming a loop it reads.
 RUN: %ptxroof analyze %fixtures/gluon/attn_fwd_ws_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry attn_fwd_ws_kernel( // block 256×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 ? (trips of $L__BB0_39); tensor flops bf16 ? (trips of $L__BB0_39); sfu flops f32 ? (trips of $L__BB0_39); global load ? B (trips of $L__BB0_39), store ? B (trips of $L__BB0_39); shared load ? B (trips of $L__BB0_2), store ? B (trips of $L__BB0_39); param load 17,408 B{{$}}
+ANN: {{^}}.visible .entry attn_fwd_ws_kernel( // block 256×1×1 | pointer params assumed 32 B aligned | shared memory 0 B/CTA + dynamic | per CTA: flops f32 ? (trips of $L__BB0_39); tensor flops bf16 ? (trips of $L__BB0_39); sfu flops f32 ? (trips of $L__BB0_39); global load ? B (trips of $L__BB0_39), store ? B (trips of $L__BB0_39); shared load ? B (trips of $L__BB0_2), store ? B (trips of $L__BB0_39); param load 17,408 B{{$}}
 ANN: {{^}}	setp.eq.b32 	%p58, %r1753, 0; // [<block 1>] warp 0-3 × lane * | exec 128/CTA{{$}}
 ANN: {{^}}	add.s64 	%rd162, %rd37, %rd155; // [<block 2>] warp 0-3 × lane * | runs when %ctaid.x < param_10 (CTA-uniform, branch at line 257) | exec <= 128/CTA{{$}}
 ANN: {{^}}$L__BB0_39:                             // =>This Loop Header: Depth=1 // loop: trips ? (loop exit is not at the latch) | warp 0-3 × lane * | under line 260 | exec ?{{$}}

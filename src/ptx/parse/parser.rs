@@ -391,13 +391,14 @@ impl<'a> Parser<'a> {
         }
         // Pointer attributes after the type: `.ptr [.global|.shared|.local|.const] [.align N]`
         // (LLVM's NVPTX backend, e.g. Triton: `.param .u64 .ptr .global .align 1 p0`).
+        let mut ptr_align = None;
         while self.at(TokenKind::Dot) {
             self.expect(TokenKind::Dot, "param attribute")?;
             let attr = self.expect_ident("param attribute")?;
             match self.interner.resolve(attr) {
                 "ptr" | "global" | "shared" | "local" | "const" => {}
                 "align" => {
-                    self.expect_u32(".align value")?;
+                    ptr_align = Some(self.expect_u32(".align value")?);
                 }
                 other => {
                     return Err(self.err(format!("unexpected param attribute .{other}")));
@@ -417,6 +418,7 @@ impl<'a> Parser<'a> {
             name,
             align,
             size,
+            ptr_align,
         })
     }
 

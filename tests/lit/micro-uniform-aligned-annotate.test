@@ -2,5 +2,5 @@
 # before the loop and after each trip, has its low 7 bits clear, so the
 # address's 512·⌊b/128⌋ prints as 4·b; so does b masked to clear them.
 RUN: %ptxroof analyze %fixtures/micro/uniform_aligned.ptx | FileCheck "%s"
-CHECK: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + 4·uniform(%r3@$L__BB0_1) + param_0] sectors/req 4–5 (ideal 4){{$}}
-CHECK: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + 4·uniform(%r6@118) + param_0] sectors/req 4–5 (ideal 4){{$}}
+CHECK: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + 4·uniform(%r3@$L__BB0_1) + param_0] sectors/req 4 (ideal 4){{$}}
+CHECK: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + 4·uniform(%r6@118) + param_0] sectors/req 4 (ideal 4){{$}}

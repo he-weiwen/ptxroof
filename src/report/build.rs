@@ -47,9 +47,10 @@ pub enum AnalyzeError {
     Ncu(String),
 }
 
-/// Caller-supplied analysis inputs (bet 4: launch config and
-/// bindings are inputs, never guesses).
-#[derive(Debug, Default)]
+/// Caller-supplied analysis inputs: the launch config and bindings are
+/// never guessed; the alignment of the memory pointer parameters point
+/// to defaults to `PTR_ALIGN`, and the `.entry` line says so.
+#[derive(Debug)]
 pub struct AnalyzeOptions {
     pub bindings: Vec<BindingSpec>,
     /// `--launch x,y,z`; `None` = default to `.reqntid`/`.maxntid`
@@ -58,6 +59,26 @@ pub struct AnalyzeOptions {
     /// `--grid x,y,z`, the launch's CTAs per axis.
     pub grid: Option<[u32; 3]>,
     pub ncu: Option<NcuRecord>,
+    /// `--ptr-align N`: the alignment, in bytes, taken for the memory a
+    /// pointer parameter points to where its `.ptr .align` declares less.
+    pub ptr_align: u32,
+}
+
+/// The default `ptr_align`: a 32-byte sector's, which the 256 B
+/// alignment of `cudaMalloc`'s memory (CUDA C++ Programming Guide,
+/// "Device Memory Accesses") covers but a view into it may not.
+pub const PTR_ALIGN: u32 = 32;
+
+impl Default for AnalyzeOptions {
+    fn default() -> Self {
+        AnalyzeOptions {
+            bindings: Vec::new(),
+            launch: None,
+            grid: None,
+            ncu: None,
+            ptr_align: PTR_ALIGN,
+        }
+    }
 }
 
 /// Parse `source` and run `each` on every kernel's report builder, under
@@ -156,7 +177,12 @@ pub(super) fn each_kernel(
         let cfg = build_cfg(&module, kernel);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&module, kernel, &cfg, &forest);
-        each(KernelReportBuilder::new(&data, &bind_map, &lines));
+        each(KernelReportBuilder::new(
+            &data,
+            &bind_map,
+            &lines,
+            opts.ptr_align,
+        ));
     }
     Ok(())
 }
@@ -343,9 +369,15 @@ impl KernelReportBuilder<'_> {
                     };
                     let footprint = match (&form, bytes) {
                         (Some(a), Some(b)) if matches!(space, Space::Global | Space::Generic) => {
-                            Some(warp_footprint(a, b, align.unwrap_or(b), shape, |tid| {
-                                set.contains(tid, shape)
-                            }))
+                            let pointer = self.pointee(a);
+                            Some(warp_footprint(
+                                a,
+                                b,
+                                align.unwrap_or(b),
+                                pointer,
+                                shape,
+                                |tid| set.contains(tid, shape),
+                            ))
                         }
                         _ => None,
                     };
@@ -520,6 +552,9 @@ pub(super) struct KernelReportBuilder<'a> {
     pub(super) counts: ExecutionCounts<'a>,
     /// The PTX file's lines, naming a uniform value by its statement's.
     pub(super) lines: &'a LineIndex,
+    /// The alignment taken for the memory a pointer parameter points to
+    /// past its `.ptr .align`.
+    pub(super) ptr_align: u32,
 }
 
 impl<'a> KernelReportBuilder<'a> {
@@ -527,6 +562,7 @@ impl<'a> KernelReportBuilder<'a> {
         data: &'a KernelAnalyses<'a>,
         bind_map: &'a HashMap<SymbolicConstant, i64>,
         lines: &'a LineIndex,
+        ptr_align: u32,
     ) -> Self {
         let KernelAnalyses {
             module,
@@ -592,6 +628,7 @@ impl<'a> KernelReportBuilder<'a> {
             data,
             counts,
             lines,
+            ptr_align,
         };
         let (accesses, access_forms, per_request, per_wavefronts, operands) =
             b.accesses_by_scope(&affine);
@@ -647,15 +684,24 @@ impl<'a> KernelReportBuilder<'a> {
             .as_const()
             .filter(|&t| t > 0)?;
         let forms = self.access_forms.get(&Some(id))?;
-        loop_bytes(id, trips, self.counts.shape, forms, |key| self.pointer(key))
+        loop_bytes(id, trips, self.counts.shape, forms, |key| self.pointee(key))
     }
 
-    /// The pointer a loop footprint's base sits on: the one 64-bit
+    /// The parameter `pointer` finds an address sits on, and the
+    /// alignment of the memory it points to: its `.ptr .align`, or
+    /// `ptr_align` where that is more.
+    fn pointee(&self, a: &AffineExpr) -> Option<(usize, u32)> {
+        let i = self.pointer(a)?;
+        let declared = self.kernel.params[i].ptr_align.unwrap_or(1);
+        Some((i, declared.max(self.ptr_align)))
+    }
+
+    /// The pointer an address or a loop footprint's base sits on: the one 64-bit
     /// parameter it names, with coefficient 1 in its symbolic part, when
     /// it names no other address (a parameter in a coefficient, a
     /// module-scope array) and no 64-bit uniform value. An offset from a
     /// pointer is taken to stay in its allocation.
-    fn pointer(&self, key: &AffineExpr) -> Option<usize> {
+    pub(super) fn pointer(&self, key: &AffineExpr) -> Option<usize> {
         let pointer = |leaf: &SymbolicConstant| match leaf {
             SymbolicConstant::KernelParam(i) => {
                 (self.kernel.params.get(*i)).is_some_and(|p| p.ty.bytes() == Some(8))

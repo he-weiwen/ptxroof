@@ -5,11 +5,12 @@
 //! The lane-dependent part is evaluated for every lane; the uniform
 //! part (CTA index, loop counters, parameters) only shifts the whole
 //! set, so every alignment of it under which the lanes' accesses are
-//! aligned is tried and the count is reported as a range.
+//! aligned, and which its pointer's alignment and its terms'
+//! coefficients allow, is tried and the count is reported as a range.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
 use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, thread, warps_of};
-use crate::analysis::affine::sym_expr::SymExpr;
+use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::measurement::Space;
 use crate::analysis::thread_participation::Pred;
@@ -69,13 +70,15 @@ pub struct Footprint {
 
 /// Sectors per warp request of an access of `bytes` at an address
 /// aligned to `align` (the access size; `cp.async`'s cp-size when a
-/// smaller src-size is read), or why they cannot be counted:
+/// smaller src-size is read), on the parameter `pointer` names whose
+/// memory is aligned as it gives, or why they cannot be counted:
 /// a lane coefficient that is not a constant (bind the parameter), or
 /// a block shape that is not known (`.reqntid` or `--launch`).
 pub fn warp_footprint(
     a: &AffineExpr,
     bytes: u32,
     align: u32,
+    pointer: Option<(usize, u32)>,
     shape: [u32; 3],
     executes: impl Fn([i64; 3]) -> bool,
 ) -> Result<Footprint, String> {
@@ -89,6 +92,8 @@ pub fn warp_footprint(
     let bytes = i64::from(bytes);
     let align = i64::from(align.max(1));
     let (lanes, residue) = warp_lanes(a, align, shape, executes)?;
+    let aligned = (0..SECTOR).filter(|s| (s + residue).rem_euclid(align) == 0);
+    let shifts = narrowed(aligned.collect(), uniform_residues(a, pointer));
     let warps: Vec<Vec<i64>> = (lanes.iter())
         .map(|w| w.iter().map(|&(_, o)| o).collect())
         .collect();
@@ -106,12 +111,10 @@ pub fn warp_footprint(
         let packed = ((distinct + SECTOR - 1) / SECTOR) as u32;
         ideal_min = ideal_min.min(packed);
         ideal_max = ideal_max.max(packed);
-        let mut shift = (align - residue) % align;
-        while shift < SECTOR {
+        for &shift in &shifts {
             let n = sector_count(offsets, bytes, shift);
             min = min.min(n);
             max = max.max(n);
-            shift += align;
         }
     }
     if min == u32::MAX {
@@ -128,6 +131,56 @@ pub fn warp_footprint(
             max: ideal_max,
         },
     })
+}
+
+/// The part of `a` no lane changes, modulo a sector, as `c + g·ℤ` with
+/// `g` dividing a sector: `g` divides each term's coefficient, the
+/// alignment `pointer` gives where the address sits on its parameter,
+/// and each other symbol's constant factor.
+fn uniform_residues(a: &AffineExpr, pointer: Option<(usize, u32)>) -> (i64, i64) {
+    let gcd = |mut a: i64, mut b: i64| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a.abs()
+    };
+    let mut g = SECTOR;
+    for (_, k) in a.terms.iter().filter(|(v, _)| !depends_on_lane(v)) {
+        g = gcd(g, k.as_const().unwrap_or(1));
+    }
+    let summands = match &a.base {
+        SymExpr::Sum(ts) => ts.as_slice(),
+        base => std::slice::from_ref(base),
+    };
+    let mut c = 0;
+    for t in summands {
+        let factor = match t {
+            SymExpr::Const(n) => {
+                c += n.rem_euclid(SECTOR);
+                SECTOR
+            }
+            SymExpr::Sym(SymbolicConstant::KernelParam(i)) => match pointer {
+                Some((p, align)) if p == *i => i64::from(align),
+                _ => 1,
+            },
+            SymExpr::Prod(fs) => match fs.first() {
+                Some(SymExpr::Const(k)) => *k,
+                _ => 1,
+            },
+            _ => 1,
+        };
+        g = gcd(g, factor);
+    }
+    (c, g)
+}
+
+/// The shifts of `aligned` congruent to `c` modulo `g`; all of them
+/// where none is.
+fn narrowed(aligned: Vec<i64>, (c, g): (i64, i64)) -> Vec<i64> {
+    let known: Vec<i64> = (aligned.iter().copied())
+        .filter(|s| (s - c).rem_euclid(g) == 0)
+        .collect();
+    if known.is_empty() { aligned } else { known }
 }
 
 /// A shared memory request, for the wavefronts that serve it.
@@ -430,7 +483,9 @@ pub struct AccessForm {
 /// the loop's counter selects them.
 /// Bases on different pointers are assumed disjoint; bases on one
 /// pointer, or on none known, may overlap, so the distinct bytes are
-/// at most their sum and at least the largest on each pointer. Needs
+/// at most their sum and at least the largest on each pointer.
+/// `pointer` gives the parameter a base sits on and the alignment of
+/// the memory it points to. Needs
 /// a numeric trip count, the block shape, every global access's bytes,
 /// and every global address's lane and counter coefficients as
 /// constants.
@@ -439,7 +494,7 @@ pub fn loop_bytes(
     trips: i64,
     shape: [u32; 3],
     forms: &[AccessForm],
-    pointer: impl Fn(&AffineExpr) -> Option<usize>,
+    pointer: impl Fn(&AffineExpr) -> Option<(usize, u32)>,
 ) -> Option<LoopBytes> {
     let [nx, ny, nz] = shape.map(i64::from);
     let threads = nx * ny * nz;
@@ -579,7 +634,7 @@ pub fn loop_bytes(
         let len = union_len(intervals);
         most += len;
         match pointer(&key) {
-            Some(p) => {
+            Some((p, _)) => {
                 let m = largest.entry(p).or_default();
                 *m = (*m).max(len);
             }
@@ -591,9 +646,10 @@ pub fn loop_bytes(
         max: most as u64,
     };
     let mut sector_bytes = Some(ByteRange { min: 0, max: 0 });
-    for pats in patterns.values() {
-        let totals: Vec<u64> = (0..SECTOR)
-            .filter(|&rho| pats.iter().all(|(p, n)| p.aligned(rho, *n)))
+    for (key, pats) in &patterns {
+        let aligned = (0..SECTOR).filter(|&rho| pats.iter().all(|(p, n)| p.aligned(rho, *n)));
+        let totals: Vec<u64> = narrowed(aligned.collect(), uniform_residues(key, pointer(key)))
+            .into_iter()
             .map(|rho| pats.iter().map(|(p, n)| p.total(rho, *n)).sum())
             .collect();
         sector_bytes = match (sector_bytes, totals.iter().min(), totals.iter().max()) {
@@ -660,7 +716,9 @@ mod tests {
         shape: [u32; 3],
         executes: impl Fn([i64; 3]) -> bool,
     ) -> (u32, u32) {
-        let f = warp_footprint(a, bytes, align, shape, executes).unwrap();
+        // On a base whose alignment is not known.
+        let a = a.clone() + AffineExpr::from_base(SymExpr::sym("p"));
+        let f = warp_footprint(&a, bytes, align, None, shape, executes).unwrap();
         (f.sectors.min, f.sectors.max)
     }
 
@@ -768,11 +826,38 @@ mod tests {
     }
 
     #[test]
+    fn a_pointer_s_alignment_leaves_its_address_fewer_shifts() {
+        let c = |n: i64| SymExpr::Const(n);
+        let x = || Box::new(Var::Tid(Axis::X));
+        let on = |a: AffineExpr, bytes: u32, align: u32| {
+            let a = a + AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(0)));
+            let f = warp_footprint(&a, bytes, bytes, Some((0, align)), [32, 1, 1], |_| true);
+            let f = f.unwrap();
+            (f.sectors.min, f.sectors.max)
+        };
+        // 32 lanes × 4 B: a 16 B base may sit 16 B into a sector.
+        assert_eq!(on(tid().scale(c(4)), 4, 1), (4, 5));
+        assert_eq!(on(tid().scale(c(4)), 4, 16), (4, 5));
+        assert_eq!(on(tid().scale(c(4)), 4, 32), (4, 4));
+        assert_eq!(
+            on(tid().scale(c(4)) + AffineExpr::from_base(c(4)), 4, 32),
+            (5, 5)
+        );
+        // k5's rows of 8 lanes × 2 B, 512 B apart, a loop's 16 B steps on:
+        // from a 16 B base no row crosses a sector.
+        let rows = AffineExpr::var(Var::Mod(x(), 8)).scale(c(2))
+            + AffineExpr::var(Var::FloorDiv(x(), 8)).scale(c(512))
+            + AffineExpr::var(Var::Iteration(LoopId(0))).scale(c(16));
+        assert_eq!(on(rows.clone(), 2, 1), (4, 8));
+        assert_eq!(on(rows, 2, 16), (4, 4));
+    }
+
+    #[test]
     fn the_ideal_packs_the_executing_lanes_bytes() {
         let c = |n: i64| SymExpr::Const(n);
         let ideal =
             |a: &AffineExpr, bytes: u32, shape: [u32; 3], executes: fn([i64; 3]) -> bool| {
-                let f = warp_footprint(a, bytes, bytes, shape, executes).unwrap();
+                let f = warp_footprint(a, bytes, bytes, None, shape, executes).unwrap();
                 (f.ideal.min, f.ideal.max)
             };
         // 32 lanes × 2 B pack into two sectors; at a 128 B stride they take 32.
@@ -825,7 +910,7 @@ mod tests {
         );
         // On every lane no uniform part aligns them all.
         assert!(
-            warp_footprint(&tid().scale(c(2)), 4, 4, [32, 1, 1], |_| true)
+            warp_footprint(&tid().scale(c(2)), 4, 4, None, [32, 1, 1], |_| true)
                 .unwrap_err()
                 .contains("modulo")
         );
@@ -848,7 +933,9 @@ mod tests {
         let address = tid().scale(SymExpr::sym("stride"));
         let zero = CountRange { min: 0, max: 0 };
         assert_eq!(
-            warp_footprint(&address, 0, 16, [0, 0, 0], |_| panic!("no lanes needed")),
+            warp_footprint(&address, 0, 16, None, [0, 0, 0], |_| panic!(
+                "no lanes needed"
+            )),
             Ok(Footprint {
                 sectors: zero,
                 ideal: zero
@@ -861,12 +948,12 @@ mod tests {
         let k = AffineExpr::var(Var::Tid(Axis::Y))
             .scale(SymExpr::Sym(SymbolicConstant::KernelParam(2)));
         assert!(
-            warp_footprint(&k, 2, 2, [32, 32, 1], |_| true)
+            warp_footprint(&k, 2, 2, None, [32, 32, 1], |_| true)
                 .unwrap_err()
                 .contains("bind")
         );
         assert!(
-            warp_footprint(&tid(), 4, 4, [0, 0, 0], |_| true)
+            warp_footprint(&tid(), 4, 4, None, [0, 0, 0], |_| true)
                 .unwrap_err()
                 .contains("--launch")
         );
@@ -895,7 +982,7 @@ mod tests {
             conditional: false,
             unknown_varies: false,
         };
-        let on_param = |_: &AffineExpr| Some(0);
+        let on_param = |_: &AffineExpr| Some((0, 1));
         let one = loop_bytes(id, 4, [128, 1, 1], &[access(&form)], on_param).unwrap();
         assert_eq!(one.requested, 2048);
         assert_eq!(

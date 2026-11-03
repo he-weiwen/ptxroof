@@ -3,5 +3,5 @@
 # total is exact: per thread 256 f32 flops, 292 B loaded and 256 B
 # stored, 128 times that per CTA.
 RUN: %ptxroof analyze %fixtures/gluon/quantize_transpose_kernel.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry quantize_transpose_kernel( // block 128×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 32,768; global load 37,376 B, store 32,768 B; shared load 16,384 B, store 16,384 B; param load 5,632 B{{$}}
+ANN: {{^}}.visible .entry quantize_transpose_kernel( // block 128×1×1 | pointer params assumed 32 B aligned | shared memory 0 B/CTA + dynamic | per CTA: flops f32 32,768; global load 37,376 B, store 32,768 B; shared load 16,384 B, store 16,384 B; param load 5,632 B{{$}}
 ANN: {{^}}$L__func_begin0: // warp * × lane * | exec 128/CTA{{$}}

@@ -2,10 +2,10 @@
 # 0 plus the bit times the change (micro/selp_bits.ptx): by setp.eq
 # against 0, the second output of setp.ne, or setp.eq against 16, each a
 # store at 4·%tid.x plus 64 on one half of the warp. The record,
-# micro/selp_bits.ncu.json, measures 4, 2 and 4 sectors, each within the
-# predicted range. A choice by a setp.and is not read.
+# micro/selp_bits.ncu.json, measures 4, 2 and 4 sectors, each the
+# predicted count. A choice by a setp.and is not read.
 RUN: %ptxroof analyze %fixtures/micro/selp_bits.ptx | FileCheck "%s"
-CHECK: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + 64·⌊(%tid.x mod 32)/16⌋ + param_0] sectors/req 4–6 (ideal 4){{$}}
-CHECK: {{^}}	st.global.u32 	[%rd5+1024], %r1; // global store [4·%tid.x - 64·⌊(%tid.x mod 32)/16⌋ + param_0 + 1088] sectors/req 2–3 (ideal 2){{$}}
-CHECK: {{^}}	st.global.u32 	[%rd7+2048], %r1; // global store [4·%tid.x + 64·⌊(%tid.x mod 32)/16⌋ + param_0 + 2048] sectors/req 4–6 (ideal 4){{$}}
+CHECK: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·%tid.x + 64·⌊(%tid.x mod 32)/16⌋ + param_0] sectors/req 4 (ideal 4){{$}}
+CHECK: {{^}}	st.global.u32 	[%rd5+1024], %r1; // global store [4·%tid.x - 64·⌊(%tid.x mod 32)/16⌋ + param_0 + 1088] sectors/req 2 (ideal 2){{$}}
+CHECK: {{^}}	st.global.u32 	[%rd7+2048], %r1; // global store [4·%tid.x + 64·⌊(%tid.x mod 32)/16⌋ + param_0 + 2048] sectors/req 4 (ideal 4){{$}}
 CHECK: {{^}}	st.global.u32 	[%rd9+3072], %r1; // global store addr ? (depends on special register %tid.x, behind `selp.b32`){{$}}

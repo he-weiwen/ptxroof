@@ -330,6 +330,9 @@ pub struct Param {
     pub name: Symbol,
     pub align: Option<u32>,
     pub size: Option<u32>,
+    /// `.ptr .align N`: the alignment of the memory the parameter points
+    /// to (PTX ISA §5.1.6.3).
+    pub ptr_align: Option<u32>,
 }
 
 /// `.reg .f32 %f<789>;` — a counted register family (count is the

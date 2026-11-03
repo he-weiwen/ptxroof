@@ -240,6 +240,7 @@ fn every_run() -> Vec<(PathBuf, AnalyzeOptions)> {
             launch: Some(record.block),
             grid: Some(record.grid),
             ncu: Some(record),
+            ..Default::default()
         };
         runs.push((
             repo.join(fields["ptx"].as_str().expect("record names its ptx")),

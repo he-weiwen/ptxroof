@@ -4,7 +4,7 @@
 # exact. In micro_loop_guard_sibling_exit the first loop also exits to
 # the end, so the second loop's count and totals are not the guard's.
 RUN: %ptxroof analyze %fixtures/micro/loop_guard_sibling.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_loop_guard_sibling( // block 32×1×1 | per CTA: global store (128·max(param_1 - 10, 0)) B; param load 384 B{{$}}
+ANN: {{^}}.visible .entry micro_loop_guard_sibling( // block 32×1×1 | pointer params assumed 32 B aligned | per CTA: global store (128·max(param_1 - 10, 0)) B; param load 384 B{{$}}
 ANN: {{^}}$L__BB0_4: // loop: trips max(param_1 - 10, 0) | warp * × lane * | under line 35 | exec (32·max(param_1 - 10, 0))/CTA{{$}}
-ANN: {{^}}.visible .entry micro_loop_guard_sibling_exit( // block 32×1×1 | per CTA: global store <= (128·max(param_1 - 10, 1)) B; param load 384 B{{$}}
+ANN: {{^}}.visible .entry micro_loop_guard_sibling_exit( // block 32×1×1 | pointer params assumed 32 B aligned | per CTA: global store <= (128·max(param_1 - 10, 1)) B; param load 384 B{{$}}
 ANN: {{^}}$L__BB1_5: // loop: trips max(param_1 - 10, 1) | warp * × lane * | under line 74 | exec <= (32·max(param_1 - 10, 1))/CTA{{$}}

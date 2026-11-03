@@ -3,5 +3,5 @@
 # is not read, so which lanes read, and how much, is not known: the
 # sectors per request and the totals are bounds.
 RUN: %ptxroof analyze %fixtures/micro/cp_async_src_size.ptx --ncu %fixtures/micro/cp_async_src_size.ncu.json | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_cp_async_src_size( // grid 1×1×1 | block 64×1×1 | shared memory 1,024 B/CTA | per launch: global load <= 1,024 B; shared store 1,024 B; param load 512 B{{$}}
-ANN: {{^}}	cp.async.cg.shared.global 	[%r4], [%rd3], 16, %r5; // shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | global load [16·%tid.x + param_0] sectors/req <= 17 (ideal <= 16){{$}}
+ANN: {{^}}.visible .entry micro_cp_async_src_size( // grid 1×1×1 | block 64×1×1 | pointer params assumed 32 B aligned | shared memory 1,024 B/CTA | per launch: global load <= 1,024 B; shared store 1,024 B; param load 512 B{{$}}
+ANN: {{^}}	cp.async.cg.shared.global 	[%r4], [%rd3], 16, %r5; // shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | global load [16·%tid.x + param_0] sectors/req <= 16 (ideal <= 16){{$}}

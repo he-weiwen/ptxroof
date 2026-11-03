@@ -36,11 +36,11 @@ of its lines; the `.entry` line's sums are cut short.
 
 ```text
 $ ptxroof analyze tests/fixtures/k5/k5.sm_89.ptx --ncu tests/fixtures/k5/k5.sm_89.256.ncu.json
-.visible .entry _Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0_( // grid 4×4×1 | block 64×1×1 | param_0 = 256, param_1 = 256, param_2 = 256 | shared memory 2,048 B/CTA | per launch: flops f32 33,751,040; ...
-$L__BB0_2: // loop: trips 32 | global per CTA: requested 65,536 B, unique 65,536 B, sectors 98,304–147,456 B | warp * × lane * | exec 32,768/launch
-ld.global.u16  %rs1, [%rd15]; // global load [32768·%ctaid.y + 16·iv[$L__BB0_2] + 512·⌊%tid.x/8⌋ + 2·(%tid.x mod 8) + param_4] sectors/req 4–8 (ideal 2)
+.visible .entry _Z20hgemm_2d_blocktilingILi64ELi64ELi8ELi8ELi8EEviiifPK6__halfS2_fPS0_( // grid 4×4×1 | block 64×1×1 | param_0 = 256, param_1 = 256, param_2 = 256 | pointer params assumed 32 B aligned | shared memory 2,048 B/CTA | per launch: flops f32 33,751,040; ...
+$L__BB0_2: // loop: trips 32 | global per CTA: requested 65,536 B, unique 65,536 B, sectors 98,304 B | warp * × lane * | exec 32,768/launch
+ld.global.u16  %rs1, [%rd15]; // global load [32768·%ctaid.y + 16·iv[$L__BB0_2] + 512·⌊%tid.x/8⌋ + 2·(%tid.x mod 8) + param_4] sectors/req 4 (ideal 2)
 st.shared.u16  [%r20], %rs1; // shared store [2·%tid.x + As] wavefronts/req 1 (ideal 1)
-ld.global.u16  %rs9, [%rd31]; // global load [128·%ctaid.x + 4096·iv[$L__BB0_2] + 512·⌊%tid.x/64⌋ + 2·(%tid.x mod 64) + param_5] sectors/req 2–3 (ideal 2)
+ld.global.u16  %rs9, [%rd31]; // global load [128·%ctaid.x + 4096·iv[$L__BB0_2] + 512·⌊%tid.x/64⌋ + 2·(%tid.x mod 64) + param_5] sectors/req 2 (ideal 2)
 $L__BB0_3: // loop: trips 8 | warp * × lane * | exec 262,144/launch
 ld.shared.u16  %rs17, [%r110]; // shared load [2·iv[$L__BB0_3] + 128·⌊%tid.x/8⌋ + As] wavefronts/req 4 (ideal 1)
 shl.b32  %r117, %r7, 3; // [<block 4>] warp * × lane * | exec 32,768/launch
@@ -48,7 +48,8 @@ shl.b32  %r117, %r7, 3; // [<block 4>] warp * × lane * | exec 32,768/launch
 
 A loop header gives its trips, an access its address with the loop's
 iteration as LLVM's canonical induction variable, `iv[<header>]`, and the
-sectors or shared wavefronts one warp's request needs.
+sectors or shared wavefronts one warp's request needs, with pointer
+parameters taken as 32 B aligned unless `--ptr-align` says otherwise.
 
 ## Scope
 

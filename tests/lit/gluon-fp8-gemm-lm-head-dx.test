@@ -7,5 +7,5 @@
 # flops, at most 96 B of global loads and no stores, 256 times that per
 # CTA.
 RUN: %ptxroof analyze %fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry fp8_gemm_kernel( // block 256×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 <= (24576·⌈param_10/64⌉ + 33024); tensor flops fp8 <= 2097152·⌈param_10/64⌉; sfu flops f32 256; global load <= (24576·⌈param_10/64⌉ + 34816) B, store 32,768 B; shared load <= (49152·⌈param_10/64⌉ + 65536) B, store <= (16384·⌈param_10/64⌉ + 81920) B; param load 16,384 B{{$}}
+ANN: {{^}}.visible .entry fp8_gemm_kernel( // block 256×1×1 | pointer params assumed 32 B aligned | shared memory 0 B/CTA + dynamic | per CTA: flops f32 <= (24576·⌈param_10/64⌉ + 33024); tensor flops fp8 <= 2097152·⌈param_10/64⌉; sfu flops f32 256; global load <= (24576·⌈param_10/64⌉ + 34816) B, store 32,768 B; shared load <= (49152·⌈param_10/64⌉ + 65536) B, store <= (16384·⌈param_10/64⌉ + 81920) B; param load 16,384 B{{$}}
 ANN: {{^}}$L__BB0_3:                              // =>This Inner Loop Header: Depth=1 // loop: trips ⌈param_10/64⌉ | warp * × lane * | under line 287 | exec <= 256·⌈param_10/64⌉/CTA{{$}}

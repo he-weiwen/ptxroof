@@ -41,7 +41,7 @@ totals per launch its threads summed over the CTAs
 64), and which lanes of a warp
 run it when the rest of the condition is the same for every thread
 (`micro/carry_uniform.ptx`'s branch on a carry from two parameters:
-`sectors/req 4–5`); and per loop
+`sectors/req 4`); and per loop
 with a numeric trip count, the global bytes one CTA
 requests over the loop's own blocks, the bytes of the sectors those
 requests touch, and the distinct bytes it touches. An instruction that
@@ -183,6 +183,48 @@ n + 32, reads `%tid.x < 32`, and n = 0x7fffffe0, which makes n + 32
 the signed minimum and the store run on no thread, is outside the
 contract (Codex's review of 2b2731b).
 
+## How often each output is exact
+
+Each item of the annotated PTX over the kernels of the Nsight Compute
+records but `micro/`'s hand-written ones, each under its record's
+launch. Exact: a count or formula with no `<=`, `>=`, `a–b` range or
+`?`; bound: one of the first three; `?`: printed as not known; no
+number: printed without one (an operand's `addr ?` or TMA copy, a
+loop's sectors). `tests/output_tallies.rs` recomputes the table and
+fails where it is stale; `PTXROOF_WRITE_PLAN=1 cargo test --test
+output_tallies` rewrites it.
+
+<!-- tests/output_tallies.rs -->
+47 kernels.
+
+| Output | Count | Exact | Bound | ? | No number |
+|---|---|---|---|---|---|
+| `.entry`: shared memory per CTA | 36 | 1 (3%) | 35 (97%) |  |  |
+| `.entry`: FLOPs of a pipe it prints | 119 | 44 (37%) | 15 (13%) | 60 (50%) |  |
+| `.entry`: global load bytes | 47 | 21 (45%) | 12 (26%) | 14 (30%) |  |
+| `.entry`: global store bytes | 47 | 26 (55%) | 6 (13%) | 15 (32%) |  |
+| `.entry`: shared load bytes | 36 | 16 (44%) | 8 (22%) | 12 (33%) |  |
+| `.entry`: shared store bytes | 36 | 13 (36%) | 13 (36%) | 10 (28%) |  |
+| loop: trips | 194 | 30 (15%) |  | 164 (85%), 135 mbarrier waits |  |
+| loop: global bytes requested per CTA | 16 | 13 (81%) | 3 (19%) |  |  |
+| loop: global bytes unique per CTA | 16 | 6 (38%) | 4 (25%) | 6 (38%) |  |
+| loop: global sector bytes per CTA | 16 | 6 (38%) | 4 (25%) |  | 6 (38%) |
+| block: threads | 854 | 819 (96%) | 35 (4%) |  |  |
+| block: CTAs | 87 | 87 (100%) |  |  |  |
+| block: `runs when` | 154 | 154 (100%) |  |  |  |
+| block: exec | 824 | 269 (33%) | 124 (15%) | 431 (52%) |  |
+| instruction: threads, where a guard narrows its block's | 908 | 685 (75%) | 223 (25%) |  |  |
+| instruction: exec, where it differs from its block's | 643 | 529 (82%) | 110 (17%) | 4 (1%) |  |
+| instruction: `unused` | 954 | | | | |
+| instruction: `not classified` | 596 | | | | |
+| instruction: `bytes ?` | 109 | | | | |
+| operand: address | 4,399 | 3,978 (90%) |  | 421 (10%) |  |
+| operand: global sectors/req | 2,221 | 1,385 (62%) | 481 (22%) |  | 355 (16%) |
+| operand: global sectors/req, ideal | 1,866 | 1,666 (89%) | 200 (11%) |  |  |
+| operand: shared wavefronts/req | 2,178 | 1,442 (66%) |  | 557 (26%) | 179 (8%) |
+| operand: shared wavefronts/req, ideal | 1,442 | 1,442 (100%) |  |  |  |
+<!-- end tests/output_tallies.rs -->
+
 ## Known limitations
 
 ### Wrong output
@@ -205,11 +247,11 @@ contract (Codex's review of 2b2731b).
   (`micro/shared_wavefronts.ptx`'s `micro_cp_async_wavefronts`, RTX
   4090, `shared_wavefronts.cp_async.ncu.json`): a 16-byte `.cg` copy
   from `16·%tid.x` takes 32 L2 sectors to `32·%tid.x` (line 633,
-  predicted 16–17) and 8 to `16·(%tid.x mod 16)`, where lanes t and
+  predicted 16) and 8 to `16·(%tid.x mod 16)`, where lanes t and
   t + 16 write one destination (line 685); one from
   `16·(%tid.x mod 16)` to `16·%tid.x` takes 16 (line 694, predicted
-  8–9). Every other `cp.async` line of the records agrees
-  (`tests/ncu_corpus.rs`).
+  8), and the record's launch load sectors differ with them. Every
+  other `cp.async` line of the records agrees (`tests/ncu_corpus.rs`).
 - **Register effects are incomplete.** Affine analysis records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
@@ -470,7 +512,7 @@ contract (Codex's review of 2b2731b).
   hardware executes the load once for the lanes executing it together.
   A warp-specialized dispatch reads its state byte so
   (`micro/warp_dispatch.ptx`: the dispatched store's sectors read
-  `sectors/req 4–5 (ideal 4)`, `micro-warp-dispatch.test`); over the
+  `sectors/req 4 (ideal 4)`, `micro-warp-dispatch.test`); over the
   65 records the access rows whose warp sectors or wavefronts are a
   bound go from 333 to 201, all in `gluon/attn_fwd_ws_kernel`'s two
   shapes. The records keep thread instructions only
@@ -507,7 +549,8 @@ contract (Codex's review of 2b2731b).
   run as its base's.** PTX ISA §6.4.1 makes only an access that runs
   aligned: `micro/optional_align.ptx` reads `in sectors <= 192 B`, its
   16 B store at p making each byte store one sector, where with n == 0
-  and p ≡ 17 mod 32 the byte stores request 256 (`micro-optional-align.test`).
+  and p ≡ 17 mod 32 (`--ptr-align 1`) the byte stores request 256
+  (`micro-optional-align.test`).
 - **The threads and sectors of an access under `elect.sync` read the
   lowest active lane as the elected one**, where its count tries every
   active lane (PTX ISA §9.7.14.15 does not say which is elected):
@@ -784,14 +827,20 @@ contract (Codex's review of 2b2731b).
 - Parameter names are positional (`param_2`); the PTX carries no
   source names.
 - Floor division prints as `/`.
-- **Pointer alignment is unknown.** Sectors per warp request and per
-  loop are ranges over every alignment of the base under which the
-  accesses are aligned (PTX ISA §6.4.1): nvcc declares no `.ptr
-  .align`, Triton declares `.align 1`, and there is no flag to state
-  one. The aligned end matched Nsight Compute on k5 and k1, whose
-  pointers `cudaMalloc` aligned to 256 B. A 16-byte access on a
-  pointer does not narrow the range of a 2-byte access on the same
-  pointer.
+- **Pointers are taken as 32 B aligned.** Sectors per warp request
+  and per loop take the memory a pointer parameter points to as
+  aligned to its `.ptr .align N` or to `--ptr-align`, 32 by default,
+  where that is more, and the `.entry` line says so
+  (`tests/lit/ptr-align.test`): nvcc declares no `.ptr .align`, the
+  Gluon records `.align 1`, the B200 Triton records 16. A pointer below
+  it, into an allocation `cudaMalloc` aligned to 256 B, gets too few
+  sectors; `--ptr-align 1` gives the range over every alignment under
+  which the accesses are aligned (PTX ISA §6.4.1). Every record line
+  the default closed, 1,127, measured its count
+  (`ncu_corpus` snapshot). A base on a module-scope array or a loaded
+  pointer is still a range: the array's `.align` is not read
+  (`micro-uniform-bases-global.test`). A 16-byte access on a pointer
+  does not narrow the range of a 2-byte access on the same pointer.
 - **No arithmetic intensity over sector bytes.** A loop's sector
   bytes cover its own blocks while its flops sit in nested loops
   (k5's K loop: 98,304 B in sectors, no flops of its own).
@@ -908,7 +957,7 @@ contract (Codex's review of 2b2731b).
   requests and sectors 18,432 / 81,920 (k5) and 1,050,624 / 1,576,960
   (k1), stores 2,048 / 32,768 and 2,048 / 4,096, each the rows'
   aligned counts times their execution counts; per CTA, k5's K loop
-  moves 98,304 B in sectors at the aligned end of its range and the
+  moves 98,304 B in sectors and the
   epilogue's 64 loads 65,536 B, 5,120 sectors, times 16 CTAs. Unique bytes, k5 at
   256³ and 16 CTAs: `lts__t_sectors_srcunit_tex_op_read.sum` = 36,868,
   the tool's 65,536 unique B per CTA over the K loop as 2,048 sectors
@@ -973,9 +1022,9 @@ One line each, with the trigger that would start it.
   fixture's global and shared operands except those listed above,
   including 2D tiles' `⌊%tid.x/8⌋` and `(%tid.x mod 8)` and counters
   stepped by `4·N`; sectors per warp request by enumerating
-  the lanes under every alignment of the uniform part, since pointer
-  parameters carry no alignment in the PTX, so a coalesced 4-byte
-  access reads `4–5 sectors`; needs `--launch` or `.reqntid` and
+  the lanes under every alignment of the uniform part its pointer's
+  alignment allows, so a coalesced 4-byte access reads `4 sectors`;
+  needs `--launch` or `.reqntid` and
   `--bind` for a parameter in a lane coefficient; per enclosing loop how
   the address moves per iteration, `k[loop]: +16 B/iter` or
   `invariant`, the per-thread reuse class; and per loop the bytes one
@@ -1034,7 +1083,7 @@ One line each, with the trigger that would start it.
   with its SASS opcodes (`differing`). A line whose global SASS all have the width of its
   one PTX global access also compares its L2 sectors and their ideal
   over the launch, the sectors per warp request times the warps with a
-  lane that runs it, a range over the address's alignment
+  lane that runs it, a range over the alignments its pointer allows
   (a block's `sectors`, `tests/ncu_comparisons.rs`,
   `a_line_at_its_own_width_compares_its_l2_sectors`; in the records
   only the three copies above differ, in

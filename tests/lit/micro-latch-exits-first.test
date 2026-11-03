@@ -9,9 +9,9 @@
 RUN: %ptxroof analyze %fixtures/micro/latch_exits_first.ptx | FileCheck --check-prefix=ANN-FREE "%s"
 RUN: %ptxroof analyze %fixtures/micro/latch_exits_first.ptx --bind 1:n=5 | FileCheck --check-prefix=ANN-BIND "%s"
 RUN: %ptxroof analyze %fixtures/micro/latch_exits_first.ptx --ncu %fixtures/micro/latch_exits_first.ncu.json | FileCheck --check-prefix=ANN-REC "%s"
-ANN-BIND: {{^}}.visible .entry micro_latch_exits_first( // block 32×1×1 | param_1 = 5 | per CTA: global store 256 B; param load 256 B{{$}}
+ANN-BIND: {{^}}.visible .entry micro_latch_exits_first( // block 32×1×1 | param_1 = 5 | pointer params assumed 32 B aligned | per CTA: global store 256 B; param load 256 B{{$}}
 ANN-BIND: {{^}}$L__BB0_1: // loop: trips 1 | global per CTA: requested 256 B, unique 8 B, sectors 64 B | warp * × lane * | exec 32/CTA{{$}}
-ANN-BIND: {{^}}.visible .entry micro_latch_exits_first_param( // block 32×1×1 | param_1 = 5 | per CTA: global store 256 B; param load 384 B{{$}}
+ANN-BIND: {{^}}.visible .entry micro_latch_exits_first_param( // block 32×1×1 | param_1 = 5 | pointer params assumed 32 B aligned | per CTA: global store 256 B; param load 384 B{{$}}
 ANN-BIND: {{^}}$L__BB1_1: // loop: trips 1 | global per CTA: requested 256 B, unique 8 B, sectors 64 B | warp * × lane * | exec 32/CTA{{$}}
 ANN-FREE: {{^}}$L__BB1_1: // loop: trips max(param_1 - 10, 1) | warp * × lane * | exec (32·max(param_1 - 10, 1))/CTA{{$}}
 ANN-REC: {{^}}$L__BB1_1: // loop: trips 1 | global per CTA: requested 256 B, unique 8 B, sectors 64 B | warp * × lane * | exec 32/launch{{$}}
