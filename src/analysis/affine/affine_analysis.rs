@@ -2001,6 +2001,17 @@ mod tests {
             trips_of(&src)[0].1.as_ref().unwrap().to_string(),
             "max(param_0 / 8 + param_0 mod 64, 1)"
         );
+        // Triton's reversed program id, n + ~pid = n − pid − 1.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r2, %ctaid.x;\nnot.b32 %r5, %r2;\n\
+             add.s32 %r6, %r1, %r5;\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+             setp.lt.s32 %p1, %r4, %r6;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(
+            trips_of(&src)[0].1.as_ref().unwrap().to_string(),
+            "max(param_0 - %ctaid.x - 1, 1)"
+        );
         // A step that is a loop-invariant register: the count is not a
         // constant multiple, so it is refused with that reason.
         let src = kernel_with(
