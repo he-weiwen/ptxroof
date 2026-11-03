@@ -273,7 +273,7 @@ tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:67	warp 0 × lane *
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:233	warp 0 × lane 0
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:240	warp 0 × lane 0
-tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:426	<= warp 0 × lane * | runs when param_7 ≥ 1 (CTA-uniform, branch at line 424)
+tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:426	warp 0 × lane * | runs when param_7 ≥ 1 (CTA-uniform, branch at line 424)
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:469	warp * × lane *
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:606	warp * × lane * | runs when param_7 ≥ 129 (CTA-uniform, branch at line 603)
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:693	warp * × lane *
@@ -302,7 +302,7 @@ tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_k
 tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx:61	warp 0 × lane *
 tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx:228	warp 0 × lane 0
 tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx:235	warp 0 × lane 0
-tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx:583	<= warp 0 × lane * | runs when param_7 ≥ 1 (CTA-uniform, branch at line 581)
+tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx:583	warp 0 × lane * | runs when param_7 ≥ 1 (CTA-uniform, branch at line 581)
 tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx:625	warp * × lane *
 tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx:809	warp * × lane * | runs when param_7 ≥ 129 (CTA-uniform, branch at line 806)
 tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ptx:875	warp * × lane *
@@ -356,7 +356,7 @@ tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_ker
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:557	warp * × lane *
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:649	warp * × lane * | runs when predicate %p35 (line 642) is false (CTA-uniform, branch at line 647)
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:712	warp * × lane *
-tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:724	<= warp 0 × lane * | runs when (⌈param_5/64⌉)·%r74@268 + (⌈param_5/64⌉)·%r75@269 + (⌈param_5/64⌉)·%r78@275 ≥ 1 (CTA-uniform, branch at line 722)
+tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:724	warp 0 × lane * | runs when (⌈param_5/64⌉)·%r74@268 + (⌈param_5/64⌉)·%r75@269 + (⌈param_5/64⌉)·%r78@275 ≥ 1 (CTA-uniform, branch at line 722)
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:767	warp * × lane *
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:868	warp * × lane * | runs when (⌈param_5/64⌉)·%r74@268 + (⌈param_5/64⌉)·%r75@269 + (⌈param_5/64⌉)·%r78@275 ≥ 2 (CTA-uniform, branch at line 865)
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:908	warp * × lane *
@@ -432,7 +432,7 @@ tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.s
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:535	warp * × lane *
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:646	warp 0 × lane *
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:653	warp 0 × lane *
-tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:858	<= warp 0 × lane * | runs when param_10 ≥ 1 (CTA-uniform, branch at line 856)
+tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:858	warp 0 × lane * | runs when param_10 ≥ 1 (CTA-uniform, branch at line 856)
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:901	warp * × lane *
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:1048	warp * × lane * | runs when param_10 ≥ 129 (CTA-uniform, branch at line 1045)
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:1137	warp * × lane *
@@ -480,7 +480,7 @@ tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:339	warp * × lane *
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:399	warp 0 × lane *
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:406	warp 0 × lane *
-tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:499	<= warp 0 × lane * | runs when param_8 ≥ 1 (CTA-uniform, branch at line 497)
+tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:499	warp 0 × lane * | runs when param_8 ≥ 1 (CTA-uniform, branch at line 497)
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:525	warp * × lane *
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:573	warp * × lane * | runs when param_8 ≥ 33 (CTA-uniform, branch at line 570)
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:595	warp * × lane *
@@ -1072,13 +1072,13 @@ tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2011	wa
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2012	warp 4-11 × lane * | runs when jump table at line 1532 selects this target (warp-uniform)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2036	warp 4-11 × lane * | runs when 128·%ctaid.x > 0 (CTA-uniform, branch at line 2033)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2041	warp 4-11 × lane *
-tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2054	<= warp 10 × lane * | runs when 128·%ctaid.x ≥ 1 (CTA-uniform, branch at line 2052)
+tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2054	warp 10 × lane * | runs when 128·%ctaid.x ≥ 1 (CTA-uniform, branch at line 2052)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2134	warp 4-11 × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2146	warp 4-11 × lane * | runs when 128·%ctaid.x > 0 (CTA-uniform, branch at line 2143)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2151	warp 4-11 × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2167	warp 4-11 × lane * | runs when 128·%ctaid.x > 128 (CTA-uniform, branch at line 2164)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2172	warp 4-11 × lane *
-tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2182	<= warp 10 × lane * | runs when 128·%ctaid.x ≥ 129 (CTA-uniform, branch at line 2180)
+tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2182	warp 10 × lane * | runs when 128·%ctaid.x ≥ 129 (CTA-uniform, branch at line 2180)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2266	warp 4-11 × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2280	warp 4-11 × lane * | runs when 128·%ctaid.x > 128 (CTA-uniform, branch at line 2277)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2285	warp 4-11 × lane *
@@ -1097,7 +1097,7 @@ tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2413	wa
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2484	warp 4-11 × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2497	warp 4-11 × lane * | runs when 128·iv[$L__BB0_17] < 128·%ctaid.x - 256 (CTA-uniform, branch at line 2494)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2502	warp 4-11 × lane *
-tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2513	<= warp 10 × lane * | runs when 128·iv[$L__BB0_17] < 128·%ctaid.x - 256 (CTA-uniform, branch at line 2510)
+tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2513	warp 10 × lane * | runs when 128·iv[$L__BB0_17] < 128·%ctaid.x - 256 (CTA-uniform, branch at line 2510)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2585	no thread
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2586	warp 4-11 × lane * | runs when jump table at line 1532 selects this target (warp-uniform)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:2613	warp 4-11 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 2610)
@@ -1133,7 +1133,7 @@ tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3036	no
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3037	warp 4-11 × lane * | runs when jump table at line 1532 selects this target (warp-uniform)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3057	warp 4-11 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 3054)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3062	warp 4-11 × lane *
-tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3074	<= warp 10 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 3073)
+tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3074	warp 10 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 3073)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3160	warp 4-11 × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3169	warp 4-11 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 3166)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3174	warp 4-11 × lane *
@@ -1152,7 +1152,7 @@ tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3281	wa
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3351	warp 4-11 × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3363	warp 4-11 × lane * | runs when 128·%ctaid.x < -2147483520 (CTA-uniform, branch at line 3360)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3368	warp 4-11 × lane *
-tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3379	<= warp 10 × lane * | runs when 128·%ctaid.x ≤ -2147483521 (CTA-uniform, branch at line 3376)
+tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3379	warp 10 × lane * | runs when 128·%ctaid.x ≤ -2147483521 (CTA-uniform, branch at line 3376)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3464	no thread
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3465	warp 4-11 × lane * | runs when predicate %p3 (line 1528) is true (warp-uniform, branch at line 1529)
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:3470	warp 4-11 × lane *
@@ -1305,9 +1305,9 @@ tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1378	warp 0 × lane 0
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1382	warp 0 × lane 0
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1385	warp * × lane *
-tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1409	warp * × lane * | runs when predicate %p51 (line 1392) is true (CTA-uniform, branch at line 1406)
+tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1409	warp * × lane * | runs when 64·iv[$L__BB0_8] < 1920 (CTA-uniform, branch at line 1406)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1414	warp * × lane *
-tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1428	<= warp 0 × lane * | runs when predicate %p52 (line 1391) is false (CTA-uniform, branch at line 1425)
+tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1428	warp 0 × lane * | runs when 64·iv[$L__BB0_8] ≤ 1919 (CTA-uniform, branch at line 1425)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1490	warp * × lane *
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1542	warp * × lane *
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:1551	warp * × lane *
@@ -1346,7 +1346,7 @@ tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2109	warp * × lane *
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2128	warp * × lane * | runs when 128·%ctaid.x > 64 (CTA-uniform, branch at line 2125)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2133	warp * × lane *
-tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2143	<= warp 0 × lane * | runs when 128·%ctaid.x ≥ 65 (CTA-uniform, branch at line 2141)
+tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2143	warp 0 × lane * | runs when 128·%ctaid.x ≥ 65 (CTA-uniform, branch at line 2141)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2203	warp * × lane *
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2212	warp * × lane 0
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2220	warp 0-1 × lane 0
@@ -1369,7 +1369,7 @@ tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2699	warp * × lane *
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2723	warp * × lane * | runs when 64·iv[$L__BB0_21] < 128·%ctaid.x - 128 (CTA-uniform, branch at line 2720)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2728	warp * × lane *
-tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2742	<= warp 0 × lane * | runs when 64·iv[$L__BB0_21] < 128·%ctaid.x - 128 (CTA-uniform, branch at line 2739)
+tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2742	warp 0 × lane * | runs when 64·iv[$L__BB0_21] < 128·%ctaid.x - 128 (CTA-uniform, branch at line 2739)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2804	warp * × lane *
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2809	warp * × lane * | runs when 128·%ctaid.x ≥ 1 (CTA-uniform, branch at line 2807)
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ptx:2862	warp * × lane *
@@ -2072,6 +2072,8 @@ tests/fixtures/micro/or_entry.ptx:98	warp 0 × lane 0-15 ∪ warp 1 × lane 16-3
 tests/fixtures/micro/or_entry.ptx:102	warp 0 × lane 0-15 ∪ warp 1 × lane 16-31
 tests/fixtures/micro/or_entry.ptx:107	warp * × lane *
 tests/fixtures/micro/or_negative.ptx:24	warp * × lane *
+tests/fixtures/micro/param_entry.ptx:23	warp * × lane *
+tests/fixtures/micro/param_entry.ptx:29	<= warp * × lane *
 tests/fixtures/micro/param_fields.ptx:20	warp * × lane *
 tests/fixtures/micro/predicated_exit.ptx:24	warp * × lane *
 tests/fixtures/micro/predicated_exit.ptx:28	warp * × lane *

@@ -18,7 +18,9 @@ use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::register_effects::{reads_cc, split_operands};
 use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
+use crate::ptx::ir::{
+    Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt, is_param_space,
+};
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
@@ -441,7 +443,8 @@ fn lane_wise(t: &KernelAnalyses, instr: &Instr) -> bool {
 /// The kernel parameter an `ld.param` reads.
 fn kernel_param(t: &KernelAnalyses, instr: &Instr) -> Option<usize> {
     let module = t.module;
-    let param = (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "param");
+    let param =
+        (module.modifiers(instr).iter()).any(|&m| is_param_space(module.interner.resolve(m)));
     if instr.mnemonic != Opcode::Ld || !param {
         return None;
     }

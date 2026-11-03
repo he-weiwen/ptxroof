@@ -56,7 +56,8 @@ impl AffineAnalysis<'_> {
             return value;
         }
         if let Some(Operand::VectorList { children }) = ops.first().map(|&o| module.operand(o))
-            && (mnemonic != Opcode::Ld || mods.contains(&"param") && children.len() > 1)
+            && (mnemonic != Opcode::Ld
+                || mods.iter().any(|m| is_param_space(m)) && children.len() > 1)
             && registers(module, ops[0]).contains(&reg)
         {
             let opcode = module.opcode(instr);
@@ -88,7 +89,7 @@ impl AffineAnalysis<'_> {
                 Ok(a)
             }
             Opcode::Ld => {
-                if mods.contains(&"param")
+                if mods.iter().any(|m| is_param_space(m))
                     && let Some(Operand::Memory { base, .. }) =
                         ops.get(1).map(|&i| module.operand(i))
                     && let Operand::SymbolRef(pname) = module.operand(*base)
@@ -108,6 +109,13 @@ impl AffineAnalysis<'_> {
                 if ops.len() == 2 && matches!(mods.last(), Some(&("s16" | "s32" | "s64"))) =>
             {
                 Ok(AffineExpr::from_base(SymExpr::Const(0)) - arg(1)?)
+            }
+            // PTX ISA §9.7.8.4: `not` inverts every bit, which in two's
+            // complement is −1 − a.
+            Opcode::Not
+                if ops.len() == 2 && matches!(mods.last(), Some(&("b16" | "b32" | "b64"))) =>
+            {
+                Ok(AffineExpr::from_base(SymExpr::Const(-1)) - arg(1)?)
             }
             Opcode::And if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
@@ -628,8 +636,8 @@ impl AffineAnalysis<'_> {
         (bound.range(&|v| self.var_bounds(v))).is_none_or(|(x, y)| lo <= x && y < hi)
     }
 
-    /// A 16- or 32-bit `add`, `sub`, `neg`, `mul.lo`, `mad.lo`, `shl` or `bfe`
-    /// result, which wraps (PTX ISA §9.7.1), whose range over the known
+    /// A 16- or 32-bit `add`, `sub`, `neg`, `not`, `mul.lo`, `mad.lo`, `shl` or
+    /// `bfe` result, which wraps (PTX ISA §9.7.1), whose range over the known
     /// launch and constant trip counts leaves its type is refused.
     pub(super) fn fits(
         &self,
@@ -638,7 +646,9 @@ impl AffineAnalysis<'_> {
         mods: &[&str],
     ) -> Result<AffineExpr, UnknownReason> {
         let checked = match instr.mnemonic {
-            Opcode::Add | Opcode::Sub | Opcode::Neg | Opcode::Shl | Opcode::Bfe => true,
+            Opcode::Add | Opcode::Sub | Opcode::Neg | Opcode::Not | Opcode::Shl | Opcode::Bfe => {
+                true
+            }
             Opcode::Mul | Opcode::Mad => mods.contains(&"lo"),
             _ => false,
         };

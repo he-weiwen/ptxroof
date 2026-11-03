@@ -205,22 +205,22 @@ output_tallies` rewrites it.
 | `.entry`: global store bytes | 47 | 26 (55%) | 6 (13%) | 15 (32%) |  |
 | `.entry`: shared load bytes | 36 | 16 (44%) | 8 (22%) | 12 (33%) |  |
 | `.entry`: shared store bytes | 36 | 13 (36%) | 13 (36%) | 10 (28%) |  |
-| loop: trips | 194 | 30 (15%) |  | 164 (85%), 135 mbarrier waits |  |
+| loop: trips | 194 | 31 (16%) |  | 163 (84%), 135 mbarrier waits |  |
 | loop: global bytes requested per CTA | 16 | 13 (81%) | 3 (19%) |  |  |
 | loop: global bytes unique per CTA | 16 | 6 (38%) | 4 (25%) | 6 (38%) |  |
 | loop: global sector bytes per CTA | 16 | 6 (38%) | 4 (25%) |  | 6 (38%) |
-| block: threads | 854 | 819 (96%) | 35 (4%) |  |  |
+| block: threads | 854 | 825 (97%) | 29 (3%) |  |  |
 | block: CTAs | 87 | 87 (100%) |  |  |  |
 | block: `runs when` | 154 | 154 (100%) |  |  |  |
-| block: exec | 824 | 269 (33%) | 124 (15%) | 431 (52%) |  |
-| instruction: threads, where a guard narrows its block's | 908 | 685 (75%) | 223 (25%) |  |  |
-| instruction: exec, where it differs from its block's | 643 | 529 (82%) | 110 (17%) | 4 (1%) |  |
+| block: exec | 824 | 278 (34%) | 124 (15%) | 422 (51%) |  |
+| instruction: threads, where a guard narrows its block's | 908 | 724 (80%) | 184 (20%) |  |  |
+| instruction: exec, where it differs from its block's | 661 | 547 (83%) | 110 (17%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
-| instruction: `not classified` | 596 | | | | |
+| instruction: `not classified` | 423 | | | | |
 | instruction: `bytes ?` | 109 | | | | |
 | operand: address | 4,399 | 3,978 (90%) |  | 421 (10%) |  |
-| operand: global sectors/req | 2,221 | 1,385 (62%) | 481 (22%) |  | 355 (16%) |
-| operand: global sectors/req, ideal | 1,866 | 1,666 (89%) | 200 (11%) |  |  |
+| operand: global sectors/req | 2,221 | 1,393 (63%) | 473 (21%) |  | 355 (16%) |
+| operand: global sectors/req, ideal | 1,866 | 1,674 (90%) | 192 (10%) |  |  |
 | operand: shared wavefronts/req | 2,178 | 1,442 (66%) |  | 557 (26%) | 179 (8%) |
 | operand: shared wavefronts/req, ideal | 1,442 | 1,442 (100%) |  |  |  |
 <!-- end tests/output_tallies.rs -->
@@ -275,7 +275,6 @@ output_tallies` rewrites it.
   round-trip: `Unknown symbol 'gbuf'`) and its `.texref` declaration
   (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
   'micro_texture_outputs_tex'`).
-  The CFG treats `trap` as fallthrough.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
 - **A predicated `ret` or `exit` is read as falling through.** The CFG
@@ -283,6 +282,22 @@ output_tallies` rewrites it.
   on every thread, exactly (`micro/predicated_exit.ptx`: the store
   after `@%p1 exit` counts 32 per CTA, where on an RTX 4090 at n = 20
   it runs on none).
+- **`trap` is read as falling through, and a block ending in it as a
+  path a launch takes.** PTX ISA §9.7.20.4: `trap` aborts the
+  launch. The CFG gives a block ending in `trap` the next block as its
+  successor, so each of LLVM's cold `call.uni __assertfail; trap;`
+  blocks runs on the threads of the ones before it, and keeps every
+  edge into one, so a loop holding an assert check exits there and a
+  block a check can bypass is conditional. In the Blackwell corpus (the
+  census's 2,837 kernels and sol-study's 2,601 PTX files, sm_100
+  family, analyzed without launch arguments) 2,628 `trap`s sit in 23
+  parsed files: reading `trap` as a terminator changes 2,498 bounds of
+  assert blocks in 10 of them, and dropping the edges into those blocks
+  changes 9,923 lines in 11. 20 of the corpus's 24 loops refused as
+  "loop has N exit edges", in Triton concurrency-sanitizer builds of
+  sol-study's Gluon `mla_decode_1cta_kernel` and `mma_rate_kernel`,
+  have every exit but one into an assert block; without those edges the
+  five `mma_rate_kernel` loops read `trips param_1`.
 - **A block in an irreducible cycle counts as running once.** A cycle
   entered at two blocks is no natural loop, so no trip count multiplies
   its blocks: `micro/irreducible.ptx`'s `$L__BB0_A` reads `exec <=
@@ -357,7 +372,17 @@ output_tallies` rewrites it.
   `param_0 + 4·⌊%tid.x/32⌋` selects its targets' threads as an
   unknown, where with the index shuffled from lane 0 first, as Triton's
   warp specialization does, each target runs on whole warps
-  (`a_jump_table_on_a_warp_s_index_selects_whole_warps`).
+  (`a_jump_table_on_a_warp_s_index_selects_whole_warps`). So is an
+  and-mask keeping bits of `%tid.x` above its lane bits, `and.b32 d,
+  %tid.x, M` with M a multiple of 32, Triton's layout bits: b200
+  `attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding`
+  line 950's `ld.global.v4.b32` reads `addr ? (depends on a value
+  loaded inside the loop)`, its index loaded at line 909 at an address
+  built from line 98's `and.b32 %r2, %r1, 64`. In the Blackwell corpus
+  (`trap` entry above) the shift, `bfe` and division forms of the warp
+  index are 3,757 statements in 2,545 files and the masks 6,829 in
+  3,746; reading both as one value per warp turns 8,162 `addr ?` into
+  addresses.
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
@@ -490,7 +515,17 @@ output_tallies` rewrites it.
   count (`micro_unpack_halves`), from 64-bit arithmetic
   (`micro_unpack_wide`) or from an unpacked element
   (`micro_unpack_twice`), or packed as an immediate wider than its
-  element (`micro_unpack_imm`).
+  element (`micro_unpack_imm`). In the Blackwell corpus (`trap` entry
+  above), not read either: an `or` in an `ldmatrix` or `stmatrix`
+  `.x1`/`.x2` address whose sides share a bit only on lanes that give
+  the instruction no address (PTX ISA §9.7.15.5.15–16: threads 0–7 or
+  0–15), 2,962 of the 4,443 such rows refused "or whose sides may both
+  set bit N", as b200 `attn_lightllm__llama3-8b__prefill` line 1300's
+  `ldmatrix…x1`, its or at line 377; a `prmt` (89 rows, 43 files); a
+  64-bit signed shift by 63 of a form with variables, the sign word of
+  LLVM's signed division, "shift by 63 is out of range" (b200
+  `sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1` line 1055; 59 rows,
+  28 files); `min.relu` and `max.relu` (56 statements, 4 files).
 - **Offsets past 2^62 bytes are not counted**: an access whose lane
   offsets over the block, or whose loop's shifts over its trips, reach
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
@@ -558,6 +593,19 @@ output_tallies` rewrites it.
   `exec <= 1/CTA` but reads `no thread` and `sectors/req 0`, where lane
   1, if elected, requests one (`micro-elect-lane.test`). The census has no election
   under a condition that varies by lane.
+- **An `elect.sync` in a block a CTA- or warp-uniform unknown selects
+  reads every lane as elected.** The lanes of a warp enter such a
+  block together and one is elected (PTX ISA §9.7.14.15), but
+  `elected()` takes each lane the block may hold as a leader, so the
+  statement's lanes read `lane *`, not a bound; its count is right.
+  b200 `attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cache`
+  under its record: line 449, `@%p113 mbarrier.inval.shared::cta.b64
+  [%r968]; // warp 0 × lane *`. In the Blackwell corpus 66,201
+  elect-guarded statements in 1,342 files read so (`tcgen05.mma`
+  39,272, `cp.async.bulk(.tensor)` 11,655, `tcgen05.commit` 7,592,
+  `mbarrier.init` and `.inval` 3,841 each): 9,565 print `lane *`, and
+  the rest print nothing, the block's text being the same. None has a
+  sectors or wavefronts number.
 
 ### Reported as unknowns
 
@@ -620,7 +668,11 @@ output_tallies` rewrites it.
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unrolled main loop and its remainder, LLVM's two-register counter and
-  its predicate-phi two-trip loop. Not recognised, reported as
+  its predicate-phi two-trip loop, and a latch branching on a `setp` in
+  a block of its loop that dominates it, as Triton's pipelined loops
+  do (`tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd`'s
+  `$L__BB0_8`: 31 trips, five of its blocks confirmed by its record).
+  Not recognised, reported as
   `loop: trips ?` and why: grid-stride loops without `--grid`, whose step is
   `%nctaid.x` ("induction step is not a constant"), data-dependent
   bounds, multi-exit loops, inner loops bounded by an
@@ -666,7 +718,17 @@ output_tallies` rewrites it.
   value an enclosing loop defines, 30 a loaded value lanes may see
   differently, 95 are grid-stride loops, 20 atomics, 18 multi-exit.
   Of the 96 loops whose step is not a constant (74 kernels), 83 have a
-  count with `--grid 4,4,4`.
+  count with `--grid 4,4,4`; the others step by a parameter, read with
+  it bound: `02395.ptx`'s `$L__BB0_3` (line 80), "induction step is not
+  a constant" under `--grid 4,4,4`, reads `max(⌈(param_10 −
+  %ctaid.x)/16⌉, 1)` with `--bind 13:s=16` as well. A latch that holds
+  no instruction is not read: the CFG starts a block at the statement
+  after a branch, so an untargeted DWARF label there (`@!%p12 bra
+  $L__BB0_18; $L__tmp28: $L__BB0_21:`) is a block of its own, the
+  loop's latch, and the exit is "not at the latch" (sol-study Gluon
+  `dense_ws_kernel`'s persistent loop, 3 files; without the label it
+  reads `trips max(⌈(⌈param_17/128⌉·⌈param_18/256⌉ − %ctaid.x)/148⌉,
+  0)` under `--grid 148,1,1`).
 - **Counters the induction variable search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
@@ -674,27 +736,48 @@ output_tallies` rewrites it.
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
   param_0) is no counter; its guard the same for every thread, it reads
   `[4·uniform(%r1@29) + param_0]`, and the loop's unique bytes are
-  unknown (`micro-guarded-step.test`).
+  unknown (`micro-guarded-step.test`). Nor is a stage counter that
+  wraps by `selp`, `add r1, r, 1; setp.gt.s32 p, r1, S−1; selp.b32 r,
+  0, r1, p`, the buffer index of TMA and `tcgen05` pipelines: b200
+  `blk_mx_128x256_s4w4.mx_block_scaled`'s `selp.b32 %r841, 0, %r146,
+  %p72` (line 488) gives its stores `[16384·uniform(%r841@488) +
+  global_smem + 131072]`; in the Blackwell corpus 4,369 such counters
+  in 1,252 files, 17,133 address rows. Nor one stepped through `cvt`
+  (`cvt.s64.s32`, then `cvt.u32.u64` and the `add`): census
+  `00057.ptx`'s `$L__BB0_2` (line 104) reads "is defined in an
+  enclosing loop: depends on %r18, carried around an enclosing loop",
+  6 census loops.
 - **A join's φ whose paths write one value through a loop counter is
   refused**, though both definitions and the join lie in one trip of
   the loop: `micro/join_same_value.ptx`'s `micro_join_counter`,
   128·i + %tid.x on both paths (words 0 to 255 on an RTX 4090), reads
   "depends on special register %tid.x", as census kernel `00376.ptx`'s
   four `st.global.v4.b32` of its source line 74 do.
-- **Instruction families.** 75 of the 232 rows in
+- **Instruction families.** 67 of the 232 rows in
   `docs/ptx-instruction-coverage.md` are `Unknown`: integer, sparse
-  and block-scaled `mma`; `wgmma`; `tcgen05`; bulk copies, their
-  completion and the tensor copies but `cp.async.bulk.tensor`;
-  textures and surfaces; `multimem`; video instructions. `tcgen05`
-  is in 12 of the B200 fixtures (`tests/fixtures/b200`),
-  `cp.async.bulk.commit_group` and `cp.async.bulk.wait_group` in four.
+  and block-scaled `mma`; `wgmma`; `tcgen05` but its allocation,
+  waits, fences and commit; bulk copies and the tensor copies but
+  `cp.async.bulk.tensor`; textures and surfaces; `multimem`; video
+  instructions. `tcgen05` is in 12 of the B200 fixtures
+  (`tests/fixtures/b200`).
 - **A tensor copy's bytes are unknown.** `cp.async.bulk.tensor` moves
-  the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8),
-  not the PTX: the bytes of both its sides are unknown in every total,
+  the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8):
+  the bytes of both its sides are unknown in every total,
   `bytes ? (not counted)` on its line, its global side reads `addr ?
-  (the tensor map holds the address)`, and a loop holding one in its
-  own blocks has no footprint (`micro/tensor_copies.ptx`,
-  `micro-tensor-copies.test`).
+  (the tensor map holds the address)`, its shared side has no
+  wavefronts and no reason, and a loop holding one in its own blocks
+  has no footprint and says nothing of it (`micro/tensor_copies.ptx`,
+  `micro-tensor-copies.test`; in the Blackwell corpus, `trap` entry,
+  78 loops with a numeric trip count in 69 files). A load's shared
+  bytes are in the PTX, as the transaction count of the
+  `mbarrier.arrive.expect_tx` on its barrier: a phase completes when
+  the copies' complete-tx, each "equal to amount of data copied in
+  bytes", meet it (§9.7.9.26.5.2, §9.7.14.16.6). b200
+  `blk_mx_128x256_s4w4.mx_block_scaled` line 202 expects 50,688 B on
+  `[%r14]`, which the four copies of lines 215–238 complete. Every one
+  of the corpus's 4,841 parsed `expect_tx` has an immediate count, and
+  20,000 of its 20,009 tensor loads follow a same-address `expect_tx`
+  that dominates them; a store (`.bulk_group`, 950) has none.
 - **Special registers PTX ISA §10 does not describe** — `%pm*`
   ("behavior is currently undefined"), `%envreg*` (driver-defined),
   `%globaltimer*` (target-specific), `%reserved_smem_offset_*` — read
@@ -704,11 +787,24 @@ output_tallies` rewrites it.
   pinned manual's Table 2 and `fabric`; a keyword a later ISA adds
   leaves its statement unparsed (`mnemonics_outside_the_isa_are_unparsed`;
   nvcc 13.4 already emits `.version 9.4`).
+- **Dynamic shared memory is not read from a record.** `--ncu` takes a
+  record's grid, block shape and integer parameters, not its `shared`
+  bytes, and no flag gives them, so a kernel declaring `.extern
+  .shared`, as every Triton kernel does, reads `shared memory 0 B/CTA
+  + dynamic`: 26 of the 34 B200 records hold a nonzero `shared`, from
+  128 B to `blk_mx_128x256_s4w4.mx_block_scaled`'s 202,800 B.
 - **Calls.** Module-scope `.func` declarations and definitions are
   discarded (`module_scope_functions_are_skipped`), so no callee's
   instructions are counted, and a kernel calling one does not
   round-trip (`micro/call_returns.ptx`: "Call to 'zero' requires call
-  prototype").
+  prototype"). A callee's work leaves the totals exact, with no `>=`
+  (`micro-call-returns.test`), and a `.func` body's lines carry no
+  note: in the Blackwell corpus 49,926 statements in 13 files
+  (sol-study's `deepdive/warpid/out/WS_NOINLINE.ptx` line 199, a
+  `tcgen05.mma`, prints nothing). A call's return value, `ld.param
+  [retval0]`, is one per thread, so a branch on it is an unknown
+  selector: 7,086 thread sets in 10 Triton concurrency-sanitizer builds
+  of sol-study's Gluon kernels are bounds so.
 - **In a kernel with a cycle of more than one entry**, the uniformity
   analysis takes every value defined on a cycle and read outside it as
   divergent, whatever the cycle's exits compare
@@ -721,6 +817,38 @@ output_tallies` rewrites it.
   marks every φ of a join block (`taintAndPushPhiNodes`,
   llvm/include/llvm/ADT/GenericUniformityImpl.h:949): the step counter
   of `two_latches_select_at_the_header` is divergent.
+- **`redux.sync`'s result is divergent.** PTX ISA §9.7.14.13 gives each
+  thread of the membermask the reduction, one value for a warp whose
+  mask is full, but the uniformity analysis has no arm for it, and
+  affine analysis reads it as "value defined by unsupported instruction
+  `redux`". The Blackwell corpus (`trap` entry) holds 6,676 in 500
+  files, 1,254 of them sm_100a's `.f32` forms; reading the result as
+  one value per warp turns 313 `addr ?` into addresses and removes 537
+  `<= warp` bounds, in 98 files.
+- **An `ld.param` at a register address is divergent.** PTX ISA
+  §5.1.6.1 lets a kernel parameter's address move into a register and
+  be read by `ld.param`, as FlagGems selects one of two parameters
+  (`mov.b32` of each, `selp`, `ld.param.b64 %rd, [%r]`), but the
+  uniformity analysis reads a parameter only at its name: census
+  `00996.ptx` line 71's `ld.global.b16` reads `addr ? (depends on a
+  value loaded from memory)`. 25 such loads in 8 census kernels;
+  reading them as one value for the CTA gives 23 rows an address.
+- **A value reading a register no statement writes is divergent, and
+  a φ a path leaves unwritten is refused.** LLVM leaves registers
+  undefined (`undef`, and `// implicit-def:` for one first written in a
+  loop's first trip); PTX ISA §5.1.1 gives a register no initial value.
+  The uniformity analysis takes a value with no definition as
+  divergent, the half `mov.b64 {%r, _}` takes of a pack whose other
+  half is undefined too, so a division by it is "by a non-constant
+  divisor" (60 such rows in 5 sol-study files, among them
+  `codegen_cmp/attn_extend/gluon_kernels/paged_g4`). Affine analysis
+  refuses a header φ whose
+  value on entry is undefined and names a thread-varying input instead
+  of the unwritten path: the 348 `ld.global.b32` of sol-study's 18
+  `rca_gemm` `blockfp8_tma.ptx` read `addr ? (depends on special
+  register %tid.x)`, each of the address's two terms read on its own.
+  338 files of the Blackwell corpus read a register no statement
+  writes.
 - **`setp`s not read as thread selectors.** A floating-point `setp`
   compares floats, not the traced integer forms, and `.f16x2` and
   `.bf16x2` each half on its own (PTX ISA §9.7.6.2, §9.7.7.2); an
@@ -789,7 +917,9 @@ output_tallies` rewrites it.
   selector.** A ladder whose rungs each branch both ways to the next
   doubles the steps per rung; past 32 the block's set is a bound
   (`a_ladder_past_the_reach_budget_is_an_unknown_selector`). The census
-  and fixtures take at most 17.
+  and fixtures take at most 17; sol-study's concurrency-sanitizer
+  builds take more (1,232 thread sets in 10 files), each of which also
+  reads a call's return value (**Calls.**).
 - **A `cp.async` whose ignore-src is not read counts cp-size on every
   thread that runs it, as a bound.**
   - Census (13,489 in 300 kernels, sm_100a, no bindings): 479 read
@@ -819,7 +949,48 @@ output_tallies` rewrites it.
 - **A refused φ names the obstacle on one of its source chains**: in
   b200 `tma_best` 34 access rows say only "depends on special register
   %ctaid.x" (8 in `bmm_kernel_persistent`), not that a join of two
-  values stopped the trace.
+  values stopped the trace. A value an `ldmatrix` loads, used as an
+  index, is named as "one of `ldmatrix…`'s vector destinations", not as
+  loaded (census `00428.ptx`; 248 rows in 4 kernels), and a trip count
+  refused for a value its own top-level loop defines says "is defined
+  in an enclosing loop" (census `00143.ptx` line 40; 63 loops in 39
+  files of the Blackwell corpus, `trap` entry).
+- **A total left open by an unclassified statement does not say which,
+  and every pipe and space is open.** One unclassified statement marks
+  every pipe's FLOPs and the global and shared bytes
+  (`micro-totals-annotate.test`). In the Blackwell corpus 1,258 `.entry`
+  lines read `atomic flops ?`, 1,245 of them in files with no `atom` or
+  `red`, 337 `sfu flops ?` with no SFU instruction, and 626 files with
+  no tensor copy, whose unclassified statements move no global bytes,
+  mark the global bytes.
+- **`(trips of <header>)` names one loop**, the first of a total's
+  unknown trip counts: census `01802.ptx` reads `global load ? B (trips
+  of $L__BB0_5)`, though its sibling loop `$L__BB0_2`, trips also
+  unknown, holds 15 global loads; about 1,460 of the Blackwell corpus's
+  3,901 such items, in 539 files.
+- **An unknown count of a known precision prints as two unknowns**,
+  `flops f32 >= N + ?`, and as none counted where it is the pipe's
+  only work: b200
+  `attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`
+  under its record reads `sfu flops f32 >= 262,144 + ?; cuda-core flops
+  ?` with no unclassified statement.
+- **A statement's own threads print only where their text differs
+  from its block's.** A guard narrowing a block whose set is a bound
+  prints nothing, both reading `<= warp … × lane …`: 2,098 statements
+  in 44 files of the Blackwell corpus, 1,806 of them elect-guarded. A
+  `cp.async`'s source
+  threads, those its ignore-src admits (PTX ISA §9.7.9.26.3.1), print
+  nowhere, though its sectors, bytes and footprint count them
+  (`micro-cp-async-ignore-src.test`): 35,587 copies in 959 files read
+  a source set other than their own, 34,765 of them a bound.
+- **An untargeted label after a branch is a block of no instructions
+  whose line carries a block's notes**: LLVM's DWARF `$L__tmpN`
+  (b200 `tma_best_Q64N64w8s3._stage1_tma` line 517, `$L__tmp2: // no
+  thread`), 1,888 lines in 643 files of the Blackwell corpus, 663 of
+  them with threads, conditions and counts; 9 are `ncu_corpus`'s
+  `unchecked … 0 of 0 with SASS` blocks.
+- **A `.local` access prints its address and no number or reason**
+  (133 rows in 15 files of the Blackwell corpus).
 - Per-thread totals of a warp-specialized kernel are `<=` the sum of
   its partitions, since a thread runs one of them: each block's
   annotation says which threads run it (`warp 0-3 × lane *`), and the
@@ -898,6 +1069,40 @@ output_tallies` rewrites it.
 - **Opaque kernel parameters are a parse error.** `.texref`,
   `.samplerref` and `.surfref` parameters (PTX ISA §11.2.1) are not
   fundamental types (`opaque_params_are_a_parse_error`).
+- **Cluster launches are a parse error, and the model has no
+  cluster.** `.explicitcluster` and `.reqnctapercluster` (PTX ISA
+  §11.7.1–2; `.maxclusterrank` and `.blocksareclusters` take the same
+  path) between a kernel's signature and its body stop the parse,
+  "expected '{' starting kernel body", and the file prints nothing:
+  158 files of the Blackwell corpus (`trap` entry), every Gluon 2-CTA
+  kernel of sol-study (`mla_decode_2cta_kernel`, the 2-CTA GEMMs),
+  holding every `cta_group::2` `tcgen05` and TMA form, `barrier.cluster`,
+  `mapa`, `ld.shared::cluster`, `clusterlaunchcontrol` and
+  `ld.param::entry` of the corpus. With the two lines deleted they
+  analyze, but no cluster shape is kept: `%cluster_ctarank` is a symbol
+  per CTA, so a block under `runs when %cluster_ctarank = 0` (5,903
+  notes in 143 of them) counts as a bound per launch, where a cluster
+  of n CTAs gives each rank to grid/n of them (§2.2.2, §10.16), and a
+  successful `clusterlaunchcontrol.try_cancel` (§9.7.14.18) leaves
+  CTAs of the grid unlaunched (sol-study's `gemm_g2clc.ptx`). No record
+  holds a cluster launch: `tools/ncu/launch.c` sets no cluster
+  dimension and `record_launches.py` keeps Triton's program grid, while
+  sol-study's reports hold 23 cluster launches of Gluon kernels with
+  PTX.
+- **Thread sets grow with the checks along a dominator chain, and a
+  file prints nothing until every kernel is done.** A block's set is
+  its immediate dominator's and its own condition, which every
+  consumer evaluates thread by thread, so a chain of checks whose
+  failing side does not rejoin (Triton's concurrency sanitizer: `@%p
+  bra` to `__assertfail; trap;`) costs time and memory quadratic in
+  their number: 29 sanitizer builds of sol-study's Gluon kernels
+  (20,036–44,815 statements; 24 behind the cluster parse error) take
+  up to a minute and 1.5 GB each, most of it evaluating thread sets
+  (the slowest run alone: 61 s), where no other Blackwell corpus file
+  takes 3 s. Bindings that differ
+  from `.reqntid` build a second set of thread sets for dead code, 40–50%
+  more memory on those kernels. The output is written once, after every
+  kernel, so a run stopped by a time or memory limit prints nothing.
 
 - Fixture corpus: nvcc output for one CUDA header ladder (k1, k2, k5,
   k11, k12, k14, mma_demo), Triton 3.8.0 (Gluon) output for five
@@ -918,7 +1123,11 @@ output_tallies` rewrites it.
   `.local` declaration is discarded (`Unknown symbol
   '__local_depot0'`, `'lbuf'`). k1's and k2's assemble to different
   SASS because `.pragma "nounroll";` is discarded, so ptxas unrolls
-  the loop it annotated. `micro/texture_outputs.ptx`,
+  the loop it annotated. `.pragma "used_bytes_mask"` (PTX ISA §12.2;
+  138 in 43 files of the Blackwell corpus) is discarded too: of 369
+  corpus files reassembled, 356 give identical SASS, and census
+  `03035.ptx`'s masked loads come back wider (916 `LDS.128` and 35
+  `LDS` from the original, 940 and 3 from the dump). `micro/texture_outputs.ptx`,
   `call_returns.ptx`, `unparsed_writes.ptx` and `vector_register.ptx`
   lose what the parser drops (above). These are allowlisted in
   `tests/roundtrip-allowlist.txt`. One lit test per fixture
@@ -971,8 +1180,18 @@ output_tallies` rewrites it.
   (`tools/ncu/launch.c`), so a branch on loaded data takes its
   zero-data side. A line of a loop that branches back on an mbarrier
   wait's result runs a timing-dependent number of times: such lines
-  are marked `timing_dependent` and not checked (the attention forward
-  records: 30 lines each).
+  are marked `timing_dependent` (18 in each Gluon attention forward
+  record, 238 in 12 B200 records). The comparison does not read the
+  mark; such a line goes unchecked where its count is not known, and
+  `tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd`'s `mbarrier.try_wait`
+  lines 1494, 2724 and 3365, predicted and measured 0, confirm their
+  blocks. A `tcgen05` statement or `mbarrier.init` that one elected
+  thread runs is uniform-datapath SASS (`UTCHMMA`, `UTCQMMA`, `UTCCP`,
+  `SYNCS.EXCH.64` after `VOTEU.ANY`), which Nsight Compute's
+  predicated-on thread count takes as the warp's 32 threads: 139 lines
+  of 9 B200 records measure 25–32 times their count
+  (`blk_mx_128x256_s4w4.mx_block_scaled` line 167: 9,216 predicted,
+  294,912 measured), and the records keep no warp-level count for them.
 - Kernels that ship only SASS have no PTX to read: 18 of the 149
   launches in sol-study's B200 reports (cuBLAS, cuDNN, CUTLASS and CuTe
   DSL, flashinfer's trtllm-gen attention, PyTorch's elementwise).
@@ -1132,10 +1351,15 @@ One line each, with the trigger that would start it.
   per-instruction issue scope, which the model lacks; sm_100 fixtures
   exist (`tests/fixtures/b200`), sm_90 ones do not.
   `blk_mx_128x256_s4w4.mx_block_scaled` counts 224 `tcgen05.mma` per
-  CTA and no FLOPs for them. A TMA copy's bytes need its descriptor's
-  shape, strides, box and swizzle: the B200 records keep `tensormap:128`
-  only (`record_launches.py`), and the reports give TMA instructions no
-  access size and 0 sectors.
+  CTA and no FLOPs for them, though an MMA's M and N are in its idesc
+  (PTX ISA §9.7.17.4.2 Table 45; K by `.kind`, Table 42), a `mov.b32`
+  of an immediate before each of the Blackwell corpus's 49,606 parsed
+  `tcgen05.mma` (56 through a copy of one). A TMA store's bytes and a
+  copy's global address need its descriptor's shape, strides, box and
+  swizzle (a load's shared bytes are in its barrier's `expect_tx`,
+  **A tensor copy's bytes are unknown.**): the B200 records keep
+  `tensormap:128` only (`record_launches.py`), and the reports give TMA
+  instructions no access size and 0 sectors.
 - Values loaded from memory as inputs: a loop bounded by one has no
   count (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`,
   the sequence length its `ld.global` at line 64 reads); a count in a

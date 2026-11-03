@@ -48,8 +48,23 @@ impl AffineAnalysis<'_> {
             continue_if_true = !continue_if_true;
         }
 
-        // The setp defining the branch predicate, inside the latch block.
-        let Some((setp_idx, setp)) = self.data.find_setp(latch, branch.0, pred.reg) else {
+        // The setp defining the branch predicate: in the latch block, or in
+        // a block of this loop, not of a nested one, that dominates it.
+        let dominating = || {
+            let Some(Value::Result { op, .. }) = self
+                .data
+                .ssa
+                .value_before(branch.0, Register::Named(pred.reg))
+            else {
+                return None;
+            };
+            let b = self.data.block_of(op);
+            let own = self.data.forest.block_loop[b.0 as usize] == Some(id);
+            (own && self.data.forest.doms.dominates(b, latch))
+                .then(|| self.data.find_setp(b, op + 1, pred.reg))?
+        };
+        let found = (self.data.find_setp(latch, branch.0, pred.reg)).or_else(dominating);
+        let Some((setp_idx, setp)) = found else {
             return self
                 .predicate_phi_trips(id, latch, branch.0, pred.reg, continue_if_true)
                 .unwrap_or_else(|| Err(self.predicate_reason(latch, branch.0, pred.reg)))

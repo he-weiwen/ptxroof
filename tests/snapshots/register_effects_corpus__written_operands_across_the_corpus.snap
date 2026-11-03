@@ -12,7 +12,7 @@ add.rn.f32	1	564
 add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
 add.s32	1	3841
-add.s64	1	2636
+add.s64	1	2637
 add.u32	1	319
 add.u64	1	4
 addc.u32	1	1
@@ -111,6 +111,8 @@ ld.param.s32	1	36
 ld.param.u16	1	1
 ld.param.u32	1	95
 ld.param.u64	1	277
+ld.param::entry.u32	1	1
+ld.param::entry.u64	1	1
 ld.shared.b16	1	26
 ld.shared.b32	1	45
 ld.shared.b64	1	4
@@ -160,7 +162,7 @@ mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	107
 mov.u16	1	294
-mov.u32	1	1357
+mov.u32	1	1358
 mov.u64	1	51
 mul.f32	1	1827
 mul.hi.s32	1	1
@@ -175,7 +177,7 @@ mul.rn.f32x2	1	773
 mul.wide.s16	1	1
 mul.wide.s32	1	162
 mul.wide.u16	1	9
-mul.wide.u32	1	270
+mul.wide.u32	1	271
 nanosleep.u32	0	13
 neg.bf16	1	12
 neg.bf16x2	1	16
@@ -195,7 +197,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	35
 rem.s64	1	10
 rem.u32	1	8
-ret	0	287
+ret	0	288
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	805
@@ -231,7 +233,7 @@ setp.lt.f32	1	62
 setp.lt.ftz.f32	1	1
 setp.lt.s32	1	437
 setp.lt.s64	1	118
-setp.lt.u32	1	309
+setp.lt.u32	1	310
 setp.lt.u64	1	8
 setp.ne.b16	1	1
 setp.ne.b32	1	91
@@ -256,7 +258,7 @@ st.global.b32	0	198
 st.global.b64	0	9
 st.global.f32	0	16
 st.global.u16	0	198
-st.global.u32	0	246
+st.global.u32	0	247
 st.global.u64	0	2
 st.global.u8	0	2
 st.global.v2.b32	0	46

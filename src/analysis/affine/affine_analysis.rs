@@ -57,7 +57,7 @@ use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
     Element, Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialScalar, SpecialVector,
-    Stmt,
+    Stmt, is_param_space,
 };
 use crate::ptx::literal::parse_int;
 use crate::ssa::Value;
@@ -216,7 +216,7 @@ impl<'a> AffineAnalysis<'a> {
                     continue;
                 }
                 let param = (module.modifiers(instr).iter())
-                    .any(|&m| module.interner.resolve(m) == "param");
+                    .any(|&m| is_param_space(module.interner.resolve(m)));
                 match instr.mnemonic {
                     Opcode::Ld if !param => found.push(UnknownReason::Load { def: op }),
                     Opcode::Atom => found.push(UnknownReason::Atomic),
@@ -1630,6 +1630,33 @@ mod tests {
         assert_eq!(trips("_|%p1", "%p1"), second);
     }
 
+    /// Triton's pipelined loops test the counter in the header, before
+    /// its step, and branch on that test at the latch: iteration k
+    /// compares k − 1 < 31, so 32 trips. The same test in a nested
+    /// loop's block is no test of this loop.
+    #[test]
+    fn a_latch_reads_the_setp_of_a_block_of_its_loop_that_dominates_it() {
+        let trips = |inner: &str| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "mov.u32 %r1, %tid.x;\nmov.u32 %r4, 0;\n$L__H:\n{inner}\
+                     setp.lt.u32 %p3, %r1, 16;\n@%p3 bra $L__T;\nmov.u32 %r5, %r4;\n\
+                     $L__T:\nadd.s32 %r4, %r4, 1;\n@%p1 bra $L__H;\nret;"
+                ),
+            );
+            trips_of(&src)
+                .into_iter()
+                .map(|(_, t)| t.map(|t| t.to_string()))
+                .collect::<Vec<_>>()
+        };
+        let header = "setp.lt.s32 %p1, %r4, 31;\n";
+        assert_eq!(trips(header), [Ok("32".to_owned())]);
+        let nested = "$L__I:\nsetp.lt.s32 %p1, %r4, 31;\n@%p1 bra $L__I;\n";
+        let why = "latch predicate is not defined in the latch block".to_owned();
+        assert!(trips(nested).contains(&Err(why)));
+    }
+
     /// Both low halves are 1.0 on the first iteration, so the loop runs
     /// once, not the six times an integer comparison would give.
     #[test]
@@ -2000,6 +2027,17 @@ mod tests {
         assert_eq!(
             trips_of(&src)[0].1.as_ref().unwrap().to_string(),
             "max(param_0 / 8 + param_0 mod 64, 1)"
+        );
+        // Triton's reversed program id, n + ~pid = n − pid − 1.
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r1, [k_param_0];\nmov.u32 %r2, %ctaid.x;\nnot.b32 %r5, %r2;\n\
+             add.s32 %r6, %r1, %r5;\nmov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+             setp.lt.s32 %p1, %r4, %r6;\n@%p1 bra $L__L;\nret;",
+        );
+        assert_eq!(
+            trips_of(&src)[0].1.as_ref().unwrap().to_string(),
+            "max(param_0 - %ctaid.x - 1, 1)"
         );
         // A step that is a loop-invariant register: the count is not a
         // constant multiple, so it is refused with that reason.

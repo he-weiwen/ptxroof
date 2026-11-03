@@ -5,11 +5,12 @@
 # Table 7): the address through it depends on a value loaded from
 # memory; it was read as a uniform value, `[uniform(%rd2@68) + param_0]`,
 # 1 sector, where thread t stores at param_0 + 4t. Neither callee's work
-# is in the totals.
+# is in the totals, nor the `.param` argument and return value the call
+# passes (PTX ISA §5.1.6.4): only the kernel parameter's load is.
 RUN: %ptxroof analyze %fixtures/micro/call_returns.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_call_returns( // block 32×1×1 | per CTA: global store 128 B; param load 256 B{{$}}
 ANN: {{^}}	call (%r2), zero, (%r1); // call (its callee not counted){{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (value defined by unsupported instruction `call`){{$}}
-ANN: {{^}}.visible .entry micro_call_param_returns( // block 32×1×1 | per CTA: global store 128 B; param load 512 B, store 128 B{{$}}
+ANN: {{^}}.visible .entry micro_call_param_returns( // block 32×1×1 | per CTA: global store 128 B; param load 256 B{{$}}
 ANN: {{^}}	call.uni (retval0), offset, (param0); // call (its callee not counted){{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (depends on a value loaded from memory){{$}}

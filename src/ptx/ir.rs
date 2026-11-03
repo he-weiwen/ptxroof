@@ -386,6 +386,12 @@ pub(crate) fn register_member(name: &str, prefix: &str, count: u32) -> Option<u3
     (i < count && name.len() == prefix.len() + i.to_string().len()).then_some(i)
 }
 
+/// A modifier naming the parameter state space: `.param` or its
+/// `::entry` and `::func` sub-qualifiers (PTX ISA §9.7.9.8, §9.7.9.11).
+pub(crate) fn is_param_space(modifier: &str) -> bool {
+    matches!(modifier, "param" | "param::entry" | "param::func")
+}
+
 impl Kernel {
     /// The type a `.reg` declaration gives register `reg`.
     pub fn register_type(&self, module: &Module, reg: Symbol) -> Option<FundamentalType> {

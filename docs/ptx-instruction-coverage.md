@@ -180,8 +180,8 @@ decision, not just an arm).
 | 9.7.3.8 | `div` | `Flop { Sfu, type, 1 × lanes }` | OK — SFU policy (misfit §D, decided): one flop per result on the `sfu` pipe, whatever the `.approx`/`.full`/`.rnd` form expands to in SASS. |
 | 9.7.3.9 | `abs` | `Flop` ×1 | OK — with the cross-check caveat: the planned NCU measured-flops formula (`2·ffma + fmul + fadd`) excludes it, so abs-heavy kernels will show a static-vs-measured gap. Static side is defensible; document when NCU import lands. |
 | 9.7.3.10 | `neg` | `Flop` ×1 | OK — same caveat as `abs`. |
-| 9.7.3.11 | `min` | `Flop` ×1 | OK — same caveat. |
-| 9.7.3.12 | `max` | `Flop` ×1 | OK — same caveat. |
+| 9.7.3.11 | `min` | `Flop` ×1 | OK — same caveat. The three-input `.f32` form (sm_100) performs two two-input minimums and counts 1, the per-instruction rule; ptxas emits one `FMNMX3` (535 statements in 7 files of the Blackwell corpus, PLAN.md `trap` entry). |
+| 9.7.3.12 | `max` | `Flop` ×1 | OK — same caveat. The three-input `.f32` form (sm_100) performs two two-input maximums and counts 1, the per-instruction rule; ptxas emits one `FMNMX3` (46,676 statements in 1,147 files of the Blackwell corpus, `quant…_per_token_group_quant_8bit` among the b200 fixtures). |
 | 9.7.3.13 | `rcp` | `Flop { Sfu, type, 1 × lanes }` | OK — SFU policy as `div` (§9.7.3.8). |
 | 9.7.3.14 | `rcp.approx.ftz.f64` | `Flop { Sfu, f64, 1 }` (same `rcp` arm) | OK. |
 | 9.7.3.15 | `sqrt` | `Flop { Sfu, type, 1 × lanes }` | OK — SFU policy as `div` (§9.7.3.8). |
@@ -262,10 +262,10 @@ requested.
 | 9.7.9.5 | `shfl` (deprecated) | `Communication` | OK — same arm as `shfl.sync`; zero DRAM bytes is the correct accounting for intra-warp exchange. |
 | 9.7.9.6 | `shfl.sync` | `Communication` | OK. |
 | 9.7.9.7 | `prmt` | `Integer` | OK. |
-| 9.7.9.8 | `ld` | `Memory { space, Load, width × v2/v4/v8 }` | OK — space from modifiers with `Generic` as its own honest bucket (`cvta`-provenance refinement is documented anti-scope until a fixture emits generic loads); `.shared::cta` folds into `Shared`, `.shared::cluster` distinct; `volatile`/cache-op/eviction modifiers transparent. The parser keeps an address's `.unified` (`micro/unified_load.ptx`). The uniformity analysis takes the loaded value from the address alone, not from the cache_policy `.L2::cache_hint` adds, which "is treated as a performance hint only" (§9.7.9.8; `a_load_does_not_read_its_cache_policy`). |
+| 9.7.9.8 | `ld` | `Memory { space, Load, width × v2/v4/v8 }` | OK — space from modifiers with `Generic` as its own honest bucket (`cvta`-provenance refinement is documented anti-scope until a fixture emits generic loads); `.shared::cta` folds into `Shared`, `.shared::cluster` distinct, `.param::entry` and `.param::func` fold into `Param`, and an `ld.param::entry` reads its kernel parameter as `ld.param` does (`micro/param_entry.ptx`); `volatile`/cache-op/eviction modifiers transparent. The parser keeps an address's `.unified` (`micro/unified_load.ptx`). The uniformity analysis takes the loaded value from the address alone, not from the cache_policy `.L2::cache_hint` adds, which "is treated as a performance hint only" (§9.7.9.8; `a_load_does_not_read_its_cache_policy`). |
 | 9.7.9.9 | `ld.global.nc` | `Memory { Global, Load, bytes }` (via the `ld` arm; verified) | OK. Its cache_policy is no input of the loaded value either (§9.7.9.9: "a performance hint only"). |
 | 9.7.9.10 | `ldu` | `Memory { Global, Load, bytes }` | OK. |
-| 9.7.9.11 | `st` | `Memory { space, Store, bytes }` | OK. |
+| 9.7.9.11 | `st` | `Memory { space, Store, bytes }` | OK. A kernel's `st.param`, and its `ld.param` of a `.param` variable that is not one of its parameters, pass a call's arguments and return value (§5.1.6.4) and are a `Move` (`micro/call_returns.ptx`). |
 | 9.7.9.12 | `st.async` | `Memory` store via the `st` arm (verified: `st.async.shared::cluster.b32` ⇒ `{SharedCluster, Store, 4}`) | OK for byte accounting. ⚠ model misfit (mild, §B) — the bytes land in a *remote* CTA's shared memory with mbarrier completion; per-thread attribution is still right, but a future cluster-traffic view would need the remote/local distinction the modifier already carries. No action until a cluster fixture exists. |
 | 9.7.9.13 | `multimem.st.async` | `Unknown` | OK (deferred, Tier 4) — ⚠ misfit §F: one store fans out to N GPUs' memory. |
 | 9.7.9.14 | `st.bulk` | `Memory { Shared, Store, bytes: None }` → unquantified counter (verified) | OK — the size is an operand, not a type modifier, so `UnquantifiedBytes` is the honest result. Recommend quantifying the immediate-operand case when the bulk-copy family lands (Tier 2). |
@@ -305,8 +305,8 @@ remain visible, counted `Unknown` work.
 | 9.7.9.26.5.2 | `cp.async.bulk.tensor` | `Memory`: an `UnquantifiedBytes` load from `.src` and store to `.dst`, global to shared::cta or to shared::cluster (`.multicast::cluster` included), or shared::cta to global; another pair of state spaces stays `Unknown` | OK — "an asynchronous copy operation of tensor data from the location in .src state space to the location in the .dst state space" (§9.7.9.26.5.2). `.dst` is the first state space named: the manual's own example `cp.async.bulk.tensor.3d.im2col.shared::cluster.global` and Triton put `.load_mode` before it. The bytes are the bounding box of the tensor map, "a 128-byte opaque object" that "describes the tensor properties and the access properties" (§5.5.8, §5.5.3.1), **permanently unknowable from the PTX text**: `UnquantifiedBytes` is the end state (misfit §C), unless a `--bind`-style flag supplies the map. The shared side's address is traced; the global side's reads `addr ? (the tensor map holds the address)`, and a loop holding one in its own blocks has no footprint. Pinned by `a_tensor_copy_moves_the_bytes_its_tensor_map_gives` and `micro/tensor_copies.ptx`: every `.dim`, `.load_mode`, completion mechanism, `.multicast::cluster`, `.cta_group` and `.L2::cache_hint` form, which ptxas 13.4 assembles to its UTMALDG or UTMASTG, and its `--dump-ast` to the same SASS (`tests/lit/roundtrip`); its annotated lines by `micro-tensor-copies.test`. Single-thread-issued, CTA-scale (§B): one op per issuing thread. |
 | 9.7.9.26.5.3 | `cp.reduce.async.bulk.tensor` | `Unknown` | OK (deferred, Tier 2) — same, plus misfit §A (reduction). |
 | 9.7.9.26.5.4 | `cp.async.bulk.prefetch.tensor` | `Unknown` | OK (deferred, Tier 2) — target `Ignore` per the prefetch policy. |
-| 9.7.9.26.6.1 | `cp.async.bulk.commit_group` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
-| 9.7.9.26.6.2 | `cp.async.bulk.wait_group` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
+| 9.7.9.26.6.1 | `cp.async.bulk.commit_group` | `Sync` | OK — moves no bytes. |
+| 9.7.9.26.6.2 | `cp.async.bulk.wait_group` | `Sync` | OK — moves no bytes. |
 | 9.7.9.27 | `tensormap.replace` | `Unknown` | Gap (harmless) — edits a tensor-map descriptor in memory; negligible traffic. Recommend `Ignore` with a comment, or a small fixed `Memory` write — decide when TMA lands (Tier 3). |
 
 ## §9.7.10 Fabric Instructions
@@ -372,7 +372,7 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | 9.7.14.10 | `vote.sync` | `Communication` | OK. |
 | 9.7.14.11 | `match.sync` | `Communication` | OK for the plain form (verified). **Wart**: `match.all.sync` with the optional `d|p` destination hits the parser gap (verified `Unparsed`) — fix with the shared `d|p` operand form (Tier 2 rider). |
 | 9.7.14.12 | `activemask` | `Communication` | OK. |
-| 9.7.14.13 | `redux.sync` | `Communication` | OK, with a flag: ⚠ misfit §A (mild) — it also performs the reduction arithmetic (integer; `f32` min/max/add on the newest targets). Counted as communication, not as flops: an integer reduction has no roofline home and the f32 form has no fixture. |
+| 9.7.14.13 | `redux.sync` | `Communication` | OK, with a flag: ⚠ misfit §A (mild) — it also performs the reduction arithmetic (integer; `.f32` min/max, sm_100a). Counted as communication, not as flops: an integer reduction has no roofline home, and an `.f32` one is 31 maximums per 32 values, no whole number per thread (b200 `quant…_per_token_group_quant_8bit` line 97, `redux.sync.max.f32`; 1,254 `.f32` statements in 294 files of the Blackwell corpus). |
 | 9.7.14.14 | `griddepcontrol` | `Ignore` | OK — defensible; arguably `Sync` (it orders dependent grids), but nothing downstream distinguishes them. Cosmetic; keep. |
 | 9.7.14.15 | `elect.sync` | `Communication` (the `d|p` destination parses since the `|` operand change) | OK — warp-collective leader election. |
 | 9.7.14.16.12 | `mbarrier.init` | `Sync` (via `mbarrier`) | OK — technically writes 8 bytes of shared memory to initialize the object; negligible by construction, `Sync` is right. |
@@ -423,8 +423,8 @@ and CUTLASS emit these on H100).
 
 ## §9.7.17 TensorCore 5th Generation Family Instructions
 
-All `Unknown` today via the `tcgen05` mnemonic. Tier 2. Two
-family-wide misfits:
+Allocation, waits, fences and `commit` are `Sync`; the rest is
+`Unknown` via the `tcgen05` mnemonic. Tier 2. Two family-wide misfits:
 **tensor memory** is a fifth memory space the `Space` enum doesn't
 have (§B/§C), and most operations are issued by a *single thread* on
 behalf of a CTA or CTA pair (§B) — per-thread multiplication would be
@@ -432,20 +432,20 @@ wildly wrong.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
-| 9.7.17.7.1 | `tcgen05.alloc` | `Unknown` | OK (deferred, Tier 2) — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the `.entry` line beside `shared memory`, not an op class. Target `Sync` for the instruction itself. |
-| 9.7.17.7.1 | `tcgen05.dealloc` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
-| 9.7.17.7.1 | `tcgen05.relinquish_alloc_permit` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
+| 9.7.17.7.1 | `tcgen05.alloc` | `Sync` | OK — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the `.entry` line beside `shared memory`, not an op class. Its 4-byte write of the address to `[dst]` is not counted. |
+| 9.7.17.7.1 | `tcgen05.dealloc` | `Sync` | OK — moves no bytes. |
+| 9.7.17.7.1 | `tcgen05.relinquish_alloc_permit` | `Sync` | OK — moves no bytes. |
 | 9.7.17.8.3 | `tcgen05.ld` | `Unknown` | OK (deferred, Tier 2) — ⚠ misfit §B: tensor-memory→register load, warp-collective; needs the new space and PerWarp scope. |
 | 9.7.17.8.4 | `tcgen05.st` | `Unknown` | OK (deferred, Tier 2) — same, store side. |
-| 9.7.17.8.5 | `tcgen05.wait` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
+| 9.7.17.8.5 | `tcgen05.wait` | `Sync` | OK — moves no bytes. |
 | 9.7.17.9.2 | `tcgen05.cp` | `Unknown` | OK (deferred, Tier 2) — ⚠ misfit §B+§C: single-thread-issued shared→tensor-memory copy, and the optional decompression modes (4-bit/6-bit → 8-bit) make bytes-read ≠ bytes-written; pick a side per space and document. |
 | 9.7.17.9.3 | `tcgen05.shift` | `Unknown` | OK (deferred, Tier 2) — tensor-memory row shift; data movement within the new space. |
 | 9.7.17.10.9.1 | `tcgen05.mma` | `Unknown` | OK (deferred, Tier 2) — ⚠⚠ misfit §B at its most extreme: a single thread issues an MMA executed for a CTA (or CTA *pair* with `cta_group::2`); no current scope expresses "per-CTA-pair, issued once". Also §E (descriptor-sourced smem/tmem operands) and §D (block-scaled `mxf4`/`mxf8f6f4` kinds). The flop math itself is still 2·M·N·K — the model question is *whose* flops. |
 | 9.7.17.10.9.2 | `tcgen05.mma.sp` | `Unknown` | OK (deferred, Tier 2) — plus the sparse convention (§D). |
 | 9.7.17.10.9.3 | `tcgen05.mma.ws` | `Unknown` | OK (deferred, Tier 2) — weight-stationary variant; same misfits. |
 | 9.7.17.10.9.4 | `tcgen05.mma.ws.sp` | `Unknown` | OK (deferred, Tier 2) — same. |
-| 9.7.17.11.1 | `tcgen05.fence` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
-| 9.7.17.12.1 | `tcgen05.commit` | `Unknown` | OK (deferred, Tier 2) — target `Sync`. |
+| 9.7.17.11.1 | `tcgen05.fence` | `Sync` | OK — moves no bytes. |
+| 9.7.17.12.1 | `tcgen05.commit` | `Sync` | OK — makes an mbarrier track prior tcgen05 operations; moves no bytes. |
 
 ## §9.7.18 Stack Manipulation Instructions
 
@@ -616,7 +616,7 @@ flops or bytes. In descending order of importance:
    Originally: **Collateral `Unknown`s from coarse arms**: integer `div` (caught
    by the SFU reservation); `addc`/`subc`/`madc` (miss the arm their
    `.cc` partners hit). One line each.
-3. ~~**Missing one-line arms for mnemonics real producers emit**~~ Fixed (all of the Tier 3 list below has arms).
+3. ~~**Missing one-line arms for mnemonics real producers emit**~~ Fixed but for `tensormap.*` and `clusterlaunchcontrol.*`, still in `classify`'s `Unknown` arm (406 and 6 statements in the Blackwell corpus).
    Originally: **Missing one-line arms for mnemonics real producers emit**:
    `elect.sync` (also needs the `d|p` parser form), `shf`,
    `setmaxnreg` — all three arrive with any Hopper corpus — plus the
@@ -659,15 +659,17 @@ scope-axis extension (misfit §B), which should land once, first, not
 per-family**.
 
 - `wgmma.mma_async` (+ `.sp`), with `wgmma.fence` / `commit_group` / `wait_group` as `Sync`
-- TMA: `cp.async.bulk`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`), with `cp.async.bulk.commit_group` / `wait_group` as `Sync`; tensor variants land as honest unquantified bytes (misfit §C), as `cp.async.bulk.tensor` has
+- TMA: `cp.async.bulk`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`) (`cp.async.bulk.commit_group` / `wait_group` have landed as `Sync`); tensor variants land as honest unquantified bytes (misfit §C), as `cp.async.bulk.tensor` has
 - Hopper warp-specialization boilerplate is already classified: `elect.sync` (`Communication`, with the `d|p` operand form in the parser), `setmaxnreg` (`Ignore`)
 - `red.async`, `movmatrix`, `mma.sp` (sparse policy, misfit §D), `st.async` remote-attribution review
-- `tcgen05.*` (all 14 entries) — tensor memory as a new `Space`, single-thread-issue scope
+- `tcgen05.*` (the 8 entries but allocation, wait, fence and commit) — tensor memory as a new `Space`, single-thread-issue scope
 
 ### Tier 3 — cheap correctness sweep — landed; historical priorities
 
-These arms and the dead-arm cleanup have landed. The list records the
-original sweep rather than outstanding work.
+These arms and the dead-arm cleanup have landed, but for
+`tensormap.replace`, `tensormap.cp_fenceproxy` and
+`clusterlaunchcontrol.*`, which `classify` still reads as `Unknown`.
+The list records the original sweep.
 
 - To `Integer`: integer `div`, `addc`, `subc`, `madc`, `shf` (likeliest to appear first — nvcc funnel shifts), `cnot`, `fns`, `clmad`, `getctarank`
 - To `Predicate`: `istypep`

@@ -27,7 +27,9 @@
 
 use super::measurement::{ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision, Space};
 
-use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId};
+use crate::ptx::ir::{
+    FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, is_param_space,
+};
 use crate::ptx::literal::parse_int;
 
 /// Exclusive instruction category. Work quantities live in contributions.
@@ -200,6 +202,28 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
         Prefetch | Prefetchu | Discard | Applypriority | Griddepcontrol | Createpolicy
         | Nanosleep | Pmevent | Setmaxnreg => {
             ClassifiedInstruction::simple(InstructionCategory::Ignore)
+        }
+
+        // PTX ISA §9.7.17.7.1, §9.7.17.8.5, §9.7.17.11.1, §9.7.17.12.1:
+        // tensor-memory allocation, waits, fences and the commit to an
+        // mbarrier; `alloc`'s write of the address to shared memory is
+        // not counted.
+        Tcgen05
+            if matches!(
+                mods.first(),
+                Some(
+                    &("alloc"
+                        | "dealloc"
+                        | "relinquish_alloc_permit"
+                        | "wait::ld"
+                        | "wait::st"
+                        | "fence::before_thread_sync"
+                        | "fence::after_thread_sync"
+                        | "commit")
+                )
+            ) =>
+        {
+            ClassifiedInstruction::simple(InstructionCategory::Sync)
         }
 
         // -- unsupported instruction families ------------------------------
@@ -426,19 +450,22 @@ fn matrix_fragments(mods: &[&str], direction: Direction) -> ClassifiedInstructio
 /// in the shared state space"; `cp-size` is an immediate, and the
 /// optional immediate `src-size` is the number of bytes actually
 /// read ("remaining bytes in destination dst are filled with
-/// zeros"). The group bookkeeping instructions (§9.7.9.26.3.2–3) and
-/// the mbarrier arrive are synchronization; the bulk forms and the
-/// tensor ones but `cp.async.bulk.tensor` (§9.7.9.26.4, §9.7.9.26.5.3–4)
-/// are not modeled.
+/// zeros"). The group bookkeeping instructions (§9.7.9.26.3.2–3, and
+/// the bulk ones of §9.7.9.26.6) and the mbarrier arrive are
+/// synchronization; the bulk forms and the tensor ones but
+/// `cp.async.bulk.tensor` (§9.7.9.26.4, §9.7.9.26.5.3–4) are not modeled.
 fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     let has = |name: &str| mods.contains(&name);
     if mods.starts_with(&["async", "bulk", "tensor"]) {
         return tensor_copy(mods);
     }
+    if has("async") && (has("commit_group") || has("wait_group")) {
+        return ClassifiedInstruction::simple(InstructionCategory::Sync);
+    }
     if !has("async") || has("bulk") || has("reduce") {
         return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     }
-    if has("commit_group") || has("wait_group") || has("wait_all") || has("mbarrier") {
+    if has("wait_all") || has("mbarrier") {
         return ClassifiedInstruction::simple(InstructionCategory::Sync);
     }
     if !(has("shared") || has("shared::cta")) || !has("global") {
@@ -481,8 +508,12 @@ fn tensor_copy(mods: &[&str]) -> ClassifiedInstruction {
 }
 
 /// `classify`, with a `cp.async` read whose src-size is a register, not
-/// an ignore-src predicate, marked as at most its cp-size.
+/// an ignore-src predicate, marked as at most its cp-size, and the
+/// device-function parameters a call passes a move.
 pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> ClassifiedInstruction {
+    if device_function_param(module, kernel, instr) {
+        return ClassifiedInstruction::non_flop(ArithKind::Move);
+    }
     let mut c = classify(module, instr);
     if let Some(op) = cp_async_size_operand(module, instr)
         && let Operand::Register(r) = module.operand(op)
@@ -499,6 +530,25 @@ pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> Classifie
         }
     }
     c
+}
+
+/// A kernel's `st.param` or `ld.param` of a `.param` variable not among
+/// its parameters: kernel parameters are read-only (PTX ISA §5.1.6.1), a
+/// `.param` store in a kernel is `.param::func` (§9.7.9.11), and the
+/// variables a call sequence declares hold its arguments and return
+/// value (§5.1.6.4).
+fn device_function_param(module: &Module, kernel: &Kernel, instr: &Instr) -> bool {
+    let param =
+        (module.modifiers(instr).iter()).any(|&m| is_param_space(module.interner.resolve(m)));
+    match instr.mnemonic {
+        Opcode::St => param,
+        Opcode::Ld if param => module.operand_ids(instr.operands).iter().any(|&o| {
+            matches!(module.operand(o), Operand::Memory { base, .. }
+                if matches!(module.operand(*base), Operand::SymbolRef(s)
+                    if !kernel.params.iter().any(|p| p.name == *s)))
+        }),
+        _ => false,
+    }
 }
 
 /// A `cp.async`'s src-size or ignore-src operand, the one after cp-size;
@@ -544,7 +594,7 @@ fn space_of(mods: &[&str]) -> Space {
             "shared::cluster" => return Space::SharedCluster,
             "local" => return Space::Local,
             "const" => return Space::Const,
-            "param" => return Space::Param,
+            m if is_param_space(m) => return Space::Param,
             _ => {}
         }
     }
@@ -741,6 +791,40 @@ mod tests {
         }
     }
 
+    /// The forms the B200 corpus emits (`tests/fixtures/b200`).
+    #[test]
+    fn tcgen05_bookkeeping_is_synchronization_and_its_work_is_unknown() {
+        for text in [
+            "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%r1], 512;",
+            "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %r1, 512;",
+            "tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;",
+            "tcgen05.wait::ld.sync.aligned;",
+            "tcgen05.wait::st.sync.aligned;",
+            "tcgen05.fence::before_thread_sync;",
+            "tcgen05.fence::after_thread_sync;",
+            "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.b64 [%r1];",
+        ] {
+            assert_eq!(
+                class_of(text),
+                ClassifiedInstruction::simple(InstructionCategory::Sync),
+                "{text}"
+            );
+        }
+        for text in [
+            "tcgen05.mma.cta_group::1.kind::f16 [%r1], %rd1, %rd2, %r2, %p1;",
+            "tcgen05.ld.sync.aligned.32x32b.x2.b32 {%r1, %r2}, [%r3];",
+            "tcgen05.st.sync.aligned.32x32b.x2.b32 [%r3], {%r1, %r2};",
+            "tcgen05.cp.cta_group::1.warpx4.32x128b [%r1], %rd1;",
+            "tcgen05.shift.cta_group::1.down [%r1];",
+        ] {
+            assert_eq!(
+                class_of(text).category,
+                InstructionCategory::Unknown,
+                "{text}"
+            );
+        }
+    }
+
     #[test]
     fn generic_and_cluster_spaces_are_distinct_buckets() {
         assert_eq!(
@@ -754,6 +838,14 @@ mod tests {
         assert_eq!(
             class_of("ld.shared::cta.b32 %r1, [%r2];"),
             ClassifiedInstruction::memory(Space::Shared, Direction::Load, Some(4))
+        );
+        assert_eq!(
+            class_of("ld.param::entry.b64 %rd1, [k_param_0];"),
+            ClassifiedInstruction::memory(Space::Param, Direction::Load, Some(8))
+        );
+        assert_eq!(
+            class_of("st.param::func.b32 [param0], %r1;"),
+            ClassifiedInstruction::memory(Space::Param, Direction::Store, Some(4))
         );
     }
 
@@ -1011,6 +1103,9 @@ mod tests {
             "cp.async.wait_group 1;",
             "cp.async.wait_all;",
             "cp.async.mbarrier.arrive.shared.b64 [%r1];",
+            "cp.async.bulk.commit_group;",
+            "cp.async.bulk.wait_group 2;",
+            "cp.async.bulk.wait_group.read 0;",
         ] {
             assert_eq!(
                 class_of(text),
