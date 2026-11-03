@@ -4,7 +4,7 @@
 # uniform variable. Each kernel's store, past its `.entry` line, prints
 # its address and its sectors per warp request.
 RUN: %ptxroof analyze %fixtures/micro/and_sign_remainder.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_and_sign_b16( // block 32×1×1 | per CTA: global store 128 B; param load 320 B{{$}}
+ANN: {{^}}.visible .entry micro_and_sign_b16( // block 32×1×1 | pointer params assumed 32 B aligned | per CTA: global store 128 B; param load 320 B{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [param_0 + 4·(param_1 mod 32768)] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}.visible .entry micro_and_sign_wide_runs( // block 32×1×1 | per CTA: global store 128 B; param load 512 B{{$}}
 ANN: {{^}}	st.global.u32 	[%rd5], %r1; // global store [4·uniform(%rd3@51) + param_0] sectors/req 1 (ideal 1){{$}}

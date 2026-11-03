@@ -4,5 +4,5 @@
 # the store runs on 1023 in 32 warps, not the 511 an i64 reading left
 # positive, and the CTA stores 4092 B.
 RUN: %ptxroof analyze %fixtures/micro/setp_u64_wide.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_setp_u64_wide( // block 1024×1×1 | per CTA: global store 4,092 B; param load 8,192 B{{$}}
-ANN: {{^}}	@%p1 st.global.u32 	[%rd5], %r1; // warp 0 × lane 1-31 ∪ warp 1-31 × lane * | exec 1,023/CTA | global store [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
+ANN: {{^}}.visible .entry micro_setp_u64_wide( // block 1024×1×1 | pointer params assumed 32 B aligned | per CTA: global store 4,092 B; param load 8,192 B{{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd5], %r1; // warp 0 × lane 1-31 ∪ warp 1-31 × lane * | exec 1,023/CTA | global store [4·%tid.x + param_0] sectors/req 4 (ideal 4){{$}}

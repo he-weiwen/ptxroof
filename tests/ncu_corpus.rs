@@ -57,6 +57,7 @@ fn measured_verdicts_across_the_records() {
             launch: Some(record.block),
             grid: Some(record.grid),
             ncu: Some(record),
+            ..Default::default()
         };
         let Comparison { blocks, launch } = (compare(&src, &opts).expect("record analyzes"))
             .expect("the record's kernel, its block shape");

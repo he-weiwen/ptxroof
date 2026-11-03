@@ -7,7 +7,7 @@
 # runs on at most the CTA's 64 threads: its count, its sectors per
 # request and the CTA's global store bytes are bounds.
 RUN: %ptxroof analyze %fixtures/micro/setp_wraps.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_setp_wraps_signed( // block 64×1×1 | per CTA: global store <= 256 B; param load 512 B{{$}}
-ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
-ANN: {{^}}.visible .entry micro_setp_wraps_eq( // block 64×1×1 | per CTA: global store <= 256 B; param load 512 B{{$}}
-ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4){{$}}
+ANN: {{^}}.visible .entry micro_setp_wraps_signed( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store <= 256 B; param load 512 B{{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 4 (ideal <= 4){{$}}
+ANN: {{^}}.visible .entry micro_setp_wraps_eq( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store <= 256 B; param load 512 B{{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 4 (ideal <= 4){{$}}

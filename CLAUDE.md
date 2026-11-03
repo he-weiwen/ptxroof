@@ -19,6 +19,11 @@ commit, fold into it whatever the commit changes in either:
   the pinned PTX ISA version changes, re-derive the instruction
   inventory from the manual before editing rows.
 
+PLAN.md's output tallies table is recomputed by
+`tests/output_tallies.rs`, which fails when a commit moves it; rewrite
+it in that commit with `PTXROOF_WRITE_PLAN=1 cargo test --test
+output_tallies`.
+
 The same-commit rule is what keeps both files trustworthy.
 
 ## Propose a fix in one shape

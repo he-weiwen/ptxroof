@@ -9,6 +9,6 @@ RUN: %ptxroof analyze %fixtures/micro/shared_scalar.ptx | FileCheck --check-pref
 AST-NOT: .extern
 AST: .shared .align 8 .b64 total;
 AST: .shared .align 8 .b64 count;
-ANN: {{^}}.visible .entry micro_shared_scalar( // block 32×1×1 | shared memory 16 B/CTA | per CTA: global store 256 B; shared load 256 B, store 512 B; param load 256 B{{$}}
+ANN: {{^}}.visible .entry micro_shared_scalar( // block 32×1×1 | pointer params assumed 32 B aligned | shared memory 16 B/CTA | per CTA: global store 256 B; shared load 256 B, store 512 B; param load 256 B{{$}}
 ANN: {{^}}	st.shared.u64 	[count], %rd3; // shared store [count] wavefronts/req 2 (ideal 2){{$}}
 ANN: {{^}}	ld.shared.u64 	%rd4, [count]; // shared load [count] wavefronts/req 1 (ideal 1){{$}}

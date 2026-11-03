@@ -46,6 +46,10 @@ enum Command {
         /// Launch grid dimensions `x,y,z`, in CTAs
         #[arg(long)]
         grid: Option<String>,
+        /// The alignment, in bytes, taken for the memory a pointer
+        /// parameter points to where its `.ptr .align` declares less
+        #[arg(long, default_value_t = ptxroof::report::PTR_ALIGN)]
+        ptr_align: u32,
         /// A launch recorded by tools/ncu/measure.py: its grid, block shape
         /// and integer parameters stand for --grid, --launch and --bind
         #[arg(long, conflicts_with_all = ["bind", "launch", "grid"])]
@@ -73,6 +77,7 @@ fn run() -> anyhow::Result<ExitCode> {
         bind,
         launch,
         grid,
+        ptr_align,
         ncu,
         dump_ast,
     } = cli.command;
@@ -102,12 +107,14 @@ fn run() -> anyhow::Result<ExitCode> {
         !grid.is_some_and(|g| g.contains(&0)),
         "--grid: every dimension is at least 1"
     );
+    anyhow::ensure!(ptr_align.is_power_of_two(), "--ptr-align: a power of two");
     let ncu = ncu.map(|path| read_record(&path)).transpose()?;
     let opts = ptxroof::report::AnalyzeOptions {
         bindings: ncu.as_ref().map_or(bindings, |r| r.bindings()),
         launch: ncu.as_ref().map(|r| r.block).or(launch),
         grid: ncu.as_ref().map(|r| r.grid).or(grid),
         ncu,
+        ptr_align,
     };
     let text = ptxroof::report::annotate::annotate(&source, &opts)
         .with_context(|| format!("analyzing {}", input.display()))?;

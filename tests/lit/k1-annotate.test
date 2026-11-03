@@ -4,5 +4,5 @@
 # on its last row and column of CTAs run fewer. Over the launch, the
 # loop's 250 trips run on the matrix's 10^6 threads.
 RUN: %ptxroof analyze --bind param_0=1000 --bind param_1=1000 --bind param_2=1000 --launch 16,16,1 --grid 63,63,1 %fixtures/k1/k1.sm_89.ptx | FileCheck "%s"
-CHECK: {{^}}$L__BB0_4: // loop: trips 250 | global per CTA: requested <= 1,024,000 B, unique <= 64,000 B, sectors <= 896,000–1,024,000 B | warp * × lane * in 3844/3969 CTAs, other 125 CTAs differ | exec 250,000,000/launch{{$}}
+CHECK: {{^}}$L__BB0_4: // loop: trips 250 | global per CTA: requested <= 1,024,000 B, unique <= 64,000 B, sectors <= 896,000 B | warp * × lane * in 3844/3969 CTAs, other 125 CTAs differ | exec 250,000,000/launch{{$}}
 CHECK: {{^}}$L__BB0_9: // warp * × lane * | exec 1,016,064/launch{{$}}

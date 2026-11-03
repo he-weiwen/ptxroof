@@ -1,8 +1,8 @@
 # `addc` reads the carry flag `add.cc` wrote from two parameters, so the
 # branch on it is uniform: the block past it runs on every lane of the
-# CTA when `%r5 = 0`, and its store's warp requests touch 4–5 sectors.
+# CTA when `%r5 = 0`, and its store's warp requests touch 4 sectors.
 # It was a bound, `warp: <= 5 sectors`, while `addc` was taken to differ
 # per thread.
 RUN: %ptxroof analyze %fixtures/micro/carry_uniform.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	mul.wide.u32 	%rd2, %r3, 4; // [<block 1>] warp * × lane * | runs when %r5@28 = 0 (CTA-uniform, branch at line 30) | exec <= 64/CTA{{$}}
-ANN: {{^}}	st.global.u32 	[%rd3], %r3; // global store [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
+ANN: {{^}}	st.global.u32 	[%rd3], %r3; // global store [4·%tid.x + param_0] sectors/req 4 (ideal 4){{$}}

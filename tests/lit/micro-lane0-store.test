@@ -4,6 +4,6 @@
 # 0 of each CTA stores 4 B, 2^61 B in all. micro_lane0_copy's thread 0
 # loads and stores 8 B: 2^62 B each way.
 RUN: %ptxroof analyze %fixtures/micro/lane0_store.ptx --grid 536870912,32768,32768 | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_lane0_store( // grid 536870912×32768×32768 | block 32×1×1 | per launch: global store 2,305,843,009,213,693,952 B; param load ? B{{$}}
+ANN: {{^}}.visible .entry micro_lane0_store( // grid 536870912×32768×32768 | block 32×1×1 | pointer params assumed 32 B aligned | per launch: global store 2,305,843,009,213,693,952 B; param load ? B{{$}}
 ANN: {{^}}	ld.param.u64 	%rd1, [micro_lane0_store_param_0]; // [<block 0>] warp * × lane * | exec ?{{$}}
-ANN: {{^}}.visible .entry micro_lane0_copy( // grid 536870912×32768×32768 | block 32×1×1 | per launch: global load 4,611,686,018,427,387,904 B, store 4,611,686,018,427,387,904 B; param load ? B{{$}}
+ANN: {{^}}.visible .entry micro_lane0_copy( // grid 536870912×32768×32768 | block 32×1×1 | pointer params assumed 32 B aligned | per launch: global load 4,611,686,018,427,387,904 B, store 4,611,686,018,427,387,904 B; param load ? B{{$}}

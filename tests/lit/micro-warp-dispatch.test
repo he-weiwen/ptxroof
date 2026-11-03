@@ -2,8 +2,8 @@
 # ⌊%tid.x/32⌋ + state is 0. A load at an address a warp's lanes read
 # alike gives them one value, so the block runs under a warp-uniform
 # condition, on all lanes of a warp or on none, of warps 4 to 7: at
-# most 128 threads, but the store's sectors per warp request are a
-# range, not a bound.
+# most 128 threads, but the store's sectors per warp request are
+# exact, not a bound.
 RUN: %ptxroof analyze %fixtures/micro/warp_dispatch.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	mul.wide.u32 	%rd3, %r1, 4; // [<block 2>] warp 4-7 × lane * | runs when %rs1@35 = 0 (warp-uniform, branch at line 37) | exec <= 128/CTA{{$}}
-ANN: {{^}}	st.global.u32 	[%rd4], %r1; // global store [4·%tid.x + param_0] sectors/req 4–5 (ideal 4){{$}}
+ANN: {{^}}	st.global.u32 	[%rd4], %r1; // global store [4·%tid.x + param_0] sectors/req 4 (ideal 4){{$}}

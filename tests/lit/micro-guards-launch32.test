@@ -3,6 +3,6 @@
 # guard selects no thread, so its 16-byte store runs on none and
 # contributes 0 B, of a CTA's 260 B loaded and at most 706 B stored.
 RUN: %ptxroof analyze %fixtures/micro/guards.ptx --launch 32,1,1 | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_guards( // block 32×1×1 | per CTA: global load 260 B, store <= 706 B; param load 512 B{{$}}
+ANN: {{^}}.visible .entry micro_guards( // block 32×1×1 | pointer params assumed 32 B aligned | per CTA: global load 260 B, store <= 706 B; param load 512 B{{$}}
 ANN: {{^}}	@%p5 st.global.v4.f32 	[%rd4+16], {%f1, %f1, %f1, %f1}; // no thread | exec 0/CTA | global store [param_1 + 16] sectors/req 0 (ideal 0){{$}}
 ANN: {{^}}	st.global.b64 	[%rd4+48], %rd5; // [<block 1>] warp * × lane 1-31 | exec 31/CTA | global store [param_1 + 48] sectors/req 1 (ideal 1){{$}}

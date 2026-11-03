@@ -14,4 +14,4 @@ ANN: {{^}}	@%p1 cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complet
 ANN: {{^}}	@%p1 cp.async.bulk.tensor.1d.global.shared::cta.bulk_group [%rd1, {%r2}], [%r3]; // warp 0 × lane 0 | exec 1/CTA | bytes ? (not counted) | global store addr ? (the tensor map holds the address) | shared load [smem]{{$}}
 ANN: {{^}}	@%p1 cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group.L2::cache_hint [%rd1, {%r2, %r1, %r1, %r1, %r1}], [%r3], %rd3; // warp 0 × lane 0 | exec 1/CTA | bytes ? (not counted) | global store addr ? (the tensor map holds the address) | shared load [smem]{{$}}
 ANN: {{^}}$L__BB3_1: // loop: trips 4 | warp * × lane * | exec 512/CTA{{$}}
-ANN: {{^}}	st.global.u32 	[%rd4], %r1; // global store [4·%tid.x + 512·iv[$L__BB3_1] + param_0] sectors/req 4–5 (ideal 4){{$}}
+ANN: {{^}}	st.global.u32 	[%rd4], %r1; // global store [4·%tid.x + 512·iv[$L__BB3_1] + param_0] sectors/req 4 (ideal 4){{$}}

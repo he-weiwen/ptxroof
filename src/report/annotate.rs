@@ -136,9 +136,10 @@ impl KernelReportBuilder<'_> {
 
     /// The `.entry` line's annotation: what the counts take of the
     /// launch, those given, `grid X×Y×Z`, `block X×Y×Z` and each
-    /// parameter's value; then the shared memory each CTA declares, `+
-    /// dynamic` where an `.extern .shared` array's size is set at launch;
-    /// then the FLOPs and bytes its statements sum to at the scale `per`.
+    /// parameter's value, and the alignment taken for pointers; then the
+    /// shared memory each CTA declares, `+ dynamic` where an `.extern
+    /// .shared` array's size is set at launch; then the FLOPs and bytes
+    /// its statements sum to at the scale `per`.
     fn entry(&self, per: Per) -> Option<String> {
         let dims = |d: [u32; 3]| d.map(|n| n.to_string()).join("×");
         let shape = self.counts.shape;
@@ -155,6 +156,7 @@ impl KernelReportBuilder<'_> {
             self.counts.grid().map(|g| format!("grid {}", dims(g))),
             (!shape.contains(&0)).then(|| format!("block {}", dims(shape))),
             (!params.is_empty()).then(|| params.join(", ")),
+            self.assumed_align(),
             self.shared(),
             self.totals(per),
         ]
@@ -162,6 +164,22 @@ impl KernelReportBuilder<'_> {
         .flatten()
         .collect();
         (!parts.is_empty()).then(|| parts.join(" | "))
+    }
+
+    /// `pointer params assumed N B aligned` where a global access that
+    /// touches sectors sits on a pointer parameter whose `.ptr
+    /// .align` declares less than the `N` taken.
+    fn assumed_align(&self) -> Option<String> {
+        let below = |a: &AffineExpr| {
+            let i = self.pointer(a)?;
+            Some(self.kernel.params[i].ptr_align.unwrap_or(1) < self.ptr_align)
+        };
+        let counted = |row: &Access| row.sectors_per_request.is_some_and(|n| n.max > 0);
+        let assumed = (self.operands.values().flatten())
+            .filter(|(row, _)| row.space != "shared" && counted(row))
+            .filter_map(|(_, traced)| below(traced.as_ref()?.as_ref().ok()?))
+            .any(|b| b);
+        assumed.then(|| format!("pointer params assumed {} B aligned", self.ptr_align))
     }
 
     /// `shared memory N B/CTA`, its static declarations' bytes, and `+
@@ -1102,7 +1120,7 @@ $L__BB0_8:
         assert_eq!(
             notes(src, &opts),
             [
-                "block 256×1×1 | per CTA: flops f32 384; global store 4 B; param load 2,048 B",
+                "block 256×1×1 | pointer params assumed 32 B aligned | per CTA: flops f32 384; global store 4 B; param load 2,048 B",
                 "[<block 0>] warp * × lane * | exec 256/CTA",
                 "[<block 1>] warp 4-7 × lane * | exec 128/CTA",
                 "warp 0-3 × lane * | exec 128/CTA",
@@ -1143,7 +1161,9 @@ $L__BB0_8:
         );
         assert_eq!(
             note(&src, &opts, ".entry").as_deref(),
-            Some("block 64×1×1 | per CTA: global store <= 256 B; param load 512 B")
+            Some(
+                "block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store <= 256 B; param load 512 B"
+            )
         );
         let chain: String = (1..=9)
             .map(|i| format!("and.pred %p{i}, %p{}, %p{};\n", i - 1, i - 1))
@@ -1153,7 +1173,9 @@ $L__BB0_8:
         );
         assert_eq!(
             note(&src, &opts, ".entry").as_deref(),
-            Some("block 64×1×1 | per CTA: global store <= 320 B; param load 512 B")
+            Some(
+                "block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store <= 320 B; param load 512 B"
+            )
         );
         assert_eq!(
             note(&src, &opts, "st.global.u16").as_deref(),
@@ -1173,7 +1195,9 @@ $L__BB0_8:
                    @%p1 ld.global.u32 %r1, [%rd1];\nst.global.u32 [%rd1], %r1;\nret;\n}\n";
         assert_eq!(
             note(src, &AnalyzeOptions::default(), ".entry").as_deref(),
-            Some("block 32×1×1 | per CTA: global load 128 B, store 128 B; param load 256 B")
+            Some(
+                "block 32×1×1 | pointer params assumed 32 B aligned | per CTA: global load 128 B, store 128 B; param load 256 B"
+            )
         );
     }
 
@@ -1218,12 +1242,16 @@ $L__BB0_8:
                    setp.eq.u32 %p1, %r1, 0;\n@%p1 st.global.u32 [%rd1], %r1;\nret;\n}\n";
         assert_eq!(
             note(src, &opts, ".entry").as_deref(),
-            Some("block 64×1×1 | per CTA: global store 8 B; param load 512 B")
+            Some(
+                "block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store 8 B; param load 512 B"
+            )
         );
         let src = src.replace(".reqntid 64, 1, 1", ".reqntid 32, 2, 1");
         assert_eq!(
             note(&src, &opts, ".entry").as_deref(),
-            Some("block 32×2×1 | per CTA: global store <= 256 B; param load 512 B")
+            Some(
+                "block 32×2×1 | pointer params assumed 32 B aligned | per CTA: global store <= 256 B; param load 512 B"
+            )
         );
     }
 
@@ -1307,7 +1335,7 @@ $L__BB0_8:
         assert_eq!(
             note(src, &opts, ".entry").as_deref(),
             Some(
-                "block 128×1×1 | per CTA: global store (256·max(param_1, 1)) B; param load 1,536 B"
+                "block 128×1×1 | pointer params assumed 32 B aligned | per CTA: global store (256·max(param_1, 1)) B; param load 1,536 B"
             )
         );
     }
@@ -1329,7 +1357,9 @@ $L__BB0_8:
                    $L__T:\nadd.s32 %r3, %r3, 1;\nsetp.lt.u32 %p3, %r3, 8;\n@%p3 bra $L__H;\nret;\n}\n";
         assert_eq!(
             note(src, &AnalyzeOptions::default(), ".entry").as_deref(),
-            Some("block 64×1×1 | per CTA: global load 512 B, store <= 2,048 B; param load 512 B")
+            Some(
+                "block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global load 512 B, store <= 2,048 B; param load 512 B"
+            )
         );
     }
 
@@ -1351,7 +1381,7 @@ $L__BB0_8:
             note(src, &AnalyzeOptions::default(), "st.global").as_deref(),
             Some(
                 "<= warp * × lane * | exec <= 128/CTA | \
-                 global store [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4)"
+                 global store [4·%tid.x + param_0] sectors/req <= 4 (ideal <= 4)"
             )
         );
     }
@@ -1377,11 +1407,11 @@ $L__BB0_8:
         };
         assert_eq!(
             sectors("%dynamic_smem_size"),
-            ["global load [4·%tid.x + param_0] sectors/req 4–5 (ideal 4)"]
+            ["global load [4·%tid.x + param_0] sectors/req 4 (ideal 4)"]
         );
         assert_eq!(
             sectors("%clock"),
-            ["global load [4·%tid.x + param_0] sectors/req <= 5 (ideal <= 4)"]
+            ["global load [4·%tid.x + param_0] sectors/req <= 4 (ideal <= 4)"]
         );
     }
 
@@ -1402,7 +1432,7 @@ $L__BB0_8:
                    @%p3 ld.global.f32 %f1, [%rd3];\nret;\n}\n";
         assert_eq!(
             memory_operands(src, &AnalyzeOptions::default()),
-            ["global load [4·%tid.x + param_0] sectors/req 2–3 (ideal 2)"]
+            ["global load [4·%tid.x + param_0] sectors/req 2 (ideal 2)"]
         );
     }
 
@@ -1436,12 +1466,12 @@ $L__BB0_8:
                    @%p1 bra $L__LOOP;\nadd.f32 %f3, %f1, %f2;\nst.global.f32 [%rd5], %f3;\nret;\n}\n";
         assert_eq!(
             loop_bytes(src, &opts, "$L__LOOP:").as_deref(),
-            Some("requested 2,048 B, unique 1,028 B, sectors 1,280–1,536 B")
+            Some("requested 2,048 B, unique 1,028 B, sectors 1,280 B")
         );
         let guarded = src.replace("ld.global.f32 %f2", "@%p2 ld.global.f32 %f2");
         assert_eq!(
             loop_bytes(&guarded, &opts, "$L__LOOP:").as_deref(),
-            Some("requested 2,016 B, unique 1,028 B, sectors 1,280–1,536 B")
+            Some("requested 2,016 B, unique 1,028 B, sectors 1,280 B")
         );
         let loaded = guarded.replace(
             "setp.ne.s32 %p2, %r1, 0;",
@@ -1449,7 +1479,7 @@ $L__BB0_8:
         );
         assert_eq!(
             loop_bytes(&loaded, &opts, "$L__LOOP:").as_deref(),
-            Some("requested <= 2,048 B, unique <= 1,028 B, sectors <= 1,280–1,536 B")
+            Some("requested <= 2,048 B, unique <= 1,028 B, sectors <= 1,280 B")
         );
         let branched = src.replace(
             "ld.global.f32 %f2, [%rd5];",
@@ -1458,7 +1488,7 @@ $L__BB0_8:
         );
         assert_eq!(
             loop_bytes(&branched, &opts, "$L__LOOP:").as_deref(),
-            Some("requested <= 3,072 B, unique <= 1,028 B, sectors <= 1,536–1,792 B")
+            Some("requested <= 3,072 B, unique <= 1,028 B, sectors <= 1,536 B")
         );
         let src = src.replace(".reqntid 32, 1, 1\n", "");
         assert_eq!(loop_bytes(&src, &opts, "$L__LOOP:"), None);
@@ -1501,7 +1531,7 @@ $L__BB0_8:
                    setp.lt.u32 %p1, %s3, 4;\n@%p1 bra $L__LOOP;\nret;\n}\n";
         assert_eq!(
             loop_bytes(src, &AnalyzeOptions::default(), "$L__LOOP:").as_deref(),
-            Some("requested 1,024 B, unique 512–1,024 B, sectors 1,024–1,280 B")
+            Some("requested 1,024 B, unique 512–1,024 B, sectors 1,024–1,152 B")
         );
     }
 
@@ -1555,7 +1585,7 @@ $L__BB0_8:
         };
         assert_eq!(
             bytes(4).as_deref(),
-            Some("requested 32,768 B, unique 4,096 B, sectors 32,768–40,960 B")
+            Some("requested 32,768 B, unique 4,096 B, sectors 32,768 B")
         );
         assert_eq!(bytes(1 << 62), None);
     }
@@ -1974,6 +2004,7 @@ $L__BB0_8:
             launch: Some(record.block),
             grid: Some(record.grid),
             ncu: Some(record),
+            ..Default::default()
         };
         let blocks = comparison(src, &opts).blocks;
         let inner = blocks

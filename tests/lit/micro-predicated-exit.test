@@ -2,5 +2,5 @@
 # through, so the store after it counts on every thread, exactly, 32
 # stores of 4 B.
 RUN: %ptxroof analyze %fixtures/micro/predicated_exit.ptx --ncu %fixtures/micro/predicated_exit.ncu.json | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_predicated_exit( // grid 1×1×1 | block 32×1×1 | param_1 = 20 | per launch: global store 128 B; param load 384 B{{$}}
+ANN: {{^}}.visible .entry micro_predicated_exit( // grid 1×1×1 | block 32×1×1 | param_1 = 20 | pointer params assumed 32 B aligned | per launch: global store 128 B; param load 384 B{{$}}
 ANN: {{^}}	st.global.u32 	[%rd1], %r1; // [<block 1>] warp * × lane * | exec 32/launch | global store [param_0] sectors/req 1 (ideal 1){{$}}

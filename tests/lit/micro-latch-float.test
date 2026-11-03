@@ -3,5 +3,5 @@
 # once. A floating-point latch is not a trip count: the loop's trips are
 # unknown, and so are the CTA's store bytes, which need them.
 RUN: %ptxroof analyze %fixtures/micro/latch_float.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_latch_float( // block 32×1×1 | per CTA: global store ? B (trips of $L__BB0_1); param load 256 B{{$}}
+ANN: {{^}}.visible .entry micro_latch_float( // block 32×1×1 | pointer params assumed 32 B aligned | per CTA: global store ? B (trips of $L__BB0_1); param load 256 B{{$}}
 ANN: {{^}}$L__BB0_1: // loop: trips ? (latch condition compares floating-point values) | warp * × lane * | exec ?{{$}}

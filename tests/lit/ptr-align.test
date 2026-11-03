@@ -1,0 +1,25 @@
+# Sectors take the memory a pointer parameter points to as aligned to
+# its `.ptr .align`, or to --ptr-align where that is more, 32 B by
+# default, and the `.entry` line says what was taken. nvcc declares no
+# `.ptr .align`: k5's A tile rows, 8 halves 512 B apart stepping 16 B a
+# trip, take 4 sectors on a 16 or 32 B base and 4 to 8 on any other;
+# over the K loop, 98,304 B on a 32 B base. The B200 layer-norm
+# kernel's pointers declare 16, so its 4 lanes' 16 B store takes 1
+# sector even under --ptr-align 1, and nothing is said.
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 | FileCheck --check-prefix=K5 "%s"
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 --ptr-align 16 | FileCheck --check-prefix=K5-16 "%s"
+RUN: %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --bind 1:N=256 --bind 2:K=256 --launch 64,1,1 --ptr-align 1 | FileCheck --check-prefix=K5-ANY "%s"
+RUN: %ptxroof analyze %fixtures/b200/norm_act__qwen3-next-80b__prefill__sglang_fla_gated_rmsnorm._layer_norm_fwd_1pass_kernel.sm_100a.ptx --ncu %fixtures/b200/norm_act__qwen3-next-80b__prefill__sglang_fla_gated_rmsnorm._layer_norm_fwd_1pass_kernel.sm_100a.ncu.json --ptr-align 1 | FileCheck --check-prefix=DECLARED "%s"
+RUN: not %ptxroof analyze %fixtures/k5/k5.sm_80.ptx --ptr-align 24 2>&1 | FileCheck --check-prefix=BAD "%s"
+K5: {{^}}.visible .entry {{.*}} // block 64×1×1 | param_1 = 256, param_2 = 256 | pointer params assumed 32 B aligned | shared memory 2,048 B/CTA | {{.*}}{{$}}
+K5: {{^}}$L__BB0_2: // loop: trips 32 | global per CTA: requested 65,536 B, unique 65,536 B, sectors 98,304 B | {{.*}}{{$}}
+K5: {{^}}	ld.global.u16 	%rs1, [%rd15]; // global load [32768·%ctaid.y + 16·iv[$L__BB0_2] + 512·⌊%tid.x/8⌋ + 2·(%tid.x mod 8) + param_4] sectors/req 4 (ideal 2){{$}}
+K5-16: {{^}}.visible .entry {{.*}} | pointer params assumed 16 B aligned | {{.*}}{{$}}
+K5-16: {{^}}$L__BB0_2: // loop: trips 32 | global per CTA: requested 65,536 B, unique 65,536 B, sectors 98,304–114,688 B | {{.*}}{{$}}
+K5-16: {{^}}	ld.global.u16 	%rs1, [%rd15]; // {{.*}} sectors/req 4 (ideal 2){{$}}
+K5-ANY: {{^}}.visible .entry {{.*}} // block 64×1×1 | param_1 = 256, param_2 = 256 | shared memory 2,048 B/CTA | {{.*}}{{$}}
+K5-ANY: {{^}}$L__BB0_2: // loop: trips 32 | global per CTA: requested 65,536 B, unique 65,536 B, sectors 98,304–147,456 B | {{.*}}{{$}}
+K5-ANY: {{^}}	ld.global.u16 	%rs1, [%rd15]; // {{.*}} sectors/req 4–8 (ideal 2){{$}}
+DECLARED: {{^}}.visible .entry _layer_norm_fwd_1pass_kernel( // grid 65536×1×1 | block 32×1×1 | param_5 = 128, param_6 = 128, param_7 = 128, param_8 = 0, param_9 = 0, param_10 = 262144 | per launch: {{.*}}{{$}}
+DECLARED: {{^}}	@%p2 st.global.b32 [ %rd3 + 0 ], { %r9 }; // warp * × lane 0-3 | exec 262,144/launch | global store [16·%ctaid.x + 1048576·%ctaid.y + 4·(%tid.x mod 4) + param_4] sectors/req 1 (ideal 1){{$}}
+BAD: {{^}}ptxroof: --ptr-align: a power of two{{$}}

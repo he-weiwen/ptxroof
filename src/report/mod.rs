@@ -7,4 +7,4 @@ pub mod measured;
 pub mod names;
 
 pub use bindings::{BindingSpec, parse_bind};
-pub use build::{AnalyzeError, AnalyzeOptions};
+pub use build::{AnalyzeError, AnalyzeOptions, PTR_ALIGN};

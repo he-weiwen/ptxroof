@@ -4,7 +4,7 @@
 # blocks. The trip counts stay unknown for the same reasons, the inner
 # key loop's still depending on the CTA index through the tile loop.
 RUN: %ptxroof analyze %fixtures/gluon/attn_fwd_ws_kernel.w768.sm_89.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry attn_fwd_ws_kernel( // block 256×1×1 | shared memory 0 B/CTA + dynamic | per CTA: flops f32 ? (trips of $L__BB0_39); tensor flops bf16 ? (trips of $L__BB0_39); sfu flops f32 ? (trips of $L__BB0_39); global load ? B (trips of $L__BB0_39), store ? B (trips of $L__BB0_39); shared load ? B (trips of $L__BB0_2), store ? B (trips of $L__BB0_39); param load 18,432 B{{$}}
+ANN: {{^}}.visible .entry attn_fwd_ws_kernel( // block 256×1×1 | pointer params assumed 32 B aligned | shared memory 0 B/CTA + dynamic | per CTA: flops f32 ? (trips of $L__BB0_39); tensor flops bf16 ? (trips of $L__BB0_39); sfu flops f32 ? (trips of $L__BB0_39); global load ? B (trips of $L__BB0_39), store ? B (trips of $L__BB0_39); shared load ? B (trips of $L__BB0_2), store ? B (trips of $L__BB0_39); param load 18,432 B{{$}}
 ANN: {{^}}	setp.eq.b32 	%p96, %r1845, 0; // [<block 1>] warp 0-3 × lane * | exec 128/CTA{{$}}
 ANN: {{^}}	add.s64 	%rd149, %rd25, %rd142; // [<block 2>] warp 0-3 × lane * | runs when %ctaid.x < param_10 (CTA-uniform, branch at line 258) | exec <= 128/CTA{{$}}
 ANN: {{^}}$L__tmp5: // warp 0-3 × lane * | runs when %r68@275 = ⌊%r69@277/64⌋ (CTA-uniform, branch at line 367) | nested in line 261 | exec <= 128/CTA{{$}}

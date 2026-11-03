@@ -7,4 +7,4 @@
 RUN: %ptxroof analyze %fixtures/micro/video_selector.ptx | FileCheck --check-prefix=VIDEO "%s"
 RUN: %ptxroof analyze %fixtures/micro/counter_vector_write.ptx | FileCheck --check-prefix=LOOP "%s"
 VIDEO: {{^}}.visible .entry micro_video_selector( // block 32×1×1 | per CTA: flops ?; global load ? B, store >= 128 B; shared load ? B, store ? B; param load 256 B{{$}}
-LOOP: {{^}}.visible .entry micro_counter_vector_write( // block 64×1×1 | per CTA: global load ? B (trips of $L__loop); param load 512 B{{$}}
+LOOP: {{^}}.visible .entry micro_counter_vector_write( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global load ? B (trips of $L__loop); param load 512 B{{$}}

@@ -12,4 +12,4 @@ ANN: {{^}}$L__BB1_3: // warp 0-1 × lane * | runs when %r1@55 ≠ 0 or (%r1@55 =
 ANN: {{^}}$L__BB1_4: // loop: trips 3 | warp 0-1 × lane * | under line 66 | exec ? (trips of $L__BB1_1){{$}}
 ANN: {{^}}$L__BB1_5: // <= warp 0-1 × lane * ∪ warp 2-3 × lane * | runs when %tid.x ≥ 64 or (%tid.x < 64 and %r1@55 ≠ 0) or (%tid.x < 64 and %r1@55 = 0 and %r2@56 ≠ 0) (warp-uniform, branches at lines 63, 65) | exec ? (trips of $L__BB1_1){{$}}
 ANN: {{^}}$L__BB2_3: // warp 0 × lane 0-15 ∪ warp 1 × lane 16-31 | exec 32/launch{{$}}
-ANN: {{^}}$L__BB2_4: // loop: trips 4 | global per CTA: requested 512 B, unique 128 B, sectors 512–768 B | warp 0 × lane 0-15 ∪ warp 1 × lane 16-31 | exec 128/launch{{$}}
+ANN: {{^}}$L__BB2_4: // loop: trips 4 | global per CTA: requested 512 B, unique 128 B, sectors 512 B | warp 0 × lane 0-15 ∪ warp 1 × lane 16-31 | exec 128/launch{{$}}

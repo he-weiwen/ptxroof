@@ -1,7 +1,8 @@
 # neg.s32 of %tid.x is 0 − %tid.x (PTX ISA §9.7.1.12): thread t stores
-# at param_0 + 4·(64 − t), 4 to 5 sectors per warp request. A float neg
+# at param_0 + 4·(64 − t), 5 sectors per warp request, each warp's 128 B
+# starting 4 B into a sector. A float neg
 # is no integer, and its bits used as an index leave the address
 # unknown.
 RUN: %ptxroof analyze %fixtures/micro/neg.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [-4·%tid.x + param_0 + 256] sectors/req 4–5 (ideal 4){{$}}
+ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [-4·%tid.x + param_0 + 256] sectors/req 5 (ideal 4){{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (depends on special register %tid.x, behind `neg.f32`){{$}}

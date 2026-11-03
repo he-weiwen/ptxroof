@@ -286,22 +286,22 @@ fn a_loop_footprint_counts_the_lanes_that_may_read_a_copy_s_source() {
     assert_eq!(
         notes(&out, ".visible .entry"),
         [
-            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: global load <= 5,120 B; shared store 8,192 B; param load 768 B"
+            "block 64×1×1 | pointer params assumed 32 B aligned | shared memory 1,024 B/CTA | per CTA: global load <= 5,120 B; shared store 8,192 B; param load 768 B"
         ]
     );
     assert_eq!(
         notes(&out, "$L__LOOP:"),
         [
-            "loop: trips 4 | global per CTA: requested <= 5,120 B, unique <= 5,120 B, sectors <= 5,120–5,504 B | warp * × lane * | exec 256/CTA"
+            "loop: trips 4 | global per CTA: requested <= 5,120 B, unique <= 5,120 B, sectors <= 5,120 B | warp * × lane * | exec 256/CTA"
         ]
     );
     assert_eq!(
         notes(&out, "cp.async.cg"),
         [
             "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
-             global load [16·%tid.x + 1024·iv[$L__LOOP] + param_0] sectors/req 8–9 (ideal 8)",
+             global load [16·%tid.x + 1024·iv[$L__LOOP] + param_0] sectors/req 8 (ideal 8)",
             "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
-             global load [16·%tid.x + 1024·iv[$L__LOOP] + param_0 + 65536] sectors/req 16–17 (ideal 16)",
+             global load [16·%tid.x + 1024·iv[$L__LOOP] + param_0 + 65536] sectors/req 16 (ideal 16)",
         ]
     );
 }
@@ -324,14 +324,14 @@ fn a_source_read_at_mixed_residues_by_unknown_lanes_has_no_footprint() {
     assert_eq!(
         notes(&odd, ".visible .entry"),
         [
-            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: global load 512 B; shared store 1,024 B; param load 512 B"
+            "block 64×1×1 | pointer params assumed 32 B aligned | shared memory 1,024 B/CTA | per CTA: global load 512 B; shared store 1,024 B; param load 512 B"
         ]
     );
     assert_eq!(
         notes(&odd, "cp.async.cg"),
         [
             "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
-          global load [8·%tid.x + param_0] sectors/req 8–9 (ideal 8)"
+          global load [8·%tid.x + param_0] sectors/req 8 (ideal 8)"
         ]
     );
     let loaded = annotated(
@@ -341,7 +341,7 @@ fn a_source_read_at_mixed_residues_by_unknown_lanes_has_no_footprint() {
     assert_eq!(
         notes(&loaded, ".visible .entry"),
         [
-            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: global load <= 1,280 B; shared store 1,024 B; param load 512 B"
+            "block 64×1×1 | pointer params assumed 32 B aligned | shared memory 1,024 B/CTA | per CTA: global load <= 1,280 B; shared store 1,024 B; param load 512 B"
         ]
     );
     assert_eq!(
@@ -354,8 +354,8 @@ fn a_source_read_at_mixed_residues_by_unknown_lanes_has_no_footprint() {
 }
 
 /// A src-size register reads at most cp-size (PTX ISA §9.7.9.26.3.1):
-/// beside a copy that reads its 16 B under the same opcode, 16–17 sectors
-/// per warp request, its sectors per request are bounds, `<= 17 (ideal
+/// beside a copy that reads its 16 B under the same opcode, 16 sectors
+/// per warp request, its sectors per request are bounds, `<= 16 (ideal
 /// <= 16)`, and the CTA's 64 threads load at most 2 × 64 × 16 B = 2,048 B.
 /// Each copy runs as its block does, 64 times per CTA.
 #[test]
@@ -368,7 +368,7 @@ fn a_src_size_register_reads_at_most_cp_size() {
     assert_eq!(
         notes(&out, ".visible .entry"),
         [
-            "block 64×1×1 | shared memory 1,024 B/CTA | per CTA: global load <= 2,048 B; shared store 2,048 B; param load 768 B"
+            "block 64×1×1 | pointer params assumed 32 B aligned | shared memory 1,024 B/CTA | per CTA: global load <= 2,048 B; shared store 2,048 B; param load 768 B"
         ]
     );
     assert_eq!(
@@ -379,9 +379,9 @@ fn a_src_size_register_reads_at_most_cp_size() {
         notes(&out, "cp.async.cg"),
         [
             "shared store [16·%tid.x + buf] wavefronts/req ? (wavefronts not modelled) | \
-             global load [16·%tid.x + param_0] sectors/req 16–17 (ideal 16)",
+             global load [16·%tid.x + param_0] sectors/req 16 (ideal 16)",
             "shared store [16·%tid.x + buf + 1024] wavefronts/req ? (wavefronts not modelled) | \
-             global load [16·%tid.x + param_0 + 1024] sectors/req <= 17 (ideal <= 16)",
+             global load [16·%tid.x + param_0 + 1024] sectors/req <= 16 (ideal <= 16)",
         ]
     );
 }
@@ -483,7 +483,7 @@ fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
 
 /// An ignore-src the same for every thread but not read, a comparison of
 /// an unbound parameter, may leave every warp unread: the copy's sectors
-/// over the launch are a bound, `<= 34 (ideal <= 32)`, within which a
+/// over the launch are a bound, `<= 32 (ideal <= 32)`, within which a
 /// record's 0 falls.
 #[test]
 fn a_cta_uniform_ignore_src_predicts_a_bound_of_sectors() {
@@ -524,7 +524,7 @@ fn a_cta_uniform_ignore_src_predicts_a_bound_of_sectors() {
     let predicted = (sectors.predicted.max, sectors.ideal.max);
     assert_eq!(
         (predicted, sectors.at_most, sectors.outcome),
-        ((34, 32), true, SectorOutcome::Agrees)
+        ((32, 32), true, SectorOutcome::Agrees)
     );
 }
 

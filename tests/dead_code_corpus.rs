@@ -101,6 +101,7 @@ fn no_unused_instruction_has_sass_in_any_record() {
             launch: Some(record.block),
             grid: Some(record.grid),
             ncu: Some(record),
+            ..Default::default()
         };
         let record = opts.ncu.as_ref().expect("set above");
         for (_, n, _) in unused(&src, &opts)
