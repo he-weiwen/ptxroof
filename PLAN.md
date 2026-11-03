@@ -275,7 +275,6 @@ output_tallies` rewrites it.
   round-trip: `Unknown symbol 'gbuf'`) and its `.texref` declaration
   (`micro/texture_outputs.ptx` does not round-trip: `Unknown symbol
   'micro_texture_outputs_tex'`).
-  The CFG treats `trap` as fallthrough.
   Source locations, reproducible parser/classifier probes, and their outputs
   are in the [register-effects audit](docs/ptx-register-effects-audit.md#findings-in-the-current-implementation).
 - **A predicated `ret` or `exit` is read as falling through.** The CFG
@@ -283,6 +282,22 @@ output_tallies` rewrites it.
   on every thread, exactly (`micro/predicated_exit.ptx`: the store
   after `@%p1 exit` counts 32 per CTA, where on an RTX 4090 at n = 20
   it runs on none).
+- **`trap` is read as falling through, and a block ending in it as a
+  path a launch takes.** PTX ISA §9.7.20.4: `trap` aborts the
+  launch. The CFG gives a block ending in `trap` the next block as its
+  successor, so each of LLVM's cold `call.uni __assertfail; trap;`
+  blocks runs on the threads of the ones before it, and keeps every
+  edge into one, so a loop holding an assert check exits there and a
+  block a check can bypass is conditional. In the Blackwell corpus (the
+  census's 2,837 kernels and sol-study's 2,601 PTX files, sm_100
+  family, analyzed without launch arguments) 2,628 `trap`s sit in 23
+  parsed files: reading `trap` as a terminator changes 2,498 bounds of
+  assert blocks in 10 of them, and dropping the edges into those blocks
+  changes 9,770 lines in 11. 20 of the corpus's 24 loops refused as
+  "loop has N exit edges", in Triton concurrency-sanitizer builds of
+  sol-study's Gluon `mla_decode_1cta_kernel` and `mma_rate_kernel`,
+  have every exit but one into an assert block; without those edges the
+  five `mma_rate_kernel` loops read `trips param_1`.
 - **A block in an irreducible cycle counts as running once.** A cycle
   entered at two blocks is no natural loop, so no trip count multiplies
   its blocks: `micro/irreducible.ptx`'s `$L__BB0_A` reads `exec <=
@@ -357,7 +372,17 @@ output_tallies` rewrites it.
   `param_0 + 4·⌊%tid.x/32⌋` selects its targets' threads as an
   unknown, where with the index shuffled from lane 0 first, as Triton's
   warp specialization does, each target runs on whole warps
-  (`a_jump_table_on_a_warp_s_index_selects_whole_warps`).
+  (`a_jump_table_on_a_warp_s_index_selects_whole_warps`). So is an
+  and-mask keeping bits of `%tid.x` above its lane bits, `and.b32 d,
+  %tid.x, M` with M a multiple of 32, Triton's layout bits: b200
+  `attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding`
+  line 950's `ld.global.v4.b32` reads `addr ? (depends on a value
+  loaded inside the loop)`, its index loaded at line 909 at an address
+  built from line 98's `and.b32 %r2, %r1, 64`. In the Blackwell corpus
+  (`trap` entry above) the shift, `bfe` and division forms of the warp
+  index are 3,757 statements in 2,545 files and the masks 6,829 in
+  3,746; reading both as one value per warp turns 8,162 `addr ?` into
+  addresses.
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value
@@ -558,6 +583,19 @@ output_tallies` rewrites it.
   `exec <= 1/CTA` but reads `no thread` and `sectors/req 0`, where lane
   1, if elected, requests one (`micro-elect-lane.test`). The census has no election
   under a condition that varies by lane.
+- **An `elect.sync` in a block a CTA- or warp-uniform unknown selects
+  reads every lane as elected.** The lanes of a warp enter such a
+  block together and one is elected (PTX ISA §9.7.14.15), but
+  `elected()` takes each lane the block may hold as a leader, so the
+  statement's lanes read `lane *`, not a bound; its count is right.
+  b200 `attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cache`
+  under its record: line 449, `@%p113 mbarrier.inval.shared::cta.b64
+  [%r968]; // warp 0 × lane *`. In the Blackwell corpus 54,706
+  elect-guarded statements in 1,333 files read so (`tcgen05.mma`
+  29,649, `cp.async.bulk(.tensor)` 11,655, `tcgen05.commit` 5,720,
+  `mbarrier.init` and `.inval` 3,841 each): 9,565 print `lane *`, and
+  the rest print nothing, the block's text being the same. None has a
+  sectors or wavefronts number.
 
 ### Reported as unknowns
 
