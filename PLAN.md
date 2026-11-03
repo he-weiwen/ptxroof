@@ -209,18 +209,18 @@ output_tallies` rewrites it.
 | loop: global bytes requested per CTA | 16 | 13 (81%) | 3 (19%) |  |  |
 | loop: global bytes unique per CTA | 16 | 6 (38%) | 4 (25%) | 6 (38%) |  |
 | loop: global sector bytes per CTA | 16 | 6 (38%) | 4 (25%) |  | 6 (38%) |
-| block: threads | 854 | 819 (96%) | 35 (4%) |  |  |
+| block: threads | 854 | 825 (97%) | 29 (3%) |  |  |
 | block: CTAs | 87 | 87 (100%) |  |  |  |
 | block: `runs when` | 154 | 154 (100%) |  |  |  |
 | block: exec | 824 | 278 (34%) | 124 (15%) | 422 (51%) |  |
-| instruction: threads, where a guard narrows its block's | 908 | 685 (75%) | 223 (25%) |  |  |
+| instruction: threads, where a guard narrows its block's | 908 | 724 (80%) | 184 (20%) |  |  |
 | instruction: exec, where it differs from its block's | 661 | 547 (83%) | 110 (17%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
 | instruction: `not classified` | 423 | | | | |
 | instruction: `bytes ?` | 109 | | | | |
 | operand: address | 4,399 | 3,978 (90%) |  | 421 (10%) |  |
-| operand: global sectors/req | 2,221 | 1,385 (62%) | 481 (22%) |  | 355 (16%) |
-| operand: global sectors/req, ideal | 1,866 | 1,666 (89%) | 200 (11%) |  |  |
+| operand: global sectors/req | 2,221 | 1,393 (63%) | 473 (21%) |  | 355 (16%) |
+| operand: global sectors/req, ideal | 1,866 | 1,674 (90%) | 192 (10%) |  |  |
 | operand: shared wavefronts/req | 2,178 | 1,442 (66%) |  | 557 (26%) | 179 (8%) |
 | operand: shared wavefronts/req, ideal | 1,442 | 1,442 (100%) |  |  |  |
 <!-- end tests/output_tallies.rs -->

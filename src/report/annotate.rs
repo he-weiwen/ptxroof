@@ -594,8 +594,7 @@ impl KernelReportBuilder<'_> {
     /// dominator, by `atom`, and its comparisons the same for the CTA by
     /// `formula`, joined by ` and `, a conjunct without either left to the
     /// threads shown; an `or` or a `not` holding one with all its parts
-    /// (`whole`), the `not` of an `and` or an `or` as the `or` or the `and`
-    /// of its parts' negations, a thread-index comparison by `formula` and
+    /// (`whole`), a thread-index comparison by `formula` and
     /// any other unknown as `?`; an `or` among the parts of an `and`, and
     /// an `and` among those of an `or`, parenthesized. Each unknown and
     /// comparison the same for the CTA adds the line of the branch
@@ -634,17 +633,7 @@ impl KernelReportBuilder<'_> {
                     .collect::<Option<Vec<String>>>()?;
                 Some(parts.join(" or "))
             }
-            Pred::Not(x) => match &**x {
-                Pred::And(y, z) | Pred::Or(y, z) => {
-                    let (y, z) = (Box::new(!(**y).clone()), Box::new(!(**z).clone()));
-                    let dual = match **x {
-                        Pred::And(..) => Pred::Or(y, z),
-                        _ => Pred::And(y, z),
-                    };
-                    self.when(b, &dual, whole, tags)
-                }
-                x => Some(format!("not ({})", self.when(b, x, true, tags)?)),
-            },
+            Pred::Not(x) => Some(format!("not ({})", self.when(b, x, true, tags)?)),
             Pred::Cmp(c) if whole || cta_uniform(c) => {
                 if cta_uniform(c) {
                     let decider = self.counts.sets.comparison_deciders.get(&(b, c.clone()));
@@ -850,17 +839,8 @@ fn operands(p: &Pred, or: bool) -> Vec<&Pred> {
     }
 }
 
-/// The parts of a conjunction that read the CTA index, the `not` of an
-/// `or` taken as the `and` of its parts' negations.
+/// The parts of a conjunction that read the CTA index.
 fn cta_conjuncts(set: &Pred) -> Vec<Pred> {
-    if let Pred::Not(x) = set
-        && let Pred::Or(a, b) = &**x
-    {
-        return [!(**a).clone(), !(**b).clone()]
-            .iter()
-            .flat_map(cta_conjuncts)
-            .collect();
-    }
     match set {
         Pred::And(a, b) => [cta_conjuncts(a), cta_conjuncts(b)].concat(),
         p if p.varies_by_cta() => vec![p.clone()],

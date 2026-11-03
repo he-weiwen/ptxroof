@@ -154,6 +154,8 @@ impl std::ops::Not for Pred {
                 trip: c.trip,
             }),
             Pred::Not(p) => *p,
+            Pred::And(a, b) => (!*a).or(!*b),
+            Pred::Or(a, b) => (!*a).and(!*b),
             p => Pred::Not(Box::new(p)),
         }
     }
@@ -1790,7 +1792,7 @@ mod tests {
         assert_eq!(neither.count([256, 1, 1]), Some(exact(128)));
         assert_eq!(
             neither.render().as_deref(),
-            Some("not (%tid.x == 0 or ⌊%tid.x/32⌋ < 4)")
+            Some("%tid.x != 0 and ⌊%tid.x/32⌋ >= 4")
         );
         assert_eq!((!lane0.clone()).eval([0, 0, 0], [64, 1, 1]), Tri::No);
         assert_eq!(!!lane0.clone(), lane0);
@@ -1809,7 +1811,7 @@ mod tests {
         let partly = |p: Pred| p.and(Pred::Unknown);
         assert_eq!(
             (!partly(lane0.clone())).render().as_deref(),
-            Some("not (%tid.x == 0 and ?)")
+            Some("%tid.x != 0 or ?")
         );
         assert_eq!(
             partly(lane0.clone()).or(!lane0.clone()).render().as_deref(),
@@ -2123,6 +2125,11 @@ mod tests {
         assert!(!cta(0).or(lanes()).lane_exact());
         assert!(!(!(cta(0).and(lanes()))).lane_exact());
         assert!(Pred::Elect(Box::new(cta(0).and(lanes()))).lane_exact());
+        // The negation of a disjunction is the conjunction of its parts'
+        // negations: Triton's leader branch `@(%p or ⌊%tid.x/32⌋ ≠ 0) bra`
+        // leaves warp 0's lanes, or none.
+        let leader = !(cta(0).or(lanes()));
+        assert!(matches!(leader, Pred::And(..)) && leader.lane_exact());
     }
 
     /// Uniform unknowns combined in any way, as comparisons with another
@@ -2144,7 +2151,7 @@ mod tests {
         let both = counter(Cmp::Lt).and(counter(Cmp::Gt));
         let neither = (!both).in_loops(&|_| false);
         assert!(matches!(either, Pred::Or(..)) && either.lane_exact());
-        assert!(matches!(neither, Pred::Not(_)) && neither.lane_exact());
+        assert!(matches!(neither, Pred::Or(..)) && neither.lane_exact());
         let below = Pred::Cmp(warps_below_4()).and(either.clone());
         assert!(below.lane_exact());
         assert_eq!(below.render().as_deref(), Some("⌊%tid.x/32⌋ < 4"));
