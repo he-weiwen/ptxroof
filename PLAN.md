@@ -515,7 +515,17 @@ output_tallies` rewrites it.
   count (`micro_unpack_halves`), from 64-bit arithmetic
   (`micro_unpack_wide`) or from an unpacked element
   (`micro_unpack_twice`), or packed as an immediate wider than its
-  element (`micro_unpack_imm`).
+  element (`micro_unpack_imm`). In the Blackwell corpus (`trap` entry
+  above), not read either: an `or` in an `ldmatrix` or `stmatrix`
+  `.x1`/`.x2` address whose sides share a bit only on lanes that give
+  the instruction no address (PTX ISA §9.7.15.5.15–16: threads 0–7 or
+  0–15), 2,962 of the 4,443 such rows refused "or whose sides may both
+  set bit N", as b200 `attn_lightllm__llama3-8b__prefill` line 1300's
+  `ldmatrix…x1`, its or at line 377; a `prmt` (89 rows, 43 files); a
+  64-bit signed shift by 63 of a form with variables, the sign word of
+  LLVM's signed division, "shift by 63 is out of range" (b200
+  `sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1` line 1055; 59 rows,
+  28 files); `min.relu` and `max.relu` (56 statements, 4 files).
 - **Offsets past 2^62 bytes are not counted**: an access whose lane
   offsets over the block, or whose loop's shifts over its trips, reach
   2^62 bytes has unknown sectors per warp or unknown unique loop bytes
@@ -708,7 +718,17 @@ output_tallies` rewrites it.
   value an enclosing loop defines, 30 a loaded value lanes may see
   differently, 95 are grid-stride loops, 20 atomics, 18 multi-exit.
   Of the 96 loops whose step is not a constant (74 kernels), 83 have a
-  count with `--grid 4,4,4`.
+  count with `--grid 4,4,4`; the others step by a parameter, read with
+  it bound: `02395.ptx`'s `$L__BB0_3` (line 80), "induction step is not
+  a constant" under `--grid 4,4,4`, reads `max(⌈(param_10 −
+  %ctaid.x)/16⌉, 1)` with `--bind 13:s=16` as well. A latch that holds
+  no instruction is not read: the CFG starts a block at the statement
+  after a branch, so an untargeted DWARF label there (`@!%p12 bra
+  $L__BB0_18; $L__tmp28: $L__BB0_21:`) is a block of its own, the
+  loop's latch, and the exit is "not at the latch" (sol-study Gluon
+  `dense_ws_kernel`'s persistent loop, 3 files; without the label it
+  reads `trips max(⌈(⌈param_17/128⌉·⌈param_18/256⌉ − %ctaid.x)/148⌉,
+  0)` under `--grid 148,1,1`).
 - **Counters the induction variable search refuses** (a header φ every back
   edge feeds back plus one unguarded step in the loop's own blocks, or
   a directly nested loop's exit after a constant trip count,
@@ -716,7 +736,17 @@ output_tallies` rewrites it.
   write (`micro/guarded_step.ptx`, where ptxas 13.4 stores once at
   param_0) is no counter; its guard the same for every thread, it reads
   `[4·uniform(%r1@29) + param_0]`, and the loop's unique bytes are
-  unknown (`micro-guarded-step.test`).
+  unknown (`micro-guarded-step.test`). Nor is a stage counter that
+  wraps by `selp`, `add r1, r, 1; setp.gt.s32 p, r1, S−1; selp.b32 r,
+  0, r1, p`, the buffer index of TMA and `tcgen05` pipelines: b200
+  `blk_mx_128x256_s4w4.mx_block_scaled`'s `selp.b32 %r841, 0, %r146,
+  %p72` (line 488) gives its stores `[16384·uniform(%r841@488) +
+  global_smem + 131072]`; in the Blackwell corpus 4,369 such counters
+  in 1,252 files, 17,133 address rows. Nor one stepped through `cvt`
+  (`cvt.s64.s32`, then `cvt.u32.u64` and the `add`): census
+  `00057.ptx`'s `$L__BB0_2` (line 104) reads "is defined in an
+  enclosing loop: depends on %r18, carried around an enclosing loop",
+  6 census loops.
 - **A join's φ whose paths write one value through a loop counter is
   refused**, though both definitions and the join lie in one trip of
   the loop: `micro/join_same_value.ptx`'s `micro_join_counter`,
