@@ -4,10 +4,9 @@
 use ptxroof::analysis::control_flow::loop_forest;
 use ptxroof::analysis::instruction_counts::classify::InstructionCategory;
 use ptxroof::analysis::instruction_counts::collect::collect;
-use ptxroof::analysis::instruction_counts::measurement::{
-    Direction, MeasureKind, Pipe, Precision, Space,
-};
+use ptxroof::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Precision};
 use ptxroof::ptx::cfg::build_cfg;
+use ptxroof::ptx::modifier::Space;
 use ptxroof::ptx::parse::parser::parse;
 use ptxroof::report::AnalyzeOptions;
 use ptxroof::report::annotate::annotate;

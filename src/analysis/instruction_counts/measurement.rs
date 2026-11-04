@@ -17,6 +17,7 @@
 //! class is unrepresentable.
 
 use crate::ptx::ir::Opcode;
+use crate::ptx::modifier::Space;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Precision {
@@ -75,36 +76,6 @@ impl Pipe {
             Pipe::Tensor => "tensor",
             Pipe::Sfu => "sfu",
             Pipe::Atomic => "atomic",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Space {
-    Global,
-    Shared,
-    /// `.shared::cluster` — distinct from CTA-local shared (`::cta` is
-    /// the ISA default and folds into `Shared`).
-    SharedCluster,
-    Local,
-    Const,
-    Param,
-    /// `ld`/`st` with no state space: PTX generic addressing. Its own
-    /// honest bucket — unclassifiable to a concrete space without
-    /// provenance (anti-scope until a fixture emits one).
-    Generic,
-}
-
-impl Space {
-    pub fn key(self) -> &'static str {
-        match self {
-            Space::Global => "global",
-            Space::Shared => "shared",
-            Space::SharedCluster => "shared::cluster",
-            Space::Local => "local",
-            Space::Const => "const",
-            Space::Param => "param",
-            Space::Generic => "generic",
         }
     }
 }

@@ -26,10 +26,11 @@ including corrections to stale parsing claims in the tables below.
 ## The tool's model (what "fits" means)
 
 `instruction_counts/measurement.rs` owns the accounting axes (`Precision`,
-`Pipe`, `Space`, `Direction`, `ArithKind`) and contribution records;
-`instruction_counts/classify.rs` maps instructions to those records.
+`Pipe`, `Direction`, `ArithKind`) and contribution records, with `Space`
+from `ptx/modifier.rs`; `instruction_counts/classify.rs` maps
+instructions to those records.
 Scalar instruction interpretation lives in `affine/affine_analysis/transfer.rs`, with
-integer widths in `affine/int_type.rs` and special-register sharing in
+instruction types and forms (`Form`) in `ptx/modifier.rs` and special-register sharing in
 `ptx/special_registers.rs`.
 
 The parser accepts instruction-shaped statements as
@@ -302,7 +303,7 @@ remain visible, counted `Unknown` work.
 | 9.7.9.26.4.3 | `cp.async.bulk.prefetch` | `Unknown` | OK (deferred, Tier 2) — target `Ignore`, consistent with the `prefetch` policy. |
 | 9.7.9.26.4.4 | `multimem.cp.async.bulk` | `Unknown` | OK (deferred, Tier 4) — misfit §F. |
 | 9.7.9.26.4.5 | `multimem.cp.reduce.async.bulk` | `Unknown` | OK (deferred, Tier 4) — misfit §A+§F. |
-| 9.7.9.26.5.2 | `cp.async.bulk.tensor` | `Memory`: an `UnquantifiedBytes` load from `.src` and store to `.dst`, global to shared::cta or to shared::cluster (`.multicast::cluster` included), or shared::cta to global; another pair of state spaces stays `Unknown` | OK — "an asynchronous copy operation of tensor data from the location in .src state space to the location in the .dst state space" (§9.7.9.26.5.2). `.dst` is the first state space named: the manual's own example `cp.async.bulk.tensor.3d.im2col.shared::cluster.global` and Triton put `.load_mode` before it. The bytes are the bounding box of the tensor map, "a 128-byte opaque object" that "describes the tensor properties and the access properties" (§5.5.8, §5.5.3.1), **permanently unknowable from the PTX text**: `UnquantifiedBytes` is the end state (misfit §C), unless a `--bind`-style flag supplies the map. The shared side's address is traced; the global side's reads `addr ? (the tensor map holds the address)`, and a loop holding one in its own blocks has no footprint. Pinned by `a_tensor_copy_moves_the_bytes_its_tensor_map_gives` and `micro/tensor_copies.ptx`: every `.dim`, `.load_mode`, completion mechanism, `.multicast::cluster`, `.cta_group` and `.L2::cache_hint` form, which ptxas 13.4 assembles to its UTMALDG or UTMASTG, and its `--dump-ast` to the same SASS (`tests/lit/roundtrip`); its annotated lines by `micro-tensor-copies.test`. Single-thread-issued, CTA-scale (§B): one op per issuing thread. |
+| 9.7.9.26.5.2 | `cp.async.bulk.tensor` | `Memory`: an `UnquantifiedBytes` load from `.src` and store to `.dst`, global to shared::cta or to shared::cluster (`.multicast::cluster` included), or shared::cta to global; `.shared`, which ptxas 13.4 rejects here, reads as shared::cta; another pair of state spaces stays `Unknown` | OK — "an asynchronous copy operation of tensor data from the location in .src state space to the location in the .dst state space" (§9.7.9.26.5.2). `.dst` is the first state space named: the manual's own example `cp.async.bulk.tensor.3d.im2col.shared::cluster.global` and Triton put `.load_mode` before it. The bytes are the bounding box of the tensor map, "a 128-byte opaque object" that "describes the tensor properties and the access properties" (§5.5.8, §5.5.3.1), **permanently unknowable from the PTX text**: `UnquantifiedBytes` is the end state (misfit §C), unless a `--bind`-style flag supplies the map. The shared side's address is traced; the global side's reads `addr ? (the tensor map holds the address)`, and a loop holding one in its own blocks has no footprint. Pinned by `a_tensor_copy_moves_the_bytes_its_tensor_map_gives` and `micro/tensor_copies.ptx`: every `.dim`, `.load_mode`, completion mechanism, `.multicast::cluster`, `.cta_group` and `.L2::cache_hint` form, which ptxas 13.4 assembles to its UTMALDG or UTMASTG, and its `--dump-ast` to the same SASS (`tests/lit/roundtrip`); its annotated lines by `micro-tensor-copies.test`. Single-thread-issued, CTA-scale (§B): one op per issuing thread. |
 | 9.7.9.26.5.3 | `cp.reduce.async.bulk.tensor` | `Unknown` | OK (deferred, Tier 2) — same, plus misfit §A (reduction). |
 | 9.7.9.26.5.4 | `cp.async.bulk.prefetch.tensor` | `Unknown` | OK (deferred, Tier 2) — target `Ignore` per the prefetch policy. |
 | 9.7.9.26.6.1 | `cp.async.bulk.commit_group` | `Sync` | OK — moves no bytes. |

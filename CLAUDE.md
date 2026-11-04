@@ -14,7 +14,8 @@ commit, fold into it whatever the commit changes in either:
   or "verified" notes: a claim either has a test or fixture that pins
   it, or it is listed as a limitation.
 - Any change to instruction handling (`src/analysis/instruction_counts/classify.rs`, the parser's
-  instruction surface, the model axes in `src/analysis/instruction_counts/measurement.rs`)
+  instruction surface, the model axes in `src/analysis/instruction_counts/measurement.rs`,
+  the modifier meanings in `src/ptx/modifier.rs`)
   updates the audit's affected rows and its assessment sections. If
   the pinned PTX ISA version changes, re-derive the instruction
   inventory from the manual before editing rows.

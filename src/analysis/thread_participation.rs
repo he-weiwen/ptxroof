@@ -18,8 +18,7 @@
 //! one the same for every thread empties or keeps whole warps.
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
-use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Cmp, Var};
-use crate::analysis::affine::int_type::{IntKind, IntType};
+use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
 use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, linear, thread, warps_of};
 use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
@@ -30,6 +29,7 @@ use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
+use crate::ptx::modifier::{Cmp, Compare, Form, InstrType, IntKind};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -1220,23 +1220,17 @@ impl PredicateReader<'_> {
         let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
             return (Pred::Unknown, false);
         };
-        let mods: Vec<&str> = self
-            .module
-            .modifiers(instr)
-            .iter()
-            .map(|&m| self.module.interner.resolve(m))
-            .collect();
         let ops = self.module.operand_ids(instr.operands);
         let reg = |id| match self.module.operand(id) {
             Operand::Register(r) => Some(*r),
             _ => None,
         };
-        match (instr.mnemonic, mods.as_slice(), ops) {
+        match (instr.mnemonic, Form::of(self.module, instr), ops) {
             (Opcode::Setp, _, _) => {
                 let p = condition(self.module, self.kernel, self.affine, def, &mut self.forms);
                 (p.unwrap_or(Pred::Unknown), false)
             }
-            (Opcode::And | Opcode::Or, ["pred"], [_, a, b]) => {
+            (Opcode::And | Opcode::Or, Form::Logic(InstrType::Pred), [_, a, b]) => {
                 let (Some(a), Some(b)) = (reg(*a), reg(*b)) else {
                     return (Pred::Unknown, false);
                 };
@@ -1250,7 +1244,7 @@ impl PredicateReader<'_> {
             }
             // PTX ISA §4.5.3: an integer constant as a predicate is False
             // when zero and True otherwise.
-            (Opcode::Mov, ["pred"], [_, a]) => match self.module.operand(*a) {
+            (Opcode::Mov, Form::Move(InstrType::Pred), [_, a]) => match self.module.operand(*a) {
                 Operand::Immediate(t) => match parse_int(self.module.interner.resolve(*t)) {
                     Some(0) => (Pred::False, false),
                     Some(_) => (Pred::True, false),
@@ -1258,7 +1252,7 @@ impl PredicateReader<'_> {
                 },
                 _ => (Pred::Unknown, false),
             },
-            (Opcode::Not, ["pred"], [_, a]) => match reg(*a) {
+            (Opcode::Not, Form::Logic(InstrType::Pred), [_, a]) => match reg(*a) {
                 Some(a) => {
                     let (p, cut) = self.read(a, def, depth);
                     (!p, cut)
@@ -1467,20 +1461,18 @@ fn condition(
     let Stmt::Instr(setp) = &kernel.stmts[def] else {
         return None;
     };
-    let mods: Vec<&str> = module
-        .modifiers(setp)
-        .iter()
-        .map(|&m| module.interner.resolve(m))
-        .collect();
-    let cmp = Cmp::from_name(mods.first()?)?;
-    let ty = *mods.last()?;
-    // PTX ISA §9.7.6.2, §9.7.7.2: a floating-point `setp` compares floats, a packed one per half.
-    if ty.starts_with('f')
-        || ty.starts_with("bf")
-        || mods.iter().any(|m| matches!(*m, "and" | "or" | "xor"))
-    {
+    // PTX ISA §9.7.6.2, §9.7.7.2: a `setp` of no integer type compares
+    // floats, a packed one per half.
+    let Form::Compare(Compare {
+        cmp,
+        bool_op: None,
+        ty: InstrType::Int(int),
+        ..
+    }) = Form::of(module, setp)
+    else {
         return None;
-    }
+    };
+    let cmp = cmp.signed()?;
     let ops = module.operand_ids(setp.operands);
     if ops.len() != 3 {
         return None;
@@ -1506,19 +1498,16 @@ fn condition(
         let any = |v: &Var| range(v).or_else(|| any_grid(v));
         (x.range(&any)).is_some_and(|(lo, _)| lo >= 0)
     };
-    let int = IntType::from_name(ty);
-    let comparable = |a: &AffineExpr, b: &AffineExpr| {
-        int.is_some_and(|int| match (cmp, int.kind) {
-            (Cmp::Eq | Cmp::Ne, _) => {
-                let w = 1i128 << int.width;
-                fits(&(a.clone() - b.clone()), (1 - w, w))
-            }
-            (_, IntKind::Signed) => fits(a, int.values()) && fits(b, int.values()),
-            (_, IntKind::Unsigned) => {
-                nonnegative(a) && nonnegative(b) && fits(a, int.values()) && fits(b, int.values())
-            }
-            (_, IntKind::Bits) => false,
-        })
+    let comparable = |a: &AffineExpr, b: &AffineExpr| match (cmp, int.kind) {
+        (Cmp::Eq | Cmp::Ne, _) => {
+            let w = 1i128 << int.width;
+            fits(&(a.clone() - b.clone()), (1 - w, w))
+        }
+        (_, IntKind::Signed) => fits(a, int.values()) && fits(b, int.values()),
+        (_, IntKind::Unsigned) => {
+            nonnegative(a) && nonnegative(b) && fits(a, int.values()) && fits(b, int.values())
+        }
+        (_, IntKind::Bits) => false,
     };
     if let Some(d) = form.as_const()
         && comparable(&a, &b)

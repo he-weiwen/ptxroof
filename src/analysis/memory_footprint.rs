@@ -12,8 +12,8 @@ use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
 use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, thread, warps_of};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::instruction_counts::measurement::Space;
 use crate::analysis::thread_participation::Pred;
+use crate::ptx::modifier::Space;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const SECTOR: i64 = 32;

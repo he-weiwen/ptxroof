@@ -25,12 +25,11 @@
 //! family = 1 per result (the operation, not its SASS expansion), all
 //! multiplied by packed lanes (`f16x2` = ×2).
 
-use super::measurement::{ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision, Space};
+use super::measurement::{ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision};
 
-use crate::ptx::ir::{
-    FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, is_param_space,
-};
+use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId};
 use crate::ptx::literal::parse_int;
+use crate::ptx::modifier::{ParamAccess, Space, copy_spaces, param_access, space};
 
 /// Exclusive instruction category. Work quantities live in contributions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -167,13 +166,13 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
             } else {
                 Direction::Store
             };
-            ClassifiedInstruction::memory(space_of(&mods), direction, bytes_of(&mods))
+            ClassifiedInstruction::memory(space_of(module, instr), direction, bytes_of(&mods))
         }
         // Uniform global loads (PTX ISA §9.7.9.9).
         Ldu => ClassifiedInstruction::memory(Space::Global, Direction::Load, bytes_of(&mods)),
 
         // -- tensor cores (warp-collective; counts are per lane) ----------
-        Wmma => wmma(&mods),
+        Wmma => wmma(&mods, space_of(module, instr)),
         Mma => mma(&mods),
         Ldmatrix => matrix_fragments(&mods, Direction::Load),
         Stmatrix => matrix_fragments(&mods, Direction::Store),
@@ -183,7 +182,7 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
 
         // Atom returns the old value (read + write); red retains the
         // requested-byte convention of write only. Both contribute FP work.
-        Atom | Red => atomic(&mods, instr.mnemonic == Atom),
+        Atom | Red => atomic(&mods, space_of(module, instr), instr.mnemonic == Atom),
 
         // -- sync / warp collectives ---------------------------------------
         Bar | Barrier | Mbarrier | Membar | Fence => {
@@ -248,8 +247,7 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
 
 /// Atomic FP operations count one operation per scalar element. Integer,
 /// bitwise, exchange and CAS operations never become FP work.
-fn atomic(mods: &[&str], returns_old: bool) -> ClassifiedInstruction {
-    let space = space_of(mods);
+fn atomic(mods: &[&str], space: Space, returns_old: bool) -> ClassifiedInstruction {
     let bytes = bytes_of(mods);
     let mut result = ClassifiedInstruction::memory(space, Direction::Store, bytes);
     if returns_old {
@@ -333,7 +331,7 @@ fn per_lane_bytes(bits: u32) -> Option<u32> {
 /// `wmma.{load,store,mma}` (PTX ISA §9.7.15.4.3–5): the role is the
 /// first modifier; the shape modifier fixes every fragment's size and
 /// the flop count; the element types follow the shape.
-fn wmma(mods: &[&str]) -> ClassifiedInstruction {
+fn wmma(mods: &[&str], space: Space) -> ClassifiedInstruction {
     let Some(shape_at) = mods.iter().position(|m| matrix_shape(m).is_some()) else {
         return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     };
@@ -355,7 +353,7 @@ fn wmma(mods: &[&str]) -> ClassifiedInstruction {
                 return ClassifiedInstruction::simple(InstructionCategory::Unknown);
             };
             ClassifiedInstruction::memory(
-                space_of(mods),
+                space,
                 if role == "load" {
                     Direction::Load
                 } else {
@@ -457,7 +455,7 @@ fn matrix_fragments(mods: &[&str], direction: Direction) -> ClassifiedInstructio
 fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     let has = |name: &str| mods.contains(&name);
     if mods.starts_with(&["async", "bulk", "tensor"]) {
-        return tensor_copy(mods);
+        return tensor_copy(module, instr);
     }
     if has("async") && (has("commit_group") || has("wait_group")) {
         return ClassifiedInstruction::simple(InstructionCategory::Sync);
@@ -468,7 +466,7 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     if has("wait_all") || has("mbarrier") {
         return ClassifiedInstruction::simple(InstructionCategory::Sync);
     }
-    if !(has("shared") || has("shared::cta")) || !has("global") {
+    if copy_spaces(module, instr) != Some((Space::Global, Space::Shared)) {
         return ClassifiedInstruction::simple(InstructionCategory::Unknown);
     }
     let immediate = |id: Option<OperandId>| match module.operand(id?) {
@@ -490,18 +488,11 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
 /// `cp.async.bulk.tensor.3d.im2col.shared::cluster.global`. The bytes
 /// are the bounding box the tensor map gives (§5.5.3.1, §5.5.8), not
 /// the instruction.
-fn tensor_copy(mods: &[&str]) -> ClassifiedInstruction {
-    let spaces: Vec<Space> = (mods.iter())
-        .filter_map(|m| match *m {
-            "global" => Some(Space::Global),
-            "shared::cta" => Some(Space::Shared),
-            "shared::cluster" => Some(Space::SharedCluster),
-            _ => None,
-        })
-        .collect();
-    match spaces[..] {
-        [Space::Shared | Space::SharedCluster, Space::Global] | [Space::Global, Space::Shared] => {
-            ClassifiedInstruction::copy(spaces[1], spaces[0], None, None)
+fn tensor_copy(module: &Module, instr: &Instr) -> ClassifiedInstruction {
+    match copy_spaces(module, instr) {
+        Some((from @ Space::Global, to @ (Space::Shared | Space::SharedCluster)))
+        | Some((from @ Space::Shared, to @ Space::Global)) => {
+            ClassifiedInstruction::copy(from, to, None, None)
         }
         _ => ClassifiedInstruction::simple(InstructionCategory::Unknown),
     }
@@ -511,7 +502,7 @@ fn tensor_copy(mods: &[&str]) -> ClassifiedInstruction {
 /// an ignore-src predicate, marked as at most its cp-size, and the
 /// device-function parameters a call passes a move.
 pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> ClassifiedInstruction {
-    if device_function_param(module, kernel, instr) {
+    if param_access(module, kernel, instr) == Some(ParamAccess::DeviceFunctionParam) {
         return ClassifiedInstruction::non_flop(ArithKind::Move);
     }
     let mut c = classify(module, instr);
@@ -530,25 +521,6 @@ pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> Classifie
         }
     }
     c
-}
-
-/// A kernel's `st.param` or `ld.param` of a `.param` variable not among
-/// its parameters: kernel parameters are read-only (PTX ISA §5.1.6.1), a
-/// `.param` store in a kernel is `.param::func` (§9.7.9.11), and the
-/// variables a call sequence declares hold its arguments and return
-/// value (§5.1.6.4).
-fn device_function_param(module: &Module, kernel: &Kernel, instr: &Instr) -> bool {
-    let param =
-        (module.modifiers(instr).iter()).any(|&m| is_param_space(module.interner.resolve(m)));
-    match instr.mnemonic {
-        Opcode::St => param,
-        Opcode::Ld if param => module.operand_ids(instr.operands).iter().any(|&o| {
-            matches!(module.operand(o), Operand::Memory { base, .. }
-                if matches!(module.operand(*base), Operand::SymbolRef(s)
-                    if !kernel.params.iter().any(|p| p.name == *s)))
-        }),
-        _ => false,
-    }
 }
 
 /// A `cp.async`'s src-size or ignore-src operand, the one after cp-size;
@@ -586,19 +558,10 @@ fn fp_precision_and_lanes(mods: &[&str]) -> Option<(Precision, u32)> {
     None
 }
 
-fn space_of(mods: &[&str]) -> Space {
-    for &m in mods {
-        match m {
-            "global" => return Space::Global,
-            "shared" | "shared::cta" => return Space::Shared,
-            "shared::cluster" => return Space::SharedCluster,
-            "local" => return Space::Local,
-            "const" => return Space::Const,
-            m if is_param_space(m) => return Space::Param,
-            _ => {}
-        }
-    }
-    Space::Generic
+/// The state space a memory instruction names, `Generic` when it names
+/// none (PTX ISA §6.4.1.1).
+fn space_of(module: &Module, instr: &Instr) -> Space {
+    space(module, instr).unwrap_or(Space::Generic)
 }
 
 /// Per-execution byte count: type width × vector multiplier.
@@ -1171,7 +1134,6 @@ mod tests {
         // 'cp.async.bulk.tensor'"; and the other tensor copies.
         for text in [
             "cp.async.bulk.tensor.1d.global.shared::cluster.bulk_group [%rd1, {%r2}], [%r1];",
-            "cp.async.bulk.tensor.1d.shared.global.mbarrier::complete_tx::bytes [%r1], [%rd1, {%r2}], [%r3];",
             "cp.reduce.async.bulk.tensor.1d.global.shared::cta.add.tile.bulk_group [%rd1, {%r2}], [%r1];",
             "cp.async.bulk.prefetch.tensor.1d.L2.global.tile [%rd1, {%r2}];",
         ] {

@@ -4,6 +4,7 @@ pub mod cfg;
 pub(crate) mod count_constraint;
 pub mod ir;
 pub(crate) mod literal;
+pub mod modifier;
 pub mod parse;
 pub mod print;
 pub mod register_effects;

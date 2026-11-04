@@ -15,6 +15,7 @@
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
 use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, Stmt};
+use crate::ptx::modifier::{Form, Memory, Sem};
 use crate::ptx::register_effects::{reads_cc, registers, split_operands, writes};
 use crate::ssa::{RegisterSsa, Value};
 
@@ -77,12 +78,10 @@ fn pure(module: &Module, instr: &Instr) -> bool {
         }),
         _ => {
             instr.mnemonic == Opcode::Ld
-                && !(module.modifiers(instr).iter()).any(|&m| {
-                    matches!(
-                        module.interner.resolve(m),
-                        "volatile" | "relaxed" | "acquire" | "mmio"
-                    )
-                })
+                && matches!(
+                    Form::of(module, instr),
+                    Form::Memory(Memory { sem: Sem::Weak, .. })
+                )
         }
     }
 }

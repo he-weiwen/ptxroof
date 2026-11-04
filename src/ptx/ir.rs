@@ -23,6 +23,8 @@ macro_rules! named_enum {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         $vis enum $name { $($variant),* }
 
+        // A crate-private enum may only be read from its names.
+        #[allow(dead_code)]
         impl $name {
             pub fn name(self) -> &'static str {
                 match self { $(Self::$variant => $text),* }
@@ -34,6 +36,7 @@ macro_rules! named_enum {
         }
     };
 }
+pub(crate) use named_enum;
 
 named_enum! {
     /// PTX ISA §5.2.1, Table 8.
@@ -384,12 +387,6 @@ pub struct Kernel {
 pub(crate) fn register_member(name: &str, prefix: &str, count: u32) -> Option<u32> {
     let i: u32 = name.strip_prefix(prefix)?.parse().ok()?;
     (i < count && name.len() == prefix.len() + i.to_string().len()).then_some(i)
-}
-
-/// A modifier naming the parameter state space: `.param` or its
-/// `::entry` and `::func` sub-qualifiers (PTX ISA §9.7.9.8, §9.7.9.11).
-pub(crate) fn is_param_space(modifier: &str) -> bool {
-    matches!(modifier, "param" | "param::entry" | "param::func")
 }
 
 impl Kernel {

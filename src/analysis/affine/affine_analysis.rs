@@ -41,11 +41,10 @@
 //! grid given, a symbolic trip count) is assumed not to wrap its type,
 //! and unsigned/signed comparison width is not modeled.
 
-use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Cmp, Var};
+use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
 use crate::analysis::affine::affine_properties::AffineProperties;
 use crate::analysis::affine::exit_limit::{below_zero, exit_limit};
 use crate::analysis::affine::induction_variables::{InductionVariable, Step, induction_variables};
-use crate::analysis::affine::int_type::{IntKind, IntType};
 use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
@@ -55,9 +54,13 @@ use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
     Element, Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialScalar, SpecialVector,
-    Stmt, is_param_space,
+    Stmt,
 };
 use crate::ptx::literal::parse_int;
+use crate::ptx::modifier::{
+    Cmp, Compare, Form, InstrType, IntArith, IntInstrType, IntKind, IntOperand, Memory, MulMode,
+    ParamAccess, ShflMode, Space, param_access, space,
+};
 use crate::ptx::register_effects::{registers, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register};
 use crate::ssa::Value;
@@ -215,8 +218,7 @@ impl<'a> AffineAnalysis<'a> {
                 if !seen.insert(op) {
                     continue;
                 }
-                let param = (module.modifiers(instr).iter())
-                    .any(|&m| is_param_space(module.interner.resolve(m)));
+                let param = space(module, instr) == Some(Space::Param);
                 match instr.mnemonic {
                     Opcode::Ld if !param => found.push(UnknownReason::Load { def: op }),
                     Opcode::Atom => found.push(UnknownReason::Atomic),
@@ -473,10 +475,8 @@ impl<'a> AffineAnalysis<'a> {
                 if let Value::Result { op, .. } = v
                     && let Stmt::Instr(instr) = &self.data.kernel.stmts[op]
                 {
-                    let mods: Vec<&str> = (module.modifiers(instr).iter())
-                        .map(|&m| module.interner.resolve(m))
-                        .collect();
-                    self.fits(fed.clone(), instr, &mods).map_err(Some)?;
+                    self.fits(fed.clone(), instr, Form::of(module, instr))
+                        .map_err(Some)?;
                 }
             }
         }

@@ -1,7 +1,7 @@
 //! The input PTX with what the analysis says of each line appended to
 //! it as a ` // ` comment.
 
-use crate::analysis::affine::affine_expr::{AffineExpr, Cmp, Var};
+use crate::analysis::affine::affine_expr::{AffineExpr, Var};
 use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
@@ -16,6 +16,7 @@ use crate::analysis::thread_participation::{Atom, AtomKey, Constraint, Pred};
 use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Opcode, Register, Stmt};
+use crate::ptx::modifier::Cmp;
 use crate::ptx::register_effects::writes;
 use crate::report::build::{
     Access, AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel,
