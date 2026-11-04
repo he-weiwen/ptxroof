@@ -23,6 +23,21 @@ impl AffineAnalysis<'_> {
         let arg = |i: usize| -> Result<AffineExpr, UnknownReason> {
             self.operand_at(ops[i], def, depth + 1)
         };
+        // An arithmetic instruction of a packed integer type computes each
+        // lane apart (PTX ISA §9.7.1.1, §5.2.5); one of a float type reads
+        // its operands' bits as floats (§9.7.3 to §9.7.5), not as the
+        // integers their forms hold.
+        let integer = || -> Result<(), UnknownReason> {
+            let opcode = module.opcode(instr);
+            match form {
+                Form::IntArith(IntArith {
+                    ty: IntOperand::Packed { .. },
+                    ..
+                }) => Err(format!("`{opcode}` computes per packed lane").into()),
+                Form::FloatArith => Err(format!("`{opcode}` is floating-point arithmetic").into()),
+                _ => Ok(()),
+            }
+        };
         // A brace-enclosed destination's registers are the value's elements in
         // order (PTX ISA 6.4.3, "Vectors as Operands"): each is a parameter's
         // whole value only when the load has one element, and the element of
@@ -99,8 +114,14 @@ impl AffineAnalysis<'_> {
                 }
                 Err(UnknownReason::Load { def })
             }
-            Opcode::Add if ops.len() == 3 => Ok(arg(1)? + arg(2)?),
-            Opcode::Sub if ops.len() == 3 => Ok(arg(1)? - arg(2)?),
+            Opcode::Add if ops.len() == 3 => {
+                integer()?;
+                Ok(arg(1)? + arg(2)?)
+            }
+            Opcode::Sub if ops.len() == 3 => {
+                integer()?;
+                Ok(arg(1)? - arg(2)?)
+            }
             // PTX ISA §9.7.1.12: an integer `neg` is 0 − a; `.s8x4`
             // negates each byte on its own.
             Opcode::Neg
@@ -333,6 +354,7 @@ impl AffineAnalysis<'_> {
                 }
             }
             Opcode::Div | Opcode::Rem if ops.len() == 3 => {
+                integer()?;
                 let (a, b) = (arg(1)?, arg(2)?);
                 // PTX ISA §9.7.1.10: a negative number's remainder, and so
                 // the quotient's rounding, is machine-dependent.
@@ -457,6 +479,7 @@ impl AffineAnalysis<'_> {
                 Err(format!("`{}` keeps a product's upper half", module.opcode(instr)).into())
             }
             Opcode::Mul if ops.len() == 3 => {
+                integer()?;
                 let (a, b) = (arg(1)?, arg(2)?);
                 self.wide_operands(&[&a, &b], instr, form)?;
                 if a.is_symbolic_or_constant() {
@@ -468,6 +491,7 @@ impl AffineAnalysis<'_> {
                 }
             }
             Opcode::Mad if ops.len() == 4 => {
+                integer()?;
                 let (a, b, c) = (arg(1)?, arg(2)?, arg(3)?);
                 self.wide_operands(&[&a, &b], instr, form)?;
                 let prod = if a.is_symbolic_or_constant() {

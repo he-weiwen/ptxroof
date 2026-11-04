@@ -31,7 +31,10 @@ from `ptx/modifier.rs`; `instruction_counts/classify.rs` maps
 instructions to those records.
 Scalar instruction interpretation lives in `affine/affine_analysis/transfer.rs`, with
 instruction types and forms (`Form`) in `ptx/modifier.rs` and special-register sharing in
-`ptx/special_registers.rs`.
+`ptx/special_registers.rs`. It leaves the value of an `add`, `sub`, `mul`, `mad`, `div`
+or `rem` unknown when its type is a packed integer, which "computes per packed lane"
+(`micro/packed_add.ptx`), or a float, which "is floating-point arithmetic"
+(`micro/float_mul.ptx`).
 
 The parser accepts instruction-shaped statements as
 `mnemonic + modifiers + operands` (`src/ptx/parse/parser.rs`). The

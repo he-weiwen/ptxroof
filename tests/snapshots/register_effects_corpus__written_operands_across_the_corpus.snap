@@ -13,7 +13,7 @@ add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
 add.s16x2	1	1
 add.s32	1	3844
-add.s64	1	2638
+add.s64	1	2639
 add.u32	1	319
 add.u64	1	4
 addc.u32	1	1
@@ -70,7 +70,7 @@ cvt.s64.s32	1	178
 cvt.u16.u32	1	27
 cvt.u32.u16	1	49
 cvt.u32.u64	1	83
-cvt.u64.u32	1	424
+cvt.u64.u32	1	425
 cvta.param.u64	1	24
 cvta.to.global.u64	1	42
 div.approx.f32	1	2
@@ -111,7 +111,7 @@ ld.param.f32	1	21
 ld.param.s32	1	36
 ld.param.u16	1	1
 ld.param.u32	1	95
-ld.param.u64	1	282
+ld.param.u64	1	283
 ld.param::entry.u32	1	1
 ld.param::entry.u64	1	1
 ld.shared.b16	1	26
@@ -158,14 +158,14 @@ mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32	1	764
 mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32	1	33
 mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32	1	96
 mov.b16	1	23
-mov.b32	1	3817
+mov.b32	1	3820
 mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	107
 mov.u16	1	294
-mov.u32	1	1367
+mov.u32	1	1368
 mov.u64	1	51
-mul.f32	1	1827
+mul.f32	1	1828
 mul.hi.s32	1	1
 mul.hi.u32	1	7
 mul.lo.s32	1	625
@@ -198,7 +198,7 @@ redux.sync.max.f32	1	1
 rem.s32	1	35
 rem.s64	1	10
 rem.u32	1	8
-ret	0	293
+ret	0	294
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	805
@@ -260,7 +260,7 @@ st.global.b32	0	198
 st.global.b64	0	9
 st.global.f32	0	16
 st.global.u16	0	198
-st.global.u32	0	252
+st.global.u32	0	253
 st.global.u64	0	2
 st.global.u8	0	2
 st.global.v2.b32	0	46

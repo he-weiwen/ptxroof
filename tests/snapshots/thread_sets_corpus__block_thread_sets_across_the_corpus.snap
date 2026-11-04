@@ -1896,6 +1896,7 @@ tests/fixtures/micro/exit_pred_stride.ptx:21	warp * × lane *
 tests/fixtures/micro/exit_pred_stride.ptx:25	warp * × lane *
 tests/fixtures/micro/exit_pred_stride.ptx:29	warp * × lane *
 tests/fixtures/micro/expanded_rem.ptx:23	warp * × lane *
+tests/fixtures/micro/float_mul.ptx:20	warp * × lane *
 tests/fixtures/micro/floor_mod_remainder.ptx:34	warp * × lane *
 tests/fixtures/micro/floor_mod_remainder.ptx:54	warp * × lane *
 tests/fixtures/micro/floor_mod_remainder.ptx:76	warp * × lane *

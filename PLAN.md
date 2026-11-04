@@ -347,17 +347,6 @@ output_tallies` rewrites it.
   (`micro/and_sign_remainder.ptx`'s `n & 0x7fff`: `param_1 mod 32768`;
   `micro/and_runs.ptx`'s `micro_and_sign_runs`); a 64-bit mask of more
   runs is refused (`micro_and_sign_wide_runs`: a uniform variable).
-- **A packed integer add or subtract is read as one 32-bit one.**
-  `.u16x2`, `.s16x2`, `.u8x4` and `.s8x4` add and subtract each half
-  or quarter word apart (PTX ISA §9.7.1.1, §9.7.1.2, §5.2.5.2), but
-  `transfer` reads `add` and `sub` of any type as the sum or
-  difference of their operands, and `fits`, which checks 16- and
-  32-bit types, passes them. `micro/packed_add.ptx`'s `add.s16x2` of
-  0xffff and `%tid.x` makes the store's address read
-  `[4·%tid.x + param_0 + 262140]`, where ptxas 13.4 emits `VIADD.16x2`
-  and thread t ≥ 1 stores at param_0 + 4·(t − 1) (constructed). The
-  census's 86, in 22 files, feed unpacks (`mov.b32 {…}`, 71 uses),
-  `and.b32` (19) and other packed adds (8), as at `00545.ptx:526`.
 - **`shfl.sync.idx` is read as if warps were rows of 32 `%tid.x`**,
   whatever the block shape: a warp is 32 consecutive
   `%tid.x + %tid.y·%ntid.x + %tid.z·%ntid.x·%ntid.y` (PTX ISA §3.1,
