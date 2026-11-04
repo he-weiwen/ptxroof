@@ -15,21 +15,22 @@ only declare modules and selected public entry points.
 | `support/intern` | String interning |
 | `ptx/ir` | Parsed PTX representation, including register-family membership |
 | `ptx/literal` | Integer literal interpretation |
+| `ptx/modifier` | What instruction modifiers name: instruction types, comparisons and state spaces, and each instruction's form by its family's syntax; and what a `.param` address refers to |
 | `ptx/parse/lexer` | Tokenize PTX text |
 | `ptx/parse/parser` | Construct IR from tokens |
 | `ptx/print` | Canonical PTX dump |
 | `ptx/cfg` | PTX basic blocks, edges and CFG construction |
+| `ptx/register_effects` | Instruction register reads and writes, CC included |
+| `ptx/special_registers` | Sharing and stability of PTX special-register values |
+| `ptx/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/control_flow/dominators` | Dominance, post-dominance and frontiers |
 | `analysis/control_flow/loops` | Natural loop forest and irreducible edges |
 | `analysis/control_flow/sync_dependence` | Where the paths from each branch's successors meet again (LLVM's sync dependence), and which branches decide when a thread leaves a loop |
 | `ssa` | Register SSA values and def/use queries over the PTX CFG |
-| `analysis/register_effects` | Instruction register reads and writes, CC included |
-| `analysis/kernel_analyses` | One kernel's register writes, SSA, parameter indices, reachability, branch joins and loop exit branches, with control-flow queries |
-| `analysis/special_registers` | Sharing and stability of PTX special-register values |
+| `analysis/kernel_analyses` | One kernel's register writes, SSA, reachability, branch joins and loop exit branches, with control-flow queries |
 | `analysis/uniformity_info` | Propagate divergence through definitions and controlling branches |
 | `analysis/affine/sym_expr` | Symbolic expressions and simplification |
 | `analysis/affine/affine_expr` | Affine expressions over thread, CTA, loop and uniform variables |
-| `analysis/affine/int_type` | Integer types and representable ranges |
 | `analysis/affine/lane_eval` | Evaluate affine forms for lanes and warp layouts |
 | `analysis/affine/induction_variables` | Recognize loop counter induction variables on SSA values |
 | `analysis/affine/exit_limit` | Loop-exit inequalities solved for a trip count |
@@ -45,7 +46,6 @@ only declare modules and selected public entry points.
 | `analysis/memory_footprint` | Warp sectors and loop requested, distinct and sector bytes |
 | `analysis/instruction_counts/measurement` | Accounting dimensions and contribution/measurement records |
 | `analysis/instruction_counts/classify` | Decode instructions into categories and contributions |
-| `analysis/instruction_counts/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/instruction_counts/collect` | Attach block/loop execution context to instruction contributions |
 | `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs, bytes and conversions they sum to |
 | `report/bindings` | Caller parameter bindings and their text syntax |
@@ -67,14 +67,17 @@ points; internal callers use canonical modules directly.
 checks these boundaries:
 
 - Support utilities depend only on support utilities.
-- PTX representation, parsing and CFG construction depend only on PTX and support.
+- PTX representation, parsing, CFG construction, modifier meanings, register
+  effects, special-register sharing and count constraints depend only on PTX
+  and support.
 - Analyses and SSA do not depend on the parser or on reporting.
 - Report construction may call analyses and the parser.
 
 `register_member` belongs to the IR because register declarations define family
 membership; both `Kernel::register_type` and the parser use it. `measurement`
-owns `Precision`, `Pipe`, `Space`, `Direction` and `ArithKind` alongside
-`Contribution` and `MeasureKind`; `classify` produces those records. `measured`
+owns `Precision`, `Pipe`, `Direction` and `ArithKind` alongside
+`Contribution` and `MeasureKind`, with `Space` from `ptx/modifier`;
+`classify` produces those records. `measured`
 reads bindings from `report/bindings`, not from the report builder.
 
 `KernelAnalyses` holds one kernel's structure and no scalar interpretation.

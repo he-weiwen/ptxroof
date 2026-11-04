@@ -6,10 +6,11 @@
 //! the reader's.
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::register_effects::writes;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId, Register, Stmt};
 use crate::ptx::literal::parse_int;
+use crate::ptx::modifier::{Form, IntArith, IntKind, IntOperand};
+use crate::ptx::register_effects::writes;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
 use std::collections::{BTreeSet, HashMap};
@@ -193,13 +194,14 @@ impl Walk<'_> {
 
     /// A scalar integer `add` or `sub`, not saturating.
     fn integer(&self, instr: &Instr) -> bool {
-        let mods: Vec<&str> = (self.module.modifiers(instr).iter())
-            .map(|&m| self.module.interner.resolve(m))
-            .collect();
-        !mods.contains(&"sat")
-            && mods
-                .iter()
-                .any(|m| matches!(*m, "s16" | "u16" | "s32" | "u32" | "s64" | "u64"))
+        matches!(
+            Form::of(self.module, instr),
+            Form::IntArith(IntArith {
+                ty: IntOperand::Scalar(t),
+                sat: false,
+                ..
+            }) if t.kind != IntKind::Bits && t.width >= 16
+        )
     }
 }
 

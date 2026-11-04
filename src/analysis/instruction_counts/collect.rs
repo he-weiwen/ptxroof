@@ -158,9 +158,10 @@ fn block_qualifier(forest: &LoopForest, exit_blocks: &[BlockId], block: BlockId)
 mod tests {
     use super::*;
     use crate::analysis::control_flow::loop_forest;
+    use crate::analysis::instruction_counts::measurement::Direction;
     use crate::analysis::instruction_counts::measurement::MeasureKind;
-    use crate::analysis::instruction_counts::measurement::{Direction, Space};
     use crate::ptx::cfg::build_cfg;
+    use crate::ptx::modifier::Space;
     use crate::ptx::parse::parser::parse;
 
     fn collect_body(body: &str) -> (Vec<BlockMeasurements>, Module) {

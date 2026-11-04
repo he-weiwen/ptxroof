@@ -1,0 +1,48 @@
+//
+// HAND-WRITTEN: `setp.lt.u32` of a value with -4, which an unsigned
+// comparison reads as 2^32 - 4: the latch of a loop counting from 1,
+// which runs 2^32 - 4 trips, and a guard of the thread index, which
+// every thread passes.
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_latch_unsigned(
+	.param .u64 micro_latch_unsigned_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_latch_unsigned_param_0];
+	mov.u32 	%r1, 0;
+	mov.u32 	%r5, -4;
+$L__BB0_1:
+	add.s32 	%r1, %r1, 1;
+	st.global.u32 	[%rd1], %r1;
+	setp.lt.u32 	%p1, %r1, %r5;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}
+
+.visible .entry micro_guard_unsigned(
+	.param .u64 micro_guard_unsigned_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_guard_unsigned_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r5, -4;
+	setp.lt.u32 	%p1, %r1, %r5;
+	@!%p1 bra 	$L__BB1_2;
+	st.global.u32 	[%rd1], %r1;
+$L__BB1_2:
+	ret;
+}

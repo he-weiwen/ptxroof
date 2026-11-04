@@ -87,7 +87,10 @@ missing feature with its evidence.
 
 `./ci.sh` runs rustfmt, clippy, the unit and corpus tests, the lit tests
 in `tests/lit` (LLVM's lit and FileCheck) and, with a GPU and Nsight
-Compute, a fresh measurement of every RTX 4090 record. `cargo mutants`
+Compute, a fresh measurement of every RTX 4090 record. `tests/lit.sh`
+runs `$LIT`, a `lit` on PATH (`uv tool install lit`) or Ubuntu's
+`llvm-N-tools`; FileCheck comes from `$LLVM_TOOLS_DIR`, that LLVM, PATH
+or Homebrew's `llvm`. `cargo mutants`
 runs the lit tests too, through `tests/cli_suite.rs`. `PLAN.md` lists the
 known limitations and missing features; `docs/architecture.md` describes
 the module layout.

@@ -18,16 +18,25 @@ impl AffineAnalysis<'_> {
             return Err("value defined by a statement the parser could not read".into());
         };
         let mnemonic = instr.mnemonic;
-        let mods: Vec<&str> = self
-            .data
-            .module
-            .modifiers(instr)
-            .iter()
-            .map(|&m| module.interner.resolve(m))
-            .collect();
+        let form = Form::of(module, instr);
         let ops = module.operand_ids(instr.operands).to_vec();
         let arg = |i: usize| -> Result<AffineExpr, UnknownReason> {
             self.operand_at(ops[i], def, depth + 1)
+        };
+        // An arithmetic instruction of a packed integer type computes each
+        // lane apart (PTX ISA §9.7.1.1, §5.2.5); one of a float type reads
+        // its operands' bits as floats (§9.7.3 to §9.7.5), not as the
+        // integers their forms hold.
+        let integer = || -> Result<(), UnknownReason> {
+            let opcode = module.opcode(instr);
+            match form {
+                Form::IntArith(IntArith {
+                    ty: IntOperand::Packed { .. },
+                    ..
+                }) => Err(format!("`{opcode}` computes per packed lane").into()),
+                Form::FloatArith => Err(format!("`{opcode}` is floating-point arithmetic").into()),
+                _ => Ok(()),
+            }
         };
         // A brace-enclosed destination's registers are the value's elements in
         // order (PTX ISA 6.4.3, "Vectors as Operands"): each is a parameter's
@@ -57,7 +66,13 @@ impl AffineAnalysis<'_> {
         }
         if let Some(Operand::VectorList { children }) = ops.first().map(|&o| module.operand(o))
             && (mnemonic != Opcode::Ld
-                || mods.iter().any(|m| is_param_space(m)) && children.len() > 1)
+                || matches!(
+                    form,
+                    Form::Memory(Memory {
+                        space: Some(Space::Param),
+                        ..
+                    })
+                ) && children.len() > 1)
             && registers(module, ops[0]).contains(&reg)
         {
             let opcode = module.opcode(instr);
@@ -74,10 +89,11 @@ impl AffineAnalysis<'_> {
             // conversion changes the value's bits.
             Opcode::Cvt => {
                 let opcode = module.opcode(instr);
-                let types: Vec<IntType> =
-                    mods.iter().filter_map(|m| IntType::from_name(m)).collect();
-                let numeric = mods.iter().filter(|m| m.contains(char::is_numeric)).count();
-                let (&[to, from], 2) = (&types[..], numeric) else {
+                let Form::Convert {
+                    from: InstrType::Int(from),
+                    to: InstrType::Int(to),
+                } = form
+                else {
                     return Err(format!("`{opcode}` is not an integer conversion").into());
                 };
                 let a = self.operand_at(*ops.last().expect("cvt has operands"), def, depth + 1)?;
@@ -89,31 +105,45 @@ impl AffineAnalysis<'_> {
                 Ok(a)
             }
             Opcode::Ld => {
-                if mods.iter().any(|m| is_param_space(m))
-                    && let Some(Operand::Memory { base, .. }) =
-                        ops.get(1).map(|&i| module.operand(i))
-                    && let Operand::SymbolRef(pname) = module.operand(*base)
-                    && let Some(&idx) = self.data.params.get(pname)
+                if let Some(ParamAccess::KernelParam { index, .. }) =
+                    param_access(module, self.data.kernel, instr)
                 {
                     return Ok(AffineExpr::from_base(SymExpr::Sym(
-                        SymbolicConstant::KernelParam(idx),
+                        SymbolicConstant::KernelParam(index),
                     )));
                 }
                 Err(UnknownReason::Load { def })
             }
-            Opcode::Add if ops.len() == 3 => Ok(arg(1)? + arg(2)?),
-            Opcode::Sub if ops.len() == 3 => Ok(arg(1)? - arg(2)?),
+            Opcode::Add if ops.len() == 3 => {
+                integer()?;
+                Ok(arg(1)? + arg(2)?)
+            }
+            Opcode::Sub if ops.len() == 3 => {
+                integer()?;
+                Ok(arg(1)? - arg(2)?)
+            }
             // PTX ISA §9.7.1.12: an integer `neg` is 0 − a; `.s8x4`
             // negates each byte on its own.
             Opcode::Neg
-                if ops.len() == 2 && matches!(mods.last(), Some(&("s16" | "s32" | "s64"))) =>
+                if ops.len() == 2
+                    && matches!(
+                        form,
+                        Form::IntArith(IntArith {
+                            ty: IntOperand::Scalar(t),
+                            ..
+                        }) if t.kind == IntKind::Signed && t.width >= 16
+                    ) =>
             {
                 Ok(AffineExpr::from_base(SymExpr::Const(0)) - arg(1)?)
             }
             // PTX ISA §9.7.8.4: `not` inverts every bit, which in two's
             // complement is −1 − a.
             Opcode::Not
-                if ops.len() == 2 && matches!(mods.last(), Some(&("b16" | "b32" | "b64"))) =>
+                if ops.len() == 2
+                    && matches!(
+                        form,
+                        Form::Logic(InstrType::Int(t)) if t.kind == IntKind::Bits && t.width >= 16
+                    ) =>
             {
                 Ok(AffineExpr::from_base(SymExpr::Const(-1)) - arg(1)?)
             }
@@ -133,9 +163,10 @@ impl AffineAnalysis<'_> {
                 // alone. The runs' bits are disjoint, so the and is their
                 // sum; PTX ISA §4.5.1 converts the constant to the
                 // instruction's size.
-                let width = (mods.iter())
-                    .find_map(|m| m.strip_prefix('b')?.parse::<u32>().ok())
-                    .unwrap_or(32);
+                let width = match form {
+                    Form::Logic(ty) => ty.untyped_width().unwrap_or(32),
+                    _ => 32,
+                };
                 let modulo = |x: AffineExpr, k: u32| -> Result<AffineExpr, UnknownReason> {
                     (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.var_bounds(v))))
                         .ok_or_else(|| refuse(&x, "mod"))
@@ -219,7 +250,7 @@ impl AffineAnalysis<'_> {
                     return Err("bfe with a non-constant position or length".into());
                 };
                 let (pos, len) = (pos & 0xff, len & 0xff);
-                let Some(ty) = IntType::of(&mods).filter(|t| t.kind != IntKind::Bits) else {
+                let Some(ty) = form.int_type().filter(|t| t.kind != IntKind::Bits) else {
                     return Err("bfe of no integer type".into());
                 };
                 let (w, signed) = (i64::from(ty.width), ty.kind == IntKind::Signed);
@@ -255,8 +286,10 @@ impl AffineAnalysis<'_> {
                 }
             }
             Opcode::Selp if ops.len() == 4 => {
-                let selected =
-                    IntType::of(&mods).and_then(|ty| self.selected(&ops, def, depth, ty));
+                let selected = match form {
+                    Form::Select(InstrType::Int(ty)) => self.selected(&ops, def, depth, ty),
+                    _ => None,
+                };
                 selected.ok_or_else(|| self.unread(instr, def))
             }
             Opcode::Shl if ops.len() == 3 => {
@@ -264,10 +297,10 @@ impl AffineAnalysis<'_> {
                 // PTX ISA §9.7.8.8: the count is b's unsigned 32-bit value,
                 // and one past the width is clamped to it, which shifts
                 // every bit out.
-                let width = mods
-                    .iter()
-                    .rev()
-                    .find_map(|m| m.get(1..)?.parse::<i64>().ok());
+                let width = match form {
+                    Form::Shift(t) => Some(i64::from(t.width)),
+                    _ => None,
+                };
                 match self.constant(&arg(2)?).map(|c| i64::from(c as u32)) {
                     Some(c) if width.is_some_and(|w| c >= w) => {
                         Ok(AffineExpr::from_base(SymExpr::Const(0)))
@@ -281,7 +314,11 @@ impl AffineAnalysis<'_> {
                 // PTX ISA §9.7.8.9: "Signed shifts fill with the sign bit,
                 // unsigned and untyped shifts fill with 0", of the value as
                 // the type reads it.
-                if let Some(ty) = IntType::of(&mods)
+                let ty = match form {
+                    Form::Shift(t) => Some(t),
+                    _ => None,
+                };
+                if let Some(ty) = ty
                     && let read = match ty.kind {
                         IntKind::Signed => ty.values(),
                         IntKind::Unsigned | IntKind::Bits => ty.nonnegative(),
@@ -301,12 +338,8 @@ impl AffineAnalysis<'_> {
                     return (self.reduced(&v, |x| x.div_const(1i64 << c, &|v| self.var_bounds(v))))
                         .ok_or_else(|| refuse(&v, "shift"));
                 }
-                let signed_width = mods.iter().find_map(|m| match *m {
-                    "s16" => Some(16),
-                    "s32" => Some(32),
-                    "s64" => Some(64),
-                    _ => None,
-                });
+                let signed_width = (ty.filter(|t| t.kind == IntKind::Signed && t.width >= 16))
+                    .map(|t| i64::from(t.width));
                 // PTX ISA §9.7.8.9 (shr): "Signed shifts fill with the sign
                 // bit" — in this module's nonnegative domain that bit is 0
                 // unless the value is known negative, so shifting it down is
@@ -321,10 +354,11 @@ impl AffineAnalysis<'_> {
                 }
             }
             Opcode::Div | Opcode::Rem if ops.len() == 3 => {
+                integer()?;
                 let (a, b) = (arg(1)?, arg(2)?);
                 // PTX ISA §9.7.1.10: a negative number's remainder, and so
                 // the quotient's rounding, is machine-dependent.
-                if let Some(ty) = IntType::of(&mods)
+                if let Some(ty) = form.int_type()
                     && !(self.within(&a, ty.nonnegative()) && self.within(&b, ty.nonnegative()))
                 {
                     let opcode = module.opcode(instr);
@@ -340,7 +374,7 @@ impl AffineAnalysis<'_> {
                 };
                 result.ok_or_else(|| refuse(&a, "division"))
             }
-            Opcode::Shfl if mods.contains(&"idx") && ops.len() == 5 => {
+            Opcode::Shfl if form == Form::Shuffle(ShflMode::Idx) && ops.len() == 5 => {
                 // shfl.sync.idx d, a, c, 31, mask: a's value in lane c of the
                 // warp; a fourth operand other than 31 packs a mask "for
                 // logically splitting warps into sub-segments and an upper
@@ -406,13 +440,21 @@ impl AffineAnalysis<'_> {
             // that type reads both operands; `.relu` and the packed types
             // are other operations.
             Opcode::Min | Opcode::Max
-                if ops.len() == 3 && mods.len() == 1 && IntType::of(&mods).is_some() =>
+                if ops.len() == 3
+                    && matches!(
+                        form,
+                        Form::IntArith(IntArith {
+                            ty: IntOperand::Scalar(_),
+                            relu: false,
+                            ..
+                        })
+                    ) =>
             {
                 let (a, b) = (per_cta(arg(1)?), per_cta(arg(2)?));
                 if !(a.is_symbolic_or_constant() && b.is_symbolic_or_constant()) {
                     return Err(refuse(&(a + b), mnemonic.name()));
                 }
-                if let Some(ty) = IntType::of(&mods)
+                if let Some(ty) = form.int_type()
                     && !(self.within(&a, ty.values()) && self.within(&b, ty.values()))
                 {
                     let opcode = module.opcode(instr);
@@ -425,12 +467,21 @@ impl AffineAnalysis<'_> {
             }
             // PTX ISA §9.7.1.3, §9.7.1.4: `.hi` keeps the product's upper
             // half, which the affine form does not hold.
-            Opcode::Mul | Opcode::Mad if mods.contains(&"hi") => {
+            Opcode::Mul | Opcode::Mad
+                if matches!(
+                    form,
+                    Form::IntArith(IntArith {
+                        mode: Some(MulMode::Hi),
+                        ..
+                    })
+                ) =>
+            {
                 Err(format!("`{}` keeps a product's upper half", module.opcode(instr)).into())
             }
             Opcode::Mul if ops.len() == 3 => {
+                integer()?;
                 let (a, b) = (arg(1)?, arg(2)?);
-                self.wide_operands(&[&a, &b], instr, &mods)?;
+                self.wide_operands(&[&a, &b], instr, form)?;
                 if a.is_symbolic_or_constant() {
                     Ok(b.scale(a.base))
                 } else if b.is_symbolic_or_constant() {
@@ -440,8 +491,9 @@ impl AffineAnalysis<'_> {
                 }
             }
             Opcode::Mad if ops.len() == 4 => {
+                integer()?;
                 let (a, b, c) = (arg(1)?, arg(2)?, arg(3)?);
-                self.wide_operands(&[&a, &b], instr, &mods)?;
+                self.wide_operands(&[&a, &b], instr, form)?;
                 let prod = if a.is_symbolic_or_constant() {
                     b.scale(a.base)
                 } else if b.is_symbolic_or_constant() {
@@ -449,11 +501,11 @@ impl AffineAnalysis<'_> {
                 } else {
                     return Err(refuse(&(a + b), "product"));
                 };
-                Ok(self.fits(prod, instr, &mods)? + c)
+                Ok(self.fits(prod, instr, form)? + c)
             }
             _ => Err(self.unread(instr, def)),
         }?;
-        self.fits(value, instr, &mods)
+        self.fits(value, instr, form)
     }
 
     /// `selp a, b, c` of constants `a` and `b` of `ty` by a `c` that an
@@ -466,7 +518,7 @@ impl AffineAnalysis<'_> {
         ops: &[OperandId],
         def: usize,
         depth: u32,
-        ty: IntType,
+        ty: IntInstrType,
     ) -> Option<AffineExpr> {
         let module = self.data.module;
         let &Operand::Register(c) = module.operand(ops[3]) else {
@@ -479,11 +531,17 @@ impl AffineAnalysis<'_> {
         let Stmt::Instr(setp) = &self.data.kernel.stmts[op] else {
             return None;
         };
-        let mods: Vec<&str> = (module.modifiers(setp).iter())
-            .map(|&m| module.interner.resolve(m))
-            .collect();
-        let cmp = Cmp::from_name(mods.first()?).filter(|c| matches!(c, Cmp::Eq | Cmp::Ne))?;
-        let width = IntType::of(&mods).filter(|_| mods.len() == 2)?.width;
+        let Form::Compare(Compare {
+            cmp,
+            bool_op: None,
+            ftz: false,
+            ty: InstrType::Int(t),
+        }) = Form::of(module, setp)
+        else {
+            return None;
+        };
+        let cmp = cmp.signed().filter(|c| matches!(c, Cmp::Eq | Cmp::Ne))?;
+        let width = t.width;
         let sops = module.operand_ids(setp.operands);
         if setp.mnemonic != Opcode::Setp || setp.predicate.is_some() || sops.len() != 3 {
             return None;
@@ -580,10 +638,10 @@ impl AffineAnalysis<'_> {
             Operand::VectorList { children } => {
                 let elements = module.operand_ids(*children);
                 let element = *elements.get(place).filter(|_| elements.len() == count)?;
-                let bits = (module.modifiers(instr).iter()).find_map(|&m| {
-                    let width = module.interner.resolve(m).strip_prefix('b')?;
-                    width.parse::<u32>().ok()
-                })? / count as u32;
+                let Form::Move(ty) = Form::of(module, instr) else {
+                    return None;
+                };
+                let bits = ty.untyped_width()? / count as u32;
                 if let Operand::Immediate(t) = module.operand(element)
                     && !parse_int(module.interner.resolve(*t)).is_some_and(|v| {
                         (-(1i128 << (bits - 1))..1i128 << bits).contains(&i128::from(v))
@@ -612,11 +670,13 @@ impl AffineAnalysis<'_> {
         &self,
         ops: &[&AffineExpr],
         instr: &Instr,
-        mods: &[&str],
+        form: Form,
     ) -> Result<(), UnknownReason> {
-        let Some(ty) = (mods.contains(&"wide"))
-            .then(|| IntType::of(mods))
-            .flatten()
+        let Form::IntArith(IntArith {
+            mode: Some(MulMode::Wide),
+            ty: IntOperand::Scalar(ty),
+            ..
+        }) = form
         else {
             return Ok(());
         };
@@ -643,17 +703,22 @@ impl AffineAnalysis<'_> {
         &self,
         value: AffineExpr,
         instr: &Instr,
-        mods: &[&str],
+        form: Form,
     ) -> Result<AffineExpr, UnknownReason> {
         let checked = match instr.mnemonic {
             Opcode::Add | Opcode::Sub | Opcode::Neg | Opcode::Not | Opcode::Shl | Opcode::Bfe => {
                 true
             }
-            Opcode::Mul | Opcode::Mad => mods.contains(&"lo"),
+            Opcode::Mul | Opcode::Mad => matches!(
+                form,
+                Form::IntArith(IntArith {
+                    mode: Some(MulMode::Lo),
+                    ..
+                })
+            ),
             _ => false,
         };
-        let ty = (mods.iter().rev())
-            .find_map(|m| IntType::from_name(m).filter(|ty| matches!(ty.width, 16 | 32)));
+        let ty = form.int_type().filter(|ty| matches!(ty.width, 16 | 32));
         match ty {
             Some(ty) if checked && !self.within(&value, ty.values()) => Err(format!(
                 "`{}` leaves {} bits",

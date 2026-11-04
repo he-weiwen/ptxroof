@@ -416,6 +416,19 @@ output_tallies` rewrites it.
   `micro/single_loop.ptx` reads its `ld.param.u32` n as `param_1`,
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
+- **A loop's latch or guard reads an unsigned comparison as a signed
+  one.** The input contract reads an unsigned comparison only on
+  operands known to be nonnegative, as thread selectors do
+  (`thread_participation.rs`'s `condition`), but `counted_trips` and
+  `guard_test` (`loop_trip_count.rs`) subtract the operands whatever
+  the type. `micro/latch_unsigned.ptx`'s `micro_latch_unsigned` counts
+  from 1 while `setp.lt.u32` of the counter and -4 holds, 2^32 − 4
+  trips (PTX ISA §9.7.6.2; ptxas 13.4 keeps the loop, `ISETP.GE.U32
+  … -0x4`), and reads `loop: trips 1`, its store 32 per CTA; its
+  `micro_guard_unsigned` reads the same comparison of `%tid.x` as a
+  bound (constructed). Of the census's 114 latches on an unsigned
+  `setp` (a predicated backward `bra` and the nearest `setp` writing
+  its predicate), none compares with a negative immediate.
 - **Addresses affine analysis cannot read are unknown rows**, with the
   reason, unless the lanes of a warp compute the part it cannot read
   alike: that part is then a variable, `uniform(%r54@90)`, or,
@@ -680,7 +693,10 @@ output_tallies` rewrites it.
   that combines its comparison with a predicate
   (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
   compares floats (`micro/latch_float.ptx`: "latch condition compares
-  floating-point values"), a bound one value per warp only (a load, or
+  floating-point values"), packed halves or by an unsigned-only
+  comparison (`micro/latch_forms.ptx`: "latch condition compares
+  packed halves", "unsupported latch comparison `lo`"), a bound one
+  value per warp only (a load, or
   arithmetic on one), the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent
   tile loop, which has a latch and an exit per partition. A bound

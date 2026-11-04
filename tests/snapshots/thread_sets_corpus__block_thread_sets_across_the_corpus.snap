@@ -1896,6 +1896,7 @@ tests/fixtures/micro/exit_pred_stride.ptx:21	warp * × lane *
 tests/fixtures/micro/exit_pred_stride.ptx:25	warp * × lane *
 tests/fixtures/micro/exit_pred_stride.ptx:29	warp * × lane *
 tests/fixtures/micro/expanded_rem.ptx:23	warp * × lane *
+tests/fixtures/micro/float_mul.ptx:20	warp * × lane *
 tests/fixtures/micro/floor_mod_remainder.ptx:34	warp * × lane *
 tests/fixtures/micro/floor_mod_remainder.ptx:54	warp * × lane *
 tests/fixtures/micro/floor_mod_remainder.ptx:76	warp * × lane *
@@ -1978,9 +1979,21 @@ tests/fixtures/micro/latch_exits_first.ptx:61	warp * × lane *
 tests/fixtures/micro/latch_float.ptx:23	warp * × lane *
 tests/fixtures/micro/latch_float.ptx:27	warp * × lane *
 tests/fixtures/micro/latch_float.ptx:33	warp * × lane *
+tests/fixtures/micro/latch_forms.ptx:22	warp * × lane *
+tests/fixtures/micro/latch_forms.ptx:25	warp * × lane *
+tests/fixtures/micro/latch_forms.ptx:30	warp * × lane *
+tests/fixtures/micro/latch_forms.ptx:42	warp * × lane *
+tests/fixtures/micro/latch_forms.ptx:45	warp * × lane *
+tests/fixtures/micro/latch_forms.ptx:50	warp * × lane *
 tests/fixtures/micro/latch_pred_overwritten.ptx:20	warp * × lane *
 tests/fixtures/micro/latch_pred_overwritten.ptx:22	warp * × lane *
 tests/fixtures/micro/latch_pred_overwritten.ptx:29	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:20	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:23	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:28	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:40	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:45	<= warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:46	warp * × lane *
 tests/fixtures/micro/ldgsts_p0.ptx:29	warp * × lane *
 tests/fixtures/micro/ldgsts_p0.ptx:38	warp 0 × lane 0-15
 tests/fixtures/micro/ldgsts_p0.ptx:39	warp 0 × lane * ∪ warp 1 × lane 0-15
@@ -2072,6 +2085,7 @@ tests/fixtures/micro/or_entry.ptx:98	warp 0 × lane 0-15 ∪ warp 1 × lane 16-3
 tests/fixtures/micro/or_entry.ptx:102	warp 0 × lane 0-15 ∪ warp 1 × lane 16-31
 tests/fixtures/micro/or_entry.ptx:107	warp * × lane *
 tests/fixtures/micro/or_negative.ptx:24	warp * × lane *
+tests/fixtures/micro/packed_add.ptx:18	warp * × lane *
 tests/fixtures/micro/param_entry.ptx:23	warp * × lane *
 tests/fixtures/micro/param_entry.ptx:29	<= warp * × lane *
 tests/fixtures/micro/param_fields.ptx:20	warp * × lane *

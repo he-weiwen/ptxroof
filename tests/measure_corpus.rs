@@ -5,9 +5,10 @@
 use ptxroof::analysis::control_flow::loop_forest;
 use ptxroof::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
 use ptxroof::analysis::instruction_counts::measurement::MeasureKind;
-use ptxroof::analysis::instruction_counts::measurement::{Direction, Precision, Space};
+use ptxroof::analysis::instruction_counts::measurement::{Direction, Precision};
 use ptxroof::ptx::cfg::{BlockId, ControlFlowGraph, build_cfg};
 use ptxroof::ptx::ir::Module;
+use ptxroof::ptx::modifier::Space;
 use ptxroof::ptx::parse::parser::parse;
 use std::collections::BTreeSet;
 use std::fs;

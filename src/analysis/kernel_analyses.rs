@@ -1,13 +1,13 @@
 //! Register definitions and control-flow queries for one kernel.
-//! Builds SSA, parameter indices, reachability, the joins of each
+//! Builds SSA, reachability, the joins of each
 //! branch and the exit branches of each loop; contains no scalar interpretation, uniformity solver or
 //! report state.
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::control_flow::sync_dependence::{exit_branches, join_blocks};
-use crate::analysis::register_effects;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ptx::register_effects;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
 use std::collections::HashMap;
@@ -21,8 +21,6 @@ pub(crate) struct KernelAnalyses<'a> {
     pub(crate) writes: HashMap<Register, Vec<usize>>,
     /// The value each read of a register sees.
     pub(crate) ssa: RegisterSsa<'a>,
-    /// param symbol -> positional index.
-    pub(crate) params: HashMap<Symbol, usize>,
     /// `reach[a][b]`: a path of at least one edge from block a to b.
     pub(crate) reach: Vec<Vec<bool>>,
     /// `joins[b]`: the blocks where the paths from block b's successors
@@ -50,12 +48,6 @@ impl<'a> KernelAnalyses<'a> {
                 writes.entry(reg).or_default().push(i);
             }
         }
-        let params = kernel
-            .params
-            .iter()
-            .enumerate()
-            .map(|(i, p)| (p.name, i))
-            .collect();
         let n = cfg.blocks.len();
         let mut reach = vec![vec![false; n]; n];
         for (a, row) in reach.iter_mut().enumerate() {
@@ -75,7 +67,6 @@ impl<'a> KernelAnalyses<'a> {
             forest,
             writes,
             ssa,
-            params,
             reach,
             joins: join_blocks(cfg, forest),
             exit_branches: exit_branches(cfg, forest),

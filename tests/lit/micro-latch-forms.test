@@ -1,0 +1,9 @@
+# Both loops run 10 trips. A latch `setp.lo.u32`, an unsigned
+# comparison, and a latch `setp.lt.f16x2`, which compares packed
+# halves, are not trip counts: each loop's trips are unknown, and so
+# are the CTA's store bytes, which need them.
+RUN: %ptxroof analyze %fixtures/micro/latch_forms.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}.visible .entry micro_latch_lo( // block 32×1×1 | pointer params assumed 32 B aligned | per CTA: global store ? B (trips of $L__BB0_1); param load 256 B{{$}}
+ANN: {{^}}$L__BB0_1: // loop: trips ? (unsupported latch comparison `lo`) | warp * × lane * | exec ?{{$}}
+ANN: {{^}}.visible .entry micro_latch_f16x2( // block 32×1×1 | pointer params assumed 32 B aligned | per CTA: global store ? B (trips of $L__BB1_1); param load 256 B{{$}}
+ANN: {{^}}$L__BB1_1: // loop: trips ? (latch condition compares packed halves) | warp * × lane * | exec ?{{$}}

@@ -15,13 +15,12 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
 use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::kernel_analyses::KernelAnalyses;
-use crate::analysis::register_effects::{reads_cc, split_operands};
-use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{
-    Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt, is_param_space,
-};
+use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
 use crate::ptx::literal::parse_int;
+use crate::ptx::modifier::{Form, Memory, ParamAccess, Sem, ShflMode, Space, param_access};
+use crate::ptx::register_effects::{reads_cc, split_operands};
+use crate::ptx::special_registers::{SpecialRegister, special_register};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -246,11 +245,8 @@ fn warp_reads(
     d: usize,
 ) -> Option<Vec<Read>> {
     let module = t.module;
-    let mods: Vec<&str> = (module.modifiers(instr).iter())
-        .map(|&m| module.interner.resolve(m))
-        .collect();
-    let reads = match (instr.mnemonic, inputs) {
-        (Opcode::Shfl, [_, lane, c, _]) if mods.contains(&"idx") => {
+    let reads = match (instr.mnemonic, Form::of(module, instr), inputs) {
+        (Opcode::Shfl, Form::Shuffle(ShflMode::Idx), [_, lane, c, _]) => {
             let Operand::Immediate(c) = module.operand(*c) else {
                 return None;
             };
@@ -260,14 +256,15 @@ fn warp_reads(
             }
             operand_reads(t, &[*lane], d)
         }
-        (Opcode::Ld, _)
-            if (mods.iter())
-                .any(|m| matches!(*m, "global" | "shared" | "shared::cta" | "const"))
-                && !(mods.iter())
-                    .any(|m| matches!(*m, "volatile" | "relaxed" | "acquire" | "mmio")) =>
-        {
-            operand_reads(t, data_inputs(t, instr, inputs), d)
-        }
+        (
+            Opcode::Ld,
+            Form::Memory(Memory {
+                space: Some(Space::Global | Space::Shared | Space::Const),
+                sem: Sem::Weak,
+                ..
+            }),
+            _,
+        ) => operand_reads(t, data_inputs(t, instr, inputs), d),
         _ => return None,
     };
     Some(
@@ -282,11 +279,17 @@ fn warp_reads(
 /// the cache_policy `.L2::cache_hint` adds last, "a performance hint
 /// only" (PTX ISA §9.7.9.8, §9.7.9.9).
 fn data_inputs<'m>(t: &KernelAnalyses, instr: &Instr, inputs: &'m [OperandId]) -> &'m [OperandId] {
-    let module = t.module;
-    let hint =
-        (module.modifiers(instr).iter()).any(|&m| module.interner.resolve(m) == "L2::cache_hint");
+    let hint = || {
+        matches!(
+            Form::of(t.module, instr),
+            Form::Memory(Memory {
+                cache_hint: true,
+                ..
+            })
+        )
+    };
     match inputs {
-        [address @ .., _] if instr.mnemonic == Opcode::Ld && hint => address,
+        [address @ .., _] if instr.mnemonic == Opcode::Ld && hint() => address,
         _ => inputs,
     }
 }
@@ -442,21 +445,10 @@ fn lane_wise(t: &KernelAnalyses, instr: &Instr) -> bool {
 
 /// The kernel parameter an `ld.param` reads.
 fn kernel_param(t: &KernelAnalyses, instr: &Instr) -> Option<usize> {
-    let module = t.module;
-    let param =
-        (module.modifiers(instr).iter()).any(|&m| is_param_space(module.interner.resolve(m)));
-    if instr.mnemonic != Opcode::Ld || !param {
-        return None;
+    match param_access(t.module, t.kernel, instr)? {
+        ParamAccess::KernelParam { index, .. } => Some(index),
+        _ => None,
     }
-    module.operand_ids(instr.operands).iter().find_map(|&o| {
-        let Operand::Memory { base, .. } = module.operand(o) else {
-            return None;
-        };
-        match module.operand(*base) {
-            Operand::SymbolRef(s) => t.params.get(s).copied(),
-            _ => None,
-        }
-    })
 }
 
 fn read_special(reg: SpecialReg) -> Read {

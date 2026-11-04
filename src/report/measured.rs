@@ -1,5 +1,5 @@
-use crate::analysis::instruction_counts::count_constraint::CountConstraint;
 use crate::analysis::memory_footprint::Wavefronts;
+use crate::ptx::count_constraint::CountConstraint;
 use crate::ptx::ir::Module;
 use crate::report::bindings::BindingSpec;
 use serde::Deserialize;

@@ -1,0 +1,7 @@
+# Wrong output (PLAN.md): the latch reads `setp.lt.u32` of -4 as a
+# signed comparison, so the loop is counted 1 trip, where it runs
+# 2^32 - 4 (ptxas 13.4: `ISETP.GE.U32 ... -0x4`, `@!P0 BRA`); the guard
+# reads the same comparison under the input contract, as a bound.
+RUN: %ptxroof analyze %fixtures/micro/latch_unsigned.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_1: // loop: trips 1 | global per CTA: requested 128 B, unique 4 B, sectors 32 B | warp * × lane * | exec 32/CTA{{$}}
+ANN: {{^}}	st.global.u32 	[%rd1], %r1; // [<block 1>] <= warp * × lane * | exec <= 32/CTA | global store [param_0] sectors/req <= 1 (ideal <= 1){{$}}

@@ -1,8 +1,8 @@
 //! Loop-exit inequalities over symbolic expressions, solved for a trip
 //! count.
 
-use super::affine_expr::Cmp;
 use super::sym_expr::SymExpr;
+use crate::ptx::modifier::Cmp;
 
 /// `e cmp 0` as `e' < 0` over the integers, for an ordered comparison.
 pub(crate) fn below_zero(cmp: Cmp, e: SymExpr) -> Option<SymExpr> {
