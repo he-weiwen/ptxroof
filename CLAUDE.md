@@ -39,7 +39,10 @@ numbers), give each item, in this order:
   existing function it reuses.
 - Whether a type, a function signature or a module dependency
   changes; if one cannot be reused because `tests/architecture.rs`
-  would see a cycle, say so.
+  would see a cycle, say so. When a type or an interface changes,
+  write out in full, as they will read after the change, every new or
+  changed type definition (all fields and variants) and every new or
+  changed function signature, and name what is removed.
 - The tests, fixtures and snapshots whose expectations move, and the
   PLAN.md entries it touches.
 - Its rough size in lines, and what it leaves unsolved.
