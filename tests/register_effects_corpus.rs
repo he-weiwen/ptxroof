@@ -5,9 +5,9 @@
 //! writes. Each written operand is a register, a selected register
 //! (`%r1.h0`), a `{…}`, a `p|q`, a call's `(…)` or `_`.
 
-use ptxroof::analysis::register_effects::{registers, split_operands, writes, written_operands};
 use ptxroof::ptx::ir::{Operand, Register, Stmt};
 use ptxroof::ptx::parse::parser::parse;
+use ptxroof::ptx::register_effects::{registers, split_operands, writes, written_operands};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write;
 use std::fs;

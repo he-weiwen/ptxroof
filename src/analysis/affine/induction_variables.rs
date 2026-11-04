@@ -6,10 +6,10 @@
 //! the reader's.
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::register_effects::writes;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId, Register, Stmt};
 use crate::ptx::literal::parse_int;
+use crate::ptx::register_effects::writes;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
 use std::collections::{BTreeSet, HashMap};

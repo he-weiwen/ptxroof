@@ -5,9 +5,9 @@
 
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::control_flow::sync_dependence::{exit_branches, join_blocks};
-use crate::analysis::register_effects;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ptx::register_effects;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
 use std::collections::HashMap;

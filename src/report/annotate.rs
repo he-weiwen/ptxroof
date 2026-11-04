@@ -12,11 +12,11 @@ use crate::analysis::execution_counts::{
 use crate::analysis::instruction_counts::collect::BlockMeasurements;
 use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::memory_footprint::{ByteRange, CountRange};
-use crate::analysis::register_effects::writes;
 use crate::analysis::thread_participation::{Atom, AtomKey, Constraint, Pred};
 use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Opcode, Register, Stmt};
+use crate::ptx::register_effects::writes;
 use crate::report::build::{
     Access, AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel,
 };

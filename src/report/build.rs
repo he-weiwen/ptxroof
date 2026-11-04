@@ -12,7 +12,6 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::dead_code::unused;
 use crate::analysis::execution_counts::{CtaSize, ExecutionCounts, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
-use crate::analysis::instruction_counts::count_constraint::count_constraint;
 use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Space};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::{LoopName, loop_names};
@@ -23,6 +22,7 @@ use crate::analysis::memory_footprint::{
 use crate::analysis::thread_participation::{Pred, thread_sets};
 use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::{ControlFlowGraph, build_cfg};
+use crate::ptx::count_constraint::count_constraint;
 use crate::ptx::ir::Operand;
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SharedSize, SpecialVector, Stmt};
 use crate::ptx::literal::parse_int;

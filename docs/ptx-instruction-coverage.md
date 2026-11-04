@@ -30,7 +30,7 @@ including corrections to stale parsing claims in the tables below.
 `instruction_counts/classify.rs` maps instructions to those records.
 Scalar instruction interpretation lives in `affine/affine_analysis/transfer.rs`, with
 integer widths in `affine/int_type.rs` and special-register sharing in
-`analysis/special_registers.rs`.
+`ptx/special_registers.rs`.
 
 The parser accepts instruction-shaped statements as
 `mnemonic + modifiers + operands` (`src/ptx/parse/parser.rs`). The
@@ -106,7 +106,7 @@ pin lower-bound reporting. The corpus has expanded beyond the original
 nvcc ladder; see PLAN.md for its producers and fixtures.
 
 Separately from its category, each instruction has a `CountConstraint`
-(`src/analysis/instruction_counts/count_constraint.rs`): how far the ISA
+(`src/ptx/count_constraint.rs`): how far the ISA
 lets ptxas change how often it executes. Unit tests in that file pin
 each clause.
 

@@ -14,8 +14,8 @@
 
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
 use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
-use crate::analysis::register_effects::{reads_cc, registers, split_operands, writes};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, Stmt};
+use crate::ptx::register_effects::{reads_cc, registers, split_operands, writes};
 use crate::ssa::{RegisterSsa, Value};
 
 /// Per statement, whether it is an instruction that runs and is not

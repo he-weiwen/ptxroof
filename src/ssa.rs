@@ -139,9 +139,9 @@ fn block_of(cfg: &ControlFlowGraph, stmt: usize) -> BlockId {
 mod tests {
     use super::*;
     use crate::analysis::control_flow::dominators;
-    use crate::analysis::register_effects::writes;
     use crate::ptx::cfg::build_cfg;
     use crate::ptx::parse::parser::parse;
+    use crate::ptx::register_effects::writes;
 
     /// Where a test reads: before a line of the body, or at a block's end.
     #[derive(Clone, Copy)]

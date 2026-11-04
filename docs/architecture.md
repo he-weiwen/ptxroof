@@ -19,13 +19,14 @@ only declare modules and selected public entry points.
 | `ptx/parse/parser` | Construct IR from tokens |
 | `ptx/print` | Canonical PTX dump |
 | `ptx/cfg` | PTX basic blocks, edges and CFG construction |
+| `ptx/register_effects` | Instruction register reads and writes, CC included |
+| `ptx/special_registers` | Sharing and stability of PTX special-register values |
+| `ptx/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/control_flow/dominators` | Dominance, post-dominance and frontiers |
 | `analysis/control_flow/loops` | Natural loop forest and irreducible edges |
 | `analysis/control_flow/sync_dependence` | Where the paths from each branch's successors meet again (LLVM's sync dependence), and which branches decide when a thread leaves a loop |
 | `ssa` | Register SSA values and def/use queries over the PTX CFG |
-| `analysis/register_effects` | Instruction register reads and writes, CC included |
 | `analysis/kernel_analyses` | One kernel's register writes, SSA, parameter indices, reachability, branch joins and loop exit branches, with control-flow queries |
-| `analysis/special_registers` | Sharing and stability of PTX special-register values |
 | `analysis/uniformity_info` | Propagate divergence through definitions and controlling branches |
 | `analysis/affine/sym_expr` | Symbolic expressions and simplification |
 | `analysis/affine/affine_expr` | Affine expressions over thread, CTA, loop and uniform variables |
@@ -45,7 +46,6 @@ only declare modules and selected public entry points.
 | `analysis/memory_footprint` | Warp sectors and loop requested, distinct and sector bytes |
 | `analysis/instruction_counts/measurement` | Accounting dimensions and contribution/measurement records |
 | `analysis/instruction_counts/classify` | Decode instructions into categories and contributions |
-| `analysis/instruction_counts/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/instruction_counts/collect` | Attach block/loop execution context to instruction contributions |
 | `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs, bytes and conversions they sum to |
 | `report/bindings` | Caller parameter bindings and their text syntax |
@@ -67,7 +67,8 @@ points; internal callers use canonical modules directly.
 checks these boundaries:
 
 - Support utilities depend only on support utilities.
-- PTX representation, parsing and CFG construction depend only on PTX and support.
+- PTX representation, parsing, CFG construction, register effects,
+  special-register sharing and count constraints depend only on PTX and support.
 - Analyses and SSA do not depend on the parser or on reporting.
 - Report construction may call analyses and the parser.
 

@@ -51,8 +51,6 @@ use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_analyses::KernelAnalyses;
-use crate::analysis::register_effects::{registers, split_operands};
-use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::analysis::uniformity_info::{Uniform, UniformityInfo};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
@@ -60,6 +58,8 @@ use crate::ptx::ir::{
     Stmt, is_param_space,
 };
 use crate::ptx::literal::parse_int;
+use crate::ptx::register_effects::{registers, split_operands};
+use crate::ptx::special_registers::{SpecialRegister, special_register};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::cell::{Cell, RefCell};

@@ -15,13 +15,13 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
 use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::kernel_analyses::KernelAnalyses;
-use crate::analysis::register_effects::{reads_cc, split_operands};
-use crate::analysis::special_registers::{SpecialRegister, special_register};
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
     Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt, is_param_space,
 };
 use crate::ptx::literal::parse_int;
+use crate::ptx::register_effects::{reads_cc, split_operands};
+use crate::ptx::special_registers::{SpecialRegister, special_register};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
