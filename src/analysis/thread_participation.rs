@@ -29,7 +29,7 @@ use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
-use crate::ptx::modifier::{Cmp, Form, InstrType, IntInstrType, IntKind};
+use crate::ptx::modifier::{Cmp, Form, IntInstrType, IntKind};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -1230,7 +1230,7 @@ impl PredicateReader<'_> {
                 let p = condition(self.module, self.kernel, self.affine, def, &mut self.forms);
                 (p.unwrap_or(Pred::Unknown), false)
             }
-            (Opcode::And | Opcode::Or, Form::Logic(InstrType::Pred), [_, a, b]) => {
+            (Opcode::And | Opcode::Or, Form::Pred, [_, a, b]) => {
                 let (Some(a), Some(b)) = (reg(*a), reg(*b)) else {
                     return (Pred::Unknown, false);
                 };
@@ -1244,7 +1244,7 @@ impl PredicateReader<'_> {
             }
             // PTX ISA §4.5.3: an integer constant as a predicate is False
             // when zero and True otherwise.
-            (Opcode::Mov, Form::Move(InstrType::Pred), [_, a]) => match self.module.operand(*a) {
+            (Opcode::Mov, Form::Pred, [_, a]) => match self.module.operand(*a) {
                 Operand::Immediate(t) => match parse_int(self.module.interner.resolve(*t)) {
                     Some(0) => (Pred::False, false),
                     Some(_) => (Pred::True, false),
@@ -1252,7 +1252,7 @@ impl PredicateReader<'_> {
                 },
                 _ => (Pred::Unknown, false),
             },
-            (Opcode::Not, Form::Logic(InstrType::Pred), [_, a]) => match reg(*a) {
+            (Opcode::Not, Form::Pred, [_, a]) => match reg(*a) {
                 Some(a) => {
                     let (p, cut) = self.read(a, def, depth);
                     (!p, cut)

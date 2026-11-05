@@ -30,10 +30,7 @@ impl AffineAnalysis<'_> {
         let integer = || -> Result<(), UnknownReason> {
             let opcode = module.opcode(instr);
             match form {
-                Form::IntArith(IntArith {
-                    ty: IntOperand::Packed { .. },
-                    ..
-                }) => Err(format!("`{opcode}` computes per packed lane").into()),
+                Form::PackedInt => Err(format!("`{opcode}` computes per packed lane").into()),
                 Form::Float { .. } => {
                     Err(format!("`{opcode}` is floating-point arithmetic").into())
                 }
@@ -91,12 +88,16 @@ impl AffineAnalysis<'_> {
             // conversion changes the value's bits.
             Opcode::Cvt => {
                 let opcode = module.opcode(instr);
-                let Form::Convert {
-                    from: InstrType::Int(from),
-                    to: InstrType::Int(to),
-                } = form
-                else {
-                    return Err(format!("`{opcode}` is not an integer conversion").into());
+                let (from, to) = match form {
+                    Form::IntConvert {
+                        from,
+                        to,
+                        sat: false,
+                    } => (from, to),
+                    Form::IntConvert { sat: true, .. } => {
+                        return Err(format!("`{opcode}` saturates to its destination type").into());
+                    }
+                    _ => return Err(format!("`{opcode}` is not an integer conversion").into()),
                 };
                 let a = self.operand_at(*ops.last().expect("cvt has operands"), def, depth + 1)?;
                 for ty in [from, to] {
@@ -128,13 +129,9 @@ impl AffineAnalysis<'_> {
             // negates each byte on its own.
             Opcode::Neg
                 if ops.len() == 2
-                    && matches!(
-                        form,
-                        Form::IntArith(IntArith {
-                            ty: IntOperand::Scalar(t),
-                            ..
-                        }) if t.kind == IntKind::Signed && t.width >= 16
-                    ) =>
+                    && form
+                        .int_type()
+                        .is_some_and(|t| t.kind == IntKind::Signed && t.width >= 16) =>
             {
                 Ok(AffineExpr::from_base(SymExpr::Const(0)) - arg(1)?)
             }
@@ -142,10 +139,9 @@ impl AffineAnalysis<'_> {
             // complement is −1 − a.
             Opcode::Not
                 if ops.len() == 2
-                    && matches!(
-                        form,
-                        Form::Logic(InstrType::Int(t)) if t.kind == IntKind::Bits && t.width >= 16
-                    ) =>
+                    && form
+                        .int_type()
+                        .is_some_and(|t| t.kind == IntKind::Bits && t.width >= 16) =>
             {
                 Ok(AffineExpr::from_base(SymExpr::Const(-1)) - arg(1)?)
             }
@@ -165,10 +161,7 @@ impl AffineAnalysis<'_> {
                 // alone. The runs' bits are disjoint, so the and is their
                 // sum; PTX ISA §4.5.1 converts the constant to the
                 // instruction's size.
-                let width = match form {
-                    Form::Logic(ty) => ty.untyped_width().unwrap_or(32),
-                    _ => 32,
-                };
+                let width = form.int_type().map_or(32, |t| t.width);
                 let modulo = |x: AffineExpr, k: u32| -> Result<AffineExpr, UnknownReason> {
                     (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.var_bounds(v))))
                         .ok_or_else(|| refuse(&x, "mod"))
@@ -288,10 +281,7 @@ impl AffineAnalysis<'_> {
                 }
             }
             Opcode::Selp if ops.len() == 4 => {
-                let selected = match form {
-                    Form::Select(InstrType::Int(ty)) => self.selected(&ops, def, depth, ty),
-                    _ => None,
-                };
+                let selected = (form.int_type()).and_then(|ty| self.selected(&ops, def, depth, ty));
                 selected.ok_or_else(|| self.unread(instr, def))
             }
             Opcode::Shl if ops.len() == 3 => {
@@ -299,10 +289,7 @@ impl AffineAnalysis<'_> {
                 // PTX ISA §9.7.8.8: the count is b's unsigned 32-bit value,
                 // and one past the width is clamped to it, which shifts
                 // every bit out.
-                let width = match form {
-                    Form::Shift(t) => Some(i64::from(t.width)),
-                    _ => None,
-                };
+                let width = form.int_type().map(|t| i64::from(t.width));
                 match self.constant(&arg(2)?).map(|c| i64::from(c as u32)) {
                     Some(c) if width.is_some_and(|w| c >= w) => {
                         Ok(AffineExpr::from_base(SymExpr::Const(0)))
@@ -316,10 +303,7 @@ impl AffineAnalysis<'_> {
                 // PTX ISA §9.7.8.9: "Signed shifts fill with the sign bit,
                 // unsigned and untyped shifts fill with 0", of the value as
                 // the type reads it.
-                let ty = match form {
-                    Form::Shift(t) => Some(t),
-                    _ => None,
-                };
+                let ty = form.int_type();
                 if let Some(ty) = ty
                     && let read = match ty.kind {
                         IntKind::Signed => ty.values(),
@@ -442,15 +426,7 @@ impl AffineAnalysis<'_> {
             // that type reads both operands; `.relu` and the packed types
             // are other operations.
             Opcode::Min | Opcode::Max
-                if ops.len() == 3
-                    && matches!(
-                        form,
-                        Form::IntArith(IntArith {
-                            ty: IntOperand::Scalar(_),
-                            relu: false,
-                            ..
-                        })
-                    ) =>
+                if ops.len() == 3 && matches!(form, Form::Int { relu: false, .. }) =>
             {
                 let (a, b) = (per_cta(arg(1)?), per_cta(arg(2)?));
                 if !(a.is_symbolic_or_constant() && b.is_symbolic_or_constant()) {
@@ -472,10 +448,10 @@ impl AffineAnalysis<'_> {
             Opcode::Mul | Opcode::Mad
                 if matches!(
                     form,
-                    Form::IntArith(IntArith {
+                    Form::Int {
                         mode: Some(MulMode::Hi),
                         ..
-                    })
+                    }
                 ) =>
             {
                 Err(format!("`{}` keeps a product's upper half", module.opcode(instr)).into())
@@ -638,10 +614,9 @@ impl AffineAnalysis<'_> {
             Operand::VectorList { children } => {
                 let elements = module.operand_ids(*children);
                 let element = *elements.get(place).filter(|_| elements.len() == count)?;
-                let Form::Move(ty) = Form::of(module, instr) else {
-                    return None;
-                };
-                let bits = ty.untyped_width()? / count as u32;
+                let ty =
+                    (Form::of(module, instr).int_type()).filter(|t| t.kind == IntKind::Bits)?;
+                let bits = ty.width / count as u32;
                 if let Operand::Immediate(t) = module.operand(element)
                     && !parse_int(module.interner.resolve(*t)).is_some_and(|v| {
                         (-(1i128 << (bits - 1))..1i128 << bits).contains(&i128::from(v))
@@ -672,11 +647,11 @@ impl AffineAnalysis<'_> {
         instr: &Instr,
         form: Form,
     ) -> Result<(), UnknownReason> {
-        let Form::IntArith(IntArith {
+        let Form::Int {
+            ty,
             mode: Some(MulMode::Wide),
-            ty: IntOperand::Scalar(ty),
             ..
-        }) = form
+        } = form
         else {
             return Ok(());
         };
@@ -711,10 +686,10 @@ impl AffineAnalysis<'_> {
             }
             Opcode::Mul | Opcode::Mad => matches!(
                 form,
-                Form::IntArith(IntArith {
+                Form::Int {
                     mode: Some(MulMode::Lo),
                     ..
-                })
+                }
             ),
             _ => false,
         };
