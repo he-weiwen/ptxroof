@@ -117,14 +117,14 @@ impl AffineAnalysis<'_> {
             (Opcode::Neg, Form::Int { ty, .. })
                 if ops.len() == 2 && ty.kind == IntKind::Signed && ty.width >= 16 =>
             {
-                Ok(AffineExpr::from_base(SymExpr::Const(0)) - arg(1)?)
+                Ok(AffineExpr::constant(0) - arg(1)?)
             }
             // PTX ISA §9.7.8.4: `not` inverts every bit, which in two's
             // complement is −1 − a.
             (Opcode::Not, Form::Int { ty, .. })
                 if ops.len() == 2 && ty.kind == IntKind::Bits && ty.width >= 16 =>
             {
-                Ok(AffineExpr::from_base(SymExpr::Const(-1)) - arg(1)?)
+                Ok(AffineExpr::constant(-1) - arg(1)?)
             }
             (Opcode::And, _) if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
@@ -150,7 +150,7 @@ impl AffineAnalysis<'_> {
                 let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
                 let range = bound.range(&|v| self.var_bounds(v));
                 let all = konst as u64 & u64::MAX >> (64 - width);
-                let (mut bits, mut sum) = (all, AffineExpr::from_base(SymExpr::Const(0)));
+                let (mut bits, mut sum) = (all, AffineExpr::constant(0));
                 let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
                 // A value of 0 or −1, all ones, keeps none or all of the
                 // mask: −mask·v, alike signed and unsigned below the sign bit.
@@ -231,7 +231,7 @@ impl AffineAnalysis<'_> {
                 };
                 let (w, signed) = (i64::from(ty.width), ty.kind == IntKind::Signed);
                 if len == 0 || !signed && pos >= w {
-                    return Ok(AffineExpr::from_base(SymExpr::Const(0)));
+                    return Ok(AffineExpr::constant(0));
                 }
                 if pos >= w {
                     return Err(format!("bfe at {pos} of {len} bits").into());
@@ -271,9 +271,7 @@ impl AffineAnalysis<'_> {
                 // every bit out.
                 let width = form.int_type().map(|t| i64::from(t.width));
                 match self.constant(&arg(2)?).map(|c| i64::from(c as u32)) {
-                    Some(c) if width.is_some_and(|w| c >= w) => {
-                        Ok(AffineExpr::from_base(SymExpr::Const(0)))
-                    }
+                    Some(c) if width.is_some_and(|w| c >= w) => Ok(AffineExpr::constant(0)),
                     Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".into()),
                 }
@@ -311,7 +309,7 @@ impl AffineAnalysis<'_> {
                 // unless the value is known negative, so shifting it down is
                 // nvcc's `x / 2^n` sign fix-up.
                 if signed_width == Some(c + 1) && self.within(&v, (0, i128::MAX)) {
-                    return Ok(AffineExpr::from_base(SymExpr::Const(0)));
+                    return Ok(AffineExpr::constant(0));
                 }
                 if (0..63).contains(&c) {
                     Ok(AffineExpr::from_base(SymExpr::floor_div(v.base, 1i64 << c)))
@@ -359,7 +357,7 @@ impl AffineAnalysis<'_> {
                     match v {
                         Var::Tid(Axis::X) => Some(
                             warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32))
-                                + AffineExpr::from_base(SymExpr::Const(c)),
+                                + AffineExpr::constant(c),
                         ),
                         Var::FloorDiv(inner, d) if **inner == Var::Tid(Axis::X) => {
                             if d % 32 == 0 {
@@ -367,7 +365,7 @@ impl AffineAnalysis<'_> {
                             } else if 32 % d == 0 {
                                 Some(
                                     warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32 / d))
-                                        + AffineExpr::from_base(SymExpr::Const(c / d)),
+                                        + AffineExpr::constant(c / d),
                                 )
                             } else {
                                 None
@@ -375,7 +373,7 @@ impl AffineAnalysis<'_> {
                         }
                         Var::Mod(inner, m) if **inner == Var::Tid(Axis::X) => {
                             if 32 % m == 0 {
-                                Some(AffineExpr::from_base(SymExpr::Const(c % m)))
+                                Some(AffineExpr::constant(c % m))
                             } else if m % 32 == 0 {
                                 let w = Var::Mod(
                                     Box::new(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 32)),
@@ -383,7 +381,7 @@ impl AffineAnalysis<'_> {
                                 );
                                 Some(
                                     AffineExpr::var(w).scale(SymExpr::Const(32))
-                                        + AffineExpr::from_base(SymExpr::Const(c)),
+                                        + AffineExpr::constant(c),
                                 )
                             } else {
                                 None
@@ -522,7 +520,7 @@ impl AffineAnalysis<'_> {
         };
         let (a, b) = (arm(ops[1])?, arm(ops[2])?);
         let [r0, r1] = [d, k + d].map(|x| if holds(x) { a } else { b });
-        let base = AffineExpr::from_base(SymExpr::Const(r0));
+        let base = AffineExpr::constant(r0);
         match r1.checked_sub(r0)? {
             0 => Some(base),
             change => Some(base + AffineExpr::var(v.clone()).scale(SymExpr::Const(change))),

@@ -293,7 +293,7 @@ impl<'a> AffineAnalysis<'a> {
             Operand::Immediate(text) => {
                 let text = module.interner.resolve(*text);
                 parse_int(text)
-                    .map(|c| AffineExpr::from_base(SymExpr::Const(c)))
+                    .map(AffineExpr::constant)
                     .ok_or_else(|| format!("non-integer immediate {text}").into())
             }
             // A named location (a shared array, the dynamic shared base):
@@ -301,8 +301,9 @@ impl<'a> AffineAnalysis<'a> {
             Operand::SymbolRef(s) => Ok(AffineExpr::from_base(SymExpr::sym(
                 module.interner.resolve(*s),
             ))),
-            Operand::Offset { base, offset } => Ok(self.operand_at(*base, pos, depth)?
-                + AffineExpr::from_base(SymExpr::Const(*offset))),
+            Operand::Offset { base, offset } => {
+                Ok(self.operand_at(*base, pos, depth)? + AffineExpr::constant(*offset))
+            }
             other => Err(format!("unsupported operand form in latch trace: {other:?}").into()),
         }
     }
@@ -313,7 +314,7 @@ impl<'a> AffineAnalysis<'a> {
         }
         match reg {
             _ if special_register(reg) == Some(SpecialRegister::Zero) => {
-                Ok(AffineExpr::from_base(SymExpr::Const(0)))
+                Ok(AffineExpr::constant(0))
             }
             // PTX ISA §10.3: %laneid is "the thread's lane within the
             // warp", and §3.1: a warp "contains threads of consecutive,
@@ -444,7 +445,7 @@ impl<'a> AffineAnalysis<'a> {
             return Err((self.depends_on(vec![v], Vec::new())).unwrap_or_else(|| why.into()));
         }
         let common = match header {
-            true => (self.same_immediate(&defs)).map(|c| AffineExpr::from_base(SymExpr::Const(c))),
+            true => (self.same_immediate(&defs)).map(AffineExpr::constant),
             false => self.same_value(&defs, reg, depth),
         };
         common.ok_or_else(refused)
@@ -559,7 +560,7 @@ impl<'a> AffineAnalysis<'a> {
         offset: i64,
         pos: usize,
     ) -> Result<AffineExpr, UnknownReason> {
-        let a = self.operand_at(base, pos, 0)? + AffineExpr::from_base(SymExpr::Const(offset));
+        let a = self.operand_at(base, pos, 0)? + AffineExpr::constant(offset);
         let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
         self.alike(&a, pos, Uniform::Warp, None)?;
         Ok(a)

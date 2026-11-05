@@ -708,7 +708,7 @@ impl KernelReportBuilder<'_> {
     fn formula(&self, form: &AffineExpr, cmp: Cmp) -> String {
         let (form, nested) = shifted(form);
         let negative = |c: &SymExpr| SymExpr::split_const(c.clone()).0 < 0;
-        let zero = || AffineExpr::from_base(SymExpr::Const(0));
+        let zero = || AffineExpr::constant(0);
         let split = |f: &AffineExpr| {
             let summands = match &f.base {
                 SymExpr::Sum(ts) => ts.clone(),
