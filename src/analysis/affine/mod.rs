@@ -2,7 +2,6 @@
 
 pub(crate) mod affine_analysis;
 pub mod affine_expr;
-pub(crate) mod affine_properties;
 pub(crate) mod exit_limit;
 pub mod induction_variables;
 pub mod lane_eval;
