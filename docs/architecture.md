@@ -22,7 +22,7 @@ only declare modules and selected public entry points.
 | `ptx/cfg` | PTX basic blocks, edges and CFG construction |
 | `ptx/register_effects` | Instruction register reads and writes, CC included, and whether they are an instruction's only effect |
 | `ptx/special_registers` | Sharing and stability of PTX special-register values |
-| `ptx/thread_hierarchy` | A CTA's threads by thread ID and its warps |
+| `ptx/thread_hierarchy` | A CTA's threads by thread ID and its warps, and the threads of a block and CTAs of a grid |
 | `ptx/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/control_flow/dominators` | Dominance, post-dominance and frontiers |
 | `analysis/control_flow/loops` | Natural loop forest and irreducible edges |

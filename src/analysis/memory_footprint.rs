@@ -8,12 +8,12 @@
 //! aligned, and which its pointer's alignment and its terms'
 //! coefficients allow, is tried and the count is reported as a range.
 
-use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var, at_tid};
+use crate::analysis::affine::affine_expr::{AffineExpr, Var, at_tid};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::thread_participation::Pred;
 use crate::ptx::modifier::Space;
-use crate::ptx::thread_hierarchy::{WARP_SZ, to_3d, warps_of};
+use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_3d, warps_of};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const SECTOR: i64 = 32;
@@ -44,13 +44,10 @@ pub fn offsets_fit(
 /// A thread index's values in a block of `shape`.
 pub fn in_block(shape: [u32; 3]) -> impl Fn(&Var) -> Option<(i64, i64)> {
     move |v| {
-        let n = match v {
-            Var::Tid(Axis::X) => shape[0],
-            Var::Tid(Axis::Y) => shape[1],
-            Var::Tid(Axis::Z) => shape[2],
-            _ => return None,
+        let Var::Tid(a) = v else {
+            return None;
         };
-        Some((0, i64::from(n) - 1))
+        Some((0, i64::from(shape[*a as usize]) - 1))
     }
 }
 
@@ -337,8 +334,7 @@ fn warp_lanes(
             None => return Err(format!("the coefficient of {v} is {c}; bind it")),
         }
     }
-    let [nx, ny, nz] = shape.map(i64::from);
-    let threads = nx * ny * nz;
+    let threads = threads(shape);
     if threads == 0 {
         return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
     }
@@ -496,8 +492,7 @@ pub fn loop_bytes(
     forms: &[AccessForm],
     pointer: impl Fn(&AffineExpr) -> Option<(usize, u32)>,
 ) -> Option<LoopBytes> {
-    let [nx, ny, nz] = shape.map(i64::from);
-    let threads = nx * ny * nz;
+    let threads = threads(shape);
     if threads == 0 {
         return None;
     }
@@ -685,6 +680,7 @@ fn union_len(mut intervals: Vec<(i64, i64)>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::affine::affine_expr::Axis;
     use crate::analysis::affine::sym_expr::SymbolicConstant;
 
     fn tid() -> AffineExpr {

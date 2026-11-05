@@ -28,6 +28,7 @@ use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SharedSize, Specia
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::Space;
 use crate::ptx::parse::parser::{ParseError, parse};
+use crate::ptx::thread_hierarchy::{WARP_SZ, ctas, threads};
 use crate::report::bindings::BindingSpec;
 use crate::report::measured::{
     Comparison, LineIndex, MeasuredBlock, MeasuredTotals, NcuRecord, Prediction, SectorCount,
@@ -94,13 +95,13 @@ pub fn compare(source: &str, opts: &AnalyzeOptions) -> Result<Option<Comparison>
         let Some(record) = &opts.ncu else {
             return;
         };
-        let threads: u64 = builder.counts.shape.iter().map(|&n| u64::from(n)).product();
+        let threads = threads(builder.counts.shape) as u64;
         if builder.module.interner.resolve(builder.kernel.name) != record.kernel || threads == 0 {
             return;
         }
         let cta = CtaSize {
             threads,
-            warps: threads.div_ceil(32),
+            warps: threads.div_ceil(WARP_SZ as u64),
             exact: true,
         };
         let (blocks, launch) = builder.measured(record, builder.lines, &cta);
@@ -813,7 +814,7 @@ impl<'a> KernelReportBuilder<'a> {
         lines: &LineIndex,
         cta: &CtaSize,
     ) -> (Vec<MeasuredBlock>, Option<MeasuredTotals>) {
-        let grid = (record.grid.iter()).try_fold(1u64, |n, &d| n.checked_mul(d.into()));
+        let grid = ctas(record.grid);
         let mut per_line: HashMap<u32, usize> = HashMap::new();
         for stmt in &self.kernel.stmts {
             if let Stmt::Instr(i) = stmt {

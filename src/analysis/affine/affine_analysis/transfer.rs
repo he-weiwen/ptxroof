@@ -3,7 +3,6 @@
 //! analysis reads.
 
 use super::*;
-use crate::ptx::thread_hierarchy::WARP_SZ;
 
 impl AffineAnalysis<'_> {
     /// The value statement `def` writes to `reg`, were its guard true.

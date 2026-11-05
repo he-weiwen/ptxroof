@@ -28,7 +28,7 @@ use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{Cmp, Form, IntInstrType, IntKind, cp_async_size_operand};
-use crate::ptx::thread_hierarchy::{WARP_SZ, to_1d, to_3d, warps_of};
+use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_1d, to_3d, warps_of};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -467,9 +467,7 @@ fn holds(cmp: Cmp, x: i128) -> bool {
 /// The axes of the CTA index `v` reads.
 fn cta_axes(v: &Var, used: &mut [bool; 3]) {
     match v {
-        Var::Ctaid(Axis::X) => used[0] = true,
-        Var::Ctaid(Axis::Y) => used[1] = true,
-        Var::Ctaid(Axis::Z) => used[2] = true,
+        Var::Ctaid(a) => used[*a as usize] = true,
         Var::FloorDiv(x, _) | Var::Mod(x, _) => cta_axes(x, used),
         _ => {}
     }
@@ -574,9 +572,7 @@ impl Constraint {
     /// The value of the form's `%ctaid` terms at the CTA `c`.
     fn cta_part(&self, c: [i64; 3]) -> i128 {
         let index = |v: &Var| match v {
-            Var::Ctaid(Axis::X) => c[0],
-            Var::Ctaid(Axis::Y) => c[1],
-            Var::Ctaid(Axis::Z) => c[2],
+            Var::Ctaid(a) => c[*a as usize],
             _ => 0,
         };
         (self.form.terms.iter())
@@ -687,7 +683,7 @@ impl Pred {
         weight: &dyn Fn([i64; 3]) -> Option<u64>,
     ) -> Option<(u64, u64)> {
         let (ctas, rest) = self.cta_keys(shape, grid, read)?;
-        let threads: u64 = shape.iter().map(|&n| u64::from(n)).product();
+        let threads = threads(shape) as u64;
         let mut groups = HashMap::new();
         for (c, key) in ctas {
             let group = match groups.entry(key) {
@@ -732,7 +728,7 @@ impl Pred {
             return None;
         }
         let (ctas, rest) = self.cta_keys(shape, grid, [false; 3])?;
-        let threads: u64 = shape.iter().map(|&n| u64::from(n)).product();
+        let threads = threads(shape) as u64;
         let (mut keys, mut classes) = (HashMap::new(), Vec::<(LaneMasks, u64)>::new());
         for (c, key) in ctas {
             let i = *keys.entry(key).or_insert_with(|| {
@@ -776,9 +772,7 @@ impl Pred {
         if read > CTA_BUDGET {
             return None;
         }
-        let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
-            .map(|l| to_3d(l, shape))
-            .collect();
+        let threads: Vec<[i64; 3]> = (0..threads(shape)).map(|l| to_3d(l, shape)).collect();
         if threads.is_empty() {
             return None;
         }
@@ -826,9 +820,7 @@ impl Pred {
     /// lane evaluations.
     pub fn over_trips(&self, shape: [u32; 3], l: LoopId, n: u64) -> Option<[(u64, u64); 2]> {
         let over = self.constraints(|k| k.trip.is_some());
-        let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
-            .map(|t| to_3d(t, shape))
-            .collect();
+        let threads: Vec<[i64; 3]> = (0..threads(shape)).map(|t| to_3d(t, shape)).collect();
         let end = i128::from(n) + 1;
         let mut cuts = vec![1, end];
         for k in over.iter().filter(|k| k.trip.is_some_and(|(m, _)| m == l)) {

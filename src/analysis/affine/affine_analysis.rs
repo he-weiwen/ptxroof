@@ -61,6 +61,7 @@ use crate::ptx::modifier::{
 };
 use crate::ptx::register_effects::{registers, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register};
+use crate::ptx::thread_hierarchy::WARP_SZ;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::cell::{Cell, RefCell};
@@ -327,9 +328,9 @@ impl<'a> AffineAnalysis<'a> {
             // warp", and §3.1: a warp "contains threads of consecutive,
             // increasing thread IDs with the first warp containing
             // thread 0"; in a one-dimensional block that is %tid.x mod 32.
-            SpecialReg::Scalar(SpecialScalar::Laneid) if self.one_dimensional() => {
-                Ok(AffineExpr::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
-            }
+            SpecialReg::Scalar(SpecialScalar::Laneid) if self.one_dimensional() => Ok(
+                AffineExpr::var(Var::Mod(Box::new(Var::Tid(Axis::X)), WARP_SZ)),
+            ),
             // One value for the CTA (the launch shape, the cluster, the
             // shared memory sizes): a symbol, bound when known.
             _ if special_register(reg) == Some(SpecialRegister::PerCta) => Ok(
@@ -763,14 +764,9 @@ impl<'a> AffineAnalysis<'a> {
     /// `%ctaid` below a bound grid, a counter in [1, n].
     pub(crate) fn var_bounds(&self, v: &Var) -> Option<(i64, i64)> {
         let shape = |vector: SpecialVector, axis: &Axis| {
-            let i = match axis {
-                Axis::X => 0,
-                Axis::Y => 1,
-                Axis::Z => 2,
-            };
-            let n = *self
-                .bindings?
-                .get(&SymbolicConstant::SpecialReg(vector.components()[i]))?;
+            let n = *self.bindings?.get(&SymbolicConstant::SpecialReg(
+                vector.components()[*axis as usize],
+            ))?;
             (n >= 1).then_some((0, n - 1))
         };
         match v {
