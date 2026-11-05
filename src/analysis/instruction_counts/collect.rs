@@ -1,9 +1,8 @@
 //! Per-block measurement collection.
 //!
 //! Walks every block's instructions through the classifier and emits
-//! the measurement stream, plus per-block class tallies (the accounting
-//! the `classified + allowlisted-unknown = total` verifier identity
-//! reads) and the block's execution qualifier.
+//! the measurement stream, the block's instructions and its execution
+//! qualifier.
 //!
 //! Within its innermost scope — the containing loop, or the kernel
 //! for top-level blocks — a block's
@@ -18,9 +17,7 @@
 //! The qualifier retains the upper bound.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::instruction_counts::classify::{
-    ClassifiedInstruction, InstructionCategory, classify_in,
-};
+use crate::analysis::instruction_counts::classify::classify;
 use crate::analysis::instruction_counts::measurement::Measurement;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Stmt};
@@ -31,44 +28,17 @@ pub enum CountQualifier {
     AtMost,
 }
 
-/// Instruction-class tallies for one block; the accounting identity is
-/// `flop + non_flop_arith + memory + sync + communication + control +
-/// ignore + unknown == total`.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ClassCounts {
-    pub total: u32,
-    pub flop: u32,
-    pub non_flop_arith: u32,
-    pub memory: u32,
-    pub sync: u32,
-    pub communication: u32,
-    pub control: u32,
-    pub ignore: u32,
-    pub unknown: u32,
-    /// Statements the parser could not read; outside `total` and the
-    /// identity, reported alongside the unknowns.
-    pub unparsed: u32,
-}
-
 #[derive(Debug)]
 pub struct BlockMeasurements {
     pub block: BlockId,
     pub qualifier: CountQualifier,
+    /// The block's contributions, in statement order.
     pub measurements: Vec<Measurement>,
-    pub class_counts: ClassCounts,
-    /// Individual instructions issued per execution of the block.
-    /// A predicated instruction is issued whether or not its
-    /// predicate holds, so it counts here in full.
-    pub instructions: Vec<InstructionRecord>,
-}
-
-/// One instruction, even when it contributes several measurements or none.
-#[derive(Debug)]
-pub struct InstructionRecord {
-    pub opcode: String,
-    pub classified: ClassifiedInstruction,
-    pub provenance: usize,
-    pub predicated: bool,
+    /// Statement indices of the instructions issued per execution of the
+    /// block, each once even when it contributes several measurements or
+    /// none. A predicated instruction is issued whether or not its
+    /// predicate holds.
+    pub instructions: Vec<usize>,
 }
 
 /// Collect measurements for every block; indexed by `BlockId`.
@@ -88,47 +58,24 @@ pub fn collect(
         .map(|bid| {
             let qualifier = block_qualifier(forest, &exit_blocks, bid);
             let mut measurements = Vec::new();
-            let mut counts = ClassCounts::default();
             let mut instructions = Vec::new();
             let b = cfg.block(bid);
             for (si, stmt) in kernel.stmts[b.start..b.end].iter().enumerate() {
-                let Stmt::Instr(instr) = stmt else {
-                    counts.unparsed += u32::from(matches!(stmt, Stmt::Unparsed { .. }));
-                    continue;
-                };
+                let Stmt::Instr(instr) = stmt else { continue };
                 let provenance = b.start + si;
-                counts.total += 1;
-                let predicated = instr.predicate.is_some();
-                let classified = classify_in(module, kernel, instr);
-                match classified.category {
-                    InstructionCategory::Flop => counts.flop += 1,
-                    InstructionCategory::NonFlopArith { .. } => counts.non_flop_arith += 1,
-                    InstructionCategory::Memory => counts.memory += 1,
-                    InstructionCategory::Sync => counts.sync += 1,
-                    InstructionCategory::Communication => counts.communication += 1,
-                    InstructionCategory::Control => counts.control += 1,
-                    InstructionCategory::Ignore => counts.ignore += 1,
-                    InstructionCategory::Unknown => counts.unknown += 1,
-                }
-                measurements.extend(classified.contributions.iter().map(|c| Measurement {
+                let contributions = classify(module, kernel, instr).into_iter();
+                measurements.extend(contributions.map(|c| Measurement {
                     kind: c.kind,
                     count: c.count,
-                    predicated,
                     provenance,
                     memory_operand: c.memory_operand,
                 }));
-                instructions.push(InstructionRecord {
-                    opcode: module.opcode(instr),
-                    classified,
-                    provenance,
-                    predicated,
-                });
+                instructions.push(provenance);
             }
             BlockMeasurements {
                 block: bid,
                 qualifier,
                 measurements,
-                class_counts: counts,
                 instructions,
             }
         })
@@ -229,41 +176,9 @@ mod tests {
     }
 
     #[test]
-    fn predicated_instruction_is_marked() {
-        let (blocks, _) = collect_body("@%p1 st.global.f32 [%rd1], %f1;\nret;");
-        let m = &blocks[0].measurements[0];
-        assert!(m.predicated);
-    }
-
-    #[test]
-    fn class_counts_account_for_every_instruction() {
-        let (blocks, _) = collect_body(
-            "ld.param.u64 %rd1, [k_param_0];\nmov.u32 %r1, 0;\n\
-             fma.rn.f32 %f1, %f1, %f1, %f1;\ncvt.f32.f16 %f2, %rs1;\n\
-             bar.sync 0;\nmma.sync.m8n8k4 %f1, %f2, %f3, %f4;\nret;",
-        );
-        let c = blocks[0].class_counts;
-        assert_eq!(c.total, 7);
-        assert_eq!(
-            c.flop
-                + c.non_flop_arith
-                + c.memory
-                + c.sync
-                + c.communication
-                + c.control
-                + c.ignore
-                + c.unknown,
-            c.total,
-            "accounting identity"
-        );
-        assert_eq!(c.unknown, 1); // the mma
-    }
-
-    #[test]
     fn a_copy_is_one_memory_instruction_with_two_byte_records() {
         let (blocks, _) = collect_body("cp.async.cg.shared.global [%r1], [%rd1], 16, 16;\nret;");
-        let c = blocks[0].class_counts;
-        assert_eq!((c.total, c.memory), (2, 1));
+        assert_eq!(blocks[0].instructions, [0, 1]);
         let bytes: Vec<_> = blocks[0]
             .measurements
             .iter()
@@ -279,13 +194,6 @@ mod tests {
                 (Space::Shared, Direction::Store, 16)
             ]
         );
-    }
-
-    #[test]
-    fn unparsed_statements_are_counted_outside_the_identity() {
-        let (blocks, _) = collect_body("@@ not ptx;\nfma.rn.f32 %f1, %f1, %f1, %f1;\nret;");
-        let c = blocks[0].class_counts;
-        assert_eq!((c.total, c.flop, c.control, c.unparsed), (2, 1, 1, 1));
     }
 
     #[test]

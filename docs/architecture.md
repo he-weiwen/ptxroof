@@ -44,9 +44,9 @@ only declare modules and selected public entry points.
 | `analysis/dead_code` | Instructions with no live effect through register SSA |
 | `analysis/memory_footprint` | Warp sectors and loop requested, distinct and sector bytes |
 | `analysis/instruction_counts/measurement` | Accounting dimensions and contribution/measurement records |
-| `analysis/instruction_counts/classify` | Decode instructions into categories and contributions |
+| `analysis/instruction_counts/classify` | Decode instructions into contributions |
 | `analysis/instruction_counts/collect` | Attach block/loop execution context to instruction contributions |
-| `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs, bytes and conversions they sum to |
+| `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs and bytes they sum to |
 | `report/bindings` | Caller parameter bindings and their text syntax |
 | `report/measured` | Import and validate NCU records; compare measured and predicted quantities, and the comparisons' results |
 | `report/build` | Orchestrate kernel analyses, trace the memory operands the annotated PTX prints, and compare a kernel with its NCU record |
@@ -74,7 +74,7 @@ checks these boundaries:
 
 `register_member` belongs to the IR because register declarations define family
 membership; both `Kernel::register_type` and the parser use it. `measurement`
-owns `Precision`, `Pipe`, `Direction` and `ArithKind` alongside
+owns `Precision`, `Pipe` and `Direction` alongside
 `Contribution` and `MeasureKind`, with `Space` from `ptx/modifier`;
 `classify` produces those records. `measured`
 reads bindings from `report/bindings`, not from the report builder.

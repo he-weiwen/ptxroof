@@ -1,15 +1,14 @@
-//! Instruction → one exclusive category and zero or more contributions.
+//! Instruction → zero or more contributions.
 //!
 //! Transcribed from v1's `lib/PTX/Classifier.cpp` (v1 lives only in
 //! git history now, last at 690d81d): cuda-core, tensor-core and SFU
-//! flops, non-flop arithmetic (conversions counted separately — they
-//! are the precision-audit overhead S8 reports), memory, copies that
-//! read one space and write another, sync, control, ignore, unknown.
-//! What is not modelled (Hopper bulk copies and warpgroup MMA, integer and
-//! sparse MMA kinds, textures) classifies as `Unknown`: visible,
-//! counted, and policed by the corpus coverage check — never silently
-//! zero. `docs/ptx-instruction-coverage.md` walks the ISA chapter row
-//! by row.
+//! flops, and the bytes of memory accesses and of copies that read one
+//! space and write another; non-flop arithmetic, sync, control and hints
+//! contribute nothing. What is not modelled (Hopper bulk copies and
+//! warpgroup MMA, integer and sparse MMA kinds, textures) contributes one
+//! `UnknownOps`: visible, counted, and policed by the corpus coverage
+//! check — never silently zero. `docs/ptx-instruction-coverage.md`
+//! walks the ISA chapter row by row.
 //!
 //! Two deliberate divergences from the v1 reference, both documented
 //! at the match arm:
@@ -25,92 +24,48 @@
 //! family = 1 per result (the operation, not its SASS expansion), all
 //! multiplied by packed lanes (`f16x2` = ×2).
 
-use super::measurement::{ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision};
+use super::measurement::{Contribution, Direction, MeasureKind, Pipe, Precision};
 
-use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId};
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{
     ParamAccess, Space, copy_spaces, cp_async_size_operand, param_access, space,
 };
 
-/// Exclusive instruction category. Work quantities live in contributions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum InstructionCategory {
-    Flop,
-    NonFlopArith { kind: ArithKind },
-    Memory,
-    Sync,
-    Communication,
-    Control,
-    Ignore,
-    Unknown,
+fn flop(pipe: Pipe, precision: Precision, flops: u32) -> Vec<Contribution> {
+    vec![Contribution::new(
+        MeasureKind::Flops { pipe, precision },
+        flops.into(),
+    )]
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ClassifiedInstruction {
-    pub category: InstructionCategory,
-    pub contributions: Vec<Contribution>,
+fn memory(space: Space, direction: Direction, bytes: Option<u32>) -> Vec<Contribution> {
+    vec![Contribution::memory(space, direction, bytes, 0)]
 }
 
-impl ClassifiedInstruction {
-    fn simple(category: InstructionCategory) -> Self {
-        let kind = match category {
-            InstructionCategory::Sync => Some(MeasureKind::SyncOps),
-            InstructionCategory::Communication => Some(MeasureKind::CommunicationOps),
-            InstructionCategory::Control => Some(MeasureKind::ControlOps),
-            _ => None,
-        };
-        Self {
-            category,
-            contributions: kind
-                .into_iter()
-                .map(|kind| Contribution::new(kind, 1))
-                .collect(),
-        }
-    }
-
-    fn flop(pipe: Pipe, precision: Precision, flops: u32) -> Self {
-        Self {
-            category: InstructionCategory::Flop,
-            contributions: vec![Contribution::new(
-                MeasureKind::Flops { pipe, precision },
-                flops.into(),
-            )],
-        }
-    }
-
-    fn non_flop(kind: ArithKind) -> Self {
-        let measurement = if kind == ArithKind::Conversion {
-            MeasureKind::Conversions
-        } else {
-            MeasureKind::NonFlopOps { kind }
-        };
-        Self {
-            category: InstructionCategory::NonFlopArith { kind },
-            contributions: vec![Contribution::new(measurement, 1)],
-        }
-    }
-
-    fn memory(space: Space, direction: Direction, bytes: Option<u32>) -> Self {
-        Self {
-            category: InstructionCategory::Memory,
-            contributions: vec![Contribution::memory(space, direction, bytes, 0)],
-        }
-    }
-
-    fn copy(from: Space, to: Space, read_bytes: Option<u32>, written_bytes: Option<u32>) -> Self {
-        Self {
-            category: InstructionCategory::Memory,
-            contributions: vec![
-                Contribution::memory(from, Direction::Load, read_bytes, 1),
-                Contribution::memory(to, Direction::Store, written_bytes, 0),
-            ],
-        }
-    }
+fn copy(
+    from: Space,
+    to: Space,
+    read_bytes: Option<u32>,
+    written_bytes: Option<u32>,
+) -> Vec<Contribution> {
+    vec![
+        Contribution::memory(from, Direction::Load, read_bytes, 1),
+        Contribution::memory(to, Direction::Store, written_bytes, 0),
+    ]
 }
 
-pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
+fn unknown() -> Vec<Contribution> {
+    vec![Contribution::new(MeasureKind::UnknownOps, 1)]
+}
+
+/// The contributions of `instr` in `kernel`; an access to a
+/// device-function parameter, which a call passes or returns, has none.
+pub fn classify(module: &Module, kernel: &Kernel, instr: &Instr) -> Vec<Contribution> {
     use Opcode::*;
+    if param_access(module, kernel, instr) == Some(ParamAccess::DeviceFunctionParam) {
+        return Vec::new();
+    }
     let interner = &module.interner;
     let mods: Vec<&str> = module
         .modifiers(instr)
@@ -120,46 +75,34 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
 
     let fp = fp_precision_and_lanes(&mods);
 
-    let mut result = match instr.mnemonic {
+    match instr.mnemonic {
         // -- cuda-core flops (FP type modifier required) -----------------
         Fma | Mad => match fp {
-            Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::CudaCore, p, 2 * lanes),
+            Some((p, lanes)) => flop(Pipe::CudaCore, p, 2 * lanes),
             // mad.lo.s32 and friends are address arithmetic, not flops
             // (divergence from v1, which counted 2 "Other" flops here).
-            None => ClassifiedInstruction::non_flop(ArithKind::Integer),
+            None => Vec::new(),
         },
         Add | Sub | Mul | Min | Max | Abs | Neg | Copysign => match fp {
-            Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::CudaCore, p, lanes),
-            None => ClassifiedInstruction::non_flop(ArithKind::Integer),
+            Some((p, lanes)) => flop(Pipe::CudaCore, p, lanes),
+            None => Vec::new(),
         },
 
         // -- special function unit (PTX ISA §9.7.3.8, .13–.22; §9.7.4.9–10) --
         Rcp | Sqrt | Rsqrt | Sin | Cos | Lg2 | Ex2 | Tanh => match fp {
-            Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::Sfu, p, lanes),
-            None => ClassifiedInstruction::simple(InstructionCategory::Unknown),
+            Some((p, lanes)) => flop(Pipe::Sfu, p, lanes),
+            None => unknown(),
         },
         Div => match fp {
-            Some((p, lanes)) => ClassifiedInstruction::flop(Pipe::Sfu, p, lanes),
-            None => ClassifiedInstruction::non_flop(ArithKind::Integer),
+            Some((p, lanes)) => flop(Pipe::Sfu, p, lanes),
+            None => Vec::new(),
         },
 
         // -- non-flop arithmetic ------------------------------------------
-        Cvt => ClassifiedInstruction::non_flop(ArithKind::Conversion),
-        Mov | Cvta | Mapa | Stacksave | Stackrestore | Alloca => {
-            ClassifiedInstruction::non_flop(ArithKind::Move)
-        }
-        Setp | Selp | Set | Slct | Testp | Isspacep | Istypep => {
-            ClassifiedInstruction::non_flop(ArithKind::Predicate)
-        }
-        And | Or | Xor | Not | Shl | Shr | Shf | Lop3 | Bfe | Bfi | Brev | Popc | Clz | Bfind
-        | Bmsk | Szext | Prmt | Rem | Sad | Dp4a | Dp2a | Mul24 | Mad24 | Addc | Subc | Madc
-        | Cnot | Fns | Clmad | Getctarank => {
-            if mods.contains(&"pred") {
-                ClassifiedInstruction::non_flop(ArithKind::Predicate)
-            } else {
-                ClassifiedInstruction::non_flop(ArithKind::Integer)
-            }
-        }
+        Cvt | Mov | Cvta | Mapa | Stacksave | Stackrestore | Alloca | Setp | Selp | Set | Slct
+        | Testp | Isspacep | Istypep | And | Or | Xor | Not | Shl | Shr | Shf | Lop3 | Bfe
+        | Bfi | Brev | Popc | Clz | Bfind | Bmsk | Szext | Prmt | Rem | Sad | Dp4a | Dp2a
+        | Mul24 | Mad24 | Addc | Subc | Madc | Cnot | Fns | Clmad | Getctarank => Vec::new(),
 
         // -- memory -----------------------------------------------------------
         Ld | St => {
@@ -168,10 +111,10 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
             } else {
                 Direction::Store
             };
-            ClassifiedInstruction::memory(space_of(module, instr), direction, bytes_of(&mods))
+            memory(space_of(module, instr), direction, bytes_of(&mods))
         }
         // Uniform global loads (PTX ISA §9.7.9.9).
-        Ldu => ClassifiedInstruction::memory(Space::Global, Direction::Load, bytes_of(&mods)),
+        Ldu => memory(Space::Global, Direction::Load, bytes_of(&mods)),
 
         // -- tensor cores (warp-collective; counts are per lane) ----------
         Wmma => wmma(&mods, space_of(module, instr)),
@@ -187,23 +130,15 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
         Atom | Red => atomic(&mods, space_of(module, instr), instr.mnemonic == Atom),
 
         // -- sync / warp collectives ---------------------------------------
-        Bar | Barrier | Mbarrier | Membar | Fence => {
-            ClassifiedInstruction::simple(InstructionCategory::Sync)
-        }
-        Shfl | Vote | Match | Activemask | Redux | Elect => {
-            ClassifiedInstruction::simple(InstructionCategory::Communication)
-        }
+        Bar | Barrier | Mbarrier | Membar | Fence | Shfl | Vote | Match | Activemask | Redux
+        | Elect => Vec::new(),
 
         // -- control -----------------------------------------------------------
-        Bra | Brx | Ret | Exit | Call | Trap | Brkpt => {
-            ClassifiedInstruction::simple(InstructionCategory::Control)
-        }
+        Bra | Brx | Ret | Exit | Call | Trap | Brkpt => Vec::new(),
 
         // -- correctly ignored -------------------------------------------------
         Prefetch | Prefetchu | Discard | Applypriority | Griddepcontrol | Createpolicy
-        | Nanosleep | Pmevent | Setmaxnreg => {
-            ClassifiedInstruction::simple(InstructionCategory::Ignore)
-        }
+        | Nanosleep | Pmevent | Setmaxnreg => Vec::new(),
 
         // PTX ISA §9.7.17.7.1, §9.7.17.8.5, §9.7.17.11.1, §9.7.17.12.1:
         // tensor-memory allocation, waits, fences and the commit to an
@@ -224,7 +159,7 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
                 )
             ) =>
         {
-            ClassifiedInstruction::simple(InstructionCategory::Sync)
+            Vec::new()
         }
 
         // -- unsupported instruction families ------------------------------
@@ -232,30 +167,17 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
         Clusterlaunchcontrol | Fabric | Movmatrix | Multimem | Tcgen05 | Tensormap | Wgmma
         | Tex | Tld4 | Txq | Suld | Suq | Sured | Sust | Vabsdiff | Vabsdiff2 | Vabsdiff4
         | Vadd | Vadd2 | Vadd4 | Vavrg2 | Vavrg4 | Vmad | Vmax | Vmax2 | Vmax4 | Vmin | Vmin2
-        | Vmin4 | Vset | Vset2 | Vset4 | Vshl | Vshr | Vsub | Vsub2 | Vsub4 => {
-            ClassifiedInstruction::simple(InstructionCategory::Unknown)
-        }
-    };
-    if result.category == InstructionCategory::Unknown {
-        result.contributions.push(Contribution::new(
-            MeasureKind::UnknownOps {
-                mnemonic: instr.mnemonic,
-            },
-            1,
-        ));
+        | Vmin4 | Vset | Vset2 | Vset4 | Vshl | Vshr | Vsub | Vsub2 | Vsub4 => unknown(),
     }
-    result
 }
 
 /// Atomic FP operations count one operation per scalar element. Integer,
 /// bitwise, exchange and CAS operations never become FP work.
-fn atomic(mods: &[&str], space: Space, returns_old: bool) -> ClassifiedInstruction {
+fn atomic(mods: &[&str], space: Space, returns_old: bool) -> Vec<Contribution> {
     let bytes = bytes_of(mods);
-    let mut result = ClassifiedInstruction::memory(space, Direction::Store, bytes);
+    let mut result = memory(space, Direction::Store, bytes);
     if returns_old {
-        result
-            .contributions
-            .insert(0, Contribution::memory(space, Direction::Load, bytes, 0));
+        result.insert(0, Contribution::memory(space, Direction::Load, bytes, 0));
     }
     if mods.iter().any(|m| matches!(*m, "add" | "min" | "max"))
         && let Some((precision, lanes)) = fp_precision_and_lanes(mods)
@@ -269,7 +191,7 @@ fn atomic(mods: &[&str], space: Space, returns_old: bool) -> ClassifiedInstructi
                 _ => None,
             })
             .unwrap_or(1);
-        result.contributions.push(Contribution::new(
+        result.push(Contribution::new(
             MeasureKind::Flops {
                 pipe: Pipe::Atomic,
                 precision,
@@ -333,9 +255,9 @@ fn per_lane_bytes(bits: u32) -> Option<u32> {
 /// `wmma.{load,store,mma}` (PTX ISA §9.7.15.4.3–5): the role is the
 /// first modifier; the shape modifier fixes every fragment's size and
 /// the flop count; the element types follow the shape.
-fn wmma(mods: &[&str], space: Space) -> ClassifiedInstruction {
+fn wmma(mods: &[&str], space: Space) -> Vec<Contribution> {
     let Some(shape_at) = mods.iter().position(|m| matrix_shape(m).is_some()) else {
-        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
+        return unknown();
     };
     let (m, n, k) = matrix_shape(mods[shape_at]).expect("position found a shape");
     let types: Vec<&str> = mods[shape_at + 1..]
@@ -349,12 +271,12 @@ fn wmma(mods: &[&str], space: Space) -> ClassifiedInstruction {
                 "a" => m * k,
                 "b" => k * n,
                 "c" | "d" => m * n,
-                _ => return ClassifiedInstruction::simple(InstructionCategory::Unknown),
+                _ => return unknown(),
             };
             let Some(bits) = types.last().and_then(|t| element_bits(t)) else {
-                return ClassifiedInstruction::simple(InstructionCategory::Unknown);
+                return unknown();
             };
-            ClassifiedInstruction::memory(
+            memory(
                 space,
                 if role == "load" {
                     Direction::Load
@@ -373,13 +295,11 @@ fn wmma(mods: &[&str], space: Space) -> ClassifiedInstruction {
                 types.get(1).copied().unwrap_or("")
             };
             match tensor_precision(atype) {
-                Some(precision) => {
-                    ClassifiedInstruction::flop(Pipe::Tensor, precision, 2 * m * n * k / WARP_LANES)
-                }
-                None => ClassifiedInstruction::simple(InstructionCategory::Unknown),
+                Some(precision) => flop(Pipe::Tensor, precision, 2 * m * n * k / WARP_LANES),
+                None => unknown(),
             }
         }
-        _ => ClassifiedInstruction::simple(InstructionCategory::Unknown),
+        _ => unknown(),
     }
 }
 
@@ -387,15 +307,15 @@ fn wmma(mods: &[&str], space: Space) -> ClassifiedInstruction {
 /// the shape modifier; the types follow the shape as `.dtype.atype
 /// .btype.ctype`. Sparse (`.sp`) and block-scaled forms are left
 /// Unknown: their flop count is a convention still to be chosen.
-fn mma(mods: &[&str]) -> ClassifiedInstruction {
+fn mma(mods: &[&str]) -> Vec<Contribution> {
     if mods
         .iter()
         .any(|m| m.starts_with("sp") || *m == "block_scale")
     {
-        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
+        return unknown();
     }
     let Some(shape_at) = mods.iter().position(|m| matrix_shape(m).is_some()) else {
-        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
+        return unknown();
     };
     let (m, n, k) = matrix_shape(mods[shape_at]).expect("position found a shape");
     let types: Vec<&str> = mods[shape_at + 1..]
@@ -404,7 +324,7 @@ fn mma(mods: &[&str]) -> ClassifiedInstruction {
         .filter(|t| element_bits(t).is_some())
         .collect();
     let Some(precision) = types.get(1).and_then(|t| tensor_precision(t)) else {
-        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
+        return unknown();
     };
     // §9.7.15.5.1: "A warp executing mma.m8n8k4 with .f16 floating point
     // type will compute 4 MMA operations of shape .m8n8k4"; §9.7.15.5.2:
@@ -414,7 +334,7 @@ fn mma(mods: &[&str]) -> ClassifiedInstruction {
     } else {
         1
     };
-    ClassifiedInstruction::flop(
+    flop(
         Pipe::Tensor,
         precision,
         operations * 2 * m * n * k / WARP_LANES,
@@ -426,7 +346,7 @@ fn mma(mods: &[&str]) -> ClassifiedInstruction {
 /// is provided, generic addressing is used, such that the address in p
 /// points into .shared space"). The padded 6-/4-bit source formats
 /// have no element width here and stay unquantified.
-fn matrix_fragments(mods: &[&str], direction: Direction) -> ClassifiedInstruction {
+fn matrix_fragments(mods: &[&str], direction: Direction) -> Vec<Contribution> {
     let shape = mods.iter().find_map(|m| matrix_rows_cols(m));
     let count = mods.iter().find_map(|m| match *m {
         "x1" => Some(1),
@@ -435,10 +355,10 @@ fn matrix_fragments(mods: &[&str], direction: Direction) -> ClassifiedInstructio
         _ => None,
     });
     let (Some((rows, cols)), Some(count)) = (shape, count) else {
-        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
+        return unknown();
     };
     let bits = mods.iter().rev().find_map(|m| element_bits(m));
-    ClassifiedInstruction::memory(
+    memory(
         Space::Shared,
         direction,
         bits.and_then(|b| per_lane_bytes(count * rows * cols * b)),
@@ -454,22 +374,22 @@ fn matrix_fragments(mods: &[&str], direction: Direction) -> ClassifiedInstructio
 /// the bulk ones of §9.7.9.26.6) and the mbarrier arrive are
 /// synchronization; the bulk forms and the tensor ones but
 /// `cp.async.bulk.tensor` (§9.7.9.26.4, §9.7.9.26.5.3–4) are not modeled.
-fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
+fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> Vec<Contribution> {
     let has = |name: &str| mods.contains(&name);
     if mods.starts_with(&["async", "bulk", "tensor"]) {
         return tensor_copy(module, instr);
     }
     if has("async") && (has("commit_group") || has("wait_group")) {
-        return ClassifiedInstruction::simple(InstructionCategory::Sync);
+        return Vec::new();
     }
     if !has("async") || has("bulk") || has("reduce") {
-        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
+        return unknown();
     }
     if has("wait_all") || has("mbarrier") {
-        return ClassifiedInstruction::simple(InstructionCategory::Sync);
+        return Vec::new();
     }
     if copy_spaces(module, instr) != Some((Space::Global, Space::Shared)) {
-        return ClassifiedInstruction::simple(InstructionCategory::Unknown);
+        return unknown();
     }
     let immediate = |id: Option<OperandId>| match module.operand(id?) {
         Operand::Immediate(text) => {
@@ -479,7 +399,7 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
     };
     let cp_size = immediate(module.operand_ids(instr.operands).get(2).copied());
     let src_size = immediate(cp_async_size_operand(module, instr));
-    ClassifiedInstruction::copy(Space::Global, Space::Shared, src_size.or(cp_size), cp_size)
+    copy(Space::Global, Space::Shared, src_size.or(cp_size), cp_size)
 }
 
 /// `cp.async.bulk.tensor` (PTX ISA §9.7.9.26.5.2) copies "tensor data
@@ -490,39 +410,12 @@ fn cp(module: &Module, instr: &Instr, mods: &[&str]) -> ClassifiedInstruction {
 /// `cp.async.bulk.tensor.3d.im2col.shared::cluster.global`. The bytes
 /// are the bounding box the tensor map gives (§5.5.3.1, §5.5.8), not
 /// the instruction.
-fn tensor_copy(module: &Module, instr: &Instr) -> ClassifiedInstruction {
+fn tensor_copy(module: &Module, instr: &Instr) -> Vec<Contribution> {
     match copy_spaces(module, instr) {
         Some((from @ Space::Global, to @ (Space::Shared | Space::SharedCluster)))
-        | Some((from @ Space::Shared, to @ Space::Global)) => {
-            ClassifiedInstruction::copy(from, to, None, None)
-        }
-        _ => ClassifiedInstruction::simple(InstructionCategory::Unknown),
+        | Some((from @ Space::Shared, to @ Space::Global)) => copy(from, to, None, None),
+        _ => unknown(),
     }
-}
-
-/// `classify`, with a `cp.async` read whose src-size is a register, not
-/// an ignore-src predicate, marked as at most its cp-size, and the
-/// device-function parameters a call passes a move.
-pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> ClassifiedInstruction {
-    if param_access(module, kernel, instr) == Some(ParamAccess::DeviceFunctionParam) {
-        return ClassifiedInstruction::non_flop(ArithKind::Move);
-    }
-    let mut c = classify(module, instr);
-    if let Some(op) = cp_async_size_operand(module, instr)
-        && let Operand::Register(r) = module.operand(op)
-        && kernel.register_type(module, *r) != Some(FundamentalType::Pred)
-    {
-        for x in &mut c.contributions {
-            x.at_most |= matches!(
-                x.kind,
-                MeasureKind::Bytes {
-                    direction: Direction::Load,
-                    ..
-                }
-            );
-        }
-    }
-    c
 }
 
 /// FP precision + packed-lane multiplier from type modifiers.
@@ -579,11 +472,12 @@ mod tests {
     use crate::ptx::ir::Stmt;
     use crate::ptx::parse::parser::parse;
 
-    /// Classify the single instruction in `text`.
-    fn class_of(text: &str) -> ClassifiedInstruction {
+    /// Classify the single instruction in `text`, in a kernel of one
+    /// parameter, `k_param_0`.
+    fn class_of(text: &str) -> Vec<Contribution> {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
-             .visible .entry k()\n{{\n{text}\n}}\n"
+             .visible .entry k(.param .u64 k_param_0)\n{{\n{text}\n}}\n"
         );
         let m = parse(&src).expect("snippet parses");
         let instr = m.kernels[0]
@@ -594,111 +488,48 @@ mod tests {
                 _ => None,
             })
             .expect("one instruction");
-        classify(&m, &instr)
+        classify(&m, &m.kernels[0], &instr)
     }
 
     #[test]
     fn flops_follow_the_fma_2_convention_and_packed_lanes() {
         assert_eq!(
             class_of("fma.rn.f32 %f1, %f2, %f3, %f4;"),
-            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::F32, 2)
+            flop(Pipe::CudaCore, Precision::F32, 2)
         );
         assert_eq!(
             class_of("fma.rn.f16x2 %r1, %r2, %r3, %r4;"),
-            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::F16, 4)
+            flop(Pipe::CudaCore, Precision::F16, 4)
         );
         assert_eq!(
             class_of("add.f32 %f1, %f2, %f3;"),
-            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::F32, 1)
+            flop(Pipe::CudaCore, Precision::F32, 1)
         );
         assert_eq!(
             class_of("mul.bf16x2 %r1, %r2, %r3;"),
-            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::BF16, 2)
+            flop(Pipe::CudaCore, Precision::BF16, 2)
         );
         assert_eq!(
             class_of("max.f64 %fd1, %fd2, %fd3;"),
-            ClassifiedInstruction::flop(Pipe::CudaCore, Precision::F64, 1)
+            flop(Pipe::CudaCore, Precision::F64, 1)
         );
     }
 
+    /// Integer arithmetic, conversions, predicates and moves, sync, warp
+    /// collectives, control and hints count no work.
     #[test]
-    fn integer_arithmetic_is_not_a_flop() {
-        // The divergence-from-v1 case: integer mad is address math.
-        assert_eq!(
-            class_of("mad.lo.s32 %r1, %r2, %r3, %r4;"),
-            ClassifiedInstruction::non_flop(ArithKind::Integer)
-        );
-        assert_eq!(
-            class_of("add.s64 %rd1, %rd2, 8;"),
-            ClassifiedInstruction::non_flop(ArithKind::Integer)
-        );
-        assert_eq!(
-            class_of("mul.wide.s32 %rd1, %r1, 2;"),
-            ClassifiedInstruction::non_flop(ArithKind::Integer)
-        );
-    }
-
-    #[test]
-    fn conversions_are_their_own_kind() {
-        assert_eq!(
-            class_of("cvt.f32.f16 %f1, %rs1;"),
-            ClassifiedInstruction::non_flop(ArithKind::Conversion)
-        );
-        assert_eq!(
-            class_of("cvt.rn.f16.f32 %rs1, %f1;"),
-            ClassifiedInstruction::non_flop(ArithKind::Conversion)
-        );
-        // cvta is an address-space cast, not a value conversion.
-        assert_eq!(
-            class_of("cvta.to.global.u64 %rd1, %rd2;"),
-            ClassifiedInstruction::non_flop(ArithKind::Move)
-        );
-    }
-
-    #[test]
-    fn predicate_ops_including_or_pred() {
-        assert_eq!(
-            class_of("setp.lt.s32 %p1, %r1, %r2;"),
-            ClassifiedInstruction::non_flop(ArithKind::Predicate)
-        );
-        assert_eq!(
-            class_of("or.pred %p3, %p1, %p2;"),
-            ClassifiedInstruction::non_flop(ArithKind::Predicate)
-        );
-        assert_eq!(
-            class_of("and.b32 %r1, %r2, 3;"),
-            ClassifiedInstruction::non_flop(ArithKind::Integer)
-        );
-    }
-
-    #[test]
-    fn memory_width_space_and_direction() {
-        assert_eq!(
-            class_of("ld.global.u16 %rs1, [%rd1];"),
-            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(2))
-        );
-        assert_eq!(
-            class_of("st.shared.u16 [%r1], %rs1;"),
-            ClassifiedInstruction::memory(Space::Shared, Direction::Store, Some(2))
-        );
-        assert_eq!(
-            class_of("ld.param.u64 %rd1, [k_param_4];"),
-            ClassifiedInstruction::memory(Space::Param, Direction::Load, Some(8))
-        );
-        assert_eq!(
-            class_of("ld.global.v2.f32 {%f1, %f2}, [%rd1];"),
-            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(8))
-        );
-        assert_eq!(
-            class_of("ld.global.nc.L2::128B.b128 {%rd1, %rd2}, [%rd3];"),
-            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(16))
-        );
-    }
-
-    #[test]
-    fn hopper_and_extended_precision_bookkeeping_have_arms() {
-        let integer = ClassifiedInstruction::non_flop(ArithKind::Integer);
+    fn non_flop_arithmetic_sync_control_and_hints_contribute_nothing() {
         for text in [
+            // The divergence-from-v1 case: integer mad is address math.
+            "mad.lo.s32 %r1, %r2, %r3, %r4;",
+            "add.s64 %rd1, %rd2, 8;",
+            "mul.wide.s32 %rd1, %r1, 2;",
+            "cvt.f32.f16 %f1, %rs1;",
+            "cvt.rn.f16.f32 %rs1, %f1;",
+            "cvta.to.global.u64 %rd1, %rd2;",
+            "setp.lt.s32 %p1, %r1, %r2;",
+            "or.pred %p3, %p1, %p2;",
+            "and.b32 %r1, %r2, 3;",
             "addc.cc.u32 %r1, %r2, %r3;",
             "subc.u32 %r1, %r2, %r3;",
             "madc.hi.cc.u32 %r1, %r2, %r3, %r4;",
@@ -707,45 +538,55 @@ mod tests {
             "fns.b32 %r1, %r2, %r3, %r4;",
             "clmad.lo.u64 %rd1, %rd2, %rd3, %rd4;",
             "getctarank.shared::cluster.u32 %r1, %r2;",
-        ] {
-            assert_eq!(class_of(text), integer, "{text}");
-        }
-        assert_eq!(
-            class_of("istypep.texref %p1, %rd1;"),
-            ClassifiedInstruction::non_flop(ArithKind::Predicate)
-        );
-        for text in [
+            "istypep.texref %p1, %rd1;",
             "mapa.shared::cluster.u32 %r1, %r2, %r3;",
             "stacksave.u64 %rd1;",
             "alloca.u64 %rd1, %rd2, 16;",
-        ] {
-            assert_eq!(
-                class_of(text),
-                ClassifiedInstruction::non_flop(ArithKind::Move),
-                "{text}"
-            );
-        }
-        assert_eq!(
-            class_of("elect.sync %r1|%p1, %r2;"),
-            ClassifiedInstruction::simple(InstructionCategory::Communication)
-        );
-        for text in [
+            "bar.sync 0;",
+            "membar.gl;",
+            "shfl.sync.bfly.b32 %r1, %r2, %r3, %r4, %r5;",
+            "vote.sync.any.pred %p1, %p2, %r1;",
+            "redux.sync.add.s32 %r1, %r2, %r3;",
+            "elect.sync %r1|%p1, %r2;",
+            "@%p1 bra $L__X;",
+            "ret;",
+            "prefetch.global.L2 [%rd1];",
             "createpolicy.fractional.L2::evict_last.b64 %rd1, 0.25;",
             "nanosleep.u32 100;",
             "pmevent 3;",
             "setmaxnreg.inc.sync.aligned.u32 232;",
         ] {
-            assert_eq!(
-                class_of(text),
-                ClassifiedInstruction::simple(InstructionCategory::Ignore),
-                "{text}"
-            );
+            assert!(class_of(text).is_empty(), "{text}");
         }
+    }
+
+    #[test]
+    fn memory_width_space_and_direction() {
+        assert_eq!(
+            class_of("ld.global.u16 %rs1, [%rd1];"),
+            memory(Space::Global, Direction::Load, Some(2))
+        );
+        assert_eq!(
+            class_of("st.shared.u16 [%r1], %rs1;"),
+            memory(Space::Shared, Direction::Store, Some(2))
+        );
+        assert_eq!(
+            class_of("ld.param.u64 %rd1, [k_param_0];"),
+            memory(Space::Param, Direction::Load, Some(8))
+        );
+        assert_eq!(
+            class_of("ld.global.v2.f32 {%f1, %f2}, [%rd1];"),
+            memory(Space::Global, Direction::Load, Some(8))
+        );
+        assert_eq!(
+            class_of("ld.global.nc.L2::128B.b128 {%rd1, %rd2}, [%rd3];"),
+            memory(Space::Global, Direction::Load, Some(16))
+        );
     }
 
     /// The forms the B200 corpus emits (`tests/fixtures/b200`).
     #[test]
-    fn tcgen05_bookkeeping_is_synchronization_and_its_work_is_unknown() {
+    fn tcgen05_bookkeeping_contributes_nothing_and_its_work_is_unknown() {
         for text in [
             "tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32 [%r1], 512;",
             "tcgen05.dealloc.cta_group::1.sync.aligned.b32 %r1, 512;",
@@ -756,11 +597,7 @@ mod tests {
             "tcgen05.fence::after_thread_sync;",
             "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.b64 [%r1];",
         ] {
-            assert_eq!(
-                class_of(text),
-                ClassifiedInstruction::simple(InstructionCategory::Sync),
-                "{text}"
-            );
+            assert_eq!(class_of(text), Vec::new(), "{text}");
         }
         for text in [
             "tcgen05.mma.cta_group::1.kind::f16 [%r1], %rd1, %rd2, %r2, %p1;",
@@ -769,11 +606,7 @@ mod tests {
             "tcgen05.cp.cta_group::1.warpx4.32x128b [%r1], %rd1;",
             "tcgen05.shift.cta_group::1.down [%r1];",
         ] {
-            assert_eq!(
-                class_of(text).category,
-                InstructionCategory::Unknown,
-                "{text}"
-            );
+            assert_eq!(class_of(text), unknown(), "{text}");
         }
     }
 
@@ -781,60 +614,21 @@ mod tests {
     fn generic_and_cluster_spaces_are_distinct_buckets() {
         assert_eq!(
             class_of("ld.f32 %f1, [%rd1];"),
-            ClassifiedInstruction::memory(Space::Generic, Direction::Load, Some(4))
+            memory(Space::Generic, Direction::Load, Some(4))
         );
         assert_eq!(
             class_of("st.shared::cluster.b32 [%r1], %r2;"),
-            ClassifiedInstruction::memory(Space::SharedCluster, Direction::Store, Some(4))
+            memory(Space::SharedCluster, Direction::Store, Some(4))
         );
         assert_eq!(
             class_of("ld.shared::cta.b32 %r1, [%r2];"),
-            ClassifiedInstruction::memory(Space::Shared, Direction::Load, Some(4))
+            memory(Space::Shared, Direction::Load, Some(4))
         );
         assert_eq!(
             class_of("ld.param::entry.b64 %rd1, [k_param_0];"),
-            ClassifiedInstruction::memory(Space::Param, Direction::Load, Some(8))
+            memory(Space::Param, Direction::Load, Some(8))
         );
-        assert_eq!(
-            class_of("st.param::func.b32 [param0], %r1;"),
-            ClassifiedInstruction::memory(Space::Param, Direction::Store, Some(4))
-        );
-    }
-
-    #[test]
-    fn sync_control_ignore() {
-        assert_eq!(
-            class_of("bar.sync 0;"),
-            ClassifiedInstruction::simple(InstructionCategory::Sync)
-        );
-        assert_eq!(
-            class_of("membar.gl;"),
-            ClassifiedInstruction::simple(InstructionCategory::Sync)
-        );
-        assert_eq!(
-            class_of("shfl.sync.bfly.b32 %r1, %r2, %r3, %r4, %r5;"),
-            ClassifiedInstruction::simple(InstructionCategory::Communication)
-        );
-        assert_eq!(
-            class_of("vote.sync.any.pred %p1, %p2, %r1;"),
-            ClassifiedInstruction::simple(InstructionCategory::Communication)
-        );
-        assert_eq!(
-            class_of("redux.sync.add.s32 %r1, %r2, %r3;"),
-            ClassifiedInstruction::simple(InstructionCategory::Communication)
-        );
-        assert_eq!(
-            class_of("@%p1 bra $L__X;"),
-            ClassifiedInstruction::simple(InstructionCategory::Control)
-        );
-        assert_eq!(
-            class_of("ret;"),
-            ClassifiedInstruction::simple(InstructionCategory::Control)
-        );
-        assert_eq!(
-            class_of("prefetch.global.L2 [%rd1];"),
-            ClassifiedInstruction::simple(InstructionCategory::Ignore)
-        );
+        assert_eq!(class_of("st.param::func.b32 [param0], %r1;"), Vec::new());
     }
 
     #[test]
@@ -844,24 +638,24 @@ mod tests {
         let load = "wmma.load.a.sync.aligned.row.m16n16k16.shared.f16 {%r1, %r2, %r3, %r4, %r5, %r6, %r7, %r8}, [%r9], %r10;";
         assert_eq!(
             class_of(load),
-            ClassifiedInstruction::memory(Space::Shared, Direction::Load, Some(16))
+            memory(Space::Shared, Direction::Load, Some(16))
         );
         assert_eq!(
             class_of(
                 "wmma.load.c.sync.aligned.row.m16n16k16.global.f32 {%f1, %f2, %f3, %f4, %f5, %f6, %f7, %f8}, [%rd1], %r1;"
             ),
-            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(32))
+            memory(Space::Global, Direction::Load, Some(32))
         );
         assert_eq!(
             class_of(
                 "wmma.store.d.sync.aligned.row.m16n16k16.global.f16 [%rd1], {%r1, %r2, %r3, %r4}, %r5;"
             ),
-            ClassifiedInstruction::memory(Space::Global, Direction::Store, Some(16))
+            memory(Space::Global, Direction::Store, Some(16))
         );
         // m8n32k16: B is 16x32 bf16 = 1024 B per warp = 32 B per lane.
         assert_eq!(
             class_of("wmma.load.b.sync.aligned.col.m8n32k16.global.bf16 {%r1}, [%rd1];"),
-            ClassifiedInstruction::memory(Space::Global, Direction::Load, Some(32))
+            memory(Space::Global, Direction::Load, Some(32))
         );
     }
 
@@ -873,33 +667,32 @@ mod tests {
             class_of(
                 "wmma.mma.sync.aligned.row.row.m16n16k16.f32.f32 {%f1, %f2, %f3, %f4, %f5, %f6, %f7, %f8}, {%r1, %r2, %r3, %r4, %r5, %r6, %r7, %r8}, {%r9, %r10, %r11, %r12, %r13, %r14, %r15, %r16}, {%f1, %f2, %f3, %f4, %f5, %f6, %f7, %f8};"
             ),
-            ClassifiedInstruction::flop(Pipe::Tensor, Precision::F16, 256)
+            flop(Pipe::Tensor, Precision::F16, 256)
         );
         assert_eq!(
             class_of(
                 "wmma.mma.sync.aligned.row.col.m8n32k16.f32.bf16.bf16.f32 {%f1}, {%r1}, {%r2}, {%f2};"
             ),
-            ClassifiedInstruction::flop(Pipe::Tensor, Precision::BF16, 256)
+            flop(Pipe::Tensor, Precision::BF16, 256)
         );
         assert_eq!(
             class_of(
                 "wmma.mma.sync.aligned.row.col.m8n8k4.rn.f64.f64.f64.f64 {%fd1}, {%fd2}, {%fd3}, {%fd4};"
             ),
-            ClassifiedInstruction::flop(Pipe::Tensor, Precision::F64, 16)
+            flop(Pipe::Tensor, Precision::F64, 16)
         );
         // Integer MMA is not floating-point work: loud, not zero.
         assert_eq!(
             class_of(
                 "wmma.mma.sync.aligned.row.col.m16n16k16.s32.s8.s8.s32 {%r1}, {%r2}, {%r3}, {%r4};"
-            )
-            .category,
-            InstructionCategory::Unknown
+            ),
+            unknown()
         );
     }
 
     #[test]
     fn mma_sync_flops_by_shape_and_multiplicand_type() {
-        let tensor = |precision, flops| ClassifiedInstruction::flop(Pipe::Tensor, precision, flops);
+        let tensor = |precision, flops| flop(Pipe::Tensor, precision, flops);
         // k14's form: 2*16*8*16 / 32 = 128 flops per lane.
         assert_eq!(
             class_of(
@@ -948,18 +741,13 @@ mod tests {
             "mma.sp.sync.aligned.m16n8k32.row.col.f32.f16.f16.f32 {%f1}, {%r1}, {%r2}, {%f2}, %r3, 0;",
             "mma.sync.aligned.m16n8k64.row.col.kind::mxf4.block_scale.f32.e2m1.e2m1.f32.ue8m0 {%f1}, {%r1}, {%r2}, {%f2}, %r3, {0, 0}, %r4, {0, 0};",
         ] {
-            assert_eq!(
-                class_of(text).category,
-                InstructionCategory::Unknown,
-                "{text}"
-            );
+            assert_eq!(class_of(text), unknown(), "{text}");
         }
     }
 
     #[test]
     fn ldmatrix_and_stmatrix_move_num_fragments_of_shared_memory() {
-        let shared =
-            |direction, bytes| ClassifiedInstruction::memory(Space::Shared, direction, bytes);
+        let shared = |direction, bytes| memory(Space::Shared, direction, bytes);
         // k14's forms: an 8x8 b16 matrix is 128 B per warp, 4 B per lane.
         assert_eq!(
             class_of("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%r5];"),
@@ -992,7 +780,7 @@ mod tests {
             class_of("cp.async.cg.shared.global [%r20], [%rd11], 16, 16;")
         );
         let copy = |read_bytes, written_bytes| {
-            ClassifiedInstruction::copy(
+            copy(
                 Space::Global,
                 Space::Shared,
                 Some(read_bytes),
@@ -1018,27 +806,6 @@ mod tests {
             class_of("cp.async.cg.shared.global.L2::cache_hint [%r1], [%rd1], 16, %p1, %rd2;"),
             copy(16, 16)
         );
-        // A src-size register reads at most cp-size; an ignore-src
-        // predicate, an immediate or the cache policy leaves it exact.
-        let bounds = |tail: &str| {
-            let src = format!(
-                ".version 8.7\n.target sm_80\n.address_size 64\n.visible .entry k()\n{{\n\
-                 .reg .pred %p<2>;\n.reg .b32 %r<3>;\n.reg .b64 %rd<3>;\n\
-                 cp.async.cg.shared.global.L2::cache_hint [%r1], [%rd1], 16{tail};\n}}\n"
-            );
-            let m = parse(&src).expect("snippet parses");
-            let k = &m.kernels[0];
-            let Some(Stmt::Instr(instr)) = k.stmts.first() else {
-                panic!("one instruction");
-            };
-            (classify_in(&m, k, instr).contributions.iter())
-                .map(|c| c.at_most)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(bounds(", %r2, %rd2"), [true, false]);
-        for tail in [", %p1, %rd2", ", 8, %rd2", ", %rd2"] {
-            assert_eq!(bounds(tail), [false, false], "{tail}");
-        }
         // Under `.L2::cache_hint` the last operand is the policy, an
         // immediate one too; ptxas reads 16 B from `..., 16, 8`.
         for (sizes, read) in [("16, 0x1234", 16), ("16, 8", 16), ("16, 8, %rd2", 8)] {
@@ -1059,21 +826,13 @@ mod tests {
             "cp.async.bulk.wait_group 2;",
             "cp.async.bulk.wait_group.read 0;",
         ] {
-            assert_eq!(
-                class_of(text),
-                ClassifiedInstruction::simple(InstructionCategory::Sync),
-                "{text}"
-            );
+            assert_eq!(class_of(text), Vec::new(), "{text}");
         }
         for text in [
             "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes [%r1], [%rd1], 1024, [%r2];",
             "cp.reduce.async.bulk.global.shared::cta.bulk_group.add.f32 [%rd1], [%r1], 256;",
         ] {
-            assert_eq!(
-                class_of(text).category,
-                InstructionCategory::Unknown,
-                "{text}"
-            );
+            assert_eq!(class_of(text), unknown(), "{text}");
         }
     }
 
@@ -1081,7 +840,7 @@ mod tests {
     /// ptxas 13.4 assembles for sm_100a.
     #[test]
     fn a_tensor_copy_moves_the_bytes_its_tensor_map_gives() {
-        let copy = |from, to| ClassifiedInstruction::copy(from, to, None, None);
+        let copy = |from, to| copy(from, to, None, None);
         let to_cta = copy(Space::Global, Space::Shared);
         let to_cluster = copy(Space::Global, Space::SharedCluster);
         let to_global = copy(Space::Shared, Space::Global);
@@ -1126,17 +885,13 @@ mod tests {
             "cp.reduce.async.bulk.tensor.1d.global.shared::cta.add.tile.bulk_group [%rd1, {%r2}], [%r1];",
             "cp.async.bulk.prefetch.tensor.1d.L2.global.tile [%rd1, {%r2}];",
         ] {
-            assert_eq!(
-                class_of(text).category,
-                InstructionCategory::Unknown,
-                "{text}"
-            );
+            assert_eq!(class_of(text), unknown(), "{text}");
         }
     }
 
     #[test]
     fn sfu_family_is_one_flop_per_result_on_its_own_pipe() {
-        let sfu = |precision, flops| ClassifiedInstruction::flop(Pipe::Sfu, precision, flops);
+        let sfu = |precision, flops| flop(Pipe::Sfu, precision, flops);
         assert_eq!(
             class_of("ex2.approx.ftz.f32 %f1, %f2;"),
             sfu(Precision::F32, 1)
@@ -1163,10 +918,7 @@ mod tests {
             sfu(Precision::BF16, 2)
         );
         // Integer division (§9.7.1.9) is address arithmetic, like rem.
-        assert_eq!(
-            class_of("div.u32 %r1, %r2, %r3;"),
-            ClassifiedInstruction::non_flop(ArithKind::Integer)
-        );
+        assert_eq!(class_of("div.u32 %r1, %r2, %r3;"), Vec::new());
     }
 
     #[test]
@@ -1254,7 +1006,6 @@ mod tests {
             ),
         ] {
             let actual = class_of(text);
-            assert_eq!(actual.category, InstructionCategory::Memory, "{text}");
             let mut expected = vec![];
             if reads {
                 expected.push(Contribution {
@@ -1264,7 +1015,6 @@ mod tests {
                     },
                     count: width,
                     memory_operand: Some(0),
-                    at_most: false,
                 });
             }
             expected.push(Contribution {
@@ -1274,7 +1024,6 @@ mod tests {
                 },
                 count: width,
                 memory_operand: Some(0),
-                at_most: false,
             });
             if let Some(precision) = precision {
                 expected.push(Contribution {
@@ -1284,35 +1033,28 @@ mod tests {
                     },
                     count: flops,
                     memory_operand: None,
-                    at_most: false,
                 });
             }
-            assert_eq!(actual.contributions, expected, "{text}");
+            assert_eq!(actual, expected, "{text}");
         }
     }
 
     #[test]
     fn unknown_is_explicit_but_ignored_has_no_contributions() {
-        let unknown = class_of("wgmma.fence.sync.aligned;");
-        assert_eq!(unknown.category, InstructionCategory::Unknown);
         assert!(matches!(
-            unknown.contributions.as_slice(),
+            class_of("wgmma.fence.sync.aligned;").as_slice(),
             [Contribution {
-                kind: MeasureKind::UnknownOps { .. },
+                kind: MeasureKind::UnknownOps,
                 count: 1,
                 ..
             }]
         ));
-        assert!(
-            class_of("prefetch.global.L2 [%rd1];")
-                .contributions
-                .is_empty()
-        );
+        assert!(class_of("prefetch.global.L2 [%rd1];").is_empty());
     }
 
     #[test]
     fn out_of_audience_families_are_unknown_not_zero() {
         let tex = "tex.2d.v4.f32.f32 {%f1, %f2, %f3, %f4}, [t, {%f5, %f6}];";
-        assert_eq!(class_of(tex).category, InstructionCategory::Unknown);
+        assert_eq!(class_of(tex), unknown());
     }
 }

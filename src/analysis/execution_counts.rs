@@ -743,7 +743,7 @@ impl<'a> ExecutionCounts<'a> {
                             Direction::Store => entry.1.add_unknown(),
                         }
                     }
-                    MeasureKind::UnknownOps { .. } => {
+                    MeasureKind::UnknownOps => {
                         flops.values_mut().for_each(FlopAccumulator::add_unknown);
                         for space in ["global", "shared"] {
                             let (l, s) = bytes.get_mut(space).expect("pre-inserted");
@@ -751,11 +751,6 @@ impl<'a> ExecutionCounts<'a> {
                             s.add_unknown();
                         }
                     }
-                    MeasureKind::Conversions
-                    | MeasureKind::NonFlopOps { .. }
-                    | MeasureKind::SyncOps
-                    | MeasureKind::CommunicationOps
-                    | MeasureKind::ControlOps => {}
                 }
             }
         }

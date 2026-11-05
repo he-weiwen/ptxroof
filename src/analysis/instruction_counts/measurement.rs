@@ -2,21 +2,18 @@
 //!
 //! `count` is the magnitude contributed by ONE execution of the
 //! instruction by ONE thread (flops for `Flops`, bytes for `Bytes`,
-//! 1 for op-counting kinds). A warp-collective instruction (the
+//! 1 for the others). A warp-collective instruction (the
 //! tensor families) contributes its warp total divided by the 32
 //! lanes that issue it, so every count adds up per thread. Loop trip
 //! multiplication happens at report aggregation (PR 12); until then
-//! everything is per-execution and the constants stay exact, but for
-//! a `cp.async` read whose src-size is a register: at most cp-size, its
-//! `at_most` set (PTX ISA §9.7.9.26.3.1).
+//! everything is per-execution.
 //!
 //! Honesty is in the kinds: an instruction that moves statically
 //! unquantifiable bytes becomes `UnquantifiedBytes` (an op count with
-//! a visible hole), an unhandled instruction becomes `UnknownOp` with
-//! its mnemonic — the v1 `AsyncCopy{bytes unset} → 0` silent-zero bug
+//! a visible hole), an unhandled instruction becomes `UnknownOps`
+//! — the v1 `AsyncCopy{bytes unset} → 0` silent-zero bug
 //! class is unrepresentable.
 
-use crate::ptx::ir::Opcode;
 use crate::ptx::modifier::Space;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -86,20 +83,6 @@ pub enum Direction {
     Store,
 }
 
-/// Non-flop arithmetic, split because conversions are first-class in a
-/// precision audit (S8: 8 `cvt` per k2 main-loop iteration).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ArithKind {
-    /// `cvt` — precision/width conversion.
-    Conversion,
-    /// Integer/bit arithmetic: address math, masks, shifts.
-    Integer,
-    /// Predicate computation and selection: `setp`, `selp`, `set`...
-    Predicate,
-    /// Register/address bookkeeping: `mov`, `cvta`.
-    Move,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MeasureKind {
     Flops {
@@ -116,20 +99,8 @@ pub enum MeasureKind {
         space: Space,
         direction: Direction,
     },
-    /// `cvt` ops — the precision-conversion overhead (S8).
-    Conversions,
-    /// Integer/predicate/move bookkeeping ops.
-    NonFlopOps {
-        kind: ArithKind,
-    },
-    SyncOps,
-    CommunicationOps,
-    ControlOps,
-    /// An instruction the classifier does not handle: counted by
-    /// mnemonic, reported by name.
-    UnknownOps {
-        mnemonic: Opcode,
-    },
+    /// An instruction the classifier does not handle.
+    UnknownOps,
 }
 
 /// A contribution before execution context is attached by the collector.
@@ -140,8 +111,6 @@ pub struct Contribution {
     /// Index among the instruction's memory operands (not all operands).
     /// Read and write contributions of an atomic reference the same operand.
     pub memory_operand: Option<usize>,
-    /// `count` is the most one execution moves.
-    pub at_most: bool,
 }
 
 impl Contribution {
@@ -150,7 +119,6 @@ impl Contribution {
             kind,
             count,
             memory_operand: None,
-            at_most: false,
         }
     }
 
@@ -163,7 +131,6 @@ impl Contribution {
             kind,
             count,
             memory_operand: Some(operand),
-            at_most: false,
         }
     }
 }
@@ -172,9 +139,6 @@ impl Contribution {
 pub struct Measurement {
     pub kind: MeasureKind,
     pub count: u64,
-    /// The instruction itself is `@%p`-guarded: its count is an upper
-    /// bound regardless of where its block sits.
-    pub predicated: bool,
     /// Statement index into the owning kernel's `stmts` — provenance
     /// for diagnostics and the report verifier.
     pub provenance: usize,
