@@ -485,7 +485,8 @@ fn on_index(a: &AffineExpr) -> bool {
 /// and `%ctaid` by its grid: `True` or `False` when the form's range
 /// decides it, else the comparison with its `%ctaid` terms substituted
 /// when they take one value, or with their range; `None` when
-/// unbounded.
+/// unbounded, or when the form reads no `%tid` and an axis of `%ctaid`
+/// it reads has no grid to tell its CTAs apart, one unknown for the CTA.
 fn across_ctas(
     form: &AffineExpr,
     cmp: Cmp,
@@ -499,6 +500,15 @@ fn across_ctas(
     }
     let (ctas, lanes): (BTreeMap<_, _>, BTreeMap<_, _>) =
         (form.terms.clone().into_iter()).partition(|(v, _)| v.depends_on_ctaid());
+    let mut used = [false; 3];
+    ctas.keys().for_each(|v| cta_axes(v, &mut used));
+    let unbounded = [Axis::X, Axis::Y, Axis::Z]
+        .into_iter()
+        .zip(used)
+        .any(|(a, read)| read && range(&Var::Ctaid(a)).is_none());
+    if lanes.is_empty() && unbounded {
+        return None;
+    }
     let (lo, hi) = AffineExpr {
         terms: ctas,
         base: SymExpr::Const(0),

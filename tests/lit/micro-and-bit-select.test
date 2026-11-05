@@ -1,9 +1,9 @@
 # An and of a mask with a value of 0 or −1 is −mask times the value: the
 # bit select −(%tid.x & 1) & 576 is 576·(%tid.x mod 2), 32- and 64-bit.
 # A mask with the sign bit and a value below −1 stay unknown; %ctaid.x's
-# bit needs the grid for its range, and is a uniform variable without
-# it, a multiple of 64. An or of the select with another bit adds them,
-# 2080·(%tid.x mod 2) setting bits 5 and 11 only, and a select by a
+# bit, a remainder, is 0 or 1 with or without the grid, so its select is
+# 576·(%ctaid.x mod 2) either way. An or of the select with another bit
+# adds them, 2080·(%tid.x mod 2) setting bits 5 and 11 only, and a select by a
 # signed bfe of one bit is minus that bit. A 16-bit −1 widened by
 # mul.wide.u16 is refused; an and.b16 takes its mask's 16 bits; −2^63
 # as a coefficient prints whole.
@@ -22,7 +22,7 @@ FREE: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (depends on speci
 FREE: {{^}}.visible .entry micro_and_select_two_bits( // block 128×1×1 | per CTA: global store 512 B; param load 1,024 B{{$}}
 FREE: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (depends on special register (%tid.x mod 4), in a mod){{$}}
 FREE: {{^}}.visible .entry micro_and_select_grid( // block 128×1×1 | pointer params assumed 32 B aligned | per CTA: global store 512 B; param load 1,024 B{{$}}
-FREE: {{^}}	st.global.u32 	[%rd3], %r1; // global store [4·uniform(%r5@154) + param_0] sectors/req 1 (ideal 1){{$}}
+FREE: {{^}}	st.global.u32 	[%rd3], %r1; // global store [2304·(%ctaid.x mod 2) + param_0] sectors/req 1 (ideal 1){{$}}
 FREE: {{^}}.visible .entry micro_and_select_or( // block 128×1×1 | pointer params assumed 32 B aligned | per CTA: global store 512 B; param load 1,024 B{{$}}
 FREE: {{^}}	st.global.u32 	[%rd3], %r1; // global store [512·⌊(%tid.x mod 16)/8⌋ + 8320·(%tid.x mod 2) + param_0] sectors/req 4 (ideal 1){{$}}
 FREE: {{^}}.visible .entry micro_and_select_bfe( // block 128×1×1 | pointer params assumed 32 B aligned | per CTA: global store 512 B; param load 1,024 B{{$}}

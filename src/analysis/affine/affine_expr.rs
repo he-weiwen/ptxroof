@@ -447,7 +447,7 @@ impl AffineExpr {
             return Some((q, AffineExpr::constant(0), rem));
         };
         if k >= c {
-            let (lo, hi) = var_range(v, bound).or_else(|| own_range(v))?;
+            let (lo, hi) = var_range(v, bound)?;
             let at = |x: i64| i128::from(c) * i128::from(x) + i128::from(k);
             return (at(lo) >= 0 && at(hi) < i128::from(d)).then(|| {
                 let r = AffineExpr::term(v.clone(), SymExpr::Const(c)) + rem;
@@ -816,28 +816,17 @@ fn group_range(
     })
 }
 
-/// A variable's least and greatest value, a floor or a mod from its
-/// operand's.
-/// The values a remainder, or a floor of one, takes whatever its operand.
-fn own_range(v: &Var) -> Option<(i64, i64)> {
-    match v {
-        Var::Mod(_, m) => Some((0, m - 1)),
-        Var::FloorDiv(inner, d) => {
-            own_range(inner).map(|(lo, hi)| (lo.div_euclid(*d), hi.div_euclid(*d)))
-        }
-        Var::Swizzle(b) => Some(b.range(None)),
-        _ => None,
-    }
-}
-
+/// A variable's least and greatest value, a floor from its operand's
+/// and a remainder by m from its operand's where that lies in [0, m),
+/// else [0, m − 1] whatever its operand.
 fn var_range(v: &Var, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i64, i64)> {
     match v {
         Var::FloorDiv(inner, d) => {
             let (lo, hi) = var_range(inner, bound)?;
             Some((lo.div_euclid(*d), hi.div_euclid(*d)))
         }
-        Var::Mod(inner, m) => match var_range(inner, bound)? {
-            (lo, hi) if lo >= 0 && hi < *m => Some((lo, hi)),
+        Var::Mod(inner, m) => match var_range(inner, bound) {
+            Some((lo, hi)) if lo >= 0 && hi < *m => Some((lo, hi)),
             _ => Some((0, m - 1)),
         },
         Var::Swizzle(b) => Some(b.range(bound(&Var::Tid(Axis::X)))),
