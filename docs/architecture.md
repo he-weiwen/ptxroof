@@ -31,7 +31,7 @@ only declare modules and selected public entry points.
 | `analysis/uniformity_info` | Propagate divergence through definitions and controlling branches |
 | `analysis/affine/sym_expr` | Symbolic expressions and simplification |
 | `analysis/affine/affine_expr` | Affine expressions over thread, CTA, loop and uniform variables |
-| `analysis/affine/lane_eval` | Evaluate affine forms for lanes and warp layouts |
+| `analysis/affine/lane_eval` | A block's threads by linear index and its warps |
 | `analysis/affine/induction_variables` | Recognize loop counter induction variables on SSA values |
 | `analysis/affine/exit_limit` | Loop-exit inequalities solved for a trip count |
 | `analysis/affine/unknown_reason` | Why a value has no affine expression, and its sentence where it is read |

@@ -18,8 +18,8 @@
 //! one the same for every thread empties or keeps whole warps.
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
-use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
-use crate::analysis::affine::lane_eval::{lanes, linear, thread, warps_of};
+use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var, at_tid};
+use crate::analysis::affine::lane_eval::{linear, thread, warps_of};
 use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
@@ -215,9 +215,9 @@ impl Pred {
                 let value = |v: &Var| match (v, env.cta, trip) {
                     (Var::Ctaid(a), Some(c), _) => c[*a as usize],
                     (Var::Iteration(l), _, Some((m, k))) if *l == m => k,
-                    _ => lanes(tid)(v),
+                    _ => at_tid(tid)(v),
                 };
-                let Some(x) = at(&c.form, &value) else {
+                let Some(x) = c.form.eval(&value) else {
                     return Tri::Maybe;
                 };
                 let (lo, hi) = match c.cta.filter(|_| env.cta.is_none()) {
@@ -429,15 +429,6 @@ fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
     } else {
         Tri::No
     }
-}
-
-/// `form` with each variable at `value`, in i128 so that a comparison
-/// of 64-bit operands reads exactly; `None` past i128.
-fn at(form: &AffineExpr, value: &dyn Fn(&Var) -> i64) -> Option<i128> {
-    (form.terms.iter()).try_fold(i128::from(form.base.const_part()), |x, (v, c)| {
-        let term = i128::from(c.as_const().unwrap_or(0)).checked_mul(i128::from(v.eval(value)))?;
-        x.checked_add(term)
-    })
 }
 
 /// Whether `x cmp 0` holds for every `x` in [lo, hi], for none, or for
@@ -792,7 +783,7 @@ impl Pred {
         }
         let lanes: Vec<(i128, i128)> = (over.iter())
             .map(|k| {
-                (threads.iter().map(|&t| at(&k.form, &lanes(t))))
+                (threads.iter().map(|&t| k.form.eval(&at_tid(t))))
                     .try_fold((i128::MAX, i128::MIN), |(lo, hi), x| {
                         Some((lo.min(x?), hi.max(x?)))
                     })
@@ -843,9 +834,9 @@ impl Pred {
             let c = i128::from(k.form.terms.get(&Var::Iteration(l))?.as_const()?);
             for &t in &threads {
                 let (num, den) = if c < 0 {
-                    (at(&k.form, &lanes(t))?, -c)
+                    (k.form.eval(&at_tid(t))?, -c)
                 } else {
-                    (-at(&k.form, &lanes(t))?, c)
+                    (-k.form.eval(&at_tid(t))?, c)
                 };
                 let (lo, hi) = (num.div_euclid(den), -(-num).div_euclid(den));
                 cuts.extend([lo, lo + 1, hi, hi + 1].map(|x| x.clamp(1, end)));

@@ -8,8 +8,8 @@
 //! aligned, and which its pointer's alignment and its terms'
 //! coefficients allow, is tried and the count is reported as a range.
 
-use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
-use crate::analysis::affine::lane_eval::{lanes, thread, warps_of};
+use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var, at_tid};
+use crate::analysis::affine::lane_eval::{thread, warps_of};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::thread_participation::Pred;
@@ -352,7 +352,7 @@ fn warp_lanes(
                 .filter(|&(_, tid)| executes(tid))
                 .map(|(lane, tid)| {
                     let offset = (lane_terms.iter())
-                        .map(|(v, k)| k * v.eval(&lanes(tid)))
+                        .map(|(v, k)| k * v.eval(&at_tid(tid)))
                         .sum();
                     (lane, offset)
                 })
@@ -593,8 +593,8 @@ pub fn loop_bytes(
             let offsets: Vec<i64> = warp
                 .map(|t| thread(t, shape))
                 .filter(|&tid| set.contains(tid, shape))
-                .map(|tid| crate::analysis::affine::lane_eval::eval_lane(form, tid))
-                .collect();
+                .map(|tid| i64::try_from(form.eval(&at_tid(tid))?).ok())
+                .collect::<Option<_>>()?;
             let align = i64::from(f.align);
             let pats = patterns.entry(key.clone()).or_default();
             if offsets.is_empty() {
@@ -612,7 +612,7 @@ pub fn loop_bytes(
             if !set.contains(tid, shape) {
                 continue;
             }
-            let base = crate::analysis::affine::lane_eval::eval_lane(form, tid);
+            let base = i64::try_from(form.eval(&at_tid(tid))?).ok()?;
             if intervals.len() as i64 + trips > 1 << 22 {
                 return None;
             }

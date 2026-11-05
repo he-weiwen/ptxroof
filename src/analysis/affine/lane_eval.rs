@@ -1,29 +1,6 @@
-//! Evaluate the lane-dependent part of affine expressions.
+//! A block's threads by linear index and its warps.
 
-use super::affine_expr::{AffineExpr, Axis, Var};
 use std::ops::Range;
-
-/// The value of a form with constant coefficients for one thread;
-/// variables that are not lane-dependent and symbols count as 0, so
-/// the constant offset of the base is kept.
-pub fn eval_lane(a: &AffineExpr, tid: [i64; 3]) -> i64 {
-    a.base.const_part()
-        + a.terms
-            .iter()
-            .map(|(v, c)| c.as_const().unwrap_or(0) * v.eval(&lanes(tid)))
-            .sum::<i64>()
-}
-
-/// Each thread index at its value in thread `tid`, every other
-/// variable at 0.
-pub(in crate::analysis) fn lanes(tid: [i64; 3]) -> impl Fn(&Var) -> i64 {
-    move |v| match v {
-        Var::Tid(Axis::X) => tid[0],
-        Var::Tid(Axis::Y) => tid[1],
-        Var::Tid(Axis::Z) => tid[2],
-        _ => 0,
-    }
-}
 
 /// The linear index of thread `tid` in a block of `shape`, `%tid.x`
 /// varying fastest.

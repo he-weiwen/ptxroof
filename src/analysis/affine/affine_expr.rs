@@ -240,6 +240,15 @@ impl Var {
     }
 }
 
+/// Each thread index at its value in thread `tid`, every other variable
+/// at 0.
+pub fn at_tid(tid: [i64; 3]) -> impl Fn(&Var) -> i64 {
+    move |v| match v {
+        Var::Tid(a) => tid[*a as usize],
+        _ => 0,
+    }
+}
+
 impl fmt::Display for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let axis = |a: &Axis| match a {
@@ -495,6 +504,17 @@ impl AffineExpr {
     /// A variable of the form depends on the thread index.
     pub fn depends_on_tid(&self) -> bool {
         self.terms.keys().any(Var::depends_on_tid)
+    }
+
+    /// The form with each variable at `leaf`'s value, a symbol and a term
+    /// of symbolic coefficient at 0, in i128 so that a comparison of
+    /// 64-bit operands reads exactly; `None` past i128.
+    pub fn eval(&self, leaf: &dyn Fn(&Var) -> i64) -> Option<i128> {
+        (self.terms.iter()).try_fold(i128::from(self.base.const_part()), |x, (v, c)| {
+            let term =
+                i128::from(c.as_const().unwrap_or(0)).checked_mul(i128::from(v.eval(leaf)))?;
+            x.checked_add(term)
+        })
     }
 }
 
