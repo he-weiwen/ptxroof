@@ -225,7 +225,7 @@ decision, not just an arm).
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
 | 9.7.6.1 | `set` | `Predicate` | OK — produces a 0/1 value in a data register, but comparisons are not flops under the convention. |
-| 9.7.6.2 | `setp` | `Predicate` | OK, the dual-destination form `setp ... p|q, a, b` included: it parses as one `p|q` operand (`multiple_destination_registers`) and is counted (`micro/guards.ptx`'s `setp.lt.u32 %p2|%p8`). |
+| 9.7.6.2 | `setp` | `Predicate` | OK, the dual-destination form `setp ... p|q, a, b` included: it parses as one `p|q` operand (`multiple_destination_registers`) and is counted (`micro/guards.ptx`'s `setp.lt.u32 %p2|%p8`). Its unsigned spellings `lo`, `ls`, `hi`, `hs` read as `lt`, `le`, `gt`, `ge` of the `.u` type ("may be used instead", §9.7.6.2 Integer Notes; `micro/latch_forms.ptx`); `lo` to `hs` of a `.s` type, `lt` to `ge` of a `.b` type and `.ftz` of an integer type are no integer comparison (`comparisons_read_their_predicate_width_and_bool_op`). |
 | 9.7.6.3 | `selp` | `Predicate` | OK. |
 | 9.7.6.4 | `slct` | `Predicate` | OK. |
 

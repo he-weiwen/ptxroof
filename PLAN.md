@@ -693,9 +693,8 @@ output_tallies` rewrites it.
   that combines its comparison with a predicate
   (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
   compares floats (`micro/latch_float.ptx`: "latch condition compares
-  floating-point values"), packed halves or by an unsigned-only
-  comparison (`micro/latch_forms.ptx`: "latch condition compares
-  packed halves", "unsupported latch comparison `lo`"), a bound one
+  floating-point values") or packed halves (`micro/latch_forms.ptx`:
+  "latch condition compares packed halves"), a bound one
   value per warp only (a load, or
   arithmetic on one), the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent

@@ -58,8 +58,8 @@ use crate::ptx::ir::{
 };
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{
-    Cmp, Compare, Form, InstrType, IntArith, IntInstrType, IntKind, IntOperand, Memory, MulMode,
-    ParamAccess, ShflMode, Space, param_access, space,
+    Cmp, Form, InstrType, IntArith, IntInstrType, IntKind, IntOperand, IntPredicate, Memory,
+    MulMode, ParamAccess, ShflMode, Space, param_access, space,
 };
 use crate::ptx::register_effects::{registers, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register};

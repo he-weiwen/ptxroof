@@ -34,7 +34,9 @@ impl AffineAnalysis<'_> {
                     ty: IntOperand::Packed { .. },
                     ..
                 }) => Err(format!("`{opcode}` computes per packed lane").into()),
-                Form::FloatArith => Err(format!("`{opcode}` is floating-point arithmetic").into()),
+                Form::Float { .. } => {
+                    Err(format!("`{opcode}` is floating-point arithmetic").into())
+                }
                 _ => Ok(()),
             }
         };
@@ -531,17 +533,14 @@ impl AffineAnalysis<'_> {
         let Stmt::Instr(setp) = &self.data.kernel.stmts[op] else {
             return None;
         };
-        let Form::Compare(Compare {
-            cmp,
+        let Form::IntCompare {
+            pred: pred @ (IntPredicate::Eq | IntPredicate::Ne),
+            width,
             bool_op: None,
-            ftz: false,
-            ty: InstrType::Int(t),
-        }) = Form::of(module, setp)
+        } = Form::of(module, setp)
         else {
             return None;
         };
-        let cmp = cmp.signed().filter(|c| matches!(c, Cmp::Eq | Cmp::Ne))?;
-        let width = t.width;
         let sops = module.operand_ids(setp.operands);
         if setp.mnemonic != Opcode::Setp || setp.predicate.is_some() || sops.len() != 3 {
             return None;
@@ -569,7 +568,8 @@ impl AffineAnalysis<'_> {
             return None;
         }
         let (k, d) = (i128::from(k.as_const()?), i128::from(diff.base.as_const()?));
-        let holds = |x: i128| (x.rem_euclid(1 << width) == 0) ^ (cmp == Cmp::Ne) ^ complement;
+        let ne = pred == IntPredicate::Ne;
+        let holds = |x: i128| (x.rem_euclid(1 << width) == 0) ^ ne ^ complement;
         let (lo, hi) = ty.values();
         let arm = |id| {
             self.constant(&read(id, def)?)

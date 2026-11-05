@@ -111,7 +111,7 @@ impl InstrType {
     }
 }
 
-/// A signed integer comparison, `a cmp b` (PTX ISA §9.3.1.1, Table 22).
+/// A comparison of two integers, `a cmp b`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Cmp {
     Eq,
@@ -145,6 +145,68 @@ impl Cmp {
             Cmp::Le => Cmp::Ge,
             Cmp::Ge => Cmp::Le,
             eq_or_ne => eq_or_ne,
+        }
+    }
+}
+
+/// An integer `setp`'s comparison of its operands' bits (PTX ISA §9.7.6.2),
+/// LLVM's `ICmpInst::Predicate`: `lt` and `lo` of an unsigned type are both
+/// `Ult`, and `eq` of any type is `Eq`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IntPredicate {
+    Eq,
+    Ne,
+    Slt,
+    Sle,
+    Sgt,
+    Sge,
+    Ult,
+    Ule,
+    Ugt,
+    Uge,
+}
+
+impl IntPredicate {
+    /// §9.7.6.2: "The signed and unsigned comparison operators are eq, ne,
+    /// lt, le, gt, ge. For unsigned values, the comparison operators lo, ls,
+    /// hi, and hs for lower, lower-or-same, higher, and higher-or-same may be
+    /// used instead of lt, le, gt, ge, respectively. The untyped, bit-size
+    /// comparisons are eq and ne."
+    fn of(op: CmpOp, kind: IntKind) -> Option<IntPredicate> {
+        Some(match (op, kind) {
+            (CmpOp::Eq, _) => Self::Eq,
+            (CmpOp::Ne, _) => Self::Ne,
+            (CmpOp::Lt, IntKind::Signed) => Self::Slt,
+            (CmpOp::Le, IntKind::Signed) => Self::Sle,
+            (CmpOp::Gt, IntKind::Signed) => Self::Sgt,
+            (CmpOp::Ge, IntKind::Signed) => Self::Sge,
+            (CmpOp::Lt | CmpOp::Lo, IntKind::Unsigned) => Self::Ult,
+            (CmpOp::Le | CmpOp::Ls, IntKind::Unsigned) => Self::Ule,
+            (CmpOp::Gt | CmpOp::Hi, IntKind::Unsigned) => Self::Ugt,
+            (CmpOp::Ge | CmpOp::Hs, IntKind::Unsigned) => Self::Uge,
+            _ => return None,
+        })
+    }
+
+    /// How it reads its operands: `Bits` for `Eq` and `Ne`, which compare
+    /// the bits.
+    pub(crate) fn reads(self) -> IntKind {
+        match self {
+            Self::Eq | Self::Ne => IntKind::Bits,
+            Self::Slt | Self::Sle | Self::Sgt | Self::Sge => IntKind::Signed,
+            Self::Ult | Self::Ule | Self::Ugt | Self::Uge => IntKind::Unsigned,
+        }
+    }
+
+    /// The comparison of the integers its operands read as.
+    pub(crate) fn cmp(self) -> Cmp {
+        match self {
+            Self::Eq => Cmp::Eq,
+            Self::Ne => Cmp::Ne,
+            Self::Slt | Self::Ult => Cmp::Lt,
+            Self::Sle | Self::Ule => Cmp::Le,
+            Self::Sgt | Self::Ugt => Cmp::Gt,
+            Self::Sge | Self::Uge => Cmp::Ge,
         }
     }
 }
@@ -205,14 +267,19 @@ pub(crate) enum Form {
     /// `add`, `sub`, `mul`, `mad`, `div`, `rem`, `neg`, `min`, `max` or
     /// `bfe` of an integer or packed integer type (§9.7.1, §9.7.2).
     IntArith(IntArith),
-    /// The same of a float type (§9.7.3 to §9.7.5).
-    FloatArith,
+    /// The same, or a `setp`, of a float type, scalar or of 2 `lanes`
+    /// (§9.7.3 to §9.7.5, §9.7.6.2, §9.7.7.2).
+    Float { lanes: u8 },
     /// `and`, `or`, `xor` or `not` (§9.7.8.1 to §9.7.8.4).
     Logic(InstrType),
     /// `shl` or `shr` (§9.7.8.8, §9.7.8.9).
     Shift(IntInstrType),
-    /// `setp` (§9.7.6.2, §9.7.7.2).
-    Compare(Compare),
+    /// `setp.CmpOp{.BoolOp}.type` of an integer type (§9.7.6.2).
+    IntCompare {
+        pred: IntPredicate,
+        width: u32,
+        bool_op: Option<BoolOp>,
+    },
     /// `selp` (§9.7.6.3).
     Select(InstrType),
     /// `mov` (§9.7.9.3, §9.7.9.4).
@@ -252,38 +319,13 @@ named_enum! {
     pub(crate) enum MulMode { Lo = "lo", Hi = "hi", Wide = "wide" }
 }
 
-/// `setp.CmpOp{.BoolOp}{.ftz}.type` (§9.7.6.2, §9.7.7.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Compare {
-    pub(crate) cmp: CmpOp,
-    pub(crate) bool_op: Option<BoolOp>,
-    pub(crate) ftz: bool,
-    pub(crate) ty: InstrType,
-}
-
 named_enum! {
     /// A `setp` comparison (§9.3.1).
-    pub(crate) enum CmpOp {
+    enum CmpOp {
         Eq = "eq", Ne = "ne", Lt = "lt", Le = "le", Gt = "gt", Ge = "ge",
         Lo = "lo", Ls = "ls", Hi = "hi", Hs = "hs",
         Equ = "equ", Neu = "neu", Ltu = "ltu", Leu = "leu", Gtu = "gtu", Geu = "geu",
         Num = "num", Nan = "nan",
-    }
-}
-
-impl CmpOp {
-    /// `eq`, `ne`, `lt`, `le`, `gt` and `ge` as the comparison of the
-    /// integers; `None` for the others.
-    pub(crate) fn signed(self) -> Option<Cmp> {
-        Some(match self {
-            CmpOp::Eq => Cmp::Eq,
-            CmpOp::Ne => Cmp::Ne,
-            CmpOp::Lt => Cmp::Lt,
-            CmpOp::Le => Cmp::Le,
-            CmpOp::Gt => Cmp::Gt,
-            CmpOp::Ge => Cmp::Ge,
-            _ => return None,
-        })
     }
 }
 
@@ -337,7 +379,7 @@ impl Form {
                 Some(InstrType::Int(t)) => Some(Form::Shift(t)),
                 _ => None,
             },
-            Setp => comparison(&mods).map(Form::Compare),
+            Setp => comparison(&mods),
             Selp => one().map(Form::Select),
             Mov => one().map(Form::Move),
             Cvt => conversion(&mods),
@@ -376,7 +418,7 @@ fn arithmetic(op: Opcode, mods: &[&str]) -> Option<Form> {
     let ty = match ty {
         InstrType::Int(t) => IntOperand::Scalar(t),
         InstrType::PackedInt { lane, lanes } => IntOperand::Packed { lane, lanes },
-        InstrType::Float { .. } => return Some(Form::FloatArith),
+        InstrType::Float { lanes, .. } => return Some(Form::Float { lanes }),
         InstrType::B128 | InstrType::Pred => return None,
     };
     let product = matches!(op, Opcode::Mul | Opcode::Mad);
@@ -407,8 +449,9 @@ fn arithmetic(op: Opcode, mods: &[&str]) -> Option<Form> {
 }
 
 /// `setp`'s modifiers: its comparison first, its type last, and between
-/// them at most one `.ftz` and one `BoolOp`.
-fn comparison(mods: &[&str]) -> Option<Compare> {
+/// them at most one `BoolOp` and, of a float type, one `.ftz` (§9.7.6.2:
+/// "Modifier .ftz applies only to .f32 comparisons"; §9.7.7.2).
+fn comparison(mods: &[&str]) -> Option<Form> {
     let (first, rest) = mods.split_first()?;
     let (last, between) = rest.split_last()?;
     let (cmp, ty) = (CmpOp::from_name(first)?, InstrType::from_name(last)?);
@@ -420,12 +463,15 @@ fn comparison(mods: &[&str]) -> Option<Compare> {
             _ => return None,
         }
     }
-    Some(Compare {
-        cmp,
-        bool_op,
-        ftz,
-        ty,
-    })
+    match ty {
+        InstrType::Int(t) if !ftz => Some(Form::IntCompare {
+            pred: IntPredicate::of(cmp, t.kind)?,
+            width: t.width,
+            bool_op,
+        }),
+        InstrType::Float { lanes, .. } => Some(Form::Float { lanes }),
+        _ => None,
+    }
 }
 
 /// A `cvt`'s types, the two of its modifiers that contain a digit,
@@ -719,21 +765,21 @@ mod tests {
     }
 
     /// A float type picks the float family, whatever else the
-    /// instruction says (§9.7.3 to §9.7.5).
+    /// instruction says (§9.7.3 to §9.7.5), scalar or packed.
     #[test]
     fn float_arithmetic_is_one_form() {
-        for text in [
-            "add.rn.ftz.f32 %f1, %f2, %f3;",
-            "add.rn.f32.bf16 %f1, %f2, %rs3;",
-            "add.f32x2 %rd1, %rd2, %rd3;",
-            "sub.f64 %fd1, %fd2, %fd3;",
-            "mul.rn.bf16x2 %r1, %r2, %r3;",
-            "mad.rn.f32 %f1, %f2, %f3, %f4;",
-            "div.approx.ftz.f32 %f1, %f2, %f3;",
-            "neg.f16 %rs1, %rs2;",
-            "max.NaN.xorsign.abs.f16x2 %r1, %r2, %r3;",
+        for (text, lanes) in [
+            ("add.rn.ftz.f32 %f1, %f2, %f3;", 1),
+            ("add.rn.f32.bf16 %f1, %f2, %rs3;", 1),
+            ("add.f32x2 %rd1, %rd2, %rd3;", 2),
+            ("sub.f64 %fd1, %fd2, %fd3;", 1),
+            ("mul.rn.bf16x2 %r1, %r2, %r3;", 2),
+            ("mad.rn.f32 %f1, %f2, %f3, %f4;", 1),
+            ("div.approx.ftz.f32 %f1, %f2, %f3;", 1),
+            ("neg.f16 %rs1, %rs2;", 1),
+            ("max.NaN.xorsign.abs.f16x2 %r1, %r2, %r3;", 2),
         ] {
-            assert_eq!(form_of(text), Form::FloatArith, "{text}");
+            assert_eq!(form_of(text), Form::Float { lanes }, "{text}");
         }
     }
 
@@ -787,46 +833,37 @@ mod tests {
     }
 
     /// §9.7.6.2, §9.7.7.2: `setp.CmpOp{.ftz}.type p[|q], a, b` and
-    /// `setp.CmpOp.BoolOp{.ftz}.type p[|q], a, b, {!}c`.
+    /// `setp.CmpOp.BoolOp{.ftz}.type p[|q], a, b, {!}c`, `.ftz` of a float
+    /// type only.
     #[test]
-    fn comparisons_read_their_operator_flags_and_type() {
-        let compare = |cmp, ty| Compare {
-            cmp,
-            bool_op: None,
-            ftz: false,
-            ty,
+    fn comparisons_read_their_predicate_width_and_bool_op() {
+        let compare = |pred, width, bool_op| Form::IntCompare {
+            pred,
+            width,
+            bool_op,
         };
-        assert_eq!(
-            form_of("setp.lt.s32 %p1, %r1, %r2;"),
-            Form::Compare(compare(CmpOp::Lt, InstrType::Int(int("s32"))))
-        );
-        assert_eq!(
-            form_of("setp.hs.u64 %p1, %rd1, %rd2;"),
-            Form::Compare(compare(CmpOp::Hs, InstrType::Int(int("u64"))))
-        );
-        assert_eq!(
-            form_of("setp.ne.and.b32 %p1, %r1, %r2, %p2;"),
-            Form::Compare(Compare {
-                bool_op: Some(BoolOp::And),
-                ..compare(CmpOp::Ne, InstrType::Int(int("b32")))
-            })
-        );
-        assert_eq!(
-            form_of("setp.gtu.or.ftz.f32 %p1, %f1, %f2, !%p2;"),
-            Form::Compare(Compare {
-                bool_op: Some(BoolOp::Or),
-                ftz: true,
-                ..compare(CmpOp::Gtu, F32)
-            })
-        );
-        assert_eq!(
-            form_of("setp.lt.f16x2 %p1|%p2, %r1, %r2;"),
-            Form::Compare(compare(CmpOp::Lt, InstrType::Float { bits: 16, lanes: 2 }))
-        );
-        assert_eq!(
-            form_of("setp.nan.bf16 %p1, %rs1, %rs2;"),
-            Form::Compare(compare(CmpOp::Nan, InstrType::Float { bits: 16, lanes: 1 }))
-        );
+        for (text, expected) in [
+            (
+                "setp.lt.s32 %p1, %r1, %r2;",
+                compare(IntPredicate::Slt, 32, None),
+            ),
+            (
+                "setp.hs.u64 %p1, %rd1, %rd2;",
+                compare(IntPredicate::Uge, 64, None),
+            ),
+            (
+                "setp.ne.and.b32 %p1, %r1, %r2, %p2;",
+                compare(IntPredicate::Ne, 32, Some(BoolOp::And)),
+            ),
+            (
+                "setp.gtu.or.ftz.f32 %p1, %f1, %f2, !%p2;",
+                Form::Float { lanes: 1 },
+            ),
+            ("setp.lt.f16x2 %p1|%p2, %r1, %r2;", Form::Float { lanes: 2 }),
+            ("setp.nan.bf16 %p1, %rs1, %rs2;", Form::Float { lanes: 1 }),
+        ] {
+            assert_eq!(form_of(text), expected, "{text}");
+        }
         for text in [
             "setp.s32.lt %p1, %r1, %r2;",
             "setp.lt %p1, %r1, %r2;",
@@ -834,29 +871,74 @@ mod tests {
             "setp.lt.and.or.s32 %p1, %r1, %r2, %p2;",
             "setp.lt.sat.s32 %p1, %r1, %r2;",
             "setp.lt.s32.ftz %p1, %r1, %r2;",
+            "setp.lt.ftz.s32 %p1, %r1, %r2;",
+            "setp.lo.s32 %p1, %r1, %r2;",
+            "setp.lt.b32 %p1, %r1, %r2;",
+            "setp.equ.s32 %p1, %r1, %r2;",
         ] {
             assert_eq!(form_of(text), Form::Other, "{text}");
         }
     }
 
-    /// `eq` to `ge` are `Cmp`s; the unsigned and float comparisons are
-    /// not.
+    /// §9.7.6.2: `lt` and `lo` of an unsigned type are one predicate, and
+    /// `eq` of every integer type one; each reads its operands as signed,
+    /// unsigned or bits and compares the integers by its `Cmp`.
     #[test]
-    fn signed_comparisons_are_cmps() {
-        let ops = [
-            CmpOp::Eq,
-            CmpOp::Ne,
-            CmpOp::Lt,
-            CmpOp::Le,
-            CmpOp::Gt,
-            CmpOp::Ge,
-        ];
-        let cmps = [Cmp::Eq, Cmp::Ne, Cmp::Lt, Cmp::Le, Cmp::Gt, Cmp::Ge];
-        for (op, cmp) in ops.into_iter().zip(cmps) {
-            assert_eq!(op.signed(), Some(cmp));
-        }
-        for op in [CmpOp::Lo, CmpOp::Hs, CmpOp::Ltu, CmpOp::Num] {
-            assert_eq!(op.signed(), None, "{op:?}");
+    fn spellings_of_one_comparison_are_one_predicate() {
+        let pred = |text: &str| match form_of(&format!("setp.{text} %p1, %r1, %r2;")) {
+            Form::IntCompare { pred, .. } => pred,
+            other => panic!("{text}: {other:?}"),
+        };
+        for (texts, expected, reads, cmp) in [
+            (
+                &["lt.u32", "lo.u32"][..],
+                IntPredicate::Ult,
+                IntKind::Unsigned,
+                Cmp::Lt,
+            ),
+            (
+                &["le.u32", "ls.u32"],
+                IntPredicate::Ule,
+                IntKind::Unsigned,
+                Cmp::Le,
+            ),
+            (
+                &["gt.u64", "hi.u64"],
+                IntPredicate::Ugt,
+                IntKind::Unsigned,
+                Cmp::Gt,
+            ),
+            (
+                &["ge.u16", "hs.u16"],
+                IntPredicate::Uge,
+                IntKind::Unsigned,
+                Cmp::Ge,
+            ),
+            (&["lt.s32"], IntPredicate::Slt, IntKind::Signed, Cmp::Lt),
+            (&["le.s16"], IntPredicate::Sle, IntKind::Signed, Cmp::Le),
+            (&["gt.s64"], IntPredicate::Sgt, IntKind::Signed, Cmp::Gt),
+            (&["ge.s32"], IntPredicate::Sge, IntKind::Signed, Cmp::Ge),
+            (
+                &["eq.s32", "eq.u32", "eq.b32"],
+                IntPredicate::Eq,
+                IntKind::Bits,
+                Cmp::Eq,
+            ),
+            (
+                &["ne.s64", "ne.u64", "ne.b64"],
+                IntPredicate::Ne,
+                IntKind::Bits,
+                Cmp::Ne,
+            ),
+        ] {
+            for text in texts {
+                assert_eq!(pred(text), expected, "{text}");
+            }
+            assert_eq!(
+                (expected.reads(), expected.cmp()),
+                (reads, cmp),
+                "{expected:?}"
+            );
         }
     }
 
