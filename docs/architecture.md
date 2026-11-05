@@ -22,6 +22,7 @@ only declare modules and selected public entry points.
 | `ptx/cfg` | PTX basic blocks, edges and CFG construction |
 | `ptx/register_effects` | Instruction register reads and writes, CC included, and whether they are an instruction's only effect |
 | `ptx/special_registers` | Sharing and stability of PTX special-register values |
+| `ptx/thread_hierarchy` | A CTA's threads by thread ID and its warps |
 | `ptx/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/control_flow/dominators` | Dominance, post-dominance and frontiers |
 | `analysis/control_flow/loops` | Natural loop forest and irreducible edges |
@@ -31,7 +32,6 @@ only declare modules and selected public entry points.
 | `analysis/uniformity_info` | Propagate divergence through definitions and controlling branches |
 | `analysis/affine/sym_expr` | Symbolic expressions and simplification |
 | `analysis/affine/affine_expr` | Affine expressions over thread, CTA, loop and uniform variables |
-| `analysis/affine/lane_eval` | A block's threads by linear index and its warps |
 | `analysis/affine/induction_variables` | Recognize loop counter induction variables on SSA values |
 | `analysis/affine/exit_limit` | Loop-exit inequalities solved for a trip count |
 | `analysis/affine/unknown_reason` | Why a value has no affine expression, and its sentence where it is read |
@@ -67,8 +67,8 @@ checks these boundaries:
 
 - Support utilities depend only on support utilities.
 - PTX representation, parsing, CFG construction, modifier meanings, register
-  effects, special-register sharing and count constraints depend only on PTX
-  and support.
+  effects, special-register sharing, the thread hierarchy and count
+  constraints depend only on PTX and support.
 - Analyses and SSA do not depend on the parser or on reporting.
 - Report construction may call analyses and the parser.
 

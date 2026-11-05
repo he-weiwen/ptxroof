@@ -3,6 +3,7 @@
 //! analysis reads.
 
 use super::*;
+use crate::ptx::thread_hierarchy::WARP_SZ;
 
 impl AffineAnalysis<'_> {
     /// The value statement `def` writes to `reg`, were its guard true.
@@ -343,25 +344,25 @@ impl AffineAnalysis<'_> {
                 // with %tid.x replaced by 32·⌊%tid.x/32⌋ + c; a warp-uniform
                 // a (a function of ⌊%tid.x/32⌋) is unchanged.
                 let a = arg(1)?;
-                let Some(c) = self.constant(&arg(2)?).filter(|c| (0..32).contains(c)) else {
+                let Some(c) = self.constant(&arg(2)?).filter(|c| (0..WARP_SZ).contains(c)) else {
                     return Err("shfl.idx from a non-constant lane".into());
                 };
-                if self.constant(&arg(3)?) != Some(31) {
+                if self.constant(&arg(3)?) != Some(WARP_SZ - 1) {
                     return Err("shfl.idx in segments of the warp or a clamped lane".into());
                 }
-                let warp = |v: Var| AffineExpr::var(Var::FloorDiv(Box::new(v), 32));
+                let warp = |v: Var| AffineExpr::var(Var::FloorDiv(Box::new(v), WARP_SZ));
                 let lane = |v: &Var| -> Option<AffineExpr> {
                     match v {
                         Var::Tid(Axis::X) => Some(
-                            warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32))
+                            warp(Var::Tid(Axis::X)).scale(SymExpr::Const(WARP_SZ))
                                 + AffineExpr::constant(c),
                         ),
                         Var::FloorDiv(inner, d) if **inner == Var::Tid(Axis::X) => {
-                            if d % 32 == 0 {
+                            if d % WARP_SZ == 0 {
                                 Some(AffineExpr::var(v.clone()))
-                            } else if 32 % d == 0 {
+                            } else if WARP_SZ % d == 0 {
                                 Some(
-                                    warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32 / d))
+                                    warp(Var::Tid(Axis::X)).scale(SymExpr::Const(WARP_SZ / d))
                                         + AffineExpr::constant(c / d),
                                 )
                             } else {
@@ -369,15 +370,15 @@ impl AffineAnalysis<'_> {
                             }
                         }
                         Var::Mod(inner, m) if **inner == Var::Tid(Axis::X) => {
-                            if 32 % m == 0 {
+                            if WARP_SZ % m == 0 {
                                 Some(AffineExpr::constant(c % m))
-                            } else if m % 32 == 0 {
+                            } else if m % WARP_SZ == 0 {
                                 let w = Var::Mod(
-                                    Box::new(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 32)),
-                                    m / 32,
+                                    Box::new(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), WARP_SZ)),
+                                    m / WARP_SZ,
                                 );
                                 Some(
-                                    AffineExpr::var(w).scale(SymExpr::Const(32))
+                                    AffineExpr::var(w).scale(SymExpr::Const(WARP_SZ))
                                         + AffineExpr::constant(c),
                                 )
                             } else {

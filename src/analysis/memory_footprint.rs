@@ -9,11 +9,11 @@
 //! coefficients allow, is tried and the count is reported as a range.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var, at_tid};
-use crate::analysis::affine::lane_eval::{thread, warps_of};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::thread_participation::Pred;
 use crate::ptx::modifier::Space;
+use crate::ptx::thread_hierarchy::{WARP_SZ, to_3d, warps_of};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const SECTOR: i64 = 32;
@@ -348,7 +348,7 @@ fn warp_lanes(
     let warps: WarpLanes = warps_of(shape)
         .map(|warp| {
             let first = warp.start;
-            warp.map(|t| (t - first, thread(t, shape)))
+            warp.map(|t| (t - first, to_3d(t, shape)))
                 .filter(|&(_, tid)| executes(tid))
                 .map(|(lane, tid)| {
                     let offset = (lane_terms.iter())
@@ -519,7 +519,7 @@ pub fn loop_bytes(
         let bytes = f.bytes?;
         let set = &f.set;
         let lanes = (0..threads)
-            .filter(|&t| set.contains(thread(t, shape), shape))
+            .filter(|&t| set.contains(to_3d(t, shape), shape))
             .count() as u64;
         let per_trip = (set.trip_loop() == Some(id) && set.elect_active().is_none())
             .then(|| set.over_trips(shape, id, u64::try_from(trips).ok()?))
@@ -561,7 +561,8 @@ pub fn loop_bytes(
         }
         // One sector pattern per warp and trip: within the budget the
         // intervals keep below.
-        if !stepped.is_empty() && trips.saturating_mul((threads + 31) / 32) > 1 << 22 {
+        if !stepped.is_empty() && trips.saturating_mul((threads + WARP_SZ - 1) / WARP_SZ) > 1 << 22
+        {
             return None;
         }
         let shift = |k: i64| -> i64 {
@@ -591,7 +592,7 @@ pub fn loop_bytes(
         let intervals = per_base.entry(key.clone()).or_default();
         for warp in warps_of(shape) {
             let offsets: Vec<i64> = warp
-                .map(|t| thread(t, shape))
+                .map(|t| to_3d(t, shape))
                 .filter(|&tid| set.contains(tid, shape))
                 .map(|tid| i64::try_from(form.eval(&at_tid(tid))?).ok())
                 .collect::<Option<_>>()?;
@@ -608,7 +609,7 @@ pub fn loop_bytes(
             }
         }
         for t in 0..threads {
-            let tid = thread(t, shape);
+            let tid = to_3d(t, shape);
             if !set.contains(tid, shape) {
                 continue;
             }

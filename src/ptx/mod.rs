@@ -9,3 +9,4 @@ pub mod parse;
 pub mod print;
 pub mod register_effects;
 pub(crate) mod special_registers;
+pub(crate) mod thread_hierarchy;
