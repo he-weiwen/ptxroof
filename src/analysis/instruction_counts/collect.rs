@@ -17,7 +17,7 @@
 //! The qualifier retains the upper bound.
 
 use crate::analysis::control_flow::loops::LoopForest;
-use crate::analysis::instruction_counts::classify::classify_in;
+use crate::analysis::instruction_counts::classify::classify;
 use crate::analysis::instruction_counts::measurement::Measurement;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Kernel, Module, Stmt};
@@ -32,6 +32,7 @@ pub enum CountQualifier {
 pub struct BlockMeasurements {
     pub block: BlockId,
     pub qualifier: CountQualifier,
+    /// The block's contributions, in statement order.
     pub measurements: Vec<Measurement>,
     /// Statement indices of the instructions issued per execution of the
     /// block, each once even when it contributes several measurements or
@@ -62,7 +63,7 @@ pub fn collect(
             for (si, stmt) in kernel.stmts[b.start..b.end].iter().enumerate() {
                 let Stmt::Instr(instr) = stmt else { continue };
                 let provenance = b.start + si;
-                let classified = classify_in(module, kernel, instr);
+                let classified = classify(module, kernel, instr);
                 measurements.extend(classified.contributions.iter().map(|c| Measurement {
                     kind: c.kind,
                     count: c.count,

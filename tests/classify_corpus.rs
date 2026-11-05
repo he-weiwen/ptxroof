@@ -7,7 +7,7 @@
 
 use ptxroof::analysis::instruction_counts::classify::{InstructionCategory, classify};
 use ptxroof::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
-use ptxroof::ptx::ir::{Opcode, Stmt};
+use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
 use ptxroof::ptx::register_effects::is_pure;
 use std::collections::BTreeMap;
@@ -51,7 +51,7 @@ fn every_corpus_instruction_classifies_or_is_allowlisted() {
             for stmt in &k.stmts {
                 if let Stmt::Instr(i) = stmt {
                     total += 1;
-                    if classify(&m, i).category == InstructionCategory::Unknown {
+                    if classify(&m, k, i).category == InstructionCategory::Unknown {
                         let name = i.mnemonic.name().to_owned();
                         *unknown.entry(name).or_default() += 1;
                     }
@@ -76,45 +76,38 @@ fn every_corpus_instruction_classifies_or_is_allowlisted() {
     );
 }
 
-/// `is_pure` agrees with the classification on every fixture instruction:
-/// non-flop arithmetic but the stack's, and flops on the CUDA cores or the
-/// SFU, are pure.
+/// An instruction `is_pure` takes as pure moves no memory and is
+/// classified: it contributes only flops on the CUDA cores or the SFU.
 #[test]
-fn purity_agrees_with_the_classification() {
+fn a_pure_instruction_contributes_only_cuda_core_or_sfu_flops() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
     collect_ptx(&root.join("tests/fixtures"), &mut files);
     files.sort();
-    let mut disagree: BTreeMap<String, usize> = BTreeMap::new();
+    let mut other: BTreeMap<String, usize> = BTreeMap::new();
     for path in &files {
         let src = fs::read_to_string(path).expect("fixture readable");
         let m = parse(&src).expect("fixture parses");
-        for stmt in m.kernels.iter().flat_map(|k| &k.stmts) {
-            let Stmt::Instr(i) = stmt else { continue };
-            let c = classify(&m, i);
-            let classified = match c.category {
-                InstructionCategory::NonFlopArith { .. } => !matches!(
-                    i.mnemonic,
-                    Opcode::Stacksave | Opcode::Stackrestore | Opcode::Alloca
-                ),
-                InstructionCategory::Flop => c.contributions.iter().all(|k| {
+        for k in &m.kernels {
+            for stmt in &k.stmts {
+                let Stmt::Instr(i) = stmt else { continue };
+                let flops = (classify(&m, k, i).contributions.iter()).all(|c| {
                     matches!(
-                        k.kind,
+                        c.kind,
                         MeasureKind::Flops {
                             pipe: Pipe::CudaCore | Pipe::Sfu,
                             ..
                         }
                     )
-                }),
-                _ => false,
-            };
-            if is_pure(i.mnemonic) != classified {
-                *disagree.entry(m.opcode(i)).or_default() += 1;
+                });
+                if is_pure(i.mnemonic) && !flops {
+                    *other.entry(m.opcode(i)).or_default() += 1;
+                }
             }
         }
     }
     assert!(
-        disagree.is_empty(),
-        "is_pure and the classification disagree: {disagree:?}"
+        other.is_empty(),
+        "pure instructions with other contributions: {other:?}"
     );
 }

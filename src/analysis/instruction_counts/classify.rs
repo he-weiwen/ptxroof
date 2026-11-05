@@ -91,8 +91,13 @@ impl ClassifiedInstruction {
     }
 }
 
-pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
+/// The category and contributions of `instr` in `kernel`; an access to a
+/// device-function parameter, which a call passes or returns, is a move.
+pub fn classify(module: &Module, kernel: &Kernel, instr: &Instr) -> ClassifiedInstruction {
     use Opcode::*;
+    if param_access(module, kernel, instr) == Some(ParamAccess::DeviceFunctionParam) {
+        return ClassifiedInstruction::non_flop(ArithKind::Move);
+    }
     let interner = &module.interner;
     let mods: Vec<&str> = module
         .modifiers(instr)
@@ -479,14 +484,6 @@ fn tensor_copy(module: &Module, instr: &Instr) -> ClassifiedInstruction {
     }
 }
 
-/// `classify`, with the device-function parameters a call passes a move.
-pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> ClassifiedInstruction {
-    if param_access(module, kernel, instr) == Some(ParamAccess::DeviceFunctionParam) {
-        return ClassifiedInstruction::non_flop(ArithKind::Move);
-    }
-    classify(module, instr)
-}
-
 /// FP precision + packed-lane multiplier from type modifiers.
 /// `bf16` is checked before `f16` deliberately (v1 had to dodge the
 /// substring trap; exact matching keeps the order only for clarity).
@@ -541,11 +538,12 @@ mod tests {
     use crate::ptx::ir::Stmt;
     use crate::ptx::parse::parser::parse;
 
-    /// Classify the single instruction in `text`.
+    /// Classify the single instruction in `text`, in a kernel of one
+    /// parameter, `k_param_0`.
     fn class_of(text: &str) -> ClassifiedInstruction {
         let src = format!(
             ".version 8.7\n.target sm_80\n.address_size 64\n\
-             .visible .entry k()\n{{\n{text}\n}}\n"
+             .visible .entry k(.param .u64 k_param_0)\n{{\n{text}\n}}\n"
         );
         let m = parse(&src).expect("snippet parses");
         let instr = m.kernels[0]
@@ -556,7 +554,7 @@ mod tests {
                 _ => None,
             })
             .expect("one instruction");
-        classify(&m, &instr)
+        classify(&m, &m.kernels[0], &instr)
     }
 
     #[test]
@@ -644,7 +642,7 @@ mod tests {
             ClassifiedInstruction::memory(Space::Shared, Direction::Store, Some(2))
         );
         assert_eq!(
-            class_of("ld.param.u64 %rd1, [k_param_4];"),
+            class_of("ld.param.u64 %rd1, [k_param_0];"),
             ClassifiedInstruction::memory(Space::Param, Direction::Load, Some(8))
         );
         assert_eq!(
@@ -759,7 +757,7 @@ mod tests {
         );
         assert_eq!(
             class_of("st.param::func.b32 [param0], %r1;"),
-            ClassifiedInstruction::memory(Space::Param, Direction::Store, Some(4))
+            ClassifiedInstruction::non_flop(ArithKind::Move)
         );
     }
 

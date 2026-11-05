@@ -517,7 +517,7 @@ fn main() {
     for s in &m.kernels[0].stmts {
         println!("{s:?}");
         if let Stmt::Instr(i) = s {
-            println!("{:?}", classify(&m, i));
+            println!("{:?}", classify(&m, &m.kernels[0], i));
             for &id in m.operand_ids(i.operands) {
                 println!("{:?}", m.operand(id));
             }
