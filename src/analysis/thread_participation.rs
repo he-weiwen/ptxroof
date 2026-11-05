@@ -1610,7 +1610,7 @@ mod tests {
     fn warps_below_4() -> Constraint {
         let warp = AffineExpr::var(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 32));
         Constraint {
-            form: warp + AffineExpr::from_base(SymExpr::Const(-4)),
+            form: warp + AffineExpr::constant(-4),
             cmp: Cmp::Lt,
             cta: None,
             trip: None,
@@ -1631,7 +1631,7 @@ mod tests {
                 trip: Some((LoopId(0), (1, 512))),
             })
         };
-        let c = |n: i64| AffineExpr::from_base(SymExpr::Const(n));
+        let c = AffineExpr::constant;
         let below = counter(c(-511));
         assert!(!below.exact() && below.lane_exact());
         let some = Counted {
@@ -1669,7 +1669,7 @@ mod tests {
                 trip: Some((l, (a.min(b), a.max(b)))),
             })
         };
-        let c = |x: i64| AffineExpr::from_base(SymExpr::Const(x));
+        let c = AffineExpr::constant;
         let lane = |m: i64| AffineExpr::var(Var::Mod(Box::new(Var::Tid(Axis::X)), m));
         let brute = |set: &Pred, shape: [u32; 3], n: u64| {
             (1..=i128::from(n)).try_fold([(0u64, 0u64); 2], |mut sums, k| {
@@ -1725,8 +1725,7 @@ mod tests {
         let c = warps_below_4();
         assert_eq!(c.render(), "⌊%tid.x/32⌋ < 4");
         let min = Constraint {
-            form: AffineExpr::var(Var::Tid(Axis::X))
-                + AffineExpr::from_base(SymExpr::Const(i64::MIN)),
+            form: AffineExpr::var(Var::Tid(Axis::X)) + AffineExpr::constant(i64::MIN),
             ..warps_below_4()
         };
         assert_eq!(min.render(), "%tid.x < 9223372036854775808");
@@ -1827,7 +1826,7 @@ mod tests {
         assert_eq!(all.render().as_deref(), Some("elected"));
         assert_eq!(all.eval([0, 0, 0], [0, 0, 0]), Tri::Maybe);
         let upper = Pred::Cmp(Constraint {
-            form: AffineExpr::var(Var::Tid(Axis::X)) + AffineExpr::from_base(SymExpr::Const(-40)),
+            form: AffineExpr::var(Var::Tid(Axis::X)) + AffineExpr::constant(-40),
             cmp: Cmp::Ge,
             cta: None,
             trip: None,
@@ -1886,7 +1885,7 @@ mod tests {
         Pred::Cmp(Constraint {
             form: AffineExpr::var(Var::Tid(Axis::X)).scale(SymExpr::Const(a))
                 + AffineExpr::var(Var::Ctaid(Axis::X)).scale(SymExpr::Const(b))
-                + AffineExpr::from_base(SymExpr::Const(base)),
+                + AffineExpr::constant(base),
             cmp,
             cta: Some((lo.min(hi), lo.max(hi))),
             trip: None,
@@ -1909,7 +1908,7 @@ mod tests {
         );
         // A set free of %ctaid: its count at every CTA.
         let lanes = Pred::Cmp(Constraint {
-            form: AffineExpr::var(Var::Tid(Axis::X)) + AffineExpr::from_base(SymExpr::Const(-16)),
+            form: AffineExpr::var(Var::Tid(Axis::X)) + AffineExpr::constant(-16),
             cmp: Cmp::Lt,
             cta: None,
             trip: None,
@@ -1952,7 +1951,7 @@ mod tests {
         let trip = Pred::Cmp(Constraint {
             form: AffineExpr::var(Var::Iteration(l)).scale(SymExpr::Const(1 << 62))
                 + tid()
-                + AffineExpr::from_base(SymExpr::Const(i64::MIN + 1)),
+                + AffineExpr::constant(i64::MIN + 1),
             cmp: Cmp::Lt,
             cta: None,
             trip: Some((l, (1 << 62, 3 << 62))),
@@ -2025,7 +2024,7 @@ mod tests {
         assert!(!at(Cmp::Lt).exact() && !at(Cmp::Lt).lane_exact());
         // Of the CTA index alone: whole warps, so the lanes stay known.
         let cta = Pred::Cmp(Constraint {
-            form: AffineExpr::var(Var::Ctaid(Axis::X)) + AffineExpr::from_base(SymExpr::Const(-2)),
+            form: AffineExpr::var(Var::Ctaid(Axis::X)) + AffineExpr::constant(-2),
             cmp: Cmp::Lt,
             cta: Some((0, 3)),
             trip: None,
@@ -2057,7 +2056,7 @@ mod tests {
         assert_eq!((!lane0.clone()).count([64, 1, 1]), Some(exact(63)));
         // 100 threads span four warps, the last one partial.
         let below_100 = Pred::Cmp(Constraint {
-            form: AffineExpr::var(Var::Tid(Axis::X)) + AffineExpr::from_base(SymExpr::Const(-100)),
+            form: AffineExpr::var(Var::Tid(Axis::X)) + AffineExpr::constant(-100),
             cmp: Cmp::Lt,
             cta: None,
             trip: None,
@@ -2132,8 +2131,7 @@ mod tests {
     fn uniform_unknowns_combined_are_one_unknown() {
         let counter = |cmp| {
             Pred::Cmp(Constraint {
-                form: AffineExpr::var(Var::Iteration(LoopId(0)))
-                    + AffineExpr::from_base(SymExpr::Const(-3)),
+                form: AffineExpr::var(Var::Iteration(LoopId(0))) + AffineExpr::constant(-3),
                 cmp,
                 cta: None,
                 trip: Some((LoopId(0), (1, 8))),

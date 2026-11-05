@@ -61,7 +61,7 @@ impl XorSwizzle {
     /// base, the rest a `Swizzle`.
     pub fn affine(self) -> AffineExpr {
         let image = self.columns.iter().fold(0, |a, &c| a | c);
-        let base = AffineExpr::from_base(SymExpr::Const((self.constant & !image) as i64));
+        let base = AffineExpr::constant((self.constant & !image) as i64);
         match image {
             0 => base,
             _ => {
@@ -255,12 +255,16 @@ impl AffineExpr {
         }
     }
 
+    pub fn constant(c: i64) -> AffineExpr {
+        AffineExpr::from_base(SymExpr::Const(c))
+    }
+
     pub fn var(v: Var) -> AffineExpr {
         AffineExpr::term(v, SymExpr::Const(1))
     }
 
     pub fn term(v: Var, coeff: SymExpr) -> AffineExpr {
-        let mut a = AffineExpr::from_base(SymExpr::Const(0));
+        let mut a = AffineExpr::constant(0);
         if coeff != SymExpr::Const(0) {
             a.terms.insert(v, coeff);
         }
@@ -270,7 +274,7 @@ impl AffineExpr {
     /// Multiply by a symbolic or constant value.
     pub fn scale(self, c: SymExpr) -> AffineExpr {
         if c == SymExpr::Const(0) {
-            return AffineExpr::from_base(SymExpr::Const(0));
+            return AffineExpr::constant(0);
         }
         AffineExpr {
             terms: self
@@ -343,7 +347,7 @@ impl AffineExpr {
             return Some(AffineExpr::from_base(SymExpr::modulo(self.base, m)));
         }
         if self.clone().div_exact(m).is_some() {
-            return Some(AffineExpr::from_base(SymExpr::Const(0)));
+            return Some(AffineExpr::constant(0));
         }
         let (_, _, rem) = self.split(m, bound)?;
         Some(rem)
@@ -378,7 +382,7 @@ impl AffineExpr {
         d: i64,
         bound: &dyn Fn(&Var) -> Option<(i64, i64)>,
     ) -> Option<(AffineExpr, AffineExpr, AffineExpr)> {
-        let mut q = AffineExpr::from_base(SymExpr::Const(0));
+        let mut q = AffineExpr::constant(0);
         let mut rest = None;
         for (v, c) in &self.terms {
             if c.divisible_by(d) {
@@ -410,16 +414,16 @@ impl AffineExpr {
         }
         let whole = SymExpr::add(whole, carry);
         q.base = SymExpr::add(SymExpr::floor_div(multiple, d), whole);
-        let rem = AffineExpr::from_base(SymExpr::Const(k));
+        let rem = AffineExpr::constant(k);
         let Some((v, c)) = rest else {
-            return Some((q, AffineExpr::from_base(SymExpr::Const(0)), rem));
+            return Some((q, AffineExpr::constant(0), rem));
         };
         if k >= c {
             let (lo, hi) = var_range(v, bound).or_else(|| own_range(v))?;
             let at = |x: i64| i128::from(c) * i128::from(x) + i128::from(k);
             return (at(lo) >= 0 && at(hi) < i128::from(d)).then(|| {
                 let r = AffineExpr::term(v.clone(), SymExpr::Const(c)) + rem;
-                (q, AffineExpr::from_base(SymExpr::Const(0)), r)
+                (q, AffineExpr::constant(0), r)
             });
         }
         let floor = AffineExpr::var(Var::FloorDiv(Box::new(v.clone()), d / c));
@@ -897,9 +901,8 @@ mod tests {
             Var::Iteration(_) => Some((1, 8)),
             _ => None,
         };
-        let a = tid.scale(SymExpr::Const(4))
-            + k.scale(SymExpr::Const(-16))
-            + AffineExpr::from_base(SymExpr::Const(100));
+        let a =
+            tid.scale(SymExpr::Const(4)) + k.scale(SymExpr::Const(-16)) + AffineExpr::constant(100);
         assert_eq!(a.range(&bound), Some((100 - 128, 100 + 508 - 16)));
         let floor = AffineExpr::var(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 32));
         assert_eq!(floor.range(&bound), Some((0, 3)));
@@ -1010,7 +1013,7 @@ mod tests {
         let a = [m, m, m, -m, -m]
             .into_iter()
             .zip(0..)
-            .fold(AffineExpr::from_base(SymExpr::Const(0)), |a, (c, l)| {
+            .fold(AffineExpr::constant(0), |a, (c, l)| {
                 a + AffineExpr::var(Var::Iteration(LoopId(l))).scale(SymExpr::Const(c))
             });
         let bound = |_: &Var| Some((m, m));
@@ -1162,7 +1165,7 @@ mod tests {
     #[test]
     fn terms_combine_cancel_and_scale_symbolically() {
         let k = SymExpr::Sym(SymbolicConstant::KernelParam(2));
-        let a = tid().scale(SymExpr::Const(2)) + AffineExpr::from_base(SymExpr::Const(8));
+        let a = tid().scale(SymExpr::Const(2)) + AffineExpr::constant(8);
         assert_eq!(a.to_string(), "2 * %tid.x + 8");
         assert_eq!(
             (a.clone() - tid().scale(SymExpr::Const(2))).as_const(),
@@ -1199,7 +1202,7 @@ mod tests {
             Some("8 * (%tid.x mod 8)")
         );
         assert_eq!(
-            m(tid() + AffineExpr::from_base(SymExpr::Const(64)), 8).as_deref(),
+            m(tid() + AffineExpr::constant(64), 8).as_deref(),
             Some("(%tid.x mod 8)")
         );
         assert_eq!(
@@ -1219,8 +1222,7 @@ mod tests {
                 .scale(SymExpr::Const(16));
         assert_eq!(neg.to_string(), "16 * %tid.x - 16 * (%tid.x mod 8)");
         assert_eq!(
-            (tid().scale(SymExpr::Const(-2)) + AffineExpr::from_base(SymExpr::Const(-4)))
-                .to_string(),
+            (tid().scale(SymExpr::Const(-2)) + AffineExpr::constant(-4)).to_string(),
             "-2 * %tid.x - 4"
         );
         assert_eq!(
@@ -1228,7 +1230,7 @@ mod tests {
             "8 * ⌊%tid.x/8⌋"
         );
         assert_eq!(
-            (tid().scale(SymExpr::Const(2)) + AffineExpr::from_base(SymExpr::Const(64)))
+            (tid().scale(SymExpr::Const(2)) + AffineExpr::constant(64))
                 .align_down(16, &free)
                 .unwrap()
                 .to_string(),
