@@ -23,13 +23,12 @@ use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, linear, thread,
 use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::instruction_counts::classify::cp_async_size_operand;
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
-use crate::ptx::modifier::{Cmp, Form, IntInstrType, IntKind};
+use crate::ptx::modifier::{Cmp, Form, IntInstrType, IntKind, cp_async_size_operand};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;

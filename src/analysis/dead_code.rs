@@ -12,11 +12,9 @@
 //! ISA §9.7.16.5.2), and a statement the parser does not read, the carry
 //! flag.
 
-use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
-use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, Stmt};
 use crate::ptx::modifier::{Form, Memory, Sem};
-use crate::ptx::register_effects::{reads_cc, registers, split_operands, writes};
+use crate::ptx::register_effects::{is_pure, reads_cc, registers, split_operands, writes};
 use crate::ssa::{RegisterSsa, Value};
 
 /// Per statement, whether it is an instruction that runs and is not
@@ -61,29 +59,12 @@ pub fn unused(
 }
 
 fn pure(module: &Module, instr: &Instr) -> bool {
-    let c = classify(module, instr);
-    match c.category {
-        InstructionCategory::NonFlopArith { .. } => !matches!(
-            instr.mnemonic,
-            Opcode::Stacksave | Opcode::Stackrestore | Opcode::Alloca
-        ),
-        InstructionCategory::Flop => c.contributions.iter().all(|k| {
-            matches!(
-                k.kind,
-                MeasureKind::Flops {
-                    pipe: Pipe::CudaCore | Pipe::Sfu,
-                    ..
-                }
+    is_pure(instr.mnemonic)
+        || instr.mnemonic == Opcode::Ld
+            && matches!(
+                Form::of(module, instr),
+                Form::Memory(Memory { sem: Sem::Weak, .. })
             )
-        }),
-        _ => {
-            instr.mnemonic == Opcode::Ld
-                && matches!(
-                    Form::of(module, instr),
-                    Form::Memory(Memory { sem: Sem::Weak, .. })
-                )
-        }
-    }
 }
 
 /// The registers statement `stmt`, whose guard reads as `guard`, reads:

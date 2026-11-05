@@ -142,6 +142,33 @@ pub fn reads_cc(module: &Module, instr: &Instr) -> bool {
     carry(module, instr).1
 }
 
+/// Whether an `op` instruction's only effect is the registers it writes,
+/// computed from its own source operands: the instructions of PTX ISA
+/// §9.7.1 to §9.7.8, `mov`, `prmt`, `isspacep`, `cvta`, `cvt`, `mapa` and
+/// `getctarank` (§9.7.9) and `istypep` (§9.7.11.6). Not memory, the stack
+/// (§9.7.18), another lane's values or control flow. The video
+/// instructions (§9.7.19) are taken as not pure: no analysis reads their
+/// values.
+pub fn is_pure(op: Opcode) -> bool {
+    use Opcode::*;
+    match op {
+        Abs | Add | Addc | And | Bfe | Bfi | Bfind | Bmsk | Brev | Clmad | Clz | Cnot
+        | Copysign | Cos | Cvt | Cvta | Div | Dp2a | Dp4a | Ex2 | Fma | Fns | Getctarank
+        | Isspacep | Istypep | Lg2 | Lop3 | Mad | Mad24 | Madc | Mapa | Max | Min | Mov | Mul
+        | Mul24 | Neg | Not | Or | Popc | Prmt | Rcp | Rem | Rsqrt | Sad | Selp | Set | Setp
+        | Shf | Shl | Shr | Sin | Slct | Sqrt | Sub | Subc | Szext | Tanh | Testp | Xor => true,
+        Activemask | Alloca | Applypriority | Atom | Bar | Barrier | Bra | Brkpt | Brx | Call
+        | Clusterlaunchcontrol | Cp | Createpolicy | Discard | Elect | Exit | Fabric | Fence
+        | Griddepcontrol | Ld | Ldmatrix | Ldu | Match | Mbarrier | Membar | Mma | Movmatrix
+        | Multimem | Nanosleep | Pmevent | Prefetch | Prefetchu | Red | Redux | Ret
+        | Setmaxnreg | Shfl | St | Stackrestore | Stacksave | Stmatrix | Suld | Suq | Sured
+        | Sust | Tcgen05 | Tensormap | Tex | Tld4 | Trap | Txq | Vote | Wgmma | Wmma => false,
+        Vabsdiff | Vabsdiff2 | Vabsdiff4 | Vadd | Vadd2 | Vadd4 | Vavrg2 | Vavrg4 | Vmad | Vmax
+        | Vmax2 | Vmax4 | Vmin | Vmin2 | Vmin4 | Vset | Vset2 | Vset4 | Vshl | Vshr | Vsub
+        | Vsub2 | Vsub4 => false,
+    }
+}
+
 /// The registers operand `op` names: itself, the elements of a `{…}` or
 /// `p|q`, as in `tex`'s `{…}|p`, an address's base and coordinates, a
 /// selection's base, or a negated predicate.

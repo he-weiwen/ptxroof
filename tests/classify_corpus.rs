@@ -6,8 +6,10 @@
 //! classify, this names it before any user files a bug.
 
 use ptxroof::analysis::instruction_counts::classify::{InstructionCategory, classify};
-use ptxroof::ptx::ir::Stmt;
+use ptxroof::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
+use ptxroof::ptx::ir::{Opcode, Stmt};
 use ptxroof::ptx::parse::parser::parse;
+use ptxroof::ptx::register_effects::is_pure;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,5 +73,48 @@ fn every_corpus_instruction_classifies_or_is_allowlisted() {
         violations.is_empty(),
         "unclassified mnemonics not in classify-allowlist.txt: {}",
         violations.join(", ")
+    );
+}
+
+/// `is_pure` agrees with the classification on every fixture instruction:
+/// non-flop arithmetic but the stack's, and flops on the CUDA cores or the
+/// SFU, are pure.
+#[test]
+fn purity_agrees_with_the_classification() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    collect_ptx(&root.join("tests/fixtures"), &mut files);
+    files.sort();
+    let mut disagree: BTreeMap<String, usize> = BTreeMap::new();
+    for path in &files {
+        let src = fs::read_to_string(path).expect("fixture readable");
+        let m = parse(&src).expect("fixture parses");
+        for stmt in m.kernels.iter().flat_map(|k| &k.stmts) {
+            let Stmt::Instr(i) = stmt else { continue };
+            let c = classify(&m, i);
+            let classified = match c.category {
+                InstructionCategory::NonFlopArith { .. } => !matches!(
+                    i.mnemonic,
+                    Opcode::Stacksave | Opcode::Stackrestore | Opcode::Alloca
+                ),
+                InstructionCategory::Flop => c.contributions.iter().all(|k| {
+                    matches!(
+                        k.kind,
+                        MeasureKind::Flops {
+                            pipe: Pipe::CudaCore | Pipe::Sfu,
+                            ..
+                        }
+                    )
+                }),
+                _ => false,
+            };
+            if is_pure(i.mnemonic) != classified {
+                *disagree.entry(m.opcode(i)).or_default() += 1;
+            }
+        }
+    }
+    assert!(
+        disagree.is_empty(),
+        "is_pure and the classification disagree: {disagree:?}"
     );
 }
