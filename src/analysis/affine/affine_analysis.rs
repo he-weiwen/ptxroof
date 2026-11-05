@@ -42,7 +42,6 @@
 //! and unsigned/signed comparison width is not modeled.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
-use crate::analysis::affine::affine_properties::AffineProperties;
 use crate::analysis::affine::exit_limit::{below_zero, exit_limit};
 use crate::analysis::affine::induction_variables::{InductionVariable, Step, induction_variables};
 use crate::analysis::affine::lane_eval::depends_on_lane;
@@ -92,7 +91,7 @@ pub(crate) struct AffineAnalysis<'a> {
     /// Each loop's trip count.
     trips: Memo<LoopId, Result<LoopTripCount, UnknownReason>>,
     /// Each value's trace.
-    values: Memo<Value, AffineProperties>,
+    values: Memo<Value, Result<AffineExpr, UnknownReason>>,
     /// How many traces and counts are being computed.
     frames: Cell<usize>,
     /// The outermost of them the result being computed read, or 0 after a
@@ -342,30 +341,29 @@ impl<'a> AffineAnalysis<'a> {
             let name = self.data.module.interner.resolve(reg);
             return Err(format!("{name} is read in a block no path reaches").into());
         };
-        match self.properties(v, depth) {
-            AffineProperties::Expr(a) => Ok(self.after_exits(a, pos)),
-            AffineProperties::Unknown {
-                min_trailing_zeros, ..
-            } if !matches!(v, Value::Undef(_))
-                && self.uniformity().register_uniformity(reg, pos).is_ok() =>
+        match self.trace(v, depth) {
+            Ok(a) => Ok(self.after_exits(a, pos)),
+            Err(_)
+                if !matches!(v, Value::Undef(_))
+                    && self.uniformity().register_uniformity(reg, pos).is_ok() =>
             {
                 let u = Var::Unknown(v);
-                Ok(match min_trailing_zeros {
+                Ok(match self.min_trailing_zeros(v) {
                     0 => AffineExpr::var(u),
                     k => {
                         AffineExpr::term(Var::FloorDiv(Box::new(u), 1 << k), SymExpr::Const(1 << k))
                     }
                 })
             }
-            AffineProperties::Unknown { reason, .. } => Err(reason),
+            Err(reason) => Err(reason),
         }
     }
 
-    /// How many low bits every definition of `v` leaves 0: an unguarded
-    /// `shl` by a constant fills as many with zeros as its count, the
-    /// constant's unsigned 32-bit value (PTX ISA §9.7.8.8), all of them
-    /// where it reaches the width, and an unguarded `and` with a constant
-    /// clears those its mask does.
+    /// How many low bits every definition of `v` leaves 0 (LLVM's
+    /// `getMinTrailingZeros`): an unguarded `shl` by a constant fills as
+    /// many with zeros as its count, the constant's unsigned 32-bit value
+    /// (PTX ISA §9.7.8.8), all of them where it reaches the width, and an
+    /// unguarded `and` with a constant clears those its mask does.
     fn min_trailing_zeros(&self, v: Value) -> u32 {
         let module = self.data.module;
         let zeros = |s: &Value| {
@@ -462,7 +460,7 @@ impl<'a> AffineAnalysis<'a> {
         depth: u32,
     ) -> Result<AffineExpr, Option<UnknownReason>> {
         let module = self.data.module;
-        let start = self.properties(r.start, depth + 1).expr()?;
+        let start = self.trace(r.start, depth + 1)?;
         let step = self.step(&r.step, depth)?;
         // The values the back edges feed, start + k·step for k in [1, n]
         // when the loop runs a constant n trips, stay in their type.
@@ -603,8 +601,8 @@ impl<'a> AffineAnalysis<'a> {
                         Ok(_) => ("is one value per warp only".into(), true),
                         Err(why) => (format!("differs between lanes: {why}"), false),
                     };
-                    let own = match own.then(|| self.properties(u, 0)) {
-                        Some(AffineProperties::Unknown { reason, .. }) => Some(Box::new(reason)),
+                    let own = match own.then(|| self.trace(u, 0)) {
+                        Some(Err(reason)) => Some(Box::new(reason)),
                         _ => None,
                     };
                     (Var::Unknown(u), why, own)
@@ -674,9 +672,10 @@ impl<'a> AffineAnalysis<'a> {
         t
     }
 
-    /// What value `v` is at its definition.
-    fn properties(&self, v: Value, depth: u32) -> AffineProperties {
-        self.uncut(|| self.properties_once(v, depth))
+    /// `v`'s trace: its affine expression at its definition, or why it
+    /// has none.
+    fn trace(&self, v: Value, depth: u32) -> Result<AffineExpr, UnknownReason> {
+        self.uncut(|| self.trace_once(v, depth))
     }
 
     /// `query`, outside every trace, with each value a trace of it was
@@ -695,7 +694,7 @@ impl<'a> AffineAnalysis<'a> {
             };
             let mut cuts = vec![first];
             while let Some(&c) = cuts.last() {
-                let _ = self.properties_once(c, 0);
+                let _ = self.trace_once(c, 0);
                 match self.cut.take() {
                     Some(d) if tried.insert(d) => cuts.push(d),
                     _ => _ = cuts.pop(),
@@ -710,20 +709,12 @@ impl<'a> AffineAnalysis<'a> {
         self.cut.set(Some(v));
     }
 
-    fn properties_once(&self, v: Value, depth: u32) -> AffineProperties {
-        let unknown = |reason| AffineProperties::Unknown {
-            reason,
-            min_trailing_zeros: self.min_trailing_zeros(v),
-        };
-        let unfinished = || unknown("value depends on itself".into());
-        let trace = || {
-            self.trace_uncached(v, depth)
-                .map_or_else(unknown, AffineProperties::Expr)
-        };
-        let settle = |first: AffineProperties, again: AffineProperties| match (&first, &again) {
-            (AffineProperties::Unknown { .. }, _) => first,
-            (_, AffineProperties::Unknown { .. }) => again,
-            _ => unknown("the value changes once its loop's count is known".into()),
+    fn trace_once(&self, v: Value, depth: u32) -> Result<AffineExpr, UnknownReason> {
+        let unfinished = || Err("value depends on itself".into());
+        let trace = || self.trace_uncached(v, depth);
+        let settle = |first, again| match (first, again) {
+            (Err(why), _) | (Ok(_), Err(why)) => Err(why),
+            (Ok(_), Ok(_)) => Err("the value changes once its loop's count is known".into()),
         };
         self.memoized(&self.values, v, unfinished, trace, settle)
     }
