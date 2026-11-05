@@ -2,7 +2,9 @@
 //! and state spaces, read by the syntax of the instruction's family — and
 //! what a `.param` address refers to.
 
-use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, named_enum};
+use crate::ptx::ir::{
+    FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, named_enum,
+};
 
 /// An integer instruction type of 8 to 64 bits, unsigned `.u`, signed
 /// `.s` or a `.b` bit pattern: how an instruction reads its operands
@@ -504,6 +506,19 @@ pub fn copy_spaces(module: &Module, instr: &Instr) -> Option<(Space, Space)> {
     let mut named = spaces(module, instr);
     let (to, from) = (named.next()?, named.next()?);
     named.next().is_none().then_some((from, to))
+}
+
+/// A `cp.async`'s src-size or ignore-src operand, the one after cp-size;
+/// with `.L2::cache_hint` the last operand is the cache policy (PTX ISA
+/// §9.7.9.26.3.1).
+pub(crate) fn cp_async_size_operand(module: &Module, instr: &Instr) -> Option<OperandId> {
+    let mods = module.modifiers(instr);
+    let has = |name: &str| mods.iter().any(|&m| module.interner.resolve(m) == name);
+    if instr.mnemonic != Opcode::Cp || !has("async") || has("bulk") || has("reduce") {
+        return None;
+    }
+    let ops = module.operand_ids(instr.operands);
+    (ops.len() == 4 + usize::from(has("L2::cache_hint"))).then(|| ops[3])
 }
 
 /// What a `ld.param` or `st.param` address refers to (PTX ISA §5.1.6).

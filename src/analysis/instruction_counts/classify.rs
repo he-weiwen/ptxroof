@@ -29,7 +29,9 @@ use super::measurement::{ArithKind, Contribution, Direction, MeasureKind, Pipe, 
 
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId};
 use crate::ptx::literal::parse_int;
-use crate::ptx::modifier::{ParamAccess, Space, copy_spaces, param_access, space};
+use crate::ptx::modifier::{
+    ParamAccess, Space, copy_spaces, cp_async_size_operand, param_access, space,
+};
 
 /// Exclusive instruction category. Work quantities live in contributions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -521,19 +523,6 @@ pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> Classifie
         }
     }
     c
-}
-
-/// A `cp.async`'s src-size or ignore-src operand, the one after cp-size;
-/// with `.L2::cache_hint` the last operand is the cache policy (PTX ISA
-/// §9.7.9.26.3.1).
-pub fn cp_async_size_operand(module: &Module, instr: &Instr) -> Option<OperandId> {
-    let mods = module.modifiers(instr);
-    let has = |name: &str| mods.iter().any(|&m| module.interner.resolve(m) == name);
-    if instr.mnemonic != Opcode::Cp || !has("async") || has("bulk") || has("reduce") {
-        return None;
-    }
-    let ops = module.operand_ids(instr.operands);
-    (ops.len() == 4 + usize::from(has("L2::cache_hint"))).then(|| ops[3])
 }
 
 /// FP precision + packed-lane multiplier from type modifiers.

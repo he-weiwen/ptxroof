@@ -15,12 +15,12 @@ only declare modules and selected public entry points.
 | `support/intern` | String interning |
 | `ptx/ir` | Parsed PTX representation, including register-family membership |
 | `ptx/literal` | Integer literal interpretation |
-| `ptx/modifier` | What instruction modifiers name: instruction types, comparisons and state spaces, and each instruction's form by its family's syntax; and what a `.param` address refers to |
+| `ptx/modifier` | What instruction modifiers name: instruction types, comparisons and state spaces, and each instruction's form by its family's syntax; what a `.param` address refers to, and which operand is a `cp.async`'s src-size |
 | `ptx/parse/lexer` | Tokenize PTX text |
 | `ptx/parse/parser` | Construct IR from tokens |
 | `ptx/print` | Canonical PTX dump |
 | `ptx/cfg` | PTX basic blocks, edges and CFG construction |
-| `ptx/register_effects` | Instruction register reads and writes, CC included |
+| `ptx/register_effects` | Instruction register reads and writes, CC included, and whether they are an instruction's only effect |
 | `ptx/special_registers` | Sharing and stability of PTX special-register values |
 | `ptx/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/control_flow/dominators` | Dominance, post-dominance and frontiers |

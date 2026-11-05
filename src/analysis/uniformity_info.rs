@@ -12,14 +12,12 @@
 //! gated by the loop's exits, as by an η's.
 
 use crate::analysis::control_flow::loops::LoopId;
-use crate::analysis::instruction_counts::classify::{InstructionCategory, classify};
-use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{Form, Memory, ParamAccess, Sem, ShflMode, Space, param_access};
-use crate::ptx::register_effects::{reads_cc, split_operands};
+use crate::ptx::register_effects::{is_pure, reads_cc, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
@@ -427,20 +425,7 @@ fn exits<'a>(t: &'a KernelAnalyses, id: LoopId) -> impl Iterator<Item = Node> + 
 /// call's return value among them, one per thread (PTX ISA §5.1.6,
 /// Table 7).
 fn lane_wise(t: &KernelAnalyses, instr: &Instr) -> bool {
-    let c = classify(t.module, instr);
-    match c.category {
-        InstructionCategory::NonFlopArith { .. } => true,
-        InstructionCategory::Flop => c.contributions.iter().all(|k| {
-            matches!(
-                k.kind,
-                MeasureKind::Flops {
-                    pipe: Pipe::CudaCore | Pipe::Sfu,
-                    ..
-                }
-            )
-        }),
-        _ => kernel_param(t, instr).is_some(),
-    }
+    is_pure(instr.mnemonic) || kernel_param(t, instr).is_some()
 }
 
 /// The kernel parameter an `ld.param` reads.
