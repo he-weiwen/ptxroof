@@ -83,19 +83,6 @@ pub enum Direction {
     Store,
 }
 
-/// The kind of a non-flop arithmetic instruction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ArithKind {
-    /// `cvt` — precision/width conversion.
-    Conversion,
-    /// Integer/bit arithmetic: address math, masks, shifts.
-    Integer,
-    /// Predicate computation and selection: `setp`, `selp`, `set`...
-    Predicate,
-    /// Register/address bookkeeping: `mov`, `cvta`.
-    Move,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MeasureKind {
     Flops {

@@ -63,8 +63,8 @@ pub fn collect(
             for (si, stmt) in kernel.stmts[b.start..b.end].iter().enumerate() {
                 let Stmt::Instr(instr) = stmt else { continue };
                 let provenance = b.start + si;
-                let classified = classify(module, kernel, instr);
-                measurements.extend(classified.contributions.iter().map(|c| Measurement {
+                let contributions = classify(module, kernel, instr).into_iter();
+                measurements.extend(contributions.map(|c| Measurement {
                     kind: c.kind,
                     count: c.count,
                     provenance,

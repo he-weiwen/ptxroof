@@ -1,11 +1,11 @@
 //! Corpus-wide classification coverage: every
-//! instruction in every fixture classifies non-Unknown, or its
+//! instruction in every fixture contributes no `UnknownOps`, or its
 //! mnemonic is listed in tests/classify-allowlist.txt. This is the
 //! check that makes "useful in the majority of cases" a tested number:
 //! when a new toolchain or kernel family introduces an idiom we don't
 //! classify, this names it before any user files a bug.
 
-use ptxroof::analysis::instruction_counts::classify::{InstructionCategory, classify};
+use ptxroof::analysis::instruction_counts::classify::classify;
 use ptxroof::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
 use ptxroof::ptx::ir::Stmt;
 use ptxroof::ptx::parse::parser::parse;
@@ -41,7 +41,7 @@ fn every_corpus_instruction_classifies_or_is_allowlisted() {
     files.sort();
     assert!(files.len() >= 8, "fixture corpus missing?");
 
-    // mnemonic -> count of Unknown classifications, across the corpus
+    // mnemonic -> count of UnknownOps contributions, across the corpus
     let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
     let mut total = 0usize;
     for path in &files {
@@ -51,7 +51,10 @@ fn every_corpus_instruction_classifies_or_is_allowlisted() {
             for stmt in &k.stmts {
                 if let Stmt::Instr(i) = stmt {
                     total += 1;
-                    if classify(&m, k, i).category == InstructionCategory::Unknown {
+                    if classify(&m, k, i)
+                        .iter()
+                        .any(|c| c.kind == MeasureKind::UnknownOps)
+                    {
                         let name = i.mnemonic.name().to_owned();
                         *unknown.entry(name).or_default() += 1;
                     }
@@ -91,7 +94,7 @@ fn a_pure_instruction_contributes_only_cuda_core_or_sfu_flops() {
         for k in &m.kernels {
             for stmt in &k.stmts {
                 let Stmt::Instr(i) = stmt else { continue };
-                let flops = (classify(&m, k, i).contributions.iter()).all(|c| {
+                let flops = classify(&m, k, i).iter().all(|c| {
                     matches!(
                         c.kind,
                         MeasureKind::Flops {

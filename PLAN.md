@@ -50,8 +50,7 @@ the register SSA, `src/analysis/dead_code.rs`) counts in no total and
 no loop footprint, and is marked `unused`: ptxas emits no SASS for
 any of the 954 such instructions in kernels with an Nsight Compute
 record (`tests/dead_code_corpus.rs`). Counts are static; nothing is
-measured (README). Each instruction has one category and independent
-contributions, and
+measured (README). Each instruction has independent contributions, and
 copies of one opcode with differing immediate sizes each count their own bytes
 at their own addresses
 (`copies_of_one_opcode_count_their_own_source_sizes_and_addresses`); an
