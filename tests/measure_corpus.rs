@@ -94,14 +94,6 @@ fn bytes(
     })
 }
 
-fn conversions(blocks: &[BlockMeasurements], ids: &[BlockId]) -> Tally {
-    tally(blocks, ids, |k| matches!(k, MeasureKind::Conversions))
-}
-
-fn sync_ops(blocks: &[BlockMeasurements], ids: &[BlockId]) -> Tally {
-    tally(blocks, ids, |k| matches!(k, MeasureKind::SyncOps))
-}
-
 fn unquantified_memory_ops(blocks: &[BlockMeasurements], ids: &[BlockId]) -> Tally {
     tally(blocks, ids, |k| {
         matches!(k, MeasureKind::UnquantifiedBytes { .. })
@@ -109,7 +101,7 @@ fn unquantified_memory_ops(blocks: &[BlockMeasurements], ids: &[BlockId]) -> Tal
 }
 
 fn unknown_ops(blocks: &[BlockMeasurements], ids: &[BlockId]) -> Tally {
-    tally(blocks, ids, |k| matches!(k, MeasureKind::UnknownOps { .. }))
+    tally(blocks, ids, |k| matches!(k, MeasureKind::UnknownOps))
 }
 
 #[test]
@@ -117,13 +109,12 @@ fn k2_per_block_numbers_match_hand_computation() {
     let f = load("k2/k2.sm_80.ptx");
 
     // Main loop $L__BB0_4 (x4-unrolled): 4 fma.rn.f32 = 8 flops;
-    // 8 ld.global.u16 = 16 B; 8 inline-asm cvt.f32.f16.
+    // 8 ld.global.u16 = 16 B.
     let main = [block_by_label(&f, "$L__BB0_4")];
     let mflops = flops(&f.blocks, &main, Some(Precision::F32));
     assert_eq!((mflops.value, mflops.ops), (8, 4));
     let loads = bytes(&f.blocks, &main, Some(Space::Global), Some(Direction::Load));
     assert_eq!((loads.value, loads.ops), (16, 8));
-    assert_eq!(conversions(&f.blocks, &main).ops, 8);
     assert_eq!(
         f.blocks[main[0].0 as usize].qualifier,
         CountQualifier::Exact,
@@ -132,17 +123,16 @@ fn k2_per_block_numbers_match_hand_computation() {
     // No f16 compute anywhere in this kernel (S8's claim, block level).
     assert_eq!(flops(&f.blocks, &main, Some(Precision::F16)).value, 0);
 
-    // Remainder loop $L__BB0_7: 1 fma = 2 flops; 2 loads = 4 B; 2 cvt.
+    // Remainder loop $L__BB0_7: 1 fma = 2 flops; 2 loads = 4 B.
     let rem = [block_by_label(&f, "$L__BB0_7")];
     assert_eq!(flops(&f.blocks, &rem, Some(Precision::F32)).value, 2);
     assert_eq!(
         bytes(&f.blocks, &rem, Some(Space::Global), Some(Direction::Load)).value,
         4
     );
-    assert_eq!(conversions(&f.blocks, &rem).ops, 2);
 
     // Epilogue $L__BB0_8: mul.f32 (1) + fma (2) = 3 flops; C readback
-    // 2 B load + 2 B store; 2 cvt. Guarded by the bounds check, so ≤.
+    // 2 B load + 2 B store. Guarded by the bounds check, so ≤.
     let epi = [block_by_label(&f, "$L__BB0_8")];
     let eflops = flops(&f.blocks, &epi, Some(Precision::F32));
     assert_eq!((eflops.value, eflops.ops), (3, 2));
@@ -159,7 +149,6 @@ fn k2_per_block_numbers_match_hand_computation() {
         bytes(&f.blocks, &epi, Some(Space::Global), Some(Direction::Store)).value,
         2
     );
-    assert_eq!(conversions(&f.blocks, &epi).ops, 2);
 
     // Entry block: 8 ld.param = 3x4 (u32) + 2x4 (f32) + 3x8 (u64) = 44 B.
     let entry = [BlockId(0)];
@@ -200,7 +189,7 @@ fn k5_dot_loop_and_copy_block() {
     let f = load("k5/k5.sm_80.ptx");
 
     // Inner dot loop $L__BB0_3: 64 fma = 128 flops; 16 ld.shared.u16
-    // = 32 B; 16 cvt.
+    // = 32 B.
     let dot = [block_by_label(&f, "$L__BB0_3")];
     let dflops = flops(&f.blocks, &dot, Some(Precision::F32));
     assert_eq!((dflops.value, dflops.ops), (128, 64));
@@ -208,10 +197,9 @@ fn k5_dot_loop_and_copy_block() {
         bytes(&f.blocks, &dot, Some(Space::Shared), Some(Direction::Load)).value,
         32
     );
-    assert_eq!(conversions(&f.blocks, &dot).ops, 16);
 
     // Tile-copy block $L__BB0_2: 16 ld.global.u16 = 32 B in,
-    // 16 st.shared.u16 = 32 B staged, one bar.sync.
+    // 16 st.shared.u16 = 32 B staged.
     let copy = [block_by_label(&f, "$L__BB0_2")];
     assert_eq!(
         bytes(&f.blocks, &copy, Some(Space::Global), Some(Direction::Load)).value,
@@ -227,7 +215,6 @@ fn k5_dot_loop_and_copy_block() {
         .value,
         32
     );
-    assert_eq!(sync_ops(&f.blocks, &copy).ops, 1);
 
     // Whole kernel: zero unknown instructions, zero unquantified ops.
     let all = all_blocks(&f.blocks);

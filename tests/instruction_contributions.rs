@@ -1,8 +1,7 @@
-//! One instruction retains one category while contributing to several
+//! One instruction is one record while contributing to several
 //! totals, checked on collection's records, the annotated PTX and
 //! `report::build::compare`.
 use ptxroof::analysis::control_flow::loop_forest;
-use ptxroof::analysis::instruction_counts::classify::InstructionCategory;
 use ptxroof::analysis::instruction_counts::collect::collect;
 use ptxroof::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Precision};
 use ptxroof::ptx::cfg::build_cfg;
@@ -84,13 +83,11 @@ fn predicated_atomic_is_one_memory_instruction_with_bounded_contributions() {
     let kernel = &module.kernels[0];
     let cfg = build_cfg(&module, kernel);
     let blocks = collect(&module, kernel, &cfg, &loop_forest(&cfg));
-    let instruction = &blocks[0].instructions[0];
-    assert_eq!(instruction.classified.category, InstructionCategory::Memory);
-    assert!(instruction.predicated);
+    assert_eq!(blocks[0].instructions, [0, 1]);
     let contributions: Vec<_> = blocks[0]
         .measurements
         .iter()
-        .filter(|m| m.provenance == instruction.provenance)
+        .filter(|m| m.provenance == 0)
         .collect();
     let mut kinds: Vec<_> = contributions.iter().map(|m| (m.kind, m.count)).collect();
     kinds.sort();
@@ -120,7 +117,6 @@ fn predicated_atomic_is_one_memory_instruction_with_bounded_contributions() {
             ),
         ]
     );
-    assert!(contributions.iter().all(|m| m.predicated));
     let out = annotate(&src, &AnalyzeOptions::default()).expect("annotates");
     assert_eq!(
         notes(&out, ".visible .entry"),

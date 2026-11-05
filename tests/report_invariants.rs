@@ -3,7 +3,7 @@
 //!
 //! 1. Every Measurement's provenance index resolves to a real
 //!    instruction.
-//! 2. Per-block class tallies sum to the kernel's instruction count.
+//! 2. The blocks' instructions sum to the kernel's instruction count.
 //! 3. Two-path consistency: with every parameter bound, the FLOPs the
 //!    annotated PTX's `.entry` line sums per thread equal an
 //!    independently computed sum (per-block flat tallies ×
@@ -75,22 +75,22 @@ fn every_measurement_provenance_resolves_to_an_instruction() {
 }
 
 #[test]
-fn block_class_tallies_sum_to_kernel_instruction_count() {
+fn block_instructions_sum_to_kernel_instruction_count() {
     for fixture in FIXTURES {
         let src = read(fixture);
         let m = parse(&src).expect("fixture parses");
         for k in &m.kernels {
             let cfg = build_cfg(&m, k);
             let f = loop_forest(&cfg);
-            let from_blocks: u32 = collect(&m, k, &cfg, &f)
+            let from_blocks: usize = collect(&m, k, &cfg, &f)
                 .iter()
-                .map(|b| b.class_counts.total)
+                .map(|b| b.instructions.len())
                 .sum();
             let from_stmts = k
                 .stmts
                 .iter()
                 .filter(|s| matches!(s, Stmt::Instr(_)))
-                .count() as u32;
+                .count();
             assert_eq!(from_blocks, from_stmts, "{fixture}");
         }
     }

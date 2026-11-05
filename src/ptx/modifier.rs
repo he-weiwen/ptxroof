@@ -998,4 +998,30 @@ mod tests {
             assert_eq!(form_of(text), Form::Other, "{text}");
         }
     }
+
+    #[test]
+    fn a_cp_async_size_operand_follows_cp_size_and_precedes_a_cache_policy() {
+        let hint = "cp.async.cg.shared.global.L2::cache_hint [%r1], [%rd1], 16";
+        for (tail, index) in [
+            (", %r2, %rd2", Some(3)),
+            (", %p1, %rd2", Some(3)),
+            (", 8, %rd2", Some(3)),
+            (", %rd2", None),
+        ] {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k()\n{{\n{hint}{tail};\n}}\n"
+            );
+            let m = parse(&src).expect("snippet parses");
+            let Some(Stmt::Instr(instr)) = m.kernels[0].stmts.first() else {
+                panic!("one instruction");
+            };
+            let ops = m.operand_ids(instr.operands);
+            assert_eq!(
+                cp_async_size_operand(&m, instr),
+                index.map(|i| ops[i]),
+                "{tail}"
+            );
+        }
+    }
 }

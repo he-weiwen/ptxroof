@@ -90,7 +90,7 @@ impl KernelReportBuilder<'_> {
                 });
             let (exec, mut parts) = self.execs(bm, per);
             let block_threads = self.threads(b, &self.counts.sets.blocks[b.0 as usize]);
-            for s in bm.instructions.iter().map(|i| i.provenance) {
+            for &s in &bm.instructions {
                 if self.counts.unused[s] {
                     parts.insert(s, vec!["unused".to_owned()]);
                 } else {
@@ -360,21 +360,20 @@ impl KernelReportBuilder<'_> {
         let own = text(block.clone());
         let mut cache = HashMap::new();
         let mut parts = Notes::new();
-        for i in &bm.instructions {
-            let exec =
-                match self
-                    .counts
-                    .statement(bm, &m, i.provenance, 0, block.as_ref(), &mut cache)
-                {
-                    Resolution::Skipped => format!("exec 0/{unit}"),
-                    Resolution::Unknown => text(None),
-                    Resolution::Counted(p) => text(Some(p)),
-                };
-            let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
+        for &s in &bm.instructions {
+            let exec = match self
+                .counts
+                .statement(bm, &m, s, 0, block.as_ref(), &mut cache)
+            {
+                Resolution::Skipped => format!("exec 0/{unit}"),
+                Resolution::Unknown => text(None),
+                Resolution::Counted(p) => text(Some(p)),
+            };
+            let Stmt::Instr(instr) = &self.kernel.stmts[s] else {
                 continue;
             };
             if exec != own && !(instr.mnemonic == Opcode::Bra && instr.predicate.is_some()) {
-                parts.insert(i.provenance, vec![exec]);
+                parts.insert(s, vec![exec]);
             }
         }
         let once = matches!(per, Per::Thread)
@@ -403,7 +402,7 @@ impl KernelReportBuilder<'_> {
             .collect();
         let has = |f: fn(&MeasureKind) -> bool| kinds.iter().any(f);
         [
-            (has(|k| matches!(k, MeasureKind::UnknownOps { .. })))
+            (has(|k| matches!(k, MeasureKind::UnknownOps)))
                 .then_some("not classified (its FLOPs and bytes not counted)"),
             (has(|k| matches!(k, MeasureKind::UnquantifiedBytes { .. })))
                 .then_some("bytes ? (not counted)"),

@@ -2,8 +2,7 @@
 //!
 //! Transcribed from v1's `lib/PTX/Classifier.cpp` (v1 lives only in
 //! git history now, last at 690d81d): cuda-core, tensor-core and SFU
-//! flops, non-flop arithmetic (conversions counted separately — they
-//! are the precision-audit overhead S8 reports), memory, copies that
+//! flops, non-flop arithmetic, memory, copies that
 //! read one space and write another, sync, control, ignore, unknown.
 //! What is not modelled (Hopper bulk copies and warpgroup MMA, integer and
 //! sparse MMA kinds, textures) classifies as `Unknown`: visible,
@@ -27,7 +26,7 @@
 
 use super::measurement::{ArithKind, Contribution, Direction, MeasureKind, Pipe, Precision};
 
-use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId};
+use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId};
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{
     ParamAccess, Space, copy_spaces, cp_async_size_operand, param_access, space,
@@ -54,18 +53,9 @@ pub struct ClassifiedInstruction {
 
 impl ClassifiedInstruction {
     fn simple(category: InstructionCategory) -> Self {
-        let kind = match category {
-            InstructionCategory::Sync => Some(MeasureKind::SyncOps),
-            InstructionCategory::Communication => Some(MeasureKind::CommunicationOps),
-            InstructionCategory::Control => Some(MeasureKind::ControlOps),
-            _ => None,
-        };
         Self {
             category,
-            contributions: kind
-                .into_iter()
-                .map(|kind| Contribution::new(kind, 1))
-                .collect(),
+            contributions: Vec::new(),
         }
     }
 
@@ -80,15 +70,7 @@ impl ClassifiedInstruction {
     }
 
     fn non_flop(kind: ArithKind) -> Self {
-        let measurement = if kind == ArithKind::Conversion {
-            MeasureKind::Conversions
-        } else {
-            MeasureKind::NonFlopOps { kind }
-        };
-        Self {
-            category: InstructionCategory::NonFlopArith { kind },
-            contributions: vec![Contribution::new(measurement, 1)],
-        }
+        Self::simple(InstructionCategory::NonFlopArith { kind })
     }
 
     fn memory(space: Space, direction: Direction, bytes: Option<u32>) -> Self {
@@ -237,12 +219,9 @@ pub fn classify(module: &Module, instr: &Instr) -> ClassifiedInstruction {
         }
     };
     if result.category == InstructionCategory::Unknown {
-        result.contributions.push(Contribution::new(
-            MeasureKind::UnknownOps {
-                mnemonic: instr.mnemonic,
-            },
-            1,
-        ));
+        result
+            .contributions
+            .push(Contribution::new(MeasureKind::UnknownOps, 1));
     }
     result
 }
@@ -500,29 +479,12 @@ fn tensor_copy(module: &Module, instr: &Instr) -> ClassifiedInstruction {
     }
 }
 
-/// `classify`, with a `cp.async` read whose src-size is a register, not
-/// an ignore-src predicate, marked as at most its cp-size, and the
-/// device-function parameters a call passes a move.
+/// `classify`, with the device-function parameters a call passes a move.
 pub fn classify_in(module: &Module, kernel: &Kernel, instr: &Instr) -> ClassifiedInstruction {
     if param_access(module, kernel, instr) == Some(ParamAccess::DeviceFunctionParam) {
         return ClassifiedInstruction::non_flop(ArithKind::Move);
     }
-    let mut c = classify(module, instr);
-    if let Some(op) = cp_async_size_operand(module, instr)
-        && let Operand::Register(r) = module.operand(op)
-        && kernel.register_type(module, *r) != Some(FundamentalType::Pred)
-    {
-        for x in &mut c.contributions {
-            x.at_most |= matches!(
-                x.kind,
-                MeasureKind::Bytes {
-                    direction: Direction::Load,
-                    ..
-                }
-            );
-        }
-    }
-    c
+    classify(module, instr)
 }
 
 /// FP precision + packed-lane multiplier from type modifiers.
@@ -1018,27 +980,6 @@ mod tests {
             class_of("cp.async.cg.shared.global.L2::cache_hint [%r1], [%rd1], 16, %p1, %rd2;"),
             copy(16, 16)
         );
-        // A src-size register reads at most cp-size; an ignore-src
-        // predicate, an immediate or the cache policy leaves it exact.
-        let bounds = |tail: &str| {
-            let src = format!(
-                ".version 8.7\n.target sm_80\n.address_size 64\n.visible .entry k()\n{{\n\
-                 .reg .pred %p<2>;\n.reg .b32 %r<3>;\n.reg .b64 %rd<3>;\n\
-                 cp.async.cg.shared.global.L2::cache_hint [%r1], [%rd1], 16{tail};\n}}\n"
-            );
-            let m = parse(&src).expect("snippet parses");
-            let k = &m.kernels[0];
-            let Some(Stmt::Instr(instr)) = k.stmts.first() else {
-                panic!("one instruction");
-            };
-            (classify_in(&m, k, instr).contributions.iter())
-                .map(|c| c.at_most)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(bounds(", %r2, %rd2"), [true, false]);
-        for tail in [", %p1, %rd2", ", 8, %rd2", ", %rd2"] {
-            assert_eq!(bounds(tail), [false, false], "{tail}");
-        }
         // Under `.L2::cache_hint` the last operand is the policy, an
         // immediate one too; ptxas reads 16 B from `..., 16, 8`.
         for (sizes, read) in [("16, 0x1234", 16), ("16, 8", 16), ("16, 8, %rd2", 8)] {
@@ -1264,7 +1205,6 @@ mod tests {
                     },
                     count: width,
                     memory_operand: Some(0),
-                    at_most: false,
                 });
             }
             expected.push(Contribution {
@@ -1274,7 +1214,6 @@ mod tests {
                 },
                 count: width,
                 memory_operand: Some(0),
-                at_most: false,
             });
             if let Some(precision) = precision {
                 expected.push(Contribution {
@@ -1284,7 +1223,6 @@ mod tests {
                     },
                     count: flops,
                     memory_operand: None,
-                    at_most: false,
                 });
             }
             assert_eq!(actual.contributions, expected, "{text}");
@@ -1298,7 +1236,7 @@ mod tests {
         assert!(matches!(
             unknown.contributions.as_slice(),
             [Contribution {
-                kind: MeasureKind::UnknownOps { .. },
+                kind: MeasureKind::UnknownOps,
                 count: 1,
                 ..
             }]

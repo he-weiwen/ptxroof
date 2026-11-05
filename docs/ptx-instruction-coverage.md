@@ -59,24 +59,24 @@ were the verified unparsed instance until the parser learned them.)
 
 Past the parser, each instruction has exactly **one** `InstructionCategory`
 and zero or more `Contribution { kind, count, memory_operand }` records.
-The category counts instructions; contributions count work independently.
+Only the contributions reach the counts.
 
 | Category | Meaning | Contributions |
 |---|---|---|
 | `Flop` | CUDA-core, tensor-core, or SFU arithmetic | FLOPs by pipe and precision |
-| `NonFlopArith { kind }` | Conversion, integer, predicate, or move | Non-FP operation counts |
+| `NonFlopArith { kind }` | Conversion, integer, predicate, or move | None |
 | `Memory` | Loads, stores, copies, atomics and reductions | Bytes by space and direction; FP atomics also contribute atomic FLOPs |
-| `Sync` | Barriers, fences, waits | Synchronization operations |
-| `Communication` | Shuffles, votes, `match`, `redux`, `elect` | Communication operations |
-| `Control` | Branches, returns, calls, traps | Control operations |
-| `Ignore` | Provably zero counted work (hints such as `prefetch`) | Empty contribution list |
-| `Unknown` | Unsupported instruction | Explicit named unknown contribution |
+| `Sync` | Barriers, fences, waits | None |
+| `Communication` | Shuffles, votes, `match`, `redux`, `elect` | None |
+| `Control` | Branches, returns, calls, traps | None |
+| `Ignore` | Provably zero counted work (hints such as `prefetch`) | None |
+| `Unknown` | Unsupported instruction | One `UnknownOps` |
 
-Collection attaches `predicated` and statement `provenance` to each
+Collection attaches the statement `provenance` to each
 contribution to produce `Measurement` records. `cp.async` emits separate
 read and write measurements; FP `atom.add` emits read bytes, write bytes,
 and atomic FLOPs. Every instruction is counted once, including ignored
-instructions, from the retained instruction records rather than the
+instructions, from the block's statement indices rather than the
 measurement records. Memory contributions identify
 which memory operand they reference, so an atomic's two sides share one
 address while a copy retains its source and destination.
@@ -351,7 +351,7 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
 | 9.7.13.1 | `{}` | Parser-level block structure; never reaches the classifier | OK — the right layer. |
-| 9.7.13.2 | `@` | Parser-level; sets the `predicated` bit on the guarded instruction's `Measurement`, which propagates as `≤` (at-most) bounds | OK — this is the model's designed answer to divergence: bounds, not probabilities. |
+| 9.7.13.2 | `@` | Parser-level; the instruction counts on the threads whose guard holds (`ThreadSets::guard`), a `≤` (at-most) bound where that set is not known | OK — this is the model's designed answer to divergence: bounds, not probabilities. |
 | 9.7.13.3 | `bra` | `Control` | OK. |
 | 9.7.13.4 | `brx.idx` | `Control` (mnemonic `brx`) | OK. Thread sets: an unguarded one sends all or none of the threads its index is one value for to a target (`a_jump_table_on_a_warp_s_index_selects_whole_warps`). |
 | 9.7.13.5 | `call` | `Control` | OK at the classifier layer; the parser reads its `(…)` return and argument lists (`Operand::ParamList`, `micro/call_returns.ptx`), and skips `.calltargets` and `.callprototype`. ⚠ misfit §E: flops/bytes inside the callee are not attributed to the call site. Fine while the corpus is fully-inlined nvcc output; recommend a report-level named unknown when a kernel calls a function whose body the module doesn't contain (extern), so the gap is visible the day it matters. |

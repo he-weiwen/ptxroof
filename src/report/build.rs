@@ -839,22 +839,16 @@ impl<'a> KernelReportBuilder<'a> {
             );
             let mut guarded = HashMap::new();
             let mut predictions = Vec::new();
-            for i in &bm.instructions {
-                let Stmt::Instr(instr) = &self.kernel.stmts[i.provenance] else {
+            for &s in &bm.instructions {
+                let Stmt::Instr(instr) = &self.kernel.stmts[s] else {
                     continue;
                 };
                 let line = lines.line(instr.offset);
                 let alone = reducible && per_line[&line] == 1;
-                let never = !self.counts.counted(bm.block, i.provenance);
+                let never = !self.counts.counted(bm.block, s);
                 let mut resolve = |operand| {
-                    self.counts.statement(
-                        bm,
-                        &m,
-                        i.provenance,
-                        operand,
-                        block.as_ref(),
-                        &mut guarded,
-                    )
+                    self.counts
+                        .statement(bm, &m, s, operand, block.as_ref(), &mut guarded)
                 };
                 let run = match resolve(0) {
                     Resolution::Counted(p) if !never => Some(p),
@@ -864,7 +858,7 @@ impl<'a> KernelReportBuilder<'a> {
                 let at_most = run.as_ref().is_some_and(|p| p.at_most);
                 // Warps with a lane that reads its global operand: each
                 // requests its sectors; a source no thread reads, none.
-                let reads = match self.counts.sets.sources.contains_key(&i.provenance) {
+                let reads = match self.counts.sets.sources.contains_key(&s) {
                     true => match resolve(1) {
                         Resolution::Skipped => Some(None),
                         Resolution::Unknown => None,
@@ -882,9 +876,8 @@ impl<'a> KernelReportBuilder<'a> {
                     }),
                     (false, None) => None,
                 };
-                let sectors = (self.per_request.get(&i.provenance).copied())
-                    .zip(requests)
-                    .and_then(|(r, (n, bound))| {
+                let sectors = (self.per_request.get(&s).copied()).zip(requests).and_then(
+                    |(r, (n, bound))| {
                         let total = |c: CountRange| {
                             Some(SectorCount {
                                 min: u64::from(c.min).checked_mul(n)?,
@@ -898,7 +891,8 @@ impl<'a> KernelReportBuilder<'a> {
                             ideal: total(r.ideal)?,
                             at_most: at_most || bound || r.at_most,
                         })
-                    });
+                    },
+                );
                 predictions.push(Prediction {
                     line,
                     constraint: count_constraint(self.module, instr),
@@ -910,7 +904,7 @@ impl<'a> KernelReportBuilder<'a> {
                     },
                     at_most,
                     sectors,
-                    wavefronts: self.per_wavefronts.get(&i.provenance).copied(),
+                    wavefronts: self.per_wavefronts.get(&s).copied(),
                     atomic: matches!(instr.mnemonic, Opcode::Atom | Opcode::Red),
                 });
             }
