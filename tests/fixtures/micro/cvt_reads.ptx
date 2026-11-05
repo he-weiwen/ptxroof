@@ -1,23 +1,28 @@
 //
-// HAND-WRITTEN: three addresses through a `cvt` that changes the
+// HAND-WRITTEN: four addresses through a `cvt` that changes the
 // value: a bf16x2 pack of 1.0 and the thread index, the bits of the
-// thread index converted to f32, and a 64-to-32-bit truncation of
-// the thread index plus 2^32. Only the last address is 4·%tid.x;
-// the tracer refuses all three: two conversions change bits, and the
-// truncation's source leaves 32 bits.
+// thread index converted to f32, a 64-to-32-bit truncation of the
+// thread index plus 2^32, and a saturating conversion of an integer
+// parameter, 0 for a negative one (PTX ISA §9.7.9.22: ".sat limits
+// the result to MININT..MAXINT for the size of the operation"). Only
+// the third address is 4·%tid.x; the tracer refuses all four: two
+// conversions change bits, the truncation's source leaves 32 bits,
+// and the saturation is a value it does not read, the same for every
+// thread.
 //
 .version 8.7
 .target sm_80
 .address_size 64
 
 .visible .entry micro_cvt_reads(
-	.param .u64 micro_cvt_reads_param_0
+	.param .u64 micro_cvt_reads_param_0,
+	.param .u32 micro_cvt_reads_param_1
 )
 .reqntid 64, 1, 1
 {
-	.reg .b32 	%r<6>;
+	.reg .b32 	%r<8>;
 	.reg .f32 	%f<3>;
-	.reg .b64 	%rd<11>;
+	.reg .b64 	%rd<13>;
 
 	ld.param.u64 	%rd1, [micro_cvt_reads_param_0];
 	mov.u32 	%r1, %tid.x;
@@ -37,5 +42,10 @@
 	mul.wide.u32 	%rd8, %r4, 4;
 	add.s64 	%rd9, %rd1, %rd8;
 	st.global.u32 	[%rd9], %r1;
+	ld.param.u32 	%r6, [micro_cvt_reads_param_1];
+	cvt.sat.u32.s32 	%r7, %r6;
+	mul.wide.u32 	%rd10, %r7, 4;
+	add.s64 	%rd11, %rd1, %rd10;
+	st.global.u32 	[%rd11], %r1;
 	ret;
 }

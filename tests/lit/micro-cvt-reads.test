@@ -1,8 +1,10 @@
 # A bf16x2 pack and an integer-to-float conversion change the value's
-# bits, and a cvt.u32.u64 of %tid.x + 2^32 (64 threads, from .reqntid)
-# leaves 32 bits: all three stores' addresses are unknown, each with
-# its reason.
+# bits, a cvt.u32.u64 of %tid.x + 2^32 (64 threads, from .reqntid)
+# leaves 32 bits: three stores' addresses are unknown, each with its
+# reason. A cvt.sat.u32.s32 of a parameter saturates, a value every
+# thread shares, which the address keeps as one unknown term.
 RUN: %ptxroof analyze %fixtures/micro/cvt_reads.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (`cvt.rn.bf16x2.f32` is not an integer conversion){{$}}
 ANN: {{^}}	st.global.u32 	[%rd5], %r1; // global store addr ? (`cvt.rn.f32.u32` is not an integer conversion){{$}}
 ANN: {{^}}	st.global.u32 	[%rd9], %r1; // global store addr ? (`cvt.u32.u64` leaves 32 bits){{$}}
+ANN: {{^}}	st.global.u32 	[%rd11], %r1; // global store [4·uniform(%r7@{{[0-9]+}}) + param_0] sectors/req 1 (ideal 1){{$}}

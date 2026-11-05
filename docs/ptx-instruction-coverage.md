@@ -225,7 +225,7 @@ decision, not just an arm).
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
 | 9.7.6.1 | `set` | `Predicate` | OK — produces a 0/1 value in a data register, but comparisons are not flops under the convention. |
-| 9.7.6.2 | `setp` | `Predicate` | OK, the dual-destination form `setp ... p|q, a, b` included: it parses as one `p|q` operand (`multiple_destination_registers`) and is counted (`micro/guards.ptx`'s `setp.lt.u32 %p2|%p8`). |
+| 9.7.6.2 | `setp` | `Predicate` | OK, the dual-destination form `setp ... p|q, a, b` included: it parses as one `p|q` operand (`multiple_destination_registers`) and is counted (`micro/guards.ptx`'s `setp.lt.u32 %p2|%p8`). Its unsigned spellings `lo`, `ls`, `hi`, `hs` read as `lt`, `le`, `gt`, `ge` of the `.u` type ("may be used instead", §9.7.6.2 Integer Notes; `micro/latch_forms.ptx`); `lo` to `hs` of a `.s` type, `lt` to `ge` of a `.b` type and `.ftz` of an integer type are no integer comparison (`comparisons_read_their_predicate_width_and_bool_op`). |
 | 9.7.6.3 | `selp` | `Predicate` | OK. |
 | 9.7.6.4 | `slct` | `Predicate` | OK. |
 
@@ -283,7 +283,7 @@ requested.
 | 9.7.9.19 | `createpolicy` | `Ignore` | OK — builds a cache-policy register, touches no memory. |
 | 9.7.9.20 | `isspacep` | `Predicate` | OK. |
 | 9.7.9.21 | `cvta` | `Move` | OK — address-space cast, not a value conversion; tested. |
-| 9.7.9.22 | `cvt` | `Conversion` | OK — and future-proof: every format including FP8/FP6/FP4 (`e4m3`, `e5m2`, `e2m1`, …) lands here with no per-format code. |
+| 9.7.9.22 | `cvt` | `Conversion` | OK — and future-proof: every format including FP8/FP6/FP4 (`e4m3`, `e5m2`, `e2m1`, …) lands here with no per-format code. An integer `cvt.sat`, which "limits the result to MININT..MAXINT for the size of the operation", gives no value to the tracer (`micro/cvt_reads.ptx`). |
 | 9.7.9.23 | `cvt.pack` | `Conversion` (mnemonic `cvt` + `pack` modifier) | OK. |
 | 9.7.9.24 | `mapa` | `Move` | OK — an address computation into a peer CTA's shared memory; the access it feeds is counted where it happens. |
 | 9.7.9.25 | `getctarank` | `Integer` | OK. |

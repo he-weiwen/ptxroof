@@ -1865,7 +1865,7 @@ tests/fixtures/micro/cta_trips.ptx:39	warp * × lane *
 tests/fixtures/micro/cta_trips.ptx:52	warp * × lane *
 tests/fixtures/micro/cta_trips.ptx:57	warp * × lane *
 tests/fixtures/micro/cta_trips.ptx:63	warp * × lane *
-tests/fixtures/micro/cvt_reads.ptx:22	warp * × lane *
+tests/fixtures/micro/cvt_reads.ptx:27	warp * × lane *
 tests/fixtures/micro/division_operands.ptx:37	warp * × lane *
 tests/fixtures/micro/division_operands.ptx:56	warp * × lane *
 tests/fixtures/micro/division_operands.ptx:75	warp * × lane *

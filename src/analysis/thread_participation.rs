@@ -29,7 +29,7 @@ use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
-use crate::ptx::modifier::{Cmp, Compare, Form, InstrType, IntKind};
+use crate::ptx::modifier::{Cmp, Form, IntInstrType, IntKind};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -1230,7 +1230,7 @@ impl PredicateReader<'_> {
                 let p = condition(self.module, self.kernel, self.affine, def, &mut self.forms);
                 (p.unwrap_or(Pred::Unknown), false)
             }
-            (Opcode::And | Opcode::Or, Form::Logic(InstrType::Pred), [_, a, b]) => {
+            (Opcode::And | Opcode::Or, Form::Pred, [_, a, b]) => {
                 let (Some(a), Some(b)) = (reg(*a), reg(*b)) else {
                     return (Pred::Unknown, false);
                 };
@@ -1244,7 +1244,7 @@ impl PredicateReader<'_> {
             }
             // PTX ISA §4.5.3: an integer constant as a predicate is False
             // when zero and True otherwise.
-            (Opcode::Mov, Form::Move(InstrType::Pred), [_, a]) => match self.module.operand(*a) {
+            (Opcode::Mov, Form::Pred, [_, a]) => match self.module.operand(*a) {
                 Operand::Immediate(t) => match parse_int(self.module.interner.resolve(*t)) {
                     Some(0) => (Pred::False, false),
                     Some(_) => (Pred::True, false),
@@ -1252,7 +1252,7 @@ impl PredicateReader<'_> {
                 },
                 _ => (Pred::Unknown, false),
             },
-            (Opcode::Not, Form::Logic(InstrType::Pred), [_, a]) => match reg(*a) {
+            (Opcode::Not, Form::Pred, [_, a]) => match reg(*a) {
                 Some(a) => {
                     let (p, cut) = self.read(a, def, depth);
                     (!p, cut)
@@ -1463,16 +1463,21 @@ fn condition(
     };
     // PTX ISA §9.7.6.2, §9.7.7.2: a `setp` of no integer type compares
     // floats, a packed one per half.
-    let Form::Compare(Compare {
-        cmp,
+    let Form::IntCompare {
+        pred,
+        width,
         bool_op: None,
-        ty: InstrType::Int(int),
-        ..
-    }) = Form::of(module, setp)
+    } = Form::of(module, setp)
     else {
         return None;
     };
-    let cmp = cmp.signed()?;
+    let (cmp, int) = (
+        pred.cmp(),
+        IntInstrType {
+            kind: pred.reads(),
+            width,
+        },
+    );
     let ops = module.operand_ids(setp.operands);
     if ops.len() != 3 {
         return None;
@@ -1498,16 +1503,15 @@ fn condition(
         let any = |v: &Var| range(v).or_else(|| any_grid(v));
         (x.range(&any)).is_some_and(|(lo, _)| lo >= 0)
     };
-    let comparable = |a: &AffineExpr, b: &AffineExpr| match (cmp, int.kind) {
-        (Cmp::Eq | Cmp::Ne, _) => {
+    let comparable = |a: &AffineExpr, b: &AffineExpr| match int.kind {
+        IntKind::Bits => {
             let w = 1i128 << int.width;
             fits(&(a.clone() - b.clone()), (1 - w, w))
         }
-        (_, IntKind::Signed) => fits(a, int.values()) && fits(b, int.values()),
-        (_, IntKind::Unsigned) => {
+        IntKind::Signed => fits(a, int.values()) && fits(b, int.values()),
+        IntKind::Unsigned => {
             nonnegative(a) && nonnegative(b) && fits(a, int.values()) && fits(b, int.values())
         }
-        (_, IntKind::Bits) => false,
     };
     if let Some(d) = form.as_const()
         && comparable(&a, &b)

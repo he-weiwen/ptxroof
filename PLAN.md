@@ -528,8 +528,11 @@ output_tallies` rewrites it.
   count (`micro_unpack_halves`), from 64-bit arithmetic
   (`micro_unpack_wide`) or from an unpacked element
   (`micro_unpack_twice`), or packed as an immediate wider than its
-  element (`micro_unpack_imm`). In the Blackwell corpus (`trap` entry
-  above), not read either: an `or` in an `ldmatrix` or `stmatrix`
+  element (`micro_unpack_imm`), or one a `mov.b128 {…}` unpacks, no
+  form the analyses read (`selections_and_moves_take_one_type`; the
+  Blackwell corpus's one file with `mov.b128` only packs). In the
+  Blackwell corpus (`trap` entry above), not read either: an `or` in
+  an `ldmatrix` or `stmatrix`
   `.x1`/`.x2` address whose sides share a bit only on lanes that give
   the instruction no address (PTX ISA §9.7.15.5.15–16: threads 0–7 or
   0–15), 2,962 of the 4,443 such rows refused "or whose sides may both
@@ -693,9 +696,8 @@ output_tallies` rewrites it.
   that combines its comparison with a predicate
   (`a_comparison_combined_with_a_predicate_is_not_a_trip_count`) or
   compares floats (`micro/latch_float.ptx`: "latch condition compares
-  floating-point values"), packed halves or by an unsigned-only
-  comparison (`micro/latch_forms.ptx`: "latch condition compares
-  packed halves", "unsupported latch comparison `lo`"), a bound one
+  floating-point values") or packed halves (`micro/latch_forms.ptx`:
+  "latch condition compares packed halves"), a bound one
   value per warp only (a load, or
   arithmetic on one), the mbarrier spin-waits
   (`mbarrier.test_wait` defines the predicate), and the persistent

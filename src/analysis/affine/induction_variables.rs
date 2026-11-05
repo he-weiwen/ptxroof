@@ -9,7 +9,7 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId, Register, Stmt};
 use crate::ptx::literal::parse_int;
-use crate::ptx::modifier::{Form, IntArith, IntKind, IntOperand};
+use crate::ptx::modifier::{Form, IntKind};
 use crate::ptx::register_effects::writes;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
@@ -196,11 +196,7 @@ impl Walk<'_> {
     fn integer(&self, instr: &Instr) -> bool {
         matches!(
             Form::of(self.module, instr),
-            Form::IntArith(IntArith {
-                ty: IntOperand::Scalar(t),
-                sat: false,
-                ..
-            }) if t.kind != IntKind::Bits && t.width >= 16
+            Form::Int { ty, sat: false, .. } if ty.kind != IntKind::Bits && ty.width >= 16
         )
     }
 }

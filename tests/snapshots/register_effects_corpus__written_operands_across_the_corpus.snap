@@ -13,7 +13,7 @@ add.rn.f32.bf16	1	14
 add.rn.f32x2	1	873
 add.s16x2	1	1
 add.s32	1	3844
-add.s64	1	2639
+add.s64	1	2640
 add.u32	1	319
 add.u64	1	4
 addc.u32	1	1
@@ -67,6 +67,7 @@ cvt.rn.f32.s32	1	17
 cvt.rn.f32.u32	1	15
 cvt.rn.satfinite.e4m3x2.f32	1	84
 cvt.s64.s32	1	178
+cvt.sat.u32.s32	1	1
 cvt.u16.u32	1	27
 cvt.u32.u16	1	49
 cvt.u32.u64	1	83
@@ -110,7 +111,7 @@ ld.param.b64	1	249
 ld.param.f32	1	21
 ld.param.s32	1	36
 ld.param.u16	1	1
-ld.param.u32	1	95
+ld.param.u32	1	96
 ld.param.u64	1	283
 ld.param::entry.u32	1	1
 ld.param::entry.u64	1	1
@@ -178,7 +179,7 @@ mul.rn.f32x2	1	773
 mul.wide.s16	1	1
 mul.wide.s32	1	162
 mul.wide.u16	1	9
-mul.wide.u32	1	272
+mul.wide.u32	1	273
 nanosleep.u32	0	13
 neg.bf16	1	12
 neg.bf16x2	1	16
@@ -260,7 +261,7 @@ st.global.b32	0	198
 st.global.b64	0	9
 st.global.f32	0	16
 st.global.u16	0	198
-st.global.u32	0	253
+st.global.u32	0	254
 st.global.u64	0	2
 st.global.u8	0	2
 st.global.v2.b32	0	46

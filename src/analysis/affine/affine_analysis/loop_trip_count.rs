@@ -78,13 +78,15 @@ impl AffineAnalysis<'_> {
             let name = module.interner.resolve(pred.reg);
             return Err(format!("{name} is written under a guard").into());
         }
-        let Form::Compare(compare) = Form::of(module, setp) else {
-            return Err("setp without comparison modifier".into());
+        let compared = match Form::of(module, setp) {
+            Form::IntCompare { pred, .. } => Some(pred),
+            // PTX ISA §9.7.7.2: a packed `setp`'s first output compares the low halves.
+            Form::Float { lanes: 2 } => {
+                return Err("latch condition compares packed halves".into());
+            }
+            Form::Float { .. } => None,
+            _ => return Err("setp without comparison modifier".into()),
         };
-        // PTX ISA §9.7.7.2: a packed `setp`'s first output compares the low halves.
-        if let InstrType::Float { lanes: 2, .. } = compare.ty {
-            return Err("latch condition compares packed halves".into());
-        }
 
         // Trace both operands at the setp.
         let ops = module.operand_ids(setp.operands);
@@ -97,9 +99,9 @@ impl AffineAnalysis<'_> {
         }
         // PTX ISA §9.7.6.2: a `setp` of no integer type compares floats,
         // not the traced integers.
-        if !matches!(compare.ty, InstrType::Int(_)) {
+        let Some(pred) = compared else {
             return Err("latch condition compares floating-point values".into());
-        }
+        };
         let a = self.operand_at(ops[1], setp_idx, 0)?;
         let b = self.operand_at(ops[2], setp_idx, 0)?;
         let d = per_cta(self.cta_uniform_symbols(id, setp_idx, a - b)?); // D = A − B; condition is `D cmp 0`
@@ -122,10 +124,7 @@ impl AffineAnalysis<'_> {
         if a1 == i64::MIN {
             return Err("induction step is −2^63, which has no negation".into());
         }
-        let Some(cmp) = compare.cmp.signed() else {
-            let name = compare.cmp.name();
-            return Err(format!("unsupported latch comparison `{name}`").into());
-        };
+        let cmp = pred.cmp();
         let cond = if continue_if_true { cmp } else { cmp.inverse() };
         let bound = self.bindings.and_then(|b| d.base.bind(b).as_const());
         if cond == Cmp::Ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
@@ -200,12 +199,7 @@ impl AffineAnalysis<'_> {
         let (def, setp) = self
             .data
             .find_setp(self.data.block_of(op), op + 1, pred.reg)?;
-        let Form::Compare(Compare {
-            cmp: cmp_op,
-            ty: InstrType::Int(_),
-            ..
-        }) = Form::of(module, setp)
-        else {
+        let Form::IntCompare { pred: compare, .. } = Form::of(module, setp) else {
             return None;
         };
         let &[_, a, b] = module.operand_ids(setp.operands) else {
@@ -222,7 +216,7 @@ impl AffineAnalysis<'_> {
             )
             .ok()?,
         );
-        let cmp = cmp_op.signed()?;
+        let cmp = compare.cmp();
         let cmp = if (taken == into) != pred.negated {
             cmp
         } else {
