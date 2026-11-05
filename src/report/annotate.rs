@@ -2,7 +2,6 @@
 //! it as a ` // ` comment.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
-use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
@@ -18,6 +17,7 @@ use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{Opcode, Register, Stmt};
 use crate::ptx::modifier::Cmp;
 use crate::ptx::register_effects::writes;
+use crate::ptx::thread_hierarchy::{WARP_SZ, ctas, threads};
 use crate::report::build::{
     Access, AnalyzeError, AnalyzeOptions, KernelReportBuilder, each_kernel,
 };
@@ -59,14 +59,13 @@ impl KernelReportBuilder<'_> {
     /// the grid and the block shape, else per CTA given the shape, else
     /// per thread.
     fn annotations(&self, notes: &mut BTreeMap<u32, Vec<String>>) {
-        let threads: u64 = self.counts.shape.iter().map(|&n| u64::from(n)).product();
+        let threads = threads(self.counts.shape) as u64;
         let cta = (threads > 0).then(|| CtaSize {
             threads,
-            warps: threads.div_ceil(32),
+            warps: threads.div_ceil(WARP_SZ as u64),
             exact: true,
         });
-        let ctas = (self.counts.grid())
-            .and_then(|g| g.iter().try_fold(1u64, |n, &d| n.checked_mul(d.into())));
+        let ctas = self.counts.grid().and_then(ctas);
         let per = match (&cta, ctas) {
             (Some(c), Some(n)) => Per::Launch(c, Some(n)),
             (Some(c), None) => Per::Cta(c),
@@ -518,7 +517,7 @@ impl KernelReportBuilder<'_> {
         let Some((grid, classes)) = classes else {
             return Some(warp_lanes(&set.lane_masks(shape, None), shape, exact));
         };
-        let total: u64 = grid.iter().map(|&n| u64::from(n)).product();
+        let total = ctas(grid)?;
         let running: Vec<_> = (classes.iter())
             .filter(|(m, _)| m.iter().any(|w| w.0 != 0))
             .collect();
@@ -779,8 +778,8 @@ impl KernelReportBuilder<'_> {
 /// `no thread` when none may run. A warp's lanes are its threads' linear
 /// indices modulo 32 (PTX ISA §3.1).
 fn warp_lanes(masks: &[(u32, u32)], shape: [u32; 3], exact: bool) -> String {
-    let threads: u64 = shape.iter().map(|&n| u64::from(n)).product();
-    let full = |w: usize| u32::MAX >> (32 - (threads - 32 * w as u64).min(32));
+    let (threads, lanes) = (threads(shape) as u64, WARP_SZ as u64);
+    let full = |w: usize| u32::MAX >> (lanes - (threads - lanes * w as u64).min(lanes));
     let mut groups: Vec<((bool, String), Vec<i64>)> = Vec::new();
     for (w, &(may, must)) in masks.iter().enumerate().filter(|(_, m)| m.0 != 0) {
         let lanes = match may == full(w) {
@@ -826,7 +825,7 @@ fn shifted(a: &AffineExpr) -> (AffineExpr, bool) {
 /// Comparison `c` reads no thread or CTA index, so it is the same for
 /// the CTA, a loop counter's or a parameter's.
 fn cta_uniform(c: &Constraint) -> bool {
-    c.cta.is_none() && c.form.terms.iter().all(|(v, _)| !depends_on_lane(v))
+    c.cta.is_none() && !c.form.depends_on_tid()
 }
 
 /// The parts of `p` under the `and`s at its top, or the `or`s where `or`.

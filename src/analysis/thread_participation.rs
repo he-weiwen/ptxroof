@@ -18,8 +18,7 @@
 //! one the same for every thread empties or keeps whole warps.
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
-use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
-use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, linear, thread, warps_of};
+use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var, at_tid};
 use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
@@ -29,6 +28,7 @@ use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{Cmp, Form, IntInstrType, IntKind, cp_async_size_operand};
+use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_1d, to_3d, warps_of};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -123,11 +123,12 @@ struct Env {
 }
 
 /// Which lane an `elect.sync` elected, for one evaluation: the lowest
-/// active lane as a representative, a given lane, or none.
+/// active lane as a representative, the thread of a given thread ID, or
+/// none.
 #[derive(Debug, Clone, Copy)]
 enum Leader {
     Lowest,
-    Lane(i64),
+    Thread(i64),
     Nobody,
 }
 
@@ -215,9 +216,9 @@ impl Pred {
                 let value = |v: &Var| match (v, env.cta, trip) {
                     (Var::Ctaid(a), Some(c), _) => c[*a as usize],
                     (Var::Iteration(l), _, Some((m, k))) if *l == m => k,
-                    _ => lanes(tid)(v),
+                    _ => at_tid(tid)(v),
                 };
-                let Some(x) = at(&c.form, &value) else {
+                let Some(x) = c.form.eval(&value) else {
                     return Tri::Maybe;
                 };
                 let (lo, hi) = match c.cta.filter(|_| env.cta.is_none()) {
@@ -232,7 +233,7 @@ impl Pred {
             }
             Pred::Elect(active) => match leader {
                 Leader::Lowest => elected(active, tid, shape, env),
-                Leader::Lane(k) if linear(tid, shape) == k => Tri::Yes,
+                Leader::Thread(k) if to_1d(tid, shape) == k => Tri::Yes,
                 _ => Tri::No,
             },
             Pred::Not(p) => match eval(p) {
@@ -318,9 +319,7 @@ impl Pred {
         match self {
             _ if self.uniform_only() => true,
             Pred::True | Pred::False | Pred::Uniform(..) => true,
-            Pred::Cmp(c) => {
-                (c.cta.is_none() && c.trip.is_none()) || !c.form.terms.keys().any(depends_on_lane)
-            }
+            Pred::Cmp(c) => (c.cta.is_none() && c.trip.is_none()) || !c.form.depends_on_tid(),
             Pred::Unknown => false,
             Pred::Elect(p) => p.lane_exact(),
             Pred::Not(p) => p.exact(),
@@ -336,7 +335,7 @@ impl Pred {
         let at = |p: Box<Pred>| Box::new(p.in_loops(inside));
         match self {
             Pred::Cmp(c) if c.trip.is_some_and(|(l, _)| !inside(l)) => {
-                match c.form.terms.keys().any(depends_on_lane) {
+                match c.form.depends_on_tid() {
                     true => Pred::Unknown,
                     false => Pred::uniform(Uniform::Cta, AtomKey::OutOfLoop(Box::new(c))),
                 }
@@ -405,18 +404,18 @@ impl Pred {
 /// representative of the elected lane: yes when no lower lane may be
 /// active, maybe when the leader is one of several lanes that may be.
 fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
-    let [nx, ny, nz] = shape.map(i64::from);
-    let threads = nx * ny * nz;
-    if threads == 0 {
+    let id = to_1d(tid, shape);
+    let warp = usize::try_from(id / WARP_SZ)
+        .ok()
+        .and_then(|w| warps_of(shape).nth(w));
+    let Some(warp) = warp else {
         return Tri::Maybe;
-    }
-    let linear = linear(tid, shape);
-    let base = linear - linear % 32;
+    };
     let mut candidates = Vec::new();
-    for l in base..(base + 32).min(threads) {
-        match active.eval_as(thread(l, shape), shape, Leader::Lowest, env) {
+    for l in warp {
+        match active.eval_as(to_3d(l, shape), shape, Leader::Lowest, env) {
             Tri::Yes if candidates.is_empty() => {
-                return if l == linear { Tri::Yes } else { Tri::No };
+                return if l == id { Tri::Yes } else { Tri::No };
             }
             Tri::Yes => {
                 candidates.push(l);
@@ -426,20 +425,11 @@ fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
             Tri::No => {}
         }
     }
-    if candidates.contains(&linear) {
+    if candidates.contains(&id) {
         Tri::Maybe
     } else {
         Tri::No
     }
-}
-
-/// `form` with each variable at `value`, in i128 so that a comparison
-/// of 64-bit operands reads exactly; `None` past i128.
-fn at(form: &AffineExpr, value: &dyn Fn(&Var) -> i64) -> Option<i128> {
-    (form.terms.iter()).try_fold(i128::from(form.base.const_part()), |x, (v, c)| {
-        let term = i128::from(c.as_const().unwrap_or(0)).checked_mul(i128::from(v.eval(value)))?;
-        x.checked_add(term)
-    })
 }
 
 /// Whether `x cmp 0` holds for every `x` in [lo, hi], for none, or for
@@ -477,20 +467,9 @@ fn holds(cmp: Cmp, x: i128) -> bool {
 /// The axes of the CTA index `v` reads.
 fn cta_axes(v: &Var, used: &mut [bool; 3]) {
     match v {
-        Var::Ctaid(Axis::X) => used[0] = true,
-        Var::Ctaid(Axis::Y) => used[1] = true,
-        Var::Ctaid(Axis::Z) => used[2] = true,
+        Var::Ctaid(a) => used[*a as usize] = true,
         Var::FloorDiv(x, _) | Var::Mod(x, _) => cta_axes(x, used),
         _ => {}
-    }
-}
-
-/// A CTA index, or a floor or remainder of one.
-fn on_cta(v: &Var) -> bool {
-    match v {
-        Var::Ctaid(_) => true,
-        Var::FloorDiv(x, _) | Var::Mod(x, _) => on_cta(x),
-        _ => false,
     }
 }
 
@@ -499,14 +478,15 @@ fn on_cta(v: &Var) -> bool {
 fn on_index(a: &AffineExpr) -> bool {
     a.base.as_const().is_some()
         && (a.terms.iter())
-            .all(|(v, c)| c.as_const().is_some() && (depends_on_lane(v) || on_cta(v)))
+            .all(|(v, c)| c.as_const().is_some() && (v.depends_on_tid() || v.depends_on_ctaid()))
 }
 
 /// `form cmp 0` over the launch, `range` bounding `%tid` by its block
 /// and `%ctaid` by its grid: `True` or `False` when the form's range
 /// decides it, else the comparison with its `%ctaid` terms substituted
 /// when they take one value, or with their range; `None` when
-/// unbounded.
+/// unbounded, or when the form reads no `%tid` and an axis of `%ctaid`
+/// it reads has no grid to tell its CTAs apart, one unknown for the CTA.
 fn across_ctas(
     form: &AffineExpr,
     cmp: Cmp,
@@ -519,7 +499,16 @@ fn across_ctas(
         Tri::Maybe => {}
     }
     let (ctas, lanes): (BTreeMap<_, _>, BTreeMap<_, _>) =
-        (form.terms.clone().into_iter()).partition(|(v, _)| on_cta(v));
+        (form.terms.clone().into_iter()).partition(|(v, _)| v.depends_on_ctaid());
+    let mut used = [false; 3];
+    ctas.keys().for_each(|v| cta_axes(v, &mut used));
+    let unbounded = [Axis::X, Axis::Y, Axis::Z]
+        .into_iter()
+        .zip(used)
+        .any(|(a, read)| read && range(&Var::Ctaid(a)).is_none());
+    if lanes.is_empty() && unbounded {
+        return None;
+    }
     let (lo, hi) = AffineExpr {
         terms: ctas,
         base: SymExpr::Const(0),
@@ -545,12 +534,14 @@ fn across_ctas(
     }))
 }
 
-fn on_lane_only(a: &AffineExpr) -> bool {
+/// Constant coefficients and base over the thread index and its floors
+/// and remainders alone.
+fn on_tid_only(a: &AffineExpr) -> bool {
     a.base.as_const().is_some()
         && a.terms.iter().all(|(v, c)| {
             c.as_const().is_some()
                 && matches!(v, Var::Tid(_) | Var::FloorDiv(..) | Var::Mod(..))
-                && depends_on_lane(v)
+                && v.depends_on_tid()
         })
 }
 
@@ -591,13 +582,11 @@ impl Constraint {
     /// The value of the form's `%ctaid` terms at the CTA `c`.
     fn cta_part(&self, c: [i64; 3]) -> i128 {
         let index = |v: &Var| match v {
-            Var::Ctaid(Axis::X) => c[0],
-            Var::Ctaid(Axis::Y) => c[1],
-            Var::Ctaid(Axis::Z) => c[2],
+            Var::Ctaid(a) => c[*a as usize],
             _ => 0,
         };
         (self.form.terms.iter())
-            .filter(|(v, _)| on_cta(v))
+            .filter(|(v, _)| v.depends_on_ctaid())
             .map(|(v, k)| i128::from(k.as_const().unwrap_or(0)) * i128::from(v.eval(&index)))
             .sum()
     }
@@ -669,8 +658,8 @@ impl Pred {
     pub(crate) fn lane_masks(&self, shape: [u32; 3], cta: Option<[i64; 3]>) -> LaneMasks {
         let env = Env { cta, trip: None };
         let lane = |(may, must): (u32, u32), t: i64| {
-            let bit = 1 << (t % 32);
-            match self.eval_as(thread(t, shape), shape, Leader::Lowest, env) {
+            let bit = 1 << (t % WARP_SZ);
+            match self.eval_as(to_3d(t, shape), shape, Leader::Lowest, env) {
                 Tri::Yes => (may | bit, must | bit),
                 Tri::Maybe => (may | bit, must),
                 Tri::No => (may, must),
@@ -704,7 +693,7 @@ impl Pred {
         weight: &dyn Fn([i64; 3]) -> Option<u64>,
     ) -> Option<(u64, u64)> {
         let (ctas, rest) = self.cta_keys(shape, grid, read)?;
-        let threads: u64 = shape.iter().map(|&n| u64::from(n)).product();
+        let threads = threads(shape) as u64;
         let mut groups = HashMap::new();
         for (c, key) in ctas {
             let group = match groups.entry(key) {
@@ -749,7 +738,7 @@ impl Pred {
             return None;
         }
         let (ctas, rest) = self.cta_keys(shape, grid, [false; 3])?;
-        let threads: u64 = shape.iter().map(|&n| u64::from(n)).product();
+        let threads = threads(shape) as u64;
         let (mut keys, mut classes) = (HashMap::new(), Vec::<(LaneMasks, u64)>::new());
         for (c, key) in ctas {
             let i = *keys.entry(key).or_insert_with(|| {
@@ -793,15 +782,13 @@ impl Pred {
         if read > CTA_BUDGET {
             return None;
         }
-        let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
-            .map(|l| thread(l, shape))
-            .collect();
+        let threads: Vec<[i64; 3]> = (0..threads(shape)).map(|l| to_3d(l, shape)).collect();
         if threads.is_empty() {
             return None;
         }
         let lanes: Vec<(i128, i128)> = (over.iter())
             .map(|k| {
-                (threads.iter().map(|&t| at(&k.form, &lanes(t))))
+                (threads.iter().map(|&t| k.form.eval(&at_tid(t))))
                     .try_fold((i128::MAX, i128::MIN), |(lo, hi), x| {
                         Some((lo.min(x?), hi.max(x?)))
                     })
@@ -843,18 +830,16 @@ impl Pred {
     /// lane evaluations.
     pub fn over_trips(&self, shape: [u32; 3], l: LoopId, n: u64) -> Option<[(u64, u64); 2]> {
         let over = self.constraints(|k| k.trip.is_some());
-        let threads: Vec<[i64; 3]> = (0..shape.iter().map(|&n| i64::from(n)).product())
-            .map(|t| thread(t, shape))
-            .collect();
+        let threads: Vec<[i64; 3]> = (0..threads(shape)).map(|t| to_3d(t, shape)).collect();
         let end = i128::from(n) + 1;
         let mut cuts = vec![1, end];
         for k in over.iter().filter(|k| k.trip.is_some_and(|(m, _)| m == l)) {
             let c = i128::from(k.form.terms.get(&Var::Iteration(l))?.as_const()?);
             for &t in &threads {
                 let (num, den) = if c < 0 {
-                    (at(&k.form, &lanes(t))?, -c)
+                    (k.form.eval(&at_tid(t))?, -c)
                 } else {
-                    (-at(&k.form, &lanes(t))?, c)
+                    (-k.form.eval(&at_tid(t))?, c)
                 };
                 let (lo, hi) = (num.div_euclid(den), -(-num).div_euclid(den));
                 cuts.extend([lo, lo + 1, hi, hi + 1].map(|x| x.clamp(1, end)));
@@ -900,7 +885,7 @@ impl Pred {
             let lanes_as = |leader: Leader| {
                 let (mut yes, mut maybe) = (0, 0);
                 for l in lanes.clone() {
-                    match self.eval_as(thread(l, shape), shape, leader, env) {
+                    match self.eval_as(to_3d(l, shape), shape, leader, env) {
                         Tri::Yes => yes += 1,
                         Tri::Maybe => maybe += 1,
                         Tri::No => {}
@@ -914,10 +899,10 @@ impl Pred {
                     (yes, yes + maybe)
                 }
                 Some(active) => {
-                    let state = |l| active.eval_as(thread(l, shape), shape, Leader::Lowest, env);
+                    let state = |l| active.eval_as(to_3d(l, shape), shape, Leader::Lowest, env);
                     let certain = lanes.clone().any(|l| state(l) == Tri::Yes);
                     (lanes.clone().filter(|&l| state(l) != Tri::No))
-                        .map(Leader::Lane)
+                        .map(Leader::Thread)
                         .chain((!certain).then_some(Leader::Nobody))
                         .map(lanes_as)
                         .fold((u32::MAX, 0), |(min, max), (yes, maybe)| {
@@ -1483,7 +1468,7 @@ fn condition(
     }
     let bound = |op| {
         let x = affine.operand_at(op, def, 0).ok()?;
-        Some(affine.bindings.map_or(x.clone(), |m| x.bind(m)))
+        Some(affine.bind(&x))
     };
     let (a, b) = (bound(ops[1])?, bound(ops[2])?);
     let form = a.clone() - b.clone();
@@ -1521,13 +1506,13 @@ fn condition(
             Pred::False
         });
     }
-    let lanes = form.terms.keys().any(depends_on_lane);
+    let on_tid = form.depends_on_tid();
     let trip = per_trip(affine, &form, def).filter(|_| comparable(&a, &b));
     let def_uniform = affine.uniformity().def_uniformity(def);
-    let kept = (!lanes && trip.is_none() && comparable(&a, &b)).then(|| (form.clone(), cmp));
-    let p = if !lanes && trip.is_none() && def_uniform != Ok(Uniform::Cta) {
+    let kept = (!on_tid && trip.is_none() && comparable(&a, &b)).then(|| (form.clone(), cmp));
+    let p = if !on_tid && trip.is_none() && def_uniform != Ok(Uniform::Cta) {
         None
-    } else if on_lane_only(&form) && comparable(&a, &b) {
+    } else if on_tid_only(&form) && comparable(&a, &b) {
         Some(Pred::Cmp(Constraint {
             form,
             cmp,
@@ -1548,7 +1533,7 @@ fn condition(
         })
     {
         Some(p)
-    } else if !lanes {
+    } else if !on_tid {
         Some(Pred::uniform(Uniform::Cta, AtomKey::Def(def)))
     } else {
         None
@@ -1584,7 +1569,7 @@ fn per_trip(
         .blocks
         .binary_search(&affine.data.block_of(def))
         .is_ok();
-    (on_lane_only(&rest) && inside)
+    (on_tid_only(&rest) && inside)
         .then_some((*l, (c.min(c * i128::from(n)), c.max(c * i128::from(n)))))
 }
 

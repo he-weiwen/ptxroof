@@ -199,6 +199,25 @@ impl Var {
         }
     }
 
+    /// The thread index (`%tid`), or a floor, remainder or swizzle of it.
+    pub fn depends_on_tid(&self) -> bool {
+        match self {
+            Var::Tid(_) => true,
+            Var::FloorDiv(inner, _) | Var::Mod(inner, _) => inner.depends_on_tid(),
+            Var::Swizzle(b) => b.columns.iter().any(|&c| c != 0),
+            Var::Ctaid(_) | Var::Iteration(_) | Var::Unknown(_) => false,
+        }
+    }
+
+    /// The CTA index (`%ctaid`), or a floor or remainder of it.
+    pub fn depends_on_ctaid(&self) -> bool {
+        match self {
+            Var::Ctaid(_) => true,
+            Var::FloorDiv(inner, _) | Var::Mod(inner, _) => inner.depends_on_ctaid(),
+            Var::Tid(_) | Var::Iteration(_) | Var::Unknown(_) | Var::Swizzle(_) => false,
+        }
+    }
+
     /// The variable's value, `leaf` giving each thread or CTA index's,
     /// counter's and uniform value's.
     pub fn eval(&self, leaf: &dyn Fn(&Var) -> i64) -> i64 {
@@ -218,6 +237,15 @@ impl Var {
             Var::Swizzle(b) => b.render(name),
             leaf => name(leaf),
         }
+    }
+}
+
+/// Each thread index at its value in thread `tid`, every other variable
+/// at 0.
+pub fn at_tid(tid: [i64; 3]) -> impl Fn(&Var) -> i64 {
+    move |v| match v {
+        Var::Tid(a) => tid[*a as usize],
+        _ => 0,
     }
 }
 
@@ -419,7 +447,7 @@ impl AffineExpr {
             return Some((q, AffineExpr::constant(0), rem));
         };
         if k >= c {
-            let (lo, hi) = var_range(v, bound).or_else(|| own_range(v))?;
+            let (lo, hi) = var_range(v, bound)?;
             let at = |x: i64| i128::from(c) * i128::from(x) + i128::from(k);
             return (at(lo) >= 0 && at(hi) < i128::from(d)).then(|| {
                 let r = AffineExpr::term(v.clone(), SymExpr::Const(c)) + rem;
@@ -471,6 +499,22 @@ impl AffineExpr {
         self.is_symbolic_or_constant()
             .then(|| self.base.as_const())
             .flatten()
+    }
+
+    /// A variable of the form depends on the thread index.
+    pub fn depends_on_tid(&self) -> bool {
+        self.terms.keys().any(Var::depends_on_tid)
+    }
+
+    /// The form with each variable at `leaf`'s value, a symbol and a term
+    /// of symbolic coefficient at 0, in i128 so that a comparison of
+    /// 64-bit operands reads exactly; `None` past i128.
+    pub fn eval(&self, leaf: &dyn Fn(&Var) -> i64) -> Option<i128> {
+        (self.terms.iter()).try_fold(i128::from(self.base.const_part()), |x, (v, c)| {
+            let term =
+                i128::from(c.as_const().unwrap_or(0)).checked_mul(i128::from(v.eval(leaf)))?;
+            x.checked_add(term)
+        })
     }
 }
 
@@ -772,28 +816,17 @@ fn group_range(
     })
 }
 
-/// A variable's least and greatest value, a floor or a mod from its
-/// operand's.
-/// The values a remainder, or a floor of one, takes whatever its operand.
-fn own_range(v: &Var) -> Option<(i64, i64)> {
-    match v {
-        Var::Mod(_, m) => Some((0, m - 1)),
-        Var::FloorDiv(inner, d) => {
-            own_range(inner).map(|(lo, hi)| (lo.div_euclid(*d), hi.div_euclid(*d)))
-        }
-        Var::Swizzle(b) => Some(b.range(None)),
-        _ => None,
-    }
-}
-
+/// A variable's least and greatest value, a floor from its operand's
+/// and a remainder by m from its operand's where that lies in [0, m),
+/// else [0, m − 1] whatever its operand.
 fn var_range(v: &Var, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i64, i64)> {
     match v {
         Var::FloorDiv(inner, d) => {
             let (lo, hi) = var_range(inner, bound)?;
             Some((lo.div_euclid(*d), hi.div_euclid(*d)))
         }
-        Var::Mod(inner, m) => match var_range(inner, bound)? {
-            (lo, hi) if lo >= 0 && hi < *m => Some((lo, hi)),
+        Var::Mod(inner, m) => match var_range(inner, bound) {
+            Some((lo, hi)) if lo >= 0 && hi < *m => Some((lo, hi)),
             _ => Some((0, m - 1)),
         },
         Var::Swizzle(b) => Some(b.range(bound(&Var::Tid(Axis::X)))),

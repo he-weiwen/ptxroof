@@ -147,8 +147,7 @@ impl AffineAnalysis<'_> {
                     (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.var_bounds(v))))
                         .ok_or_else(|| refuse(&x, "mod"))
                 };
-                let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
-                let range = bound.range(&|v| self.var_bounds(v));
+                let range = self.range(&affine);
                 let all = konst as u64 & u64::MAX >> (64 - width);
                 let (mut bits, mut sum) = (all, AffineExpr::constant(0));
                 let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
@@ -194,9 +193,8 @@ impl AffineAnalysis<'_> {
                 // LLVM writes an add as `or` when no bit is set on both
                 // sides (its `or disjoint`, which PTX does not keep).
                 let (a, b) = (arg(1)?, arg(2)?);
-                let bound = |x: &AffineExpr| self.bindings.map_or(x.clone(), |m| x.bind(m));
                 let largest = |v: &Var| self.var_bounds(v).map(|(_, hi)| hi);
-                match bound(&a).may_set(&largest) & bound(&b).may_set(&largest) {
+                match self.bind(&a).may_set(&largest) & self.bind(&b).may_set(&largest) {
                     0 => Ok(a + b),
                     both => Err(format!(
                         "or whose sides may both set bit {}",
@@ -208,8 +206,7 @@ impl AffineAnalysis<'_> {
             // PTX ISA §9.7.8.3: a bitwise exclusive-or, of two xors of
             // thread index fields their xor.
             (Opcode::Xor, _) if ops.len() == 3 => {
-                let bits =
-                    |x: AffineExpr| self.bindings.map_or(x.clone(), |m| x.bind(m)).xor_swizzle();
+                let bits = |x: AffineExpr| self.bind(&x).xor_swizzle();
                 match (arg(1).map(bits), arg(2).map(bits)) {
                     (Ok(Some(x)), Ok(Some(y))) => Ok(x.xor(&y).affine()),
                     _ => Err(self.unread(instr, def)),
@@ -346,25 +343,25 @@ impl AffineAnalysis<'_> {
                 // with %tid.x replaced by 32·⌊%tid.x/32⌋ + c; a warp-uniform
                 // a (a function of ⌊%tid.x/32⌋) is unchanged.
                 let a = arg(1)?;
-                let Some(c) = self.constant(&arg(2)?).filter(|c| (0..32).contains(c)) else {
+                let Some(c) = self.constant(&arg(2)?).filter(|c| (0..WARP_SZ).contains(c)) else {
                     return Err("shfl.idx from a non-constant lane".into());
                 };
-                if self.constant(&arg(3)?) != Some(31) {
+                if self.constant(&arg(3)?) != Some(WARP_SZ - 1) {
                     return Err("shfl.idx in segments of the warp or a clamped lane".into());
                 }
-                let warp = |v: Var| AffineExpr::var(Var::FloorDiv(Box::new(v), 32));
+                let warp = |v: Var| AffineExpr::var(Var::FloorDiv(Box::new(v), WARP_SZ));
                 let lane = |v: &Var| -> Option<AffineExpr> {
                     match v {
                         Var::Tid(Axis::X) => Some(
-                            warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32))
+                            warp(Var::Tid(Axis::X)).scale(SymExpr::Const(WARP_SZ))
                                 + AffineExpr::constant(c),
                         ),
                         Var::FloorDiv(inner, d) if **inner == Var::Tid(Axis::X) => {
-                            if d % 32 == 0 {
+                            if d % WARP_SZ == 0 {
                                 Some(AffineExpr::var(v.clone()))
-                            } else if 32 % d == 0 {
+                            } else if WARP_SZ % d == 0 {
                                 Some(
-                                    warp(Var::Tid(Axis::X)).scale(SymExpr::Const(32 / d))
+                                    warp(Var::Tid(Axis::X)).scale(SymExpr::Const(WARP_SZ / d))
                                         + AffineExpr::constant(c / d),
                                 )
                             } else {
@@ -372,15 +369,15 @@ impl AffineAnalysis<'_> {
                             }
                         }
                         Var::Mod(inner, m) if **inner == Var::Tid(Axis::X) => {
-                            if 32 % m == 0 {
+                            if WARP_SZ % m == 0 {
                                 Some(AffineExpr::constant(c % m))
-                            } else if m % 32 == 0 {
+                            } else if m % WARP_SZ == 0 {
                                 let w = Var::Mod(
-                                    Box::new(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 32)),
-                                    m / 32,
+                                    Box::new(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), WARP_SZ)),
+                                    m / WARP_SZ,
                                 );
                                 Some(
-                                    AffineExpr::var(w).scale(SymExpr::Const(32))
+                                    AffineExpr::var(w).scale(SymExpr::Const(WARP_SZ))
                                         + AffineExpr::constant(c),
                                 )
                             } else {
@@ -388,7 +385,7 @@ impl AffineAnalysis<'_> {
                             }
                         }
                         Var::Tid(_) => None,
-                        other if depends_on_lane(other) => None,
+                        other if other.depends_on_tid() => None,
                         other => Some(AffineExpr::var(other.clone())),
                     }
                 };
@@ -500,7 +497,7 @@ impl AffineAnalysis<'_> {
         };
         let read = |id, at| {
             let x = self.operand_at(id, at, depth + 1).ok()?;
-            Some(self.bindings.map_or(x.clone(), |m| x.bind(m)))
+            Some(self.bind(&x))
         };
         let diff = read(sops[1], op)? - read(sops[2], op)?;
         let &[(v, k)] = diff.terms.iter().collect::<Vec<_>>().as_slice() else {
@@ -634,8 +631,7 @@ impl AffineAnalysis<'_> {
     /// `a`'s range over the known launch and constant trip counts lies in
     /// [lo, hi), or is unknown.
     fn within(&self, a: &AffineExpr, (lo, hi): (i128, i128)) -> bool {
-        let bound = self.bindings.map_or(a.clone(), |m| a.bind(m));
-        (bound.range(&|v| self.var_bounds(v))).is_none_or(|(x, y)| lo <= x && y < hi)
+        self.range(a).is_none_or(|(x, y)| lo <= x && y < hi)
     }
 
     /// A 16- or 32-bit `add`, `sub`, `neg`, `not`, `mul.lo`, `mad.lo`, `shl` or

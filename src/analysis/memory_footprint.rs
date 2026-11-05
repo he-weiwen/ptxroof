@@ -8,12 +8,12 @@
 //! aligned, and which its pointer's alignment and its terms'
 //! coefficients allow, is tried and the count is reported as a range.
 
-use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
-use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, thread, warps_of};
+use crate::analysis::affine::affine_expr::{AffineExpr, Var, at_tid};
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::thread_participation::Pred;
 use crate::ptx::modifier::Space;
+use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_3d, warps_of};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const SECTOR: i64 = 32;
@@ -44,13 +44,10 @@ pub fn offsets_fit(
 /// A thread index's values in a block of `shape`.
 pub fn in_block(shape: [u32; 3]) -> impl Fn(&Var) -> Option<(i64, i64)> {
     move |v| {
-        let n = match v {
-            Var::Tid(Axis::X) => shape[0],
-            Var::Tid(Axis::Y) => shape[1],
-            Var::Tid(Axis::Z) => shape[2],
-            _ => return None,
+        let Var::Tid(a) = v else {
+            return None;
         };
-        Some((0, i64::from(n) - 1))
+        Some((0, i64::from(shape[*a as usize]) - 1))
     }
 }
 
@@ -145,7 +142,7 @@ fn uniform_residues(a: &AffineExpr, pointer: Option<(usize, u32)>) -> (i64, i64)
         a.abs()
     };
     let mut g = SECTOR;
-    for (_, k) in a.terms.iter().filter(|(v, _)| !depends_on_lane(v)) {
+    for (_, k) in a.terms.iter().filter(|(v, _)| !v.depends_on_tid()) {
         g = gcd(g, k.as_const().unwrap_or(1));
     }
     let summands = match &a.base {
@@ -329,7 +326,7 @@ fn warp_lanes(
 ) -> Result<(WarpLanes, i64), String> {
     let mut lane_terms: Vec<(&Var, i64)> = Vec::new();
     for (v, c) in &a.terms {
-        if !depends_on_lane(v) {
+        if !v.depends_on_tid() {
             continue;
         }
         match c.as_const() {
@@ -337,22 +334,21 @@ fn warp_lanes(
             None => return Err(format!("the coefficient of {v} is {c}; bind it")),
         }
     }
-    let [nx, ny, nz] = shape.map(i64::from);
-    let threads = nx * ny * nz;
+    let threads = threads(shape);
     if threads == 0 {
         return Err("block shape unknown: no .reqntid; pass --launch".to_owned());
     }
-    if !offsets_fit(a, depends_on_lane, &in_block(shape)) {
+    if !offsets_fit(a, Var::depends_on_tid, &in_block(shape)) {
         return Err("lane offsets reach 2^62 bytes".to_owned());
     }
     let warps: WarpLanes = warps_of(shape)
         .map(|warp| {
             let first = warp.start;
-            warp.map(|t| (t - first, thread(t, shape)))
+            warp.map(|t| (t - first, to_3d(t, shape)))
                 .filter(|&(_, tid)| executes(tid))
                 .map(|(lane, tid)| {
                     let offset = (lane_terms.iter())
-                        .map(|(v, k)| k * v.eval(&lanes(tid)))
+                        .map(|(v, k)| k * v.eval(&at_tid(tid)))
                         .sum();
                     (lane, offset)
                 })
@@ -496,8 +492,7 @@ pub fn loop_bytes(
     forms: &[AccessForm],
     pointer: impl Fn(&AffineExpr) -> Option<(usize, u32)>,
 ) -> Option<LoopBytes> {
-    let [nx, ny, nz] = shape.map(i64::from);
-    let threads = nx * ny * nz;
+    let threads = threads(shape);
     if threads == 0 {
         return None;
     }
@@ -519,7 +514,7 @@ pub fn loop_bytes(
         let bytes = f.bytes?;
         let set = &f.set;
         let lanes = (0..threads)
-            .filter(|&t| set.contains(thread(t, shape), shape))
+            .filter(|&t| set.contains(to_3d(t, shape), shape))
             .count() as u64;
         let per_trip = (set.trip_loop() == Some(id) && set.elect_active().is_none())
             .then(|| set.over_trips(shape, id, u64::try_from(trips).ok()?))
@@ -537,9 +532,7 @@ pub fn loop_bytes(
             }
         };
         requested = requested.checked_add(u64::from(bytes).checked_mul(runs)?)?;
-        let varies = |v: &Var| {
-            crate::analysis::affine::lane_eval::depends_on_lane(v) || v.counter() == Some(id)
-        };
+        let varies = |v: &Var| v.depends_on_tid() || v.counter() == Some(id);
         let bound = |v: &Var| match v {
             Var::Iteration(l) if *l == id => Some((0, trips)),
             _ => in_block(shape)(v),
@@ -563,7 +556,8 @@ pub fn loop_bytes(
         }
         // One sector pattern per warp and trip: within the budget the
         // intervals keep below.
-        if !stepped.is_empty() && trips.saturating_mul((threads + 31) / 32) > 1 << 22 {
+        if !stepped.is_empty() && trips.saturating_mul((threads + WARP_SZ - 1) / WARP_SZ) > 1 << 22
+        {
             return None;
         }
         let shift = |k: i64| -> i64 {
@@ -572,35 +566,31 @@ pub fn loop_bytes(
                     .map(|(v, c)| c * v.eval(&|_| k))
                     .sum::<i64>()
         };
-        if form.terms.iter().any(|(v, c)| {
-            crate::analysis::affine::lane_eval::depends_on_lane(v) && c.as_const().is_none()
-        }) {
+        if form
+            .terms
+            .iter()
+            .any(|(v, c)| v.depends_on_tid() && c.as_const().is_none())
+        {
             return None;
         }
         let bytes = i64::from(bytes);
         // Which lane an election picks is unspecified: a lane-dependent
         // address touched by the elected lane is a bound.
-        if f.set.elect_active().is_some()
-            && form
-                .terms
-                .keys()
-                .any(crate::analysis::affine::lane_eval::depends_on_lane)
-        {
+        if f.set.elect_active().is_some() && form.depends_on_tid() {
             at_most = true;
             requested_at_most = true;
         }
         let mut key = form.clone();
-        key.terms.retain(|v, _| {
-            !crate::analysis::affine::lane_eval::depends_on_lane(v) && v.counter() != Some(id)
-        });
+        key.terms
+            .retain(|v, _| !v.depends_on_tid() && v.counter() != Some(id));
         key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
         let intervals = per_base.entry(key.clone()).or_default();
         for warp in warps_of(shape) {
             let offsets: Vec<i64> = warp
-                .map(|t| thread(t, shape))
+                .map(|t| to_3d(t, shape))
                 .filter(|&tid| set.contains(tid, shape))
-                .map(|tid| crate::analysis::affine::lane_eval::eval_lane(form, tid))
-                .collect();
+                .map(|tid| i64::try_from(form.eval(&at_tid(tid))?).ok())
+                .collect::<Option<_>>()?;
             let align = i64::from(f.align);
             let pats = patterns.entry(key.clone()).or_default();
             if offsets.is_empty() {
@@ -614,11 +604,11 @@ pub fn loop_bytes(
             }
         }
         for t in 0..threads {
-            let tid = thread(t, shape);
+            let tid = to_3d(t, shape);
             if !set.contains(tid, shape) {
                 continue;
             }
-            let base = crate::analysis::affine::lane_eval::eval_lane(form, tid);
+            let base = i64::try_from(form.eval(&at_tid(tid))?).ok()?;
             if intervals.len() as i64 + trips > 1 << 22 {
                 return None;
             }
@@ -690,6 +680,7 @@ fn union_len(mut intervals: Vec<(i64, i64)>) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::affine::affine_expr::Axis;
     use crate::analysis::affine::sym_expr::SymbolicConstant;
 
     fn tid() -> AffineExpr {
@@ -924,8 +915,8 @@ mod tests {
         let a = tid().scale(c(k))
             + AffineExpr::var(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 2)).scale(c(-2 * k));
         assert_eq!(a.range(&in_block([8, 1, 1])), Some((0, i128::from(k))));
-        assert!(!offsets_fit(&a, depends_on_lane, &in_block([8, 1, 1])));
-        assert!(offsets_fit(&a, depends_on_lane, &in_block([2, 1, 1])));
+        assert!(!offsets_fit(&a, Var::depends_on_tid, &in_block([8, 1, 1])));
+        assert!(offsets_fit(&a, Var::depends_on_tid, &in_block([2, 1, 1])));
     }
 
     #[test]

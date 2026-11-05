@@ -44,7 +44,6 @@
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
 use crate::analysis::affine::exit_limit::{below_zero, exit_limit};
 use crate::analysis::affine::induction_variables::{InductionVariable, Step, induction_variables};
-use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
@@ -62,6 +61,7 @@ use crate::ptx::modifier::{
 };
 use crate::ptx::register_effects::{registers, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register};
+use crate::ptx::thread_hierarchy::WARP_SZ;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::cell::{Cell, RefCell};
@@ -272,12 +272,20 @@ impl<'a> AffineAnalysis<'a> {
         f(a.clone()).or_else(|| f(a.bind(self.bindings?)))
     }
 
+    /// `a` under the bindings, if there are any.
+    pub(crate) fn bind(&self, a: &AffineExpr) -> AffineExpr {
+        self.bindings.map_or(a.clone(), |m| a.bind(m))
+    }
+
+    /// `a`'s range under the bindings, over the known launch and
+    /// constant trip counts.
+    pub(crate) fn range(&self, a: &AffineExpr) -> Option<(i128, i128)> {
+        self.bind(a).range(&|v| self.var_bounds(v))
+    }
+
     /// A constant, after the bindings if there are any.
     pub(crate) fn constant(&self, a: &AffineExpr) -> Option<i64> {
-        match self.bindings {
-            Some(b) => a.bind(b).as_const(),
-            None => a.as_const(),
-        }
+        self.bind(a).as_const()
     }
 
     pub(crate) fn operand_at(
@@ -320,9 +328,9 @@ impl<'a> AffineAnalysis<'a> {
             // warp", and §3.1: a warp "contains threads of consecutive,
             // increasing thread IDs with the first warp containing
             // thread 0"; in a one-dimensional block that is %tid.x mod 32.
-            SpecialReg::Scalar(SpecialScalar::Laneid) if self.one_dimensional() => {
-                Ok(AffineExpr::var(Var::Mod(Box::new(Var::Tid(Axis::X)), 32)))
-            }
+            SpecialReg::Scalar(SpecialScalar::Laneid) if self.one_dimensional() => Ok(
+                AffineExpr::var(Var::Mod(Box::new(Var::Tid(Axis::X)), WARP_SZ)),
+            ),
             // One value for the CTA (the launch shape, the cluster, the
             // shared memory sizes): a symbol, bound when known.
             _ if special_register(reg) == Some(SpecialRegister::PerCta) => Ok(
@@ -561,7 +569,7 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
     ) -> Result<AffineExpr, UnknownReason> {
         let a = self.operand_at(base, pos, 0)? + AffineExpr::constant(offset);
-        let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
+        let a = self.bind(&a);
         self.alike(&a, pos, Uniform::Warp, None)?;
         Ok(a)
     }
@@ -756,14 +764,9 @@ impl<'a> AffineAnalysis<'a> {
     /// `%ctaid` below a bound grid, a counter in [1, n].
     pub(crate) fn var_bounds(&self, v: &Var) -> Option<(i64, i64)> {
         let shape = |vector: SpecialVector, axis: &Axis| {
-            let i = match axis {
-                Axis::X => 0,
-                Axis::Y => 1,
-                Axis::Z => 2,
-            };
-            let n = *self
-                .bindings?
-                .get(&SymbolicConstant::SpecialReg(vector.components()[i]))?;
+            let n = *self.bindings?.get(&SymbolicConstant::SpecialReg(
+                vector.components()[*axis as usize],
+            ))?;
             (n >= 1).then_some((0, n - 1))
         };
         match v {
