@@ -1483,7 +1483,7 @@ fn condition(
     }
     let bound = |op| {
         let x = affine.operand_at(op, def, 0).ok()?;
-        Some(affine.bindings.map_or(x.clone(), |m| x.bind(m)))
+        Some(affine.bind(&x))
     };
     let (a, b) = (bound(ops[1])?, bound(ops[2])?);
     let form = a.clone() - b.clone();

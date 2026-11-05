@@ -147,8 +147,7 @@ impl AffineAnalysis<'_> {
                     (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.var_bounds(v))))
                         .ok_or_else(|| refuse(&x, "mod"))
                 };
-                let bound = self.bindings.map_or(affine.clone(), |m| affine.bind(m));
-                let range = bound.range(&|v| self.var_bounds(v));
+                let range = self.range(&affine);
                 let all = konst as u64 & u64::MAX >> (64 - width);
                 let (mut bits, mut sum) = (all, AffineExpr::constant(0));
                 let held = range.map(|(lo, hi)| lo >= 0 && hi >> (width - 1) == 0);
@@ -194,9 +193,8 @@ impl AffineAnalysis<'_> {
                 // LLVM writes an add as `or` when no bit is set on both
                 // sides (its `or disjoint`, which PTX does not keep).
                 let (a, b) = (arg(1)?, arg(2)?);
-                let bound = |x: &AffineExpr| self.bindings.map_or(x.clone(), |m| x.bind(m));
                 let largest = |v: &Var| self.var_bounds(v).map(|(_, hi)| hi);
-                match bound(&a).may_set(&largest) & bound(&b).may_set(&largest) {
+                match self.bind(&a).may_set(&largest) & self.bind(&b).may_set(&largest) {
                     0 => Ok(a + b),
                     both => Err(format!(
                         "or whose sides may both set bit {}",
@@ -208,8 +206,7 @@ impl AffineAnalysis<'_> {
             // PTX ISA §9.7.8.3: a bitwise exclusive-or, of two xors of
             // thread index fields their xor.
             (Opcode::Xor, _) if ops.len() == 3 => {
-                let bits =
-                    |x: AffineExpr| self.bindings.map_or(x.clone(), |m| x.bind(m)).xor_swizzle();
+                let bits = |x: AffineExpr| self.bind(&x).xor_swizzle();
                 match (arg(1).map(bits), arg(2).map(bits)) {
                     (Ok(Some(x)), Ok(Some(y))) => Ok(x.xor(&y).affine()),
                     _ => Err(self.unread(instr, def)),
@@ -500,7 +497,7 @@ impl AffineAnalysis<'_> {
         };
         let read = |id, at| {
             let x = self.operand_at(id, at, depth + 1).ok()?;
-            Some(self.bindings.map_or(x.clone(), |m| x.bind(m)))
+            Some(self.bind(&x))
         };
         let diff = read(sops[1], op)? - read(sops[2], op)?;
         let &[(v, k)] = diff.terms.iter().collect::<Vec<_>>().as_slice() else {
@@ -634,8 +631,7 @@ impl AffineAnalysis<'_> {
     /// `a`'s range over the known launch and constant trip counts lies in
     /// [lo, hi), or is unknown.
     fn within(&self, a: &AffineExpr, (lo, hi): (i128, i128)) -> bool {
-        let bound = self.bindings.map_or(a.clone(), |m| a.bind(m));
-        (bound.range(&|v| self.var_bounds(v))).is_none_or(|(x, y)| lo <= x && y < hi)
+        self.range(a).is_none_or(|(x, y)| lo <= x && y < hi)
     }
 
     /// A 16- or 32-bit `add`, `sub`, `neg`, `not`, `mul.lo`, `mad.lo`, `shl` or

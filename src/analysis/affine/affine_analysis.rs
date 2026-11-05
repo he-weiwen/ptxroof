@@ -272,12 +272,20 @@ impl<'a> AffineAnalysis<'a> {
         f(a.clone()).or_else(|| f(a.bind(self.bindings?)))
     }
 
+    /// `a` under the bindings, if there are any.
+    pub(crate) fn bind(&self, a: &AffineExpr) -> AffineExpr {
+        self.bindings.map_or(a.clone(), |m| a.bind(m))
+    }
+
+    /// `a`'s range under the bindings, over the known launch and
+    /// constant trip counts.
+    pub(crate) fn range(&self, a: &AffineExpr) -> Option<(i128, i128)> {
+        self.bind(a).range(&|v| self.var_bounds(v))
+    }
+
     /// A constant, after the bindings if there are any.
     pub(crate) fn constant(&self, a: &AffineExpr) -> Option<i64> {
-        match self.bindings {
-            Some(b) => a.bind(b).as_const(),
-            None => a.as_const(),
-        }
+        self.bind(a).as_const()
     }
 
     pub(crate) fn operand_at(
@@ -561,7 +569,7 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
     ) -> Result<AffineExpr, UnknownReason> {
         let a = self.operand_at(base, pos, 0)? + AffineExpr::constant(offset);
-        let a = self.bindings.map_or(a.clone(), |b| a.bind(b));
+        let a = self.bind(&a);
         self.alike(&a, pos, Uniform::Warp, None)?;
         Ok(a)
     }
