@@ -2255,6 +2255,7 @@ tests/fixtures/micro/uniform_counter.ptx:156	warp * × lane *
 tests/fixtures/micro/uniform_counter.ptx:159	warp * × lane *
 tests/fixtures/micro/uniform_counter.ptx:171	warp * × lane *
 tests/fixtures/micro/uniform_counter.ptx:200	warp * × lane *
+tests/fixtures/micro/uniform_mod_range.ptx:26	warp * × lane *
 tests/fixtures/micro/unknown_in_loop.ptx:29	runs when param_1 ≥ 1 (CTA-uniform, branch at line 27)
 tests/fixtures/micro/unpack.ptx:43	warp * × lane *
 tests/fixtures/micro/unpack.ptx:72	warp * × lane *

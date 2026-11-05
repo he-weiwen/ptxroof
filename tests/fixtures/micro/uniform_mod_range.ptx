@@ -1,0 +1,37 @@
+//
+// HAND-WRITTEN: a word loaded from global memory, the same for the CTA,
+// `rem.u32` 8 is 0 to 7 (PTX ISA §9.7.1.10: "Divides a by b, store the
+// remainder in d"), so `setp.gt.u32` of it with 7 is false on every
+// thread, its store on none, and `setp.ge.u32` of it with 0 true on
+// every thread, its store on all 32. ptxas 13.4 (sm_89) keeps both
+// tests: `ISETP.GT.U32.AND P0, PT, R7, 0x7, PT`, `@P0 STG.E
+// [R2.64+0x4], R7`, `ISETP.GE.U32.AND P1, PT, R7, RZ, PT`, `@P1 STG.E
+// [R2.64+0x8], R7`. The third store's address reads the remainder as
+// the uniform variable mod 8, of range [0, 7]; the tracer decides
+// neither test.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_uniform_mod_range(
+	.param .u64 micro_uniform_mod_range_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_uniform_mod_range_param_0];
+	ld.global.u32 	%r1, [%rd1];
+	rem.u32 	%r2, %r1, 8;
+	setp.gt.u32 	%p1, %r2, 7;
+	@%p1 st.global.u32 	[%rd1+4], %r2;
+	setp.ge.u32 	%p2, %r2, 0;
+	@%p2 st.global.u32 	[%rd1+8], %r2;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3+16], %r2;
+	ret;
+}

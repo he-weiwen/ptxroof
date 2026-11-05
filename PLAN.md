@@ -918,6 +918,15 @@ output_tallies` rewrites it.
   `micro/cp_async_ignore_src.ptx` line 55 reads its source on 80
   threads over the launch, exactly, with sectors `<= 51`, where 40 are
   measured.
+- **A comparison free of `%tid` and `%ctaid` is not decided by its
+  range.** The thread sets test a form's range only through
+  `across_ctas`, for a form over `%tid` and `%ctaid`
+  (`src/analysis/thread_participation.rs`, `condition`); a comparison
+  of a value read as a uniform variable is an unknown selector even
+  where its range decides it (`micro/uniform_mod_range.ptx`: a loaded
+  word `rem.u32` 8, `uniform(…) mod 8` of range [0, 7], compared `gt` 7
+  and `ge` 0, guards a store on no thread and one on all 32; both read
+  `exec <= 32/CTA`, `micro-uniform-mod-range.test`).
 - **A test both arms of an unknown branch repeat leaves a bound.** Read
   in three-valued logic, `(? and %tid.x < 16) or (? and %tid.x < 16)`
   is not `%tid.x < 16`: the block both arms reach counts `<= 16`
