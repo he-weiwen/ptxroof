@@ -44,7 +44,6 @@
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
 use crate::analysis::affine::exit_limit::{below_zero, exit_limit};
 use crate::analysis::affine::induction_variables::{InductionVariable, Step, induction_variables};
-use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;

@@ -19,7 +19,7 @@
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::{AffineExpr, Axis, Var};
-use crate::analysis::affine::lane_eval::{depends_on_lane, lanes, linear, thread, warps_of};
+use crate::analysis::affine::lane_eval::{lanes, linear, thread, warps_of};
 use crate::analysis::affine::sym_expr::SymExpr;
 use crate::analysis::control_flow::dominators::{DominanceInfo, dominators, dominators_from};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
@@ -318,9 +318,7 @@ impl Pred {
         match self {
             _ if self.uniform_only() => true,
             Pred::True | Pred::False | Pred::Uniform(..) => true,
-            Pred::Cmp(c) => {
-                (c.cta.is_none() && c.trip.is_none()) || !c.form.terms.keys().any(depends_on_lane)
-            }
+            Pred::Cmp(c) => (c.cta.is_none() && c.trip.is_none()) || !c.form.depends_on_tid(),
             Pred::Unknown => false,
             Pred::Elect(p) => p.lane_exact(),
             Pred::Not(p) => p.exact(),
@@ -336,7 +334,7 @@ impl Pred {
         let at = |p: Box<Pred>| Box::new(p.in_loops(inside));
         match self {
             Pred::Cmp(c) if c.trip.is_some_and(|(l, _)| !inside(l)) => {
-                match c.form.terms.keys().any(depends_on_lane) {
+                match c.form.depends_on_tid() {
                     true => Pred::Unknown,
                     false => Pred::uniform(Uniform::Cta, AtomKey::OutOfLoop(Box::new(c))),
                 }
@@ -485,21 +483,12 @@ fn cta_axes(v: &Var, used: &mut [bool; 3]) {
     }
 }
 
-/// A CTA index, or a floor or remainder of one.
-fn on_cta(v: &Var) -> bool {
-    match v {
-        Var::Ctaid(_) => true,
-        Var::FloorDiv(x, _) | Var::Mod(x, _) => on_cta(x),
-        _ => false,
-    }
-}
-
 /// Constant coefficients and base over the thread and CTA indices and
 /// their floors and remainders.
 fn on_index(a: &AffineExpr) -> bool {
     a.base.as_const().is_some()
         && (a.terms.iter())
-            .all(|(v, c)| c.as_const().is_some() && (depends_on_lane(v) || on_cta(v)))
+            .all(|(v, c)| c.as_const().is_some() && (v.depends_on_tid() || v.depends_on_ctaid()))
 }
 
 /// `form cmp 0` over the launch, `range` bounding `%tid` by its block
@@ -519,7 +508,7 @@ fn across_ctas(
         Tri::Maybe => {}
     }
     let (ctas, lanes): (BTreeMap<_, _>, BTreeMap<_, _>) =
-        (form.terms.clone().into_iter()).partition(|(v, _)| on_cta(v));
+        (form.terms.clone().into_iter()).partition(|(v, _)| v.depends_on_ctaid());
     let (lo, hi) = AffineExpr {
         terms: ctas,
         base: SymExpr::Const(0),
@@ -545,12 +534,14 @@ fn across_ctas(
     }))
 }
 
-fn on_lane_only(a: &AffineExpr) -> bool {
+/// Constant coefficients and base over the thread index and its floors
+/// and remainders alone.
+fn on_tid_only(a: &AffineExpr) -> bool {
     a.base.as_const().is_some()
         && a.terms.iter().all(|(v, c)| {
             c.as_const().is_some()
                 && matches!(v, Var::Tid(_) | Var::FloorDiv(..) | Var::Mod(..))
-                && depends_on_lane(v)
+                && v.depends_on_tid()
         })
 }
 
@@ -597,7 +588,7 @@ impl Constraint {
             _ => 0,
         };
         (self.form.terms.iter())
-            .filter(|(v, _)| on_cta(v))
+            .filter(|(v, _)| v.depends_on_ctaid())
             .map(|(v, k)| i128::from(k.as_const().unwrap_or(0)) * i128::from(v.eval(&index)))
             .sum()
     }
@@ -1521,13 +1512,13 @@ fn condition(
             Pred::False
         });
     }
-    let lanes = form.terms.keys().any(depends_on_lane);
+    let on_tid = form.depends_on_tid();
     let trip = per_trip(affine, &form, def).filter(|_| comparable(&a, &b));
     let def_uniform = affine.uniformity().def_uniformity(def);
-    let kept = (!lanes && trip.is_none() && comparable(&a, &b)).then(|| (form.clone(), cmp));
-    let p = if !lanes && trip.is_none() && def_uniform != Ok(Uniform::Cta) {
+    let kept = (!on_tid && trip.is_none() && comparable(&a, &b)).then(|| (form.clone(), cmp));
+    let p = if !on_tid && trip.is_none() && def_uniform != Ok(Uniform::Cta) {
         None
-    } else if on_lane_only(&form) && comparable(&a, &b) {
+    } else if on_tid_only(&form) && comparable(&a, &b) {
         Some(Pred::Cmp(Constraint {
             form,
             cmp,
@@ -1548,7 +1539,7 @@ fn condition(
         })
     {
         Some(p)
-    } else if !lanes {
+    } else if !on_tid {
         Some(Pred::uniform(Uniform::Cta, AtomKey::Def(def)))
     } else {
         None
@@ -1584,7 +1575,7 @@ fn per_trip(
         .blocks
         .binary_search(&affine.data.block_of(def))
         .is_ok();
-    (on_lane_only(&rest) && inside)
+    (on_tid_only(&rest) && inside)
         .then_some((*l, (c.min(c * i128::from(n)), c.max(c * i128::from(n)))))
 }
 

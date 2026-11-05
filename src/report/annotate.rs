@@ -2,7 +2,6 @@
 //! it as a ` // ` comment.
 
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
-use crate::analysis::affine::lane_eval::depends_on_lane;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loops::LoopId;
@@ -826,7 +825,7 @@ fn shifted(a: &AffineExpr) -> (AffineExpr, bool) {
 /// Comparison `c` reads no thread or CTA index, so it is the same for
 /// the CTA, a loop counter's or a parameter's.
 fn cta_uniform(c: &Constraint) -> bool {
-    c.cta.is_none() && c.form.terms.iter().all(|(v, _)| !depends_on_lane(v))
+    c.cta.is_none() && !c.form.depends_on_tid()
 }
 
 /// The parts of `p` under the `and`s at its top, or the `or`s where `or`.

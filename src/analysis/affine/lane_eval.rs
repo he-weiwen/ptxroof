@@ -3,15 +3,6 @@
 use super::affine_expr::{AffineExpr, Axis, Var};
 use std::ops::Range;
 
-pub fn depends_on_lane(v: &Var) -> bool {
-    match v {
-        Var::Tid(_) => true,
-        Var::Ctaid(_) | Var::Iteration(_) | Var::Unknown(_) => false,
-        Var::FloorDiv(inner, _) | Var::Mod(inner, _) => depends_on_lane(inner),
-        Var::Swizzle(b) => b.columns.iter().any(|&c| c != 0),
-    }
-}
-
 /// The value of a form with constant coefficients for one thread;
 /// variables that are not lane-dependent and symbols count as 0, so
 /// the constant offset of the base is kept.

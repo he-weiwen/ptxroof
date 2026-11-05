@@ -385,7 +385,7 @@ impl AffineAnalysis<'_> {
                             }
                         }
                         Var::Tid(_) => None,
-                        other if depends_on_lane(other) => None,
+                        other if other.depends_on_tid() => None,
                         other => Some(AffineExpr::var(other.clone())),
                     }
                 };

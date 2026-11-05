@@ -199,6 +199,25 @@ impl Var {
         }
     }
 
+    /// The thread index (`%tid`), or a floor, remainder or swizzle of it.
+    pub fn depends_on_tid(&self) -> bool {
+        match self {
+            Var::Tid(_) => true,
+            Var::FloorDiv(inner, _) | Var::Mod(inner, _) => inner.depends_on_tid(),
+            Var::Swizzle(b) => b.columns.iter().any(|&c| c != 0),
+            Var::Ctaid(_) | Var::Iteration(_) | Var::Unknown(_) => false,
+        }
+    }
+
+    /// The CTA index (`%ctaid`), or a floor or remainder of it.
+    pub fn depends_on_ctaid(&self) -> bool {
+        match self {
+            Var::Ctaid(_) => true,
+            Var::FloorDiv(inner, _) | Var::Mod(inner, _) => inner.depends_on_ctaid(),
+            Var::Tid(_) | Var::Iteration(_) | Var::Unknown(_) | Var::Swizzle(_) => false,
+        }
+    }
+
     /// The variable's value, `leaf` giving each thread or CTA index's,
     /// counter's and uniform value's.
     pub fn eval(&self, leaf: &dyn Fn(&Var) -> i64) -> i64 {
@@ -471,6 +490,11 @@ impl AffineExpr {
         self.is_symbolic_or_constant()
             .then(|| self.base.as_const())
             .flatten()
+    }
+
+    /// A variable of the form depends on the thread index.
+    pub fn depends_on_tid(&self) -> bool {
+        self.terms.keys().any(Var::depends_on_tid)
     }
 }
 
