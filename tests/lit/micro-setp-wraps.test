@@ -1,11 +1,12 @@
 # The traced forms do not wrap at 2^32. ptxas runs the first store on
 # the 36 threads with %tid.x mod 16 equal to 0 or 8 to 15, %tid.x << 28
-# wrapping: a signed comparison is read only when both operands lie in
-# [-2^31, 2^31) on every thread. It runs the second on thread 16, where
-# %tid.x + 0xFFFFFFF0 wraps to 0: an equality is read only when the
-# operands' difference lies in (-2^32, 2^32). In each kernel the store
-# runs on at most the CTA's 64 threads: its count, its sectors per
-# request and the CTA's global store bytes are bounds.
+# wrapping: a signed comparison is read only where neither operand's
+# range crosses an edge of [-2^31, 2^31) shifted by a multiple of 2^32.
+# It runs the second on thread 16, where %tid.x + 0xFFFFFFF0 wraps to
+# 0: an equality is read only when the operands' difference lies in
+# (-2^32, 2^32). In each kernel the store runs on at most the CTA's 64
+# threads: its count, its sectors per request and the CTA's global
+# store bytes are bounds.
 RUN: %ptxroof analyze %fixtures/micro/setp_wraps.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry micro_setp_wraps_signed( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store <= 256 B; param load 512 B{{$}}
 ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 4 (ideal <= 4){{$}}

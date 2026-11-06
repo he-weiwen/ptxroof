@@ -48,11 +48,6 @@ impl IntInstrType {
             IntKind::Bits => (-half, full),
         }
     }
-
-    /// The values it reads that are not negative.
-    pub(crate) fn nonnegative(self) -> (i128, i128) {
-        (0, self.values().1)
-    }
 }
 
 /// The type an instruction-type modifier names (PTX ISA §5.2): an integer or
@@ -380,6 +375,32 @@ impl Form {
             Form::Int { ty, .. } => Some(ty),
             _ => None,
         }
+    }
+}
+
+/// The width `instr` reads its immediate operand `op` at (PTX ISA
+/// §4.5.1, "converted to the appropriate size based on the data or
+/// instruction type at its use"): its integer type's; twice that for a
+/// `.wide` `mad`'s addend, §9.7.1.4 "d and c are twice as wide as a and
+/// b"; 32 for a shift's count, §9.7.8.8, §9.7.8.9 "The b operand must be
+/// a 32-bit value, regardless of the instruction type"; else 64.
+pub(crate) fn immediate_width(module: &Module, instr: &Instr, op: OperandId) -> u32 {
+    let place = (module.operand_ids(instr.operands).iter()).position(|&o| o == op);
+    match (instr.mnemonic, Form::of(module, instr), place) {
+        (Opcode::Shl | Opcode::Shr, _, Some(2)) => 32,
+        (
+            Opcode::Mad,
+            Form::Int {
+                ty,
+                mode: Some(MulMode::Wide),
+                ..
+            },
+            Some(3),
+        ) => 2 * ty.width,
+        (_, Form::Int { ty, .. }, _) => ty.width,
+        (_, Form::IntCompare { width, .. }, _) => width,
+        (_, Form::IntConvert { from, .. }, _) => from.width,
+        _ => 64,
     }
 }
 

@@ -1,0 +1,13 @@
+# Unbound, n is taken as nonnegative (PLAN.md, input contract): the
+# max with 0 and the loops' max with 0 and 1 are dropped. Bound to -3,
+# they are kept: the store lands at param_0, the `n < 1` guard skips its
+# loop, and the `n != 0` guard enters its loop for one trip (an RTX 4090
+# run: param_0 holds 0, nothing, and 1).
+RUN: %ptxroof analyze %fixtures/micro/negative_bind.ptx | FileCheck --check-prefix=FREE "%s"
+FREE: {{^}}	st.global.u32 	[%rd3], %r2; // global store [param_0 + 4·param_1] sectors/req 1 (ideal 1){{$}}
+FREE: {{^}}$L__BB1_2: // loop: trips param_1 | warp * × lane * | under line 44 | exec param_1/CTA{{$}}
+FREE: {{^}}$L__BB2_2: // loop: trips param_1 | warp * × lane * | under line 68 | exec param_1/CTA{{$}}
+RUN: %ptxroof analyze %fixtures/micro/negative_bind.ptx --bind 1:n=-3 | FileCheck --check-prefix=BOUND "%s"
+BOUND: {{^}}	st.global.u32 	[%rd3], %r2; // global store [param_0] sectors/req 1 (ideal 1){{$}}
+BOUND: {{^}}$L__BB1_2: // loop: trips 0 | no thread{{$}}
+BOUND: {{^}}$L__BB2_2: // loop: trips 1 | global per CTA: requested 4 B, unique 4 B, sectors 32 B | warp * × lane * | exec 1/CTA{{$}}

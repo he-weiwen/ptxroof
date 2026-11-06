@@ -1584,12 +1584,13 @@ $L__BB0_8:
             .collect()
     }
 
-    /// `%r1` steps by 2^30 for 8 trips: its update reaches 2^33, past 32
-    /// bits, though the store reads it before the update. It is no
-    /// counter, but one value for every thread on each trip; stepping by
-    /// 1 it is the loop's iteration, `iv[$L__LOOP]`.
+    /// `%r1` steps by 2^30 for 8 trips: `mul.wide.u32` reads its 32 bits,
+    /// 0, 2^30, 2^31 and 3·2^30 twice over, which no multiple of the
+    /// iteration gives, so the address is one unknown value for every
+    /// thread on each trip; stepping by 1 it is the loop's iteration,
+    /// `iv[$L__LOOP]`.
     #[test]
-    fn a_counter_whose_update_leaves_its_type_is_no_counter() {
+    fn a_counter_read_across_its_type_is_unknown() {
         let src = |step: &str| {
             format!(
                 ".version 8.7\n.target sm_80\n.address_size 64\n\
@@ -1604,7 +1605,7 @@ $L__BB0_8:
         assert_eq!(address("1"), ["global store [4·iv[$L__LOOP] + param_0]"]);
         assert_eq!(
             address("1073741824"),
-            ["global store [4·uniform(%r1@$L__LOOP) + param_0]"]
+            ["global store [uniform(%rd2@13) + param_0]"]
         );
     }
 

@@ -354,7 +354,7 @@ tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_ker
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:307	warp 0 × lane *
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:478	warp * × lane * | runs when ⌈param_5/64⌉ = 1 (CTA-uniform, branch at line 476)
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:557	warp * × lane *
-tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:649	warp * × lane * | runs when predicate %p35 (line 642) is false (CTA-uniform, branch at line 647)
+tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:649	warp * × lane * | runs when param_5 ≤ 128 (CTA-uniform, branch at line 647)
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:712	warp * × lane *
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:724	warp 0 × lane * | runs when (⌈param_5/64⌉)·%r74@268 + (⌈param_5/64⌉)·%r75@269 + (⌈param_5/64⌉)·%r78@275 ≥ 1 (CTA-uniform, branch at line 722)
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:767	warp * × lane *
@@ -1674,14 +1674,14 @@ tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx:52	warp * × lane *
 tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx:336	warp * × lane * | runs when param_10 > 0 (CTA-uniform, branch at line 334)
 tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx:501	warp * × lane *
 tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx:511	warp * × lane *
-tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx:898	warp * × lane * | runs when predicate %p2 (line 893) is false (CTA-uniform, branch at line 895)
+tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx:898	warp * × lane * | runs when iv[$L__BB0_3] < ⌈param_10/64⌉ - 2 (CTA-uniform, branch at line 895)
 tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx:967	warp * × lane * | runs when param_10 ≤ 0 (CTA-uniform, branch at line 334)
 tests/fixtures/gluon/fp8_gemm_kernel.c_fc.sm_89.ptx:1098	warp * × lane *
 tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:53	warp * × lane *
 tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:287	warp * × lane * | runs when param_10 > 0 (CTA-uniform, branch at line 285)
 tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:420	warp * × lane *
 tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:512	warp * × lane *
-tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:963	warp * × lane * | runs when predicate %p3 (line 958) is false (CTA-uniform, branch at line 960)
+tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:963	warp * × lane * | runs when iv[$L__BB0_3] < ⌈param_10/64⌉ - 2 (CTA-uniform, branch at line 960)
 tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:989	warp * × lane * | runs when param_10 ≤ 0 (CTA-uniform, branch at line 285)
 tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:1058	warp * × lane *
 tests/fixtures/gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx:1124	warp * × lane *
@@ -1733,20 +1733,20 @@ tests/fixtures/k11/k11.sm_80.ptx:72	runs when param_2 ≠ 0 (CTA-uniform, branch
 tests/fixtures/k11/k11.sm_80.ptx:364	runs when param_2 = 0 (CTA-uniform, branch at line 69)
 tests/fixtures/k11/k11.sm_80.ptx:501	runs when predicate %p3 (line 496) is false or predicate %p4 (line 497) is false (CTA-uniform, branch at line 500)
 tests/fixtures/k11/k11.sm_80.ptx:503	runs when predicate %p3 (line 496) is true and predicate %p4 (line 497) is true (CTA-uniform, branch at line 500)
-tests/fixtures/k12/k12.sm_80.ptx:163	runs when predicate %p1 (line 158) is false (CTA-uniform, branch at line 159)
-tests/fixtures/k12/k12.sm_80.ptx:223	runs when predicate %p2 (line 221) is false (CTA-uniform, branch at line 222)
-tests/fixtures/k12/k12.sm_80.ptx:225	runs when predicate %p2 (line 221) is true (CTA-uniform, branch at line 222)
+tests/fixtures/k12/k12.sm_80.ptx:163	runs when param_2 / 16 ≥ 2 (CTA-uniform, branch at line 159)
+tests/fixtures/k12/k12.sm_80.ptx:223	runs when param_2 ≤ 15 (CTA-uniform, branch at line 222)
+tests/fixtures/k12/k12.sm_80.ptx:225	runs when param_2 > 15 (CTA-uniform, branch at line 222)
 tests/fixtures/k12/k12.sm_80.ptx:370	runs when predicate %p3 (line 368) is false (CTA-uniform, branch at line 369)
 tests/fixtures/k12/k12.sm_80.ptx:372	runs when predicate %p3 (line 368) is true (CTA-uniform, branch at line 369)
-tests/fixtures/k12/k12.sm_80.ptx:502	runs when predicate %p4 (line 497) is false (CTA-uniform, branch at line 498)
+tests/fixtures/k12/k12.sm_80.ptx:502	runs when iv[$L__BB0_5] < param_2 / 16 - 2 (CTA-uniform, branch at line 498)
 tests/fixtures/k12/k12.sm_80.ptx:744	runs when predicate %p6 (line 726) is false or predicate %p7 (line 727) is false (CTA-uniform, branch at line 743)
 tests/fixtures/k12/k12.sm_80.ptx:746	runs when predicate %p6 (line 726) is true and predicate %p7 (line 727) is true (CTA-uniform, branch at line 743)
-tests/fixtures/k14/k14.sm_80.ptx:205	runs when predicate %p2 (line 200) is false (CTA-uniform, branch at line 201)
-tests/fixtures/k14/k14.sm_80.ptx:265	runs when predicate %p3 (line 263) is false (CTA-uniform, branch at line 264)
-tests/fixtures/k14/k14.sm_80.ptx:267	runs when predicate %p3 (line 263) is true (CTA-uniform, branch at line 264)
+tests/fixtures/k14/k14.sm_80.ptx:205	runs when param_2 / 16 ≥ 2 (CTA-uniform, branch at line 201)
+tests/fixtures/k14/k14.sm_80.ptx:265	runs when param_2 ≤ 15 (CTA-uniform, branch at line 264)
+tests/fixtures/k14/k14.sm_80.ptx:267	runs when param_2 > 15 (CTA-uniform, branch at line 264)
 tests/fixtures/k14/k14.sm_80.ptx:442	runs when predicate %p4 (line 440) is false (CTA-uniform, branch at line 441)
 tests/fixtures/k14/k14.sm_80.ptx:444	runs when predicate %p4 (line 440) is true (CTA-uniform, branch at line 441)
-tests/fixtures/k14/k14.sm_80.ptx:734	runs when predicate %p5 (line 729) is false (CTA-uniform, branch at line 730)
+tests/fixtures/k14/k14.sm_80.ptx:734	runs when iv[$L__BB0_4] < param_2 / 16 - 2 (CTA-uniform, branch at line 730)
 tests/fixtures/k14/k14.sm_80.ptx:939	runs when predicate %p7 (line 885) is false or predicate %p8 (line 886) is false (CTA-uniform, branch at line 938)
 tests/fixtures/k14/k14.sm_80.ptx:941	runs when predicate %p7 (line 885) is true and predicate %p8 (line 886) is true (CTA-uniform, branch at line 938)
 tests/fixtures/k14/k14.sm_80.ptx:1251	runs when predicate %p7 (line 885) is false or predicate %p8 (line 886) is false (CTA-uniform, branch at line 1250)
@@ -1942,6 +1942,18 @@ tests/fixtures/micro/guards.ptx:53	warp * × lane 0
 tests/fixtures/micro/guards.ptx:54	warp 1 × lane *
 tests/fixtures/micro/guards.ptx:56	warp 0 × lane 1-31 ∪ warp 1 × lane *
 tests/fixtures/micro/guards.ptx:57	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:43	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:45	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:50	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:62	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:81	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:83	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:88	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:99	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:117	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:121	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:122	warp * × lane *
+tests/fixtures/micro/hex_immediates.ptx:135	warp * × lane *
 tests/fixtures/micro/int_literals.ptx:28	warp * × lane *
 tests/fixtures/micro/int_literals.ptx:43	warp * × lane *
 tests/fixtures/micro/int_literals.ptx:58	warp * × lane *
@@ -1988,12 +2000,15 @@ tests/fixtures/micro/latch_forms.ptx:50	warp * × lane *
 tests/fixtures/micro/latch_pred_overwritten.ptx:20	warp * × lane *
 tests/fixtures/micro/latch_pred_overwritten.ptx:22	warp * × lane *
 tests/fixtures/micro/latch_pred_overwritten.ptx:29	warp * × lane *
-tests/fixtures/micro/latch_unsigned.ptx:20	warp * × lane *
-tests/fixtures/micro/latch_unsigned.ptx:23	warp * × lane *
-tests/fixtures/micro/latch_unsigned.ptx:28	warp * × lane *
-tests/fixtures/micro/latch_unsigned.ptx:40	warp * × lane *
-tests/fixtures/micro/latch_unsigned.ptx:45	<= warp * × lane *
-tests/fixtures/micro/latch_unsigned.ptx:46	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:22	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:25	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:30	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:42	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:47	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:48	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:61	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:63	warp * × lane *
+tests/fixtures/micro/latch_unsigned.ptx:68	warp * × lane *
 tests/fixtures/micro/ldgsts_p0.ptx:29	warp * × lane *
 tests/fixtures/micro/ldgsts_p0.ptx:38	warp 0 × lane 0-15
 tests/fixtures/micro/ldgsts_p0.ptx:39	warp 0 × lane * ∪ warp 1 × lane 0-15
@@ -2042,6 +2057,15 @@ tests/fixtures/micro/neg.ptx:41	warp * × lane *
 tests/fixtures/micro/negated_predicate.ptx:20	warp * × lane *
 tests/fixtures/micro/negated_predicate.ptx:24	warp * × lane *
 tests/fixtures/micro/negated_predicate.ptx:29	warp * × lane *
+tests/fixtures/micro/negative_bind.ptx:21	warp * × lane *
+tests/fixtures/micro/negative_bind.ptx:40	warp * × lane *
+tests/fixtures/micro/negative_bind.ptx:44	warp * × lane * | runs when param_1 ≥ 1 (CTA-uniform, branch at line 43)
+tests/fixtures/micro/negative_bind.ptx:45	warp * × lane *
+tests/fixtures/micro/negative_bind.ptx:50	warp * × lane *
+tests/fixtures/micro/negative_bind.ptx:64	warp * × lane *
+tests/fixtures/micro/negative_bind.ptx:68	warp * × lane * | runs when param_1 ≠ 0 (CTA-uniform, branch at line 67)
+tests/fixtures/micro/negative_bind.ptx:69	warp * × lane *
+tests/fixtures/micro/negative_bind.ptx:74	warp * × lane *
 tests/fixtures/micro/nested_counter_step.ptx:23	warp * × lane *
 tests/fixtures/micro/nested_counter_step.ptx:26	warp * × lane *
 tests/fixtures/micro/nested_counter_step.ptx:28	warp * × lane *
@@ -2106,18 +2130,24 @@ tests/fixtures/micro/setp_float.ptx:49	warp * × lane *
 tests/fixtures/micro/setp_float.ptx:58	<= warp * × lane *
 tests/fixtures/micro/setp_u64_wide.ptx:23	warp * × lane *
 tests/fixtures/micro/setp_u64_wide.ptx:30	warp 0 × lane 1-31 ∪ warp 1-31 × lane *
-tests/fixtures/micro/setp_unknown_range.ptx:30	warp * × lane *
-tests/fixtures/micro/setp_unknown_range.ptx:38	warp 0 × lane *
-tests/fixtures/micro/setp_unknown_range.ptx:52	warp * × lane *
-tests/fixtures/micro/setp_unknown_range.ptx:60	<= warp * × lane *
-tests/fixtures/micro/setp_unknown_range.ptx:74	warp * × lane *
-tests/fixtures/micro/setp_unknown_range.ptx:82	warp 0 × lane *
-tests/fixtures/micro/setp_unknown_range.ptx:96	warp * × lane *
-tests/fixtures/micro/setp_unknown_range.ptx:103	no thread
-tests/fixtures/micro/setp_unsigned.ptx:22	warp * × lane *
-tests/fixtures/micro/setp_unsigned.ptx:28	<= warp * × lane *
-tests/fixtures/micro/setp_unsigned.ptx:41	warp * × lane *
-tests/fixtures/micro/setp_unsigned.ptx:47	<= warp * × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:33	warp * × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:41	warp 0 × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:55	warp * × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:63	warp 0 × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:77	warp * × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:85	warp 0 × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:99	warp * × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:106	no thread
+tests/fixtures/micro/setp_unknown_range.ptx:120	warp * × lane *
+tests/fixtures/micro/setp_unknown_range.ptx:128	warp 0 × lane *
+tests/fixtures/micro/setp_unsigned.ptx:27	warp * × lane *
+tests/fixtures/micro/setp_unsigned.ptx:33	warp 0 × lane 16-31 ∪ warp 1 × lane 0-15
+tests/fixtures/micro/setp_unsigned.ptx:46	warp * × lane *
+tests/fixtures/micro/setp_unsigned.ptx:52	<= warp * × lane *
+tests/fixtures/micro/setp_unsigned.ptx:65	warp * × lane *
+tests/fixtures/micro/setp_unsigned.ptx:72	warp 0 × lane 16-31 ∪ warp 1 × lane 0-15
+tests/fixtures/micro/setp_unsigned.ptx:85	warp * × lane *
+tests/fixtures/micro/setp_unsigned.ptx:91	warp 1 × lane *
 tests/fixtures/micro/setp_wraps.ptx:23	warp * × lane *
 tests/fixtures/micro/setp_wraps.ptx:29	<= warp * × lane *
 tests/fixtures/micro/setp_wraps.ptx:42	warp * × lane *
@@ -2177,7 +2207,7 @@ tests/fixtures/micro/trip_uniform.ptx:66	warp * × lane *
 tests/fixtures/micro/trip_uniform.ptx:67	warp * × lane *
 tests/fixtures/micro/trip_uniform.ptx:72	warp * × lane *
 tests/fixtures/micro/two_register_counter.ptx:33	runs when param_1 ≠ 0 (CTA-uniform, branch at line 31)
-tests/fixtures/micro/two_register_counter.ptx:44	runs when predicate %p2 (line 41) is false (CTA-uniform, branch at line 42)
+tests/fixtures/micro/two_register_counter.ptx:44	runs when iv[$L__BB0_2] ≥ param_1 - 1 (CTA-uniform, branch at line 42)
 tests/fixtures/micro/unified_load.ptx:19	warp * × lane *
 tests/fixtures/micro/unified_load.ptx:22	generic load [param_0] sectors/req 1 (ideal 1)
 tests/fixtures/micro/uniform_address.ptx:35	warp * × lane *

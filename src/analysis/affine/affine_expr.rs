@@ -9,6 +9,7 @@
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant, product};
 use crate::analysis::control_flow::loops::LoopId;
 use crate::ptx::ir::{Element, SpecialReg, SpecialVector};
+use crate::ptx::special_registers::special_register_range;
 use crate::ssa::Value;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -109,9 +110,11 @@ impl XorSwizzle {
     }
 
     /// The least and greatest values over `%tid.x` in `tid`, or over every
-    /// thread index.
+    /// thread index (`special_register_range`).
     fn range(&self, tid: Option<(i64, i64)>) -> (i64, i64) {
-        let (lo, hi) = tid.map_or((0, 1023), |(lo, hi)| (lo.max(0), hi.min(1023)));
+        let tid_x = SpecialReg::Vector(SpecialVector::Tid, Some(Element::X));
+        let (first, last) = special_register_range(tid_x).expect("the ISA bounds %tid.x");
+        let (lo, hi) = tid.map_or((first, last), |(lo, hi)| (lo.max(first), hi.min(last)));
         let values = (lo..=hi.max(lo)).map(|t| self.eval(t));
         (values.clone().min().unwrap_or(0), values.max().unwrap_or(0))
     }
@@ -177,6 +180,17 @@ impl Var {
             SpecialVector::Ctaid => Some(Var::Ctaid(axis)),
             _ => None,
         }
+    }
+
+    /// The special register a thread or CTA index is, `Var::special`'s
+    /// inverse.
+    pub fn special_reg(&self) -> Option<SpecialReg> {
+        let (vector, axis) = match *self {
+            Var::Tid(axis) => (SpecialVector::Tid, axis),
+            Var::Ctaid(axis) => (SpecialVector::Ctaid, axis),
+            _ => return None,
+        };
+        Some(vector.components()[axis as usize])
     }
 }
 

@@ -2,10 +2,10 @@
 source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nwavefront lines {wavefronts:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
-blocks {"confirmed": 151, "consistent": 282, "unchecked": 482}
-sector lines {"differ": 3, "exact": 1224, "not compared, its SASS ran otherwise": 2, "within a bound": 181, "within a range": 43}
+blocks {"confirmed": 152, "consistent": 284, "unchecked": 479}
+sector lines {"differ": 3, "exact": 1225, "not compared, its SASS ran otherwise": 2, "within a bound": 181, "within a range": 43}
 wavefront lines {"agree": 1486}
-launch sectors {"loads agrees, stores agrees": 40, "loads differs, stores agrees": 1, "not compared": 27}
+launch sectors {"loads agrees, stores agrees": 41, "loads differs, stores agrees": 1, "not compared": 26}
 
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
   launch sectors	not compared, line 420
@@ -815,7 +815,7 @@ tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json
   <block 1>	confirmed	62 of 93 with SASS, 39 agreeing
   <block 2>	consistent	37 of 55 with SASS, 27 agreeing
   $L__tmp5	consistent	3 of 7 with SASS, 3 agreeing
-  $L__tmp7	consistent	13 of 17 with SASS, 13 agreeing
+  $L__tmp7	consistent	13 of 17 with SASS, 12 agreeing
   $L__BB0_38	consistent	12 of 61 with SASS, 4 agreeing
   $L__BB0_39	unchecked	1 of 1 with SASS, 0 agreeing
   waitLoop$scope1	unchecked	3 of 3 with SASS, 0 agreeing
@@ -852,8 +852,8 @@ tests/fixtures/gluon/attn_fwd_ws_kernel.sm_89.ncu.json
   <block 38>	unchecked	3 of 3 with SASS, 0 agreeing
   $L__BB0_5	unchecked	57 of 78 with SASS, 0 agreeing
   <block 40>	unchecked	40 of 61 with SASS, 0 agreeing
-  $L__tmp46	unchecked	3 of 7 with SASS, 0 agreeing
-  $L__tmp48	unchecked	13 of 17 with SASS, 0 agreeing
+  $L__tmp46	consistent	3 of 7 with SASS, 3 agreeing
+  $L__tmp48	consistent	13 of 17 with SASS, 13 agreeing
   $L__BB0_9	unchecked	16 of 64 with SASS, 0 agreeing
   $L__BB0_10	unchecked	1 of 2 with SASS, 0 agreeing
   waitLoop$scope4	unchecked	3 of 3 with SASS, 0 agreeing
@@ -1156,10 +1156,11 @@ tests/fixtures/micro/trip_max.ncu.json
   <block 2>	consistent	1 of 1 with SASS, 1 agreeing
   sectors	{"exact": 1}
 tests/fixtures/micro/trip_max.unsigned.ncu.json
-  launch sectors	not compared, line 58
+  launch sectors	loads agrees, stores agrees
   <block 0>	consistent	4 of 5 with SASS, 2 agreeing
-  $L__BB1_1	unchecked	5 of 5 with SASS, 0 agreeing
+  $L__BB1_1	confirmed	5 of 5 with SASS, 4 agreeing
   <block 2>	consistent	1 of 1 with SASS, 1 agreeing
+  sectors	{"exact": 1}
 tests/lit/Inputs/ncu-two-per-line.ncu.json
   launch sectors	loads agrees, stores agrees
   <block 0>	consistent	6 of 7 with SASS, 3 agreeing

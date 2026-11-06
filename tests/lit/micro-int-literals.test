@@ -1,10 +1,10 @@
-# Integer literals PTX ISA §4.5.1 allows that the parser misreads, each
-# an offset ptxas folds into the store: octal 020 reads as decimal 20,
-# where ptxas stores at param_0 + 16; binary 0b10000 and 16U read as
-# symbols; 0xfffffffffffffff0, −16, is no integer, and the address a
-# uniform variable. Each store requests one sector per warp.
+# Integer literals PTX ISA §4.5.1 allows, each an offset ptxas folds
+# into the store. The parser misreads three: octal 020 reads as decimal
+# 20, where ptxas stores at param_0 + 16; binary 0b10000 and 16U read as
+# symbols. 0xfffffffffffffff0 reads as the signed value of its 64
+# bits, −16. Each store requests one sector per warp.
 RUN: %ptxroof analyze %fixtures/micro/int_literals.ptx | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}	st.global.u32 	[%rd2], %r1; // global store [param_0 + 20] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	st.global.u32 	[%rd2], %r1; // global store [param_0 + 0b10000] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	st.global.u32 	[%rd2], %r1; // global store [param_0 + 16U] sectors/req 1 (ideal 1){{$}}
-ANN: {{^}}	st.global.u32 	[%rd2], %r1; // global store [uniform(%rd2@75)] sectors/req 1 (ideal 1){{$}}
+ANN: {{^}}	st.global.u32 	[%rd2], %r1; // global store [param_0 - 16] sectors/req 1 (ideal 1){{$}}

@@ -2,7 +2,9 @@
 // HAND-WRITTEN: `setp.lt.u32` of a value with -4, which an unsigned
 // comparison reads as 2^32 - 4: the latch of a loop counting from 1,
 // which runs 2^32 - 4 trips, and a guard of the thread index, which
-// every thread passes.
+// every thread passes. Then a `setp.lt.s32` latch with 0xFFFFFFFF, a
+// .s64 literal (PTX ISA §4.5.1) cast to the instruction type (§9.4), so
+// -1: the loop runs one trip.
 //
 .version 8.7
 .target sm_80
@@ -44,5 +46,24 @@ $L__BB0_1:
 	@!%p1 bra 	$L__BB1_2;
 	st.global.u32 	[%rd1], %r1;
 $L__BB1_2:
+	ret;
+}
+
+.visible .entry micro_latch_signed_hex(
+	.param .u64 micro_latch_signed_hex_param_0
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_latch_signed_hex_param_0];
+	mov.u32 	%r1, 0;
+$L__BB2_1:
+	add.s32 	%r1, %r1, 1;
+	st.global.u32 	[%rd1], %r1;
+	setp.lt.s32 	%p1, %r1, 0xFFFFFFFF;
+	@%p1 bra 	$L__BB2_1;
 	ret;
 }

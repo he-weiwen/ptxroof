@@ -79,7 +79,7 @@ impl AffineAnalysis<'_> {
             return Err(format!("{name} is written under a guard").into());
         }
         let compared = match Form::of(module, setp) {
-            Form::IntCompare { pred, .. } => Some(pred),
+            Form::IntCompare { pred, width, .. } => Some((pred, width)),
             // PTX ISA §9.7.7.2: a packed `setp`'s first output compares the low halves.
             Form::Float { lanes: 2 } => {
                 return Err("latch condition compares packed halves".into());
@@ -99,12 +99,15 @@ impl AffineAnalysis<'_> {
         }
         // PTX ISA §9.7.6.2: a `setp` of no integer type compares floats,
         // not the traced integers.
-        let Some(pred) = compared else {
+        let Some((pred, width)) = compared else {
             return Err("latch condition compares floating-point values".into());
         };
         let a = self.operand_at(ops[1], setp_idx, 0)?;
         let b = self.operand_at(ops[2], setp_idx, 0)?;
-        let d = per_cta(self.cta_uniform_symbols(id, setp_idx, a - b)?); // D = A − B; condition is `D cmp 0`
+        let (a, b) = self.cta_uniform_symbols(id, setp_idx, a, b)?;
+        // D = A − B; condition is `D cmp 0`
+        let (d, cmp) = (self.loop_cmp(id, pred, width, &a, &b))
+            .ok_or_else(|| "latch condition does not read as one integer comparison".to_owned())?;
 
         // D(k) = A1·k + A0 in this loop's iteration number alone.
         let k = Var::Iteration(id);
@@ -124,7 +127,6 @@ impl AffineAnalysis<'_> {
         if a1 == i64::MIN {
             return Err("induction step is −2^63, which has no negation".into());
         }
-        let cmp = pred.cmp();
         let cond = if continue_if_true { cmp } else { cmp.inverse() };
         let bound = self.bindings.and_then(|b| d.base.bind(b).as_const());
         if cond == Cmp::Ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
@@ -135,12 +137,12 @@ impl AffineAnalysis<'_> {
             (cond == Cmp::Ne).then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
         match (below_zero(cond, d.base), self.guard_test(id)) {
             (Some(at_zero), Some((g, test))) if test == at_zero => Ok(LoopTripCount {
-                count: SymExpr::max(trips, SymExpr::Const(0)),
+                count: self.max(trips, SymExpr::Const(0)),
                 entry: g,
                 distance: None,
             }),
             (Some(_), _) => Ok(LoopTripCount {
-                count: SymExpr::max(trips, SymExpr::Const(1)),
+                count: self.max(trips, SymExpr::Const(1)),
                 entry: l.header,
                 distance: None,
             }),
@@ -199,7 +201,12 @@ impl AffineAnalysis<'_> {
         let (def, setp) = self
             .data
             .find_setp(self.data.block_of(op), op + 1, pred.reg)?;
-        let Form::IntCompare { pred: compare, .. } = Form::of(module, setp) else {
+        let Form::IntCompare {
+            pred: compare,
+            width,
+            ..
+        } = Form::of(module, setp)
+        else {
             return None;
         };
         let &[_, a, b] = module.operand_ids(setp.operands) else {
@@ -208,22 +215,22 @@ impl AffineAnalysis<'_> {
         if setp.predicate.is_some() {
             return None;
         }
-        let form = per_cta(
-            self.cta_uniform_symbols(
-                id,
-                def,
-                self.operand_at(a, def, 0).ok()? - self.operand_at(b, def, 0).ok()?,
-            )
-            .ok()?,
+        let (a, b) = (
+            self.operand_at(a, def, 0).ok()?,
+            self.operand_at(b, def, 0).ok()?,
         );
-        let cmp = compare.cmp();
+        let (a, b) = self.cta_uniform_symbols(id, def, a, b).ok()?;
+        let (form, cmp) = self.loop_cmp(id, compare, width, &a, &b)?;
         let cmp = if (taken == into) != pred.negated {
             cmp
         } else {
             cmp.inverse()
         };
         let e = form.is_symbolic_or_constant().then_some(form.base)?;
-        let nonneg = |e: &SymExpr| e.least().is_some_and(|l| l >= 0);
+        let nonneg = |e: &SymExpr| {
+            self.least(&AffineExpr::from_base(e.clone()))
+                .is_some_and(|l| l >= 0)
+        };
         let (cmp, e) = match cmp {
             Cmp::Ne | Cmp::Eq => {
                 let e = if nonneg(&e) {
@@ -270,23 +277,51 @@ impl AffineAnalysis<'_> {
             .is_some_and(|(_, i)| matches!(i.mnemonic, Opcode::Ret | Opcode::Exit))
     }
 
-    /// `a`, read at `pos`, with each unknown value as a symbol, where it is
-    /// one value at every trip of every entry of loop `id`: every thread
-    /// of the CTA sees it alike and the loops holding `id` do not define
-    /// it (`alike`).
+    /// `a` and `b`, read at `pos`, with each unknown value and `%ctaid` as a
+    /// symbol, where `a − b` is one value at every trip of every entry of
+    /// loop `id`: every thread of the CTA sees it alike and the loops
+    /// holding `id` do not define it (`alike`).
     fn cta_uniform_symbols(
         &self,
         id: LoopId,
         pos: usize,
         a: AffineExpr,
-    ) -> Result<AffineExpr, UnknownReason> {
+        b: AffineExpr,
+    ) -> Result<(AffineExpr, AffineExpr), UnknownReason> {
         let top = (std::iter::successors(Some(id), |&l| self.data.forest.get(l).parent).last())
             .unwrap_or(id);
-        self.alike(&a, pos, Uniform::Cta, Some(top))?;
-        Ok(a.as_symbols(&|v| match v {
-            Var::Unknown(u) => Some(SymExpr::Sym(SymbolicConstant::Unknown(*u))),
+        self.alike(&(a.clone() - b.clone()), pos, Uniform::Cta, Some(top))?;
+        let symbols = |x: AffineExpr| {
+            per_cta(x.as_symbols(&|v| match v {
+                Var::Unknown(u) => Some(SymExpr::Sym(SymbolicConstant::Unknown(*u))),
+                _ => None,
+            }))
+        };
+        Ok((symbols(a), symbols(b)))
+    }
+
+    /// The comparison `form cmp 0` a latch or guard `setp` `pred` of loop
+    /// `id` makes of `width`-bit operands `a` and `b`
+    /// (`setp_to_zero_cmps`), an operand taken as nonnegative where `least`
+    /// proves it, or where it does not read the loop's counter and its
+    /// range is unknown, as the input contract (PLAN.md) reads a trip
+    /// count; `None` where it is not one comparison.
+    fn loop_cmp(
+        &self,
+        id: LoopId,
+        pred: IntPredicate,
+        width: u32,
+        a: &AffineExpr,
+        b: &AffineExpr,
+    ) -> Option<(AffineExpr, Cmp)> {
+        let nonnegative = |x: &AffineExpr| {
+            let counted = x.terms.keys().any(|v| v.counter() == Some(id));
+            (!counted && self.range(x).is_none()) || self.least(x).is_some_and(|l| l >= 0)
+        };
+        match &self.setp_to_zero_cmps(pred, width, a, b, &nonnegative)?[..] {
+            [(form, cmp)] => Some((form.clone(), *cmp)),
             _ => None,
-        }))
+        }
     }
 
     /// No setp defines the latch predicate: say what does, if anything

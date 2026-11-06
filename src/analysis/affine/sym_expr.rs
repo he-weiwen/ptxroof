@@ -136,8 +136,9 @@ impl SymExpr {
         }
     }
 
-    /// The least value with every symbol at 0 or above, where bounded.
-    pub fn least(&self) -> Option<i64> {
+    /// The least value with every symbol at 0 or above, where bounded;
+    /// read through `AffineAnalysis::least`, which binds first.
+    pub(super) fn least(&self) -> Option<i64> {
         match self {
             SymExpr::Const(c) => Some(*c),
             SymExpr::Sym(_) | SymExpr::Mod(..) => Some(0),
@@ -394,13 +395,10 @@ impl SymExpr {
         }
     }
 
-    /// The greater of `a` and `b`, a constant when both are, and one when
-    /// it is never less than the other constant.
+    /// The greater of `a` and `b`, a constant when both are.
     pub fn max(a: SymExpr, b: SymExpr) -> SymExpr {
         match (a.as_const(), b.as_const()) {
             (Some(x), Some(y)) => SymExpr::Const(x.max(y)),
-            (_, Some(y)) if a.least().is_some_and(|l| l >= y) => a,
-            (Some(x), _) if b.least().is_some_and(|l| l >= x) => b,
             _ => SymExpr::Max(Box::new(a), Box::new(b)),
         }
     }
@@ -834,7 +832,7 @@ mod tests {
     }
 
     #[test]
-    fn least_values_with_nonnegative_symbols_fold_a_max() {
+    fn least_values_take_every_symbol_as_nonnegative() {
         let minus = |e: E, c: i64| E::sub(e, E::Const(c));
         assert_eq!(E::ceil_div(k(), 8).least(), Some(0));
         assert_eq!(minus(k(), 10).least(), Some(-10));
@@ -842,12 +840,10 @@ mod tests {
         assert_eq!(E::sub(k(), E::sym("n")).least(), None);
         let w8a8 = minus(E::max(E::ceil_div(k(), 128), E::Const(2)), 1);
         assert_eq!(w8a8.least(), Some(1));
-        assert_eq!(E::max(w8a8.clone(), E::Const(1)), w8a8);
-        assert_eq!(
+        assert!(matches!(
             E::max(E::ceil_div(k(), 8), E::Const(0)),
-            E::ceil_div(k(), 8)
-        );
-        assert!(matches!(E::max(minus(k(), 10), E::Const(0)), E::Max(..)));
+            E::Max(..)
+        ));
     }
 
     #[test]

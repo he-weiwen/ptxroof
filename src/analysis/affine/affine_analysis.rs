@@ -54,13 +54,13 @@ use crate::ptx::ir::{
     Element, Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialScalar, SpecialVector,
     Stmt,
 };
-use crate::ptx::literal::parse_int;
+use crate::ptx::literal::{parse_bits, parse_int};
 use crate::ptx::modifier::{
     Cmp, Form, IntInstrType, IntKind, IntPredicate, Memory, MulMode, ParamAccess, ShflMode, Space,
-    param_access, space,
+    immediate_width, param_access, space,
 };
 use crate::ptx::register_effects::{registers, split_operands};
-use crate::ptx::special_registers::{SpecialRegister, special_register};
+use crate::ptx::special_registers::{SpecialRegister, special_register, special_register_range};
 use crate::ptx::thread_hierarchy::WARP_SZ;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
@@ -176,7 +176,10 @@ impl<'a> AffineAnalysis<'a> {
             if instr.mnemonic != Opcode::Mov {
                 return None;
             }
-            let c = parse_int(module.interner.resolve(*text))?;
+            let c = parse_bits(
+                module.interner.resolve(*text),
+                immediate_width(module, instr, *src),
+            )?;
             if value.is_some_and(|v| v != c) {
                 return None;
             }
@@ -283,6 +286,58 @@ impl<'a> AffineAnalysis<'a> {
         self.bind(a).range(&|v| self.var_bounds(v))
     }
 
+    /// `v`'s least and greatest value as `var_bounds` gives it, and
+    /// `%ctaid`'s over any grid where none is bound
+    /// (`special_register_range`, PTX ISA §10.6, §10.7): a range for
+    /// proving a sign, not for refusing a value.
+    pub(crate) fn var_bounds_any_grid(&self, v: &Var) -> Option<(i64, i64)> {
+        (self.var_bounds(v)).or_else(|| v.special_reg().and_then(special_register_range))
+    }
+
+    /// `a`'s least value under the bindings over any grid: its range's
+    /// over `var_bounds_any_grid`, else its terms' plus its base's
+    /// `SymExpr::least`, every symbol taken as nonnegative (the input
+    /// contract, PLAN.md); else the same with each counter of a
+    /// nonnegative coefficient at its first trip, as `Var::Iteration`
+    /// counts trips from 1.
+    pub(crate) fn least(&self, a: &AffineExpr) -> Option<i128> {
+        let a = self.bind(a);
+        let any = |v: &Var| self.var_bounds_any_grid(v);
+        let least = |a: &AffineExpr| {
+            let terms = AffineExpr {
+                terms: a.terms.clone(),
+                base: SymExpr::Const(0),
+            };
+            (a.range(&any).map(|(lo, _)| lo))
+                .or_else(|| terms.range(&any)?.0.checked_add(a.base.least()?.into()))
+        };
+        let mut first = a.clone();
+        for (v, c) in &a.terms {
+            if matches!(v, Var::Iteration(_))
+                && least(&AffineExpr::from_base(c.clone())).is_some_and(|l| l >= 0)
+            {
+                first.terms.remove(v);
+                first.base = SymExpr::add(first.base, c.clone());
+            }
+        }
+        least(&a).or_else(|| (first != a).then(|| least(&first)).flatten())
+    }
+
+    /// The greater of `a` and `b`: one where `least` puts it never below
+    /// the other, a constant, under the bindings.
+    fn max(&self, a: SymExpr, b: SymExpr) -> SymExpr {
+        let at_least = |e: &SymExpr, c: Option<i64>| {
+            c.is_some_and(|c| {
+                (self.least(&AffineExpr::from_base(e.clone()))).is_some_and(|l| l >= c.into())
+            })
+        };
+        match (a.as_const(), b.as_const()) {
+            (None, y) if at_least(&a, y) => a,
+            (x, None) if at_least(&b, x) => b,
+            _ => SymExpr::max(a, b),
+        }
+    }
+
     /// A constant, after the bindings if there are any.
     pub(crate) fn constant(&self, a: &AffineExpr) -> Option<i64> {
         self.bind(a).as_const()
@@ -300,7 +355,11 @@ impl<'a> AffineAnalysis<'a> {
             Operand::Special(reg) => self.trace_special(*reg),
             Operand::Immediate(text) => {
                 let text = module.interner.resolve(*text);
-                parse_int(text)
+                let width = match &self.data.kernel.stmts[pos] {
+                    Stmt::Instr(instr) => immediate_width(module, instr, op),
+                    _ => 64,
+                };
+                parse_bits(text, width)
                     .map(AffineExpr::constant)
                     .ok_or_else(|| format!("non-integer immediate {text}").into())
             }
@@ -468,25 +527,8 @@ impl<'a> AffineAnalysis<'a> {
         r: &InductionVariable,
         depth: u32,
     ) -> Result<AffineExpr, Option<UnknownReason>> {
-        let module = self.data.module;
         let start = self.trace(r.start, depth + 1)?;
         let step = self.step(&r.step, depth)?;
-        // The values the back edges feed, start + k·step for k in [1, n]
-        // when the loop runs a constant n trips, stay in their type.
-        if self.constant_trips(l).is_some() {
-            let fed = AffineExpr::term(Var::Iteration(l), step.clone()) + start.clone();
-            let lp = self.data.forest.get(l);
-            for (_, v) in (self.data.ssa.incoming(r.phi).into_iter())
-                .filter(|(p, _)| p.is_some_and(|p| lp.blocks.binary_search(&p).is_ok()))
-            {
-                if let Value::Result { op, .. } = v
-                    && let Stmt::Instr(instr) = &self.data.kernel.stmts[op]
-                {
-                    self.fits(fed.clone(), instr, Form::of(module, instr))
-                        .map_err(Some)?;
-                }
-            }
-        }
         if step == SymExpr::Const(0) {
             return Ok(start);
         }
@@ -519,10 +561,11 @@ impl<'a> AffineAnalysis<'a> {
         self.uniformity
     }
 
-    /// Loop `id`'s trip count. Counting a loop reads its counter, which
-    /// holds only while the values its back edges feed stay in their
-    /// type over the trips, and checking that needs the count: a count
-    /// that read itself so assumed they do. It is counted again with
+    /// Loop `id`'s trip count. Counting a loop reads its latch's operands
+    /// as integers (`extend`), each its counter's values over the trips,
+    /// which holds only while those values stay in the type that reads
+    /// them, and checking that needs the count: a count that read itself
+    /// so assumed they do. It is counted again with
     /// itself as a candidate, which readers see, and kept only where both
     /// counts agree. For `for (int k = 0; k < K; k += 8)` under
     /// K = 2^31 − 1 the first count is ⌈K/8⌉ = 2^28; counted again, the
@@ -759,9 +802,10 @@ impl<'a> AffineAnalysis<'a> {
         Ok(value)
     }
 
-    /// A variable's least and greatest value when the launch or a
-    /// constant trip count fixes it: `%tid` below the bound block shape,
-    /// `%ctaid` below a bound grid, a counter in [1, n].
+    /// A variable's least and greatest value when the launch, the ISA or
+    /// a constant trip count fixes it: `%tid` below the bound block shape,
+    /// else in the range of any block (`special_register_range`), `%ctaid`
+    /// below a bound grid, a counter in [1, n].
     pub(crate) fn var_bounds(&self, v: &Var) -> Option<(i64, i64)> {
         let shape = |vector: SpecialVector, axis: &Axis| {
             let n = *self.bindings?.get(&SymbolicConstant::SpecialReg(
@@ -770,7 +814,8 @@ impl<'a> AffineAnalysis<'a> {
             (n >= 1).then_some((0, n - 1))
         };
         match v {
-            Var::Tid(axis) => shape(SpecialVector::Ntid, axis),
+            Var::Tid(axis) => (shape(SpecialVector::Ntid, axis))
+                .or_else(|| v.special_reg().and_then(special_register_range)),
             Var::Ctaid(axis) => shape(SpecialVector::Nctaid, axis),
             Var::Iteration(l) => self.constant_trips(*l).map(|n| (1, n)),
             Var::FloorDiv(..) | Var::Mod(..) | Var::Unknown(_) | Var::Swizzle(_) => None,
@@ -915,15 +960,13 @@ mod tests {
                 })
             })
         };
-        let wraps = Some(
-            "uniform(%r1) is defined in an enclosing loop: `add.u32` leaves 32 bits".to_owned(),
-        );
+        let wraps = Some("latch condition does not read as one integer comparison".to_owned());
         assert_eq!(counted(false), wraps);
         assert_eq!(counted(true), wraps);
     }
 
     #[test]
-    fn an_outer_counter_an_inner_latch_reads_is_checked_with_its_count() {
+    fn a_counter_its_latch_reads_before_its_update_is_checked_with_its_count() {
         let src = kernel_with(
             N_PARAM,
             "mov.u32 %r1, 4294967294;\n$L__O:\nmov.u32 %r2, 0;\n$L__I:\n\
@@ -931,9 +974,7 @@ mod tests {
              setp.le.u32 %p1, %r1, 4294967295;\nadd.u32 %r1, %r1, 1;\n\
              @%p1 bra $L__O;\nret;",
         );
-        let wraps = Err(
-            "uniform(%r1) is defined in an enclosing loop: `add.u32` leaves 32 bits".to_owned(),
-        );
+        let wraps = Err("latch condition does not read as one integer comparison".to_owned());
         assert_eq!(trips_of(&src)[0], ("$L__O".to_owned(), wraps));
     }
 
@@ -979,7 +1020,7 @@ mod tests {
         );
         let k = |n: i64| HashMap::from([(SymbolicConstant::KernelParam(0), n)]);
         let trips = |n| trips_under(&src, &k(n))[0].1.clone().map(|t| t.to_string());
-        assert_eq!(trips(4096), Ok("max(⌈param_0/8⌉, 1)".to_owned()));
+        assert_eq!(trips(4096), Ok("⌈param_0/8⌉".to_owned()));
         let wraps = Err(
             "uniform(%r2) is defined in an enclosing loop: `add.s32` leaves 32 bits".to_owned(),
         );
@@ -1205,19 +1246,17 @@ mod tests {
         assert_eq!(bound("min.s32 %r3, 2, %r1;"), ok("max(min(2, param_0), 1)"));
         assert_eq!(bound("min.u32 %r3, %r1, 8;"), ok("max(min(param_0, 8), 1)"));
         assert_eq!(bound("mov.u32 %r4, 5;\nmin.s32 %r3, %r4, 8;"), ok("5"));
-        assert_eq!(
-            bound("mov.u32 %r4, -1;\nmin.u32 %r3, %r4, 8;"),
-            ok("max(uniform(%r3), 1)")
-        );
+        assert_eq!(bound("mov.u32 %r4, -1;\nmin.u32 %r3, %r4, 8;"), ok("8"));
         assert_eq!(
             bound("min.relu.s32 %r3, %r1, 8;"),
             ok("max(uniform(%r3), 1)")
         );
     }
 
-    /// Under the bindings a min or max is checked and stepped by its
-    /// value: `bfe.s32` of 8 bits of max(n, 1) at n = 128 is −128 (PTX ISA
-    /// §9.7.1.20), and a step of max(n, 1) at n = 4 is 4.
+    /// Under the bindings a min or max is read and stepped by its value:
+    /// `bfe.s32` of 8 bits of max(n, 1) at n = 128 is −128 (PTX ISA
+    /// §9.7.1.20), so the loop runs once, and a step of max(n, 1) at n = 4
+    /// is 4.
     #[test]
     fn a_bound_min_or_max_is_read_at_its_value() {
         let trips = |body: &str, n: Option<i64>| {
@@ -1235,8 +1274,7 @@ mod tests {
                    setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;";
         assert_eq!(trips(bfe, None), Ok("max(param_0, 1)".to_owned()));
         assert_eq!(trips(bfe, Some(100)), Ok("100".to_owned()));
-        let leaves = Ok("max(uniform(%r3), 1)".to_owned());
-        assert_eq!(trips(bfe, Some(128)), leaves);
+        assert_eq!(trips(bfe, Some(128)), Ok("1".to_owned()));
         let step = "ld.param.u32 %r1, [k_param_0];\nmax.s32 %r2, %r1, 1;\nmov.u32 %r4, 0;\n\
                     $L__L:\nadd.s32 %r4, %r4, %r2;\nsetp.lt.s32 %p1, %r4, 1024;\n\
                     @%p1 bra $L__L;\nret;";
@@ -1258,6 +1296,25 @@ mod tests {
             .find(|(n, _)| n == "$L__O")
             .expect("outer loop");
         assert_eq!(outer.1, Ok(SymExpr::Const(25)));
+    }
+
+    /// At n = 2, n − 4 is 2^32 − 2 as `shr.u32`, `div.u32` and `rem.u32`
+    /// read it (PTX ISA §9.4).
+    #[test]
+    fn a_shift_or_division_reads_its_operand_as_its_type() {
+        let n = HashMap::from([(SymbolicConstant::KernelParam(0), 2)]);
+        let trips = |op: &str| {
+            let body = format!(
+                "ld.param.u32 %r1, [k_param_0];\nadd.s32 %r2, %r1, -4;\n{op}\n\
+                 mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+                 setp.lt.s32 %p1, %r4, %r3;\n@%p1 bra $L__L;\nret;"
+            );
+            let t = trips_under(&kernel_with(N_PARAM, &body), &n)[0].1.clone();
+            t.map(|t| t.bind(&n).to_string())
+        };
+        assert_eq!(trips("shr.u32 %r3, %r2, 28;"), Ok("15".to_owned()));
+        assert_eq!(trips("div.u32 %r3, %r2, 268435456;"), Ok("15".to_owned()));
+        assert_eq!(trips("rem.u32 %r3, %r2, 10;"), Ok("4".to_owned()));
     }
 
     /// LLVM's loop guard: a branch before the loop that skips it when its
@@ -2056,6 +2113,149 @@ mod tests {
             trips_of(&src)[0].1.as_ref().unwrap().to_string(),
             "max(param_0, 1)"
         );
+    }
+
+    #[test]
+    fn an_operand_reads_as_its_type_in_the_one_window_of_its_range() {
+        let m = parse(&kernel_with(N_PARAM, "ret;")).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &f);
+        let uniformity = UniformityInfo::new(&data);
+        let n = HashMap::from([(SymbolicConstant::KernelParam(0), 2)]);
+        let constant = AffineExpr::constant;
+        let tid = |c| AffineExpr::var(Var::Tid(Axis::X)) + constant(c);
+        let param =
+            |c| AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(0))) + constant(c);
+        let read = |bindings, a: &AffineExpr, kind, width| {
+            let affine = AffineAnalysis::new(&data, &uniformity, bindings);
+            (affine.extend(a, IntInstrType { kind, width })).map(|x| x.to_string())
+        };
+        let (s, u, b) = (IntKind::Signed, IntKind::Unsigned, IntKind::Bits);
+        for (bindings, a, kind, width, read_as) in [
+            (None, tid(0), u, 32, Some("%tid.x")),
+            (None, tid(1 << 32), u, 32, Some("%tid.x")),
+            (None, tid(-1024), u, 16, Some("%tid.x + 64512")),
+            (None, tid(-1024), b, 16, Some("%tid.x + 64512")),
+            (None, tid(-256), u, 32, None),
+            (None, tid(-256), s, 32, Some("%tid.x - 256")),
+            (None, tid(1 << 31), s, 32, Some("%tid.x - 2147483648")),
+            (None, tid((1 << 31) - 512), s, 32, None),
+            (None, constant(-1), u, 16, Some("65535")),
+            (None, constant(-1), u, 64, None),
+            (None, param(-4), u, 32, Some("param_0 - 4")),
+            (Some(&n), param(-4), u, 32, Some("param_0 + 4294967292")),
+            (Some(&n), param(-4), s, 32, Some("param_0 - 4")),
+        ] {
+            let got = read(bindings, &a, kind, width);
+            assert_eq!(got.as_deref(), read_as, "{a} as {kind:?}{width}");
+        }
+    }
+
+    #[test]
+    fn a_least_value_holds_over_any_grid() {
+        let m = parse(&kernel_with(N_PARAM, "ret;")).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &f);
+        let uniformity = UniformityInfo::new(&data);
+        let affine = AffineAnalysis::new(&data, &uniformity, None);
+        let var = AffineExpr::var;
+        let constant = AffineExpr::constant;
+        let param = AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(0)));
+        let unknown = Var::Unknown(Value::Undef(Register::Cc));
+        for (a, least) in [
+            (
+                var(Var::Ctaid(Axis::X)).scale(SymExpr::Const(128)) + var(Var::Tid(Axis::X)),
+                Some(0),
+            ),
+            (param + constant(-16), Some(-16)),
+            (var(unknown) + constant(4), None),
+            (constant(65534) - var(Var::Ctaid(Axis::Y)), Some(0)),
+        ] {
+            assert_eq!(affine.least(&a), least, "{a}");
+        }
+    }
+
+    #[test]
+    fn a_counter_is_least_at_its_first_trip() {
+        let src = kernel_with(
+            N_PARAM,
+            "ld.param.u32 %r9, [k_param_0];\nmov.u32 %r1, 0;\n$L__L:\nadd.s32 %r1, %r1, 4;\n\
+             setp.lt.s32 %p1, %r1, %r9;\n@%p1 bra $L__L;\nret;",
+        );
+        let m = parse(&src).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &f);
+        let uniformity = UniformityInfo::new(&data);
+        let affine = AffineAnalysis::new(&data, &uniformity, None);
+        let counter = || AffineExpr::var(Var::Iteration(LoopId(0)));
+        let param = |i| SymExpr::Sym(SymbolicConstant::KernelParam(i));
+        for (a, least) in [
+            (counter().scale(SymExpr::Const(4)), Some(4)),
+            (
+                AffineExpr::from_base(param(1)) + counter().scale(param(2)),
+                Some(0),
+            ),
+            (AffineExpr::from_base(param(0)) - counter(), None),
+        ] {
+            assert_eq!(affine.least(&a), least, "{a}");
+        }
+    }
+
+    #[test]
+    fn an_unsigned_setp_reads_an_operand_its_caller_takes_as_nonnegative() {
+        let m = parse(&kernel_with(N_PARAM, "ret;")).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &f);
+        let uniformity = UniformityInfo::new(&data);
+        let affine = AffineAnalysis::new(&data, &uniformity, None);
+        let x = AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(0)))
+            + AffineExpr::var(Var::Tid(Axis::X));
+        let cmps = |nonnegative: &dyn Fn(&AffineExpr) -> bool| {
+            affine.setp_to_zero_cmps(
+                IntPredicate::Ult,
+                32,
+                &x,
+                &AffineExpr::constant(-16),
+                nonnegative,
+            )
+        };
+        let proven = |x: &AffineExpr| affine.least(x).is_some_and(|l| l >= 0);
+        assert_eq!(cmps(&|_| false), None);
+        assert_eq!(
+            cmps(&proven),
+            Some(vec![(
+                x.clone() - AffineExpr::constant(4_294_967_280),
+                Cmp::Lt
+            )])
+        );
+    }
+
+    #[test]
+    fn an_immediate_is_read_at_the_width_of_its_operand() {
+        let count = |body: &str| {
+            let src = kernel_with(N_PARAM, &format!("{body}\n@%p1 bra $L__L;\nret;"));
+            trips_of(&src)[0].1.as_ref().unwrap().to_string()
+        };
+        let signed = "mov.u32 %r4, -4;\n$L__L:\nadd.s32 %r4, %r4, 1;\n\
+                      setp.lt.s32 %p1, %r4, 0xFFFFFFFF;";
+        assert_eq!(count(signed), "3");
+        let step = "mov.u32 %r4, 8;\n$L__L:\nadd.s32 %r4, %r4, 0xFFFFFFFF;\n\
+                    setp.gt.s32 %p1, %r4, 0;";
+        assert_eq!(count(step), "8");
+        let shift = "mov.u16 %rs1, 5;\nshl.b16 %rs2, %rs1, 0x10000;\ncvt.u32.u16 %r6, %rs2;\n\
+                     mov.u32 %r4, 0;\n$L__L:\nadd.s32 %r4, %r4, 1;\nsetp.lt.s32 %p1, %r4, %r6;";
+        assert_eq!(count(shift), "1");
+        let addend = "ld.param.u32 %r1, [k_param_0];\nmad.wide.u32 %rd2, %r1, 1, 0x80000000;\n\
+                      mov.u64 %rd4, 0;\n$L__L:\nadd.s64 %rd4, %rd4, 1;\nsetp.lt.s64 %p1, %rd4, %rd2;";
+        assert_eq!(count(addend), "param_0 + 2147483648");
     }
 
     #[test]
