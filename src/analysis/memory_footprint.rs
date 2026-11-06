@@ -234,13 +234,7 @@ pub fn warp_wavefronts(
                     (lane, (word(0)..=word(bytes - 1)).collect())
                 })
                 .collect();
-            let served = served(request, &words).ok_or_else(|| match request {
-                SharedRequest::Load(16) => {
-                    "two lanes of a 16-byte load share a word: no measured rule".to_owned()
-                }
-                _ => format!("no measured rule for {bytes} B per lane"),
-            })?;
-            seen.push(served);
+            seen.push(served(request, &words)?);
             shift += bytes;
         }
     }
@@ -261,9 +255,11 @@ pub fn warp_wavefronts(
 /// for 8-byte, each its own wavefronts for a store and sharing them in
 /// banks the other leaves free for a load, one wavefront when every lane
 /// loads one address; quarter-warps for a 16-byte store and the 8 lanes
-/// of each matrix, each its own wavefronts; the warp for a 16-byte load
-/// when no two lanes share a word, and no rule when they do.
-fn served(request: SharedRequest, lanes: &[(i64, Vec<i64>)]) -> Option<(u32, u32)> {
+/// of each matrix, each its own wavefronts; for a 16-byte load, the
+/// count the warp, its halves and its quarters all take, and no rule
+/// where two lanes share a word or they take different counts (a B200
+/// takes the quarters' or halves' where the warp's is fewer).
+fn served(request: SharedRequest, lanes: &[(i64, Vec<i64>)]) -> Result<(u32, u32), String> {
     let banks = |size: i64| {
         let mut groups: BTreeMap<i64, [BTreeSet<i64>; 32]> = BTreeMap::new();
         for (lane, words) in lanes {
@@ -297,13 +293,22 @@ fn served(request: SharedRequest, lanes: &[(i64, Vec<i64>)]) -> Option<(u32, u32
     let all: Vec<i64> = lanes.iter().flat_map(|(_, w)| w.iter().copied()).collect();
     let distinct: BTreeSet<i64> = all.iter().copied().collect();
     match request {
-        SharedRequest::Load(b) | SharedRequest::Store(b) if b <= 4 => Some(apart(32)),
-        SharedRequest::Store(8) => Some(apart(16)),
-        SharedRequest::Store(16) | SharedRequest::Matrix(_) => Some(apart(8)),
-        SharedRequest::Load(8) if lanes.windows(2).all(|p| p[0].1 == p[1].1) => Some((1, 1)),
-        SharedRequest::Load(8) => Some(shared(16)),
-        SharedRequest::Load(16) if distinct.len() == all.len() => Some(apart(32)),
-        _ => None,
+        SharedRequest::Load(b) | SharedRequest::Store(b) if b <= 4 => Ok(apart(32)),
+        SharedRequest::Store(8) => Ok(apart(16)),
+        SharedRequest::Store(16) | SharedRequest::Matrix(_) => Ok(apart(8)),
+        SharedRequest::Load(8) if lanes.windows(2).all(|p| p[0].1 == p[1].1) => Ok((1, 1)),
+        SharedRequest::Load(8) => Ok(shared(16)),
+        SharedRequest::Load(16) if distinct.len() < all.len() => {
+            Err("two lanes of a 16-byte load share a word: no measured rule".to_owned())
+        }
+        SharedRequest::Load(16) if apart(32) == apart(16) && apart(16) == apart(8) => Ok(apart(32)),
+        SharedRequest::Load(16) => Err(
+            "the warp, its halves and its quarters take different wavefronts: no measured rule"
+                .to_owned(),
+        ),
+        SharedRequest::Load(b) | SharedRequest::Store(b) => {
+            Err(format!("no measured rule for {b} B per lane"))
+        }
     }
 }
 
@@ -741,6 +746,10 @@ mod tests {
         assert_eq!(wf(&rem(8, 16), Matrix(2)), (2, 2));
         assert_eq!(wf(&t(128), Matrix(1)), (8, 1));
         assert!(warp_wavefronts(&rem(16, 16), Load(16), [32, 1, 1], |_| true).is_err());
+        // tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1988:
+        // the warp takes 16, its halves and quarters 32, the B200 32.
+        let conflicts = rem(16, 256) + floor(16, 64);
+        assert!(warp_wavefronts(&conflicts, Load(16), [32, 1, 1], |_| true).is_err());
     }
 
     #[test]

@@ -257,7 +257,7 @@ fn a_line_at_its_own_width_compares_its_l2_sectors() {
 #[test]
 fn no_b200_block_is_contradicted() {
     let records = records("tests/fixtures/b200");
-    assert_eq!(records.len(), 34);
+    assert_eq!(records.len(), 49);
     let contradicted: Vec<String> = (records.iter())
         .flat_map(|(path, c)| {
             (c.blocks.iter())

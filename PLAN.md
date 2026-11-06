@@ -213,34 +213,34 @@ fails where it is stale; `PTXROOF_WRITE_PLAN=1 cargo test --test
 output_tallies` rewrites it.
 
 <!-- tests/output_tallies.rs -->
-47 kernels.
+62 kernels.
 
 | Output | Count | Exact | Bound | ? | No number |
 |---|---|---|---|---|---|
-| `.entry`: shared memory per CTA | 36 | 1 (3%) | 35 (97%) |  |  |
-| `.entry`: FLOPs of a pipe it prints | 101 | 52 (51%) | 13 (13%) | 36 (36%) |  |
-| `.entry`: global load bytes | 47 | 24 (51%) | 11 (23%) | 12 (26%) |  |
-| `.entry`: global store bytes | 47 | 28 (60%) | 9 (19%) | 10 (21%) |  |
-| `.entry`: shared load bytes | 36 | 16 (44%) | 9 (25%) | 11 (31%) |  |
-| `.entry`: shared store bytes | 36 | 17 (47%) | 12 (33%) | 7 (19%) |  |
-| loop: trips | 194 | 31 (16%) |  | 163 (84%), 135 mbarrier waits |  |
-| loop: global bytes requested per CTA | 16 | 14 (88%) | 2 (13%) |  |  |
-| loop: global bytes unique per CTA | 16 | 6 (38%) | 4 (25%) | 6 (38%) |  |
-| loop: global sector bytes per CTA | 16 | 6 (38%) | 4 (25%) |  | 6 (38%) |
-| block: threads | 854 | 825 (97%) | 29 (3%) |  |  |
-| block: CTAs | 85 | 85 (100%) |  |  |  |
-| block: `runs when` | 147 | 147 (100%) |  |  |  |
-| block: exec | 818 | 286 (35%) | 112 (14%) | 420 (51%) |  |
-| instruction: threads, where a guard narrows its block's | 943 | 780 (83%) | 163 (17%) |  |  |
-| instruction: exec, where it differs from its block's | 651 | 556 (85%) | 91 (14%) | 4 (1%) |  |
-| instruction: `unused` | 954 | | | | |
+| `.entry`: shared memory per CTA | 49 | 1 (2%) | 48 (98%) |  |  |
+| `.entry`: FLOPs of a pipe it prints | 132 | 61 (46%) | 17 (13%) | 54 (41%) |  |
+| `.entry`: global load bytes | 62 | 30 (48%) | 13 (21%) | 19 (31%) |  |
+| `.entry`: global store bytes | 62 | 35 (56%) | 12 (19%) | 15 (24%) |  |
+| `.entry`: shared load bytes | 49 | 21 (43%) | 13 (27%) | 15 (31%) |  |
+| `.entry`: shared store bytes | 49 | 22 (45%) | 16 (33%) | 11 (22%) |  |
+| loop: trips | 338 | 48 (14%) |  | 290 (86%), 246 mbarrier waits |  |
+| loop: global bytes requested per CTA | 20 | 18 (90%) | 2 (10%) |  |  |
+| loop: global bytes unique per CTA | 20 | 8 (40%) | 6 (30%) | 6 (30%) |  |
+| loop: global sector bytes per CTA | 20 | 8 (40%) | 6 (30%) |  | 6 (30%) |
+| block: threads | 1,367 | 1,333 (98%) | 34 (2%) |  |  |
+| block: CTAs | 149 | 149 (100%) |  |  |  |
+| block: `runs when` | 233 | 233 (100%) |  |  |  |
+| block: exec | 1,304 | 391 (30%) | 175 (13%) | 738 (57%) |  |
+| instruction: threads, where a guard narrows its block's | 1,457 | 1,195 (82%) | 262 (18%) |  |  |
+| instruction: exec, where it differs from its block's | 1,010 | 778 (77%) | 228 (23%) | 4 (0%) |  |
+| instruction: `unused` | 1,491 | | | | |
 | instruction: `not classified` | 14 | | | | |
-| instruction: `bytes ?` | 413 | | | | |
-| operand: address | 4,399 | 4,058 (92%) |  | 341 (8%) |  |
-| operand: global sectors/req | 2,221 | 1,494 (67%) | 452 (20%) |  | 275 (12%) |
-| operand: global sectors/req, ideal | 1,946 | 1,783 (92%) | 163 (8%) |  |  |
-| operand: shared wavefronts/req | 2,178 | 1,442 (66%) |  | 557 (26%) | 179 (8%) |
-| operand: shared wavefronts/req, ideal | 1,442 | 1,442 (100%) |  |  |  |
+| instruction: `bytes ?` | 836 | | | | |
+| operand: address | 6,872 | 5,950 (87%) |  | 922 (13%) |  |
+| operand: global sectors/req | 3,359 | 1,865 (56%) | 677 (20%) |  | 817 (24%) |
+| operand: global sectors/req, ideal | 2,542 | 2,191 (86%) | 351 (14%) |  |  |
+| operand: shared wavefronts/req | 3,513 | 2,084 (59%) |  | 997 (28%) | 432 (12%) |
+| operand: shared wavefronts/req, ideal | 2,084 | 2,084 (100%) |  |  |  |
 <!-- end tests/output_tallies.rs -->
 
 ## Known limitations
@@ -270,6 +270,14 @@ output_tallies` rewrites it.
   `16·(%tid.x mod 16)` to `16·%tid.x` takes 16 (line 694, predicted
   8), and the record's launch load sectors differ with them. Every
   other `cp.async` line of the records agrees (`tests/ncu_corpus.rs`).
+- **A load whose lanes repeat 16-byte addresses predicts too small an
+  ideal.** The ideal packs the distinct bytes the executing lanes read
+  (`warp_footprint`). `delta_gluon_best.delta_rule_fwd_gluon`'s 16
+  `ld.global.v4.b32` (lines 687–808 and 1090–1197, `LDG.E.128`), whose
+  lanes read 4 addresses 64 B apart (`64·(%tid.x mod 4)`), read
+  `sectors/req 4 (ideal 2)`; the record measures the 4 sectors and an
+  ideal of 4 per request (line 687: 32,768 of each over 8,192 requests),
+  so the 16 lines differ (`tests/ncu_corpus.rs`).
 - **Register effects are incomplete.** Affine analysis records the
   registers of the operands the register-effects decoder says an
   instruction writes, a register, a `p|q` pair or a `{…}` vector, as
@@ -594,7 +602,7 @@ output_tallies` rewrites it.
   A `.volatile`, `.relaxed`, `.acquire`, `.mmio` or generic load is
   never one value (`a_global_load_at_one_address_is_one_value_per_warp`).
   No load is one value for the CTA, so a loop bounded by a loaded value
-  has no trip count: 9 counts over the 65 records
+  has no trip count: 14 counts over the 84 records
   (`attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2`'s
   `$L__BB0_2`: "uniform(%r4@79) is one value per warp only: depends on
   uniform(%r19@75), in a min", its sequence length), 240 of the
@@ -636,9 +644,10 @@ output_tallies` rewrites it.
 ### Reported as unknowns
 
 - **Shared wavefronts are not counted for a `cp.async` destination, a
-  shared atomic, or a 16-byte load two of whose lanes share a word**
-  (13,489 and 6,723 census rows, 832 of the loads by name, every lane
-  at one address). No NVIDIA document gives a copy's
+  shared atomic, or a 16-byte load two of whose lanes share a word or
+  whose warp, halves and quarters take different counts** (13,489 and
+  6,723 census rows, 832 of the loads by name, every lane at one
+  address; 140 census rows whose groups differ). No NVIDIA document gives a copy's
   rule: the Nsight Compute Profiling Guide does not name LDGSTS, and
   the CUDA Programming Guide's LDGSTS section says only that 4- and
   8-byte copies go through L1, that 16-byte ones can bypass it, and
@@ -663,7 +672,24 @@ output_tallies` rewrites it.
   5.70 per request with an ideal of 4.0, from 128-byte source rows.
   The 16-byte loads' measured counts follow no grouping found:
   `16·(%tid.x mod 8)` takes 4, `256·⌊%tid.x/16⌋` 2
-  (`micro_shared_wavefronts`).
+  (`micro_shared_wavefronts`). Where no two lanes share a word, the
+  warp, its halves and its quarters take one count on each of the RTX
+  4090 records' 66 `LDS.128` lines and 87 of the B200 records' 91; on
+  the other 4, `tma_ws_Q64N64w8s2._stage1_tma`'s lines 1988–1991, whose
+  lane l reads `256·(l mod 16) + 64·⌊l/16⌋` past a common base, the
+  warp takes 16 and its halves and quarters 32, which the B200
+  measures (4,194,304 wavefronts over 131,072 warp instructions;
+  `shared_wavefronts_follow_the_measured_lane_groups`). Each of the 32
+  banks serves 32 bits per clock (CUDA C++ Programming Guide 12.4,
+  §16.4.3), so a warp's 512 B take at least 4 wavefronts however its
+  lanes are grouped; the guide gives a 128-bit access's grouping for
+  compute capability 2.x only, by quarter-warp (8.0, §G.3.3: "add 1 to
+  the maximum number of threads in a quarter-warp that access different
+  addresses belonging to the same bank"). Lane offsets
+  `256·(l mod 16) + 64·⌊l/16⌋` and `128·(l mod 8) + 64·(⌊l/8⌋ mod 2) +
+  1024·⌊l/16⌋`, which share no word, take 16 and 16 wavefronts in
+  whole-warp groups, 32 and 16 in half-warp ones, 32 and 32 in
+  quarter-warp ones.
 - **A block under a loop whose trip count is not read is unknown in
   the totals per launch**, as its trips may differ by CTA
   (`micro_loop_guard_sibling_exit`'s first loop, with two exit edges:
@@ -782,7 +808,7 @@ output_tallies` rewrites it.
   and block-scaled `mma`; `wgmma`; `tcgen05` but its allocation,
   waits, fences and commit; bulk copies and the tensor copies but
   `cp.async.bulk.tensor`; textures and surfaces; `multimem`; video
-  instructions. `tcgen05` is in 12 of the B200 fixtures
+  instructions. `tcgen05` is in 17 of the B200 fixtures
   (`tests/fixtures/b200`).
 - **A tensor copy's bytes are unknown.** `cp.async.bulk.tensor` moves
   the bounding box its tensor map holds (PTX ISA §5.5.3.1, §5.5.8):
@@ -815,8 +841,10 @@ output_tallies` rewrites it.
   record's grid, block shape and integer parameters, not its `shared`
   bytes, and no flag gives them, so a kernel declaring `.extern
   .shared`, as every Triton kernel does, reads `shared memory 0 B/CTA
-  + dynamic`: 26 of the 34 B200 records hold a nonzero `shared`, from
-  128 B to `blk_mx_128x256_s4w4.mx_block_scaled`'s 202,800 B.
+  + dynamic`: 39 of the 49 B200 records hold a nonzero `shared`, from
+  `rca_small__fp._layer_norm_fwd_1pass_kernel.2`'s 32 B to
+  `sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel`'s
+  229,920 B.
 - **Calls.** Module-scope `.func` declarations and definitions are
   discarded (`module_scope_functions_are_skipped`), so no callee's
   instructions are counted, and a kernel calling one does not
@@ -955,7 +983,7 @@ output_tallies` rewrites it.
     condition, 58 on a loop counter trip by trip, 901 on one the same
     for every thread, 213 partly (212 in loops), 11,544 not at all
     (4,175 in loops).
-  - B200 fixtures (319 in 16 kernels): without their records none is
+  - The 34 B200 fixtures of 8ee8456 (319 in 16 kernels): without their records none is
     read exactly (74 the same for every thread, 245 not read). With
     them: 84 read all, 48 on a thread-index condition, 34 trip by trip,
     40 partly, 113 not at all (49 in loops).
@@ -1035,7 +1063,8 @@ output_tallies` rewrites it.
   it, into an allocation `cudaMalloc` aligned to 256 B, gets too few
   sectors; `--ptr-align 1` gives the range over every alignment under
   which the accesses are aligned (PTX ISA §6.4.1). Every record line
-  the default closed, 1,127, measured its count
+  the default closed but the three copies of **A `cp.async`'s global
+  sectors are counted as a load's.**, 1,455 of 1,458, measured its count
   (`ncu_corpus` snapshot). A base on a module-scope array or a loaded
   pointer is still a range: the array's `.align` is not read
   (`micro-uniform-bases-global.test`). A 16-byte access on a pointer
@@ -1212,15 +1241,15 @@ output_tallies` rewrites it.
   zero-data side. A line of a loop that branches back on an mbarrier
   wait's result runs a timing-dependent number of times: such lines
   are marked `timing_dependent` (18 in each Gluon attention forward
-  record, 238 in 12 B200 records). The comparison does not read the
+  record, 454 in 17 B200 records). The comparison does not read the
   mark; such a line goes unchecked where its count is not known, and
   `tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd`'s `mbarrier.try_wait`
   lines 1494, 2724 and 3365, predicted and measured 0, confirm their
   blocks. A `tcgen05` statement or `mbarrier.init` that one elected
   thread runs is uniform-datapath SASS (`UTCHMMA`, `UTCQMMA`, `UTCCP`,
   `SYNCS.EXCH.64` after `VOTEU.ANY`), which Nsight Compute's
-  predicated-on thread count takes as the warp's 32 threads: 139 lines
-  of 9 B200 records measure 25–32 times their count
+  predicated-on thread count takes as the warp's 32 threads: 224 lines
+  of 13 B200 records measure 25–32 times their count
   (`blk_mx_128x256_s4w4.mx_block_scaled` line 167: 9,216 predicted,
   294,912 measured), and the records keep no warp-level count for them.
 - Kernels that ship only SASS have no PTX to read: 18 of the 149
@@ -1310,13 +1339,10 @@ One line each, with the trigger that would start it.
   grid, with `i64:`, `i1:` and `tensormap:128` for the parameters of a
   tensor descriptor, which launch.c does not take; the PTX
   must still assemble to the recorded SASS (`b200-sass.test`, under
-  ptxas 13.4 only). `regen.sh` no longer regenerates them: against
-  sol-study `e1d124c` with uncommitted changes its replay of
-  `attn_lightllm/deepseek-v3/decode` fails in Triton's binder
-  (`dynamic_func() takes 6 positional arguments but 30 were given`),
-  and the kernel corpus's `MANIFEST.jsonl` no longer lists the extend
-  attention kernel's source; the shared memory entries were imported
-  with the launches the records hold and the PTX headers kept. `ci.sh` does not re-measure them with
+  ptxas 13.4 only). `regen.sh` regenerates them with the kernel
+  corpus (`CORPUS`) at `0b7cbfc7`, the commit the study ran: sol-study
+  loads a kernel by its `MANIFEST.jsonl` line, which the corpus's
+  refresh to `5693b844` moved. `ci.sh` does not re-measure them with
   `measure.py --check`, which would launch on zeroed inputs.
   `analyze --ncu RECORD` takes the record's grid, block shape and
   `u32` and `i32` parameters for `--grid`, `--launch` and `--bind`, and
@@ -1337,7 +1363,8 @@ One line each, with the trigger that would start it.
   (a block's `sectors`, `tests/ncu_comparisons.rs`,
   `a_line_at_its_own_width_compares_its_l2_sectors`; in the records
   only the three copies above differ, in
-  `micro/shared_wavefronts.cp_async.ncu.json`,
+  `micro/shared_wavefronts.cp_async.ncu.json`, and the ideal of 16
+  loads of `delta_gluon_best.delta_rule_fwd_gluon` (Wrong output),
   `gluon_records_agree_on_counts_sectors_and_launch_totals`), once
   the line's global SASS executed the predicted count, or within its
   bound. A line whose shared SASS that request wavefronts are one opcode
@@ -1345,14 +1372,15 @@ One line each, with the trigger that would start it.
   the predicted wavefronts and ideal per warp request with the
   record's over those SASS's warp-level executions
   (a block's `wavefronts`, `tests/ncu_comparisons.rs`,
-  `every_counted_shared_line_s_wavefronts_are_measured`): all 1,018
-  such lines of the records agree, 544 of them in 25 B200 Triton
-  kernels and 414 in nine Gluon kernels and k5 on the RTX 4090
+  `every_counted_shared_line_s_wavefronts_are_measured`): all 2,104
+  such lines of the records agree, 1,310 of them in 39 B200 Triton
+  kernels and 726 in nine Gluon kernels and k5 on the RTX 4090
   (`tests/ncu_corpus.rs`). ptxas may run
   a load less often than its statement: `tma_best_Q64N64w8s3._stage1_tma`'s
   line 544 executes 655,360 times where its loop iteration runs
-  2,424,832 times, so it and one line of
-  `_fwd_kernel_flash_decode_stage1_padding` are listed as not compared
+  2,424,832 times, so it and one line each of
+  `_fwd_kernel_flash_decode_stage1_padding` and
+  `tma_ws_Q64N64w8s2._stage1_tma` are listed as not compared
   (`outcome: executions_differ`). Not compared at all: a generic access,
   a line whose count is unknown, and a line with an `LDGSTS` reading `P0`,
   whose record keeps no sectors (Known limitations, Producers and
@@ -1363,8 +1391,8 @@ One line each, with the trigger that would start it.
   and executions (the `Comparison`'s `launch`;
   `an_ldgsts_on_p0_keeps_no_sectors_but_counts_in_the_launch_total`,
   `lm_head_dx_s_counter_guard_confirms_its_block`: the sum includes the
-  lines the `P0` rule leaves without sectors). In 39
-  records both agree. 25 have a line not predicted so (ce_chunk's
+  lines the `P0` rule leaves without sectors). In 46
+  records both agree. 35 have a line not predicted so (ce_chunk's
   `ld.global.b64` that ptxas loads as 32-bit `LDG.E`), and the gated
   rmsnorm record has no counts. The B200 records also keep their
   report's nonzero `sm__ops_path_tensor_src_*.sum`, added to them by
@@ -1372,16 +1400,16 @@ One line each, with the trigger that would start it.
   (none for the gated rmsnorm report, which reads them as nan); the
   launch's tensor-pipe FLOPs, where exact or a bound, are compared with
   their sum (the `Comparison`'s `tensor_flops`;
-  `b200_tensor_flops_agree_with_nsight_compute`): 19 of the 33 agree
+  `b200_tensor_flops_agree_with_nsight_compute`): 27 of the 48 agree
   exactly (the three Mamba2 chunk kernels' `mma.sync` FLOPs, the two FP8
-  GEMMs' `tcgen05.mma` FLOPs, 14 launches with none), the two fused MoE
-  kernels' bounds hold, and 12 are not compared, their tensor FLOPs `?`.
+  GEMMs' `tcgen05.mma` FLOPs, 22 launches with none), the two fused MoE
+  kernels' bounds hold, and 19 are not compared, their tensor FLOPs `?`.
   The RTX 4090 records keep no tensor ops. `tests/ncu_corpus.rs` keeps
   every record's block verdicts, their counts, its sector lines by
-  outcome, its launch totals and tensor FLOPs in one snapshot: 145 blocks confirmed,
-  276 consistent, 491 unchecked; 1,442 sector lines agree, 3 differ
-  (the copies above), 2 not compared; 40 launches' totals agree, the
-  39 above and `tests/lit/Inputs`' one. `ci.sh` measures every record again on the GPU it
+  outcome, its launch totals and tensor FLOPs in one snapshot: 207
+  blocks confirmed, 387 consistent, 834 unchecked; 1,911 sector lines
+  agree, 19 differ (the copies and loads above), 3 not compared; 47
+  launches' totals agree, the 46 above and `tests/lit/Inputs`' one. `ci.sh` measures every record again on the GPU it
   names (`measure.py --check`) and fails if it changed, but for the
   driver version past its first two components; a record of
   another GPU is skipped, and fails the run under
@@ -1390,7 +1418,7 @@ One line each, with the trigger that would start it.
 - `capabilities` verb that generates the audit doc's tables.
 - Tensor memory traffic. `Space` has no tensor memory, so `tcgen05.ld`
   and `tcgen05.st` (PTX ISA §9.7.17.8.3–4), which move data between it
-  and registers, count in no total, as `tcgen05.alloc` does: 56 and 49
+  and registers, count in no total, as `tcgen05.alloc` does: 103 and 88
   statements of the B200 records. `tcgen05.cp`, `tcgen05.shift` and
   `tcgen05.ld.red` stay `not classified`. Trigger: wanting tensor
   memory bandwidth.
@@ -1413,12 +1441,12 @@ One line each, with the trigger that would start it.
   `blk_mx_128x256_s4w4.mx_block_scaled`), `.kind::i8`, sparse and
   `.ws` forms, FP6 and FP4 types, and an idesc with no constant
   value. Its A and B, which it reads from shared memory through
-  descriptors, are `bytes ?` (304 statements of the B200 records), so a
-  kernel's shared load bytes stay a bound or `?`. Of the 12 B200 records
-  with `tcgen05.mma`, 24.3·10¹² measured tensor ops, the launch's tensor
-  FLOPs are exact for 49.5% (the two FP8 GEMMs), a bound that holds for
-  19.6% (the two fused MoE kernels), `?` for 13.1% and not classified
-  for 17.8% (`blk_mx_128x256_s4w4.mx_block_scaled`). Over the Blackwell
+  descriptors, are `bytes ?` (516 statements of the B200 records), so a
+  kernel's shared load bytes stay a bound or `?`. Of the 17 B200 records
+  with `tcgen05.mma`, 31.5·10¹² measured tensor ops, the launch's tensor
+  FLOPs are exact for 38.2% (the two FP8 GEMMs), a bound that holds for
+  15.1% (the two fused MoE kernels), `?` for 33.0% and not classified
+  for 13.7% (`blk_mx_128x256_s4w4.mx_block_scaled`). Over the Blackwell
   corpus rebuilt on 2026-11-06 (5,528 files, all of which analyze),
   without launch arguments, the 1,759 kernels with `tcgen05.mma` (the
   census's 345 in parentheses) read, on the `.entry` line's `tensor

@@ -260,6 +260,320 @@ tests/fixtures/b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ptx:712	warp 0 �
 tests/fixtures/b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ptx:718	warp 0 × lane 0
 tests/fixtures/b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ptx:1442	warp * × lane 0
 tests/fixtures/b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ptx:1452	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:52	warp * × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:55	warp * × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:71	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:78	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:87	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:126	warp 0-7 × lane * | runs when param_19 ≤ 0 (CTA-uniform, branch at line 123)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:130	warp 0-7 × lane * | runs when ⌈param_17/128⌉·⌈param_18/128⌉ > %ctaid.x (CTA-uniform, branch at line 127)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:144	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:192	warp 0-1 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:201	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:205	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:214	warp 8-11 × lane * | runs when jump table at line 233 selects this target (warp-uniform)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:220	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:233	warp 8-11 × lane * | runs when predicate %p3 (line 229) is false (warp-uniform, branch at line 230)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:234	warp 8-11 × lane * | runs when jump table at line 233 selects this target (warp-uniform)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:245	warp 8-11 × lane * | runs when %r499@237 ≥ 1 (warp-uniform, branch at line 241)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:250	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:265	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:274	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:277	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:294	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:303	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:309	warp 10 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:367	warp 8-11 × lane * | runs when jump table at line 233 selects this target (warp-uniform)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:377	warp 8-11 × lane * | runs when %r504@370 ≥ 1 (warp-uniform, branch at line 373)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:413	no thread
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:414	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:438	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:446	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:454	warp 8-11 × lane 0
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:461	warp 8,10 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:468	warp 8,10 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:479	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:485	warp 8-11 × lane * | runs when %r508@$L__BB0_15 = 0 (CTA-uniform, branch at line 483)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:510	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:526	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:531	warp 8-11 × lane * | runs when predicate %p3 (line 229) is true (warp-uniform, branch at line 230)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:536	warp 8-11 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:539	no thread
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:543	warp 0-7 × lane * | runs when param_19 > 0 (CTA-uniform, branch at line 123)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:570	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:577	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:584	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:591	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:601	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:610	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:615	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:622	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:629	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:636	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:643	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:650	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:657	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:664	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:679	warp 0-7 × lane * | runs when (⌈param_19/128⌉)·%r142@554 + (⌈param_19/128⌉)·%r143@555 + (⌈param_19/128⌉)·%r146@561 ≥ 1 (CTA-uniform, branch at line 676)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:748	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:757	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:762	warp 0-7 × lane * | runs when %r517@$L__BB0_27 = 0 (CTA-uniform, branch at line 760)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:803	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1346	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1354	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1372	warp 0-7 × lane 0
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1544	warp 0-7 × lane * | runs when %r517@$L__BB0_27 = ⌈param_19/128⌉ - 1 (CTA-uniform, branch at line 1541)
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1657	warp 0-1 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1695	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1698	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1714	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1723	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1727	warp 0-7 × lane 0
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1736	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1742	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1748	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1754	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1760	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1766	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1772	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1778	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1785	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1791	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1797	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1803	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1806	warp 0-7 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1813	warp 0 × lane *
+tests/fixtures/b200/blk_tma_ws_128x128_w8s4.blockfp8_tma.sm_100a.ptx:1816	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:41	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:57	warp 0 × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:64	warp 0 × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:102	warp * × lane * | runs when param_5 ≤ 0 (CTA-uniform, branch at line 99)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:106	warp * × lane * | runs when ⌈param_3/128⌉·⌈param_4/256⌉ > %ctaid.x (CTA-uniform, branch at line 103)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:137	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:327	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:331	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:335	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:339	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:343	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:347	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:351	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:355	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:359	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:363	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:367	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:371	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:375	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:379	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:383	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:387	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:391	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:395	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:399	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:403	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:407	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:411	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:415	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:419	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:423	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:427	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:431	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:435	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:439	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:443	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:447	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:451	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:458	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:459	warp * × lane * | runs when param_5 > 0 (CTA-uniform, branch at line 99)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:542	warp 0 × lane 0
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:549	warp 0 × lane 0
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:931	warp * × lane * | runs when ⌈param_5/64⌉ = 1 (CTA-uniform, branch at line 929)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:1087	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:1308	warp * × lane * | runs when param_5 ≤ 128 (CTA-uniform, branch at line 1306)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:1462	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:1684	warp * × lane * | runs when %r2677@1302 = ⌈param_5/64⌉ - 1 (CTA-uniform, branch at line 1682)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:1808	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:1820	warp 0 × lane * | runs when (⌈param_5/64⌉)·%r136@501 + (⌈param_5/64⌉)·%r137@502 + (⌈param_5/64⌉)·%r140@508 ≥ 1 (CTA-uniform, branch at line 1818)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:1863	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2102	warp * × lane * | runs when (⌈param_5/64⌉)·%r136@501 + (⌈param_5/64⌉)·%r137@502 + (⌈param_5/64⌉)·%r140@508 ≥ 2 (CTA-uniform, branch at line 2099)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2154	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2177	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2195	warp * × lane * | runs when %r71@2191 = 0 (CTA-uniform, branch at line 2193)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2320	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2342	warp 0 × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2392	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2402	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2410	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:2650	warp * × lane * | runs when %r2679@$L__BB0_14 = ⌈param_5/64⌉ - 1 (CTA-uniform, branch at line 2647)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3543	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3547	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3551	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3555	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3559	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3563	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3567	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3571	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3575	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3579	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3583	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3587	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3591	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3595	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3599	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3603	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3607	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3611	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3615	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3619	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3623	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3627	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3631	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3635	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3639	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3643	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3647	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3651	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3655	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3659	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3663	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3667	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3671	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3677	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3681	warp * × lane * | runs when (⌈param_5/64⌉)·%r136@501 + (⌈param_5/64⌉)·%r137@502 + (⌈param_5/64⌉)·%r140@508 ≥ 1 (CTA-uniform, branch at line 3679)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3688	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3697	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:3700	warp * × lane * | runs when %r2694@$L__BB0_22 = ⌈param_5/64⌉ - 1 (CTA-uniform, branch at line 3697)
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4621	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4625	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4629	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4633	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4637	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4641	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4645	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4649	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4653	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4657	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4661	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4665	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4669	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4673	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4677	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4681	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4685	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4689	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4693	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4697	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4701	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4705	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4709	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4713	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4717	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4721	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4725	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4729	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4733	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4737	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4741	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4745	<= warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4748	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4756	warp 0 × lane 0
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4762	warp 0 × lane 0
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4765	warp * × lane *
+tests/fixtures/b200/bmm_corpus_128x256x64_w4s4.bmm_kernel_persistent.sm_100a.ptx:4769	warp 0 × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:37	warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:76	warp * × lane * | runs when %r25@62 > 16·%ctaid.y + %r24@52 (warp-uniform, branch at line 73)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:94	warp * × lane * | runs when %r32@86 ≠ -1 (warp-uniform, branch at line 91)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:127	warp * × lane * | runs when %ctaid.y ≠ 0 (CTA-uniform, branch at line 124)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:164	warp * × lane * | runs when %ctaid.y = 0 (CTA-uniform, branch at line 124)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:198	warp * × lane * | runs when (%rs5@189 mod 256) ≠ 0 (warp-uniform, branch at line 195)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:298	warp * × lane * | runs when %r25@62 < %r24@52 + 3 (warp-uniform, branch at line 295)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:342	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:348	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:354	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:360	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:366	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:372	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:378	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:384	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:390	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:396	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:402	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:408	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:414	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:420	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:426	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:432	<= warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:517	warp 0 × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:606	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:610	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:615	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:619	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:624	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:628	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:633	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:637	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:642	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:646	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:651	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:655	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:660	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:664	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:669	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:673	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:678	warp * × lane * | runs when (%rs5@189 mod 256) = 0 (warp-uniform, branch at line 195)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:695	warp * × lane * | runs when ((%rs5@189 mod 256) ≠ 0 and %r25@62 ≥ %r24@52 + 3) or ((%rs5@189 mod 256) = 0 and %r25@62 > %r24@52 + 2) (warp-uniform, branches at lines 195, 295, 694)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:802	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:806	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:811	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:815	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:820	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:824	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:829	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:833	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:838	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:842	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:847	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:851	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:856	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:860	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:865	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:869	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:874	warp * × lane * | runs when %r25@62 ≤ %r24@52 + 2 (warp-uniform, branch at line 694)
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:917	warp 0 × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:979	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:983	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:988	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:992	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:997	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1001	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1006	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1010	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1015	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1019	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1024	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1028	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1033	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1037	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1042	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1046	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1061	warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1203	warp * × lane *
+tests/fixtures/b200/conv_orig_best._causal_conv1d_fwd_kernel.sm_100a.ptx:1315	warp * × lane *
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:40	warp * × lane *
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:888	warp * × lane * | runs when param_9 ≥ 1 (CTA-uniform, branch at line 885)
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:933	warp * × lane *
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1378	warp * × lane 0-28:4
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1382	warp * × lane 0-28:4
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1386	warp * × lane 0-28:4
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1390	warp * × lane 0-28:4
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1853	warp * × lane 0-28:4
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1857	warp * × lane 0-28:4
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1861	warp * × lane 0-28:4
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1865	warp * × lane 0-28:4
+tests/fixtures/b200/delta_gluon_best.delta_rule_fwd_gluon.sm_100a.ptx:1879	warp * × lane *
+tests/fixtures/b200/delta_prefetch_best.fused_recurrent_delta_rule_fwd_kernel.sm_100a.ptx:40	warp * × lane *
+tests/fixtures/b200/delta_prefetch_best.fused_recurrent_delta_rule_fwd_kernel.sm_100a.ptx:701	warp * × lane * | runs when param_9 ≥ 1 (CTA-uniform, branch at line 698)
+tests/fixtures/b200/delta_prefetch_best.fused_recurrent_delta_rule_fwd_kernel.sm_100a.ptx:772	warp * × lane *
+tests/fixtures/b200/delta_prefetch_best.fused_recurrent_delta_rule_fwd_kernel.sm_100a.ptx:1872	warp * × lane *
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:44	warp * × lane *
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:58	warp 0 × lane *
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ptx:67	warp 0 × lane *
@@ -387,6 +701,26 @@ tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_ker
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:1833	warp 0 × lane 0
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:1836	warp * × lane *
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ptx:1840	warp 0 × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:51	warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:84	warp * × lane * | runs when %ctaid.z < %r2@77 (warp-uniform, branch at line 81)
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:323	warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:336	warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:372	warp 0 × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:377	warp 0 × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:480	warp 0 × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:485	warp 0 × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:494	warp * × lane * | runs when %r42@344 ≥ 256·%ctaid.z + (256·%nctaid.z)·iv[$L__BB0_2] + 1 (warp-uniform, branch at line 490)
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:509	warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:923	warp 0 × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:928	warp 0 × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:937	warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:938	warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:1043	<= warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:1044	warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:1075	<= warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:1076	warp * × lane *
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:1101	warp 0 × lane 0-15
+tests/fixtures/b200/ll_decode_BN32_w4_s4._fwd_kernel_flash_decode_stage1.sm_100a.ptx:1104	warp * × lane *
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:51	warp * × lane *
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:62	warp 0 × lane *
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ptx:69	warp 0 × lane *
@@ -509,7 +843,49 @@ tests/fixtures/b200/quant__deepseek-v3__prefill__sglang_group_quant_fp8_hidden._
 tests/fixtures/b200/quant__deepseek-v3__prefill__sglang_group_quant_fp8_hidden._per_token_group_quant_8bit.sm_100a.ptx:74	<= warp * × lane *
 tests/fixtures/b200/quant__deepseek-v3__prefill__sglang_group_quant_fp8_hidden._per_token_group_quant_8bit.sm_100a.ptx:137	<= warp * × lane *
 tests/fixtures/b200/quant__deepseek-v3__prefill__sglang_group_quant_fp8_hidden._per_token_group_quant_8bit.sm_100a.ptx:143	warp * × lane 0
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:39	warp * × lane *
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:50	warp * × lane * | runs when param_10 > %ctaid.y (CTA-uniform, branch at line 47)
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:59	warp * × lane * | runs when %ctaid.x ≤ 127 (CTA-uniform, branch at line 57)
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:67	warp * × lane * | runs when %ctaid.x ≠ 0 (CTA-uniform, branch at line 64)
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:98	warp * × lane *
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:149	warp * × lane *
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:150	warp * × lane * | runs when %ctaid.x > 127 (CTA-uniform, branch at line 57)
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:175	warp * × lane * | runs when %ctaid.x = 0 (CTA-uniform, branch at line 64)
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:206	warp * × lane *
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:259	warp * × lane *
+tests/fixtures/b200/rca_small__ds2._rotary_kernel.sm_100a.ptx:303	warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:43	warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:103	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:115	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:127	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:139	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:445	<= warp * × lane 0-7
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:573	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:585	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:597	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:608	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:853	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:861	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:869	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp._layer_norm_fwd_1pass_kernel.2.sm_100a.ptx:877	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:41	warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:98	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:110	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:122	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:134	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:193	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:201	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:209	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:217	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:1078	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:1086	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:1094	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:1102	<= warp * × lane *
+tests/fixtures/b200/rca_small__fp.gated_rms_fastmath.sm_100a.ptx:1125	<= warp * × lane 0-7
 tests/fixtures/b200/rca_small__ropec.rope_cache_tile_flip.sm_100a.ptx:49	warp * × lane *
+tests/fixtures/b200/rca_small__topk.gtopk_tile.1.sm_100a.ptx:35	warp * × lane *
+tests/fixtures/b200/rca_small__topk.gtopk_tile.1.sm_100a.ptx:1281	warp * × lane 0-7
+tests/fixtures/b200/rca_small__topk.gtopk_tile.1.sm_100a.ptx:1298	warp * × lane 0-7
 tests/fixtures/b200/rmsnorm_sglang__deepseek-v3__prefill.fused_rmsnorm_kernel.sm_100a.ptx:35	warp * × lane *
 tests/fixtures/b200/rmsnorm_sglang__deepseek-v3__prefill.fused_rmsnorm_kernel.sm_100a.ptx:62	warp 0-27 × lane *
 tests/fixtures/b200/rmsnorm_sglang__deepseek-v3__prefill.fused_rmsnorm_kernel.sm_100a.ptx:187	warp 0-27 × lane *
@@ -663,6 +1039,30 @@ tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ptx:2029	warp 8
 tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ptx:2034	warp 8-11 × lane *
 tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ptx:2037	no thread
 tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ptx:2040	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:56	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:117	warp * × lane * | runs when %r25@110 > %r746@106 (warp-uniform, branch at line 114)
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:225	<= warp 0-1 × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:234	no thread
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:771	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1781	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1873	no thread
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1877	no thread
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1881	no thread
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1935	<= warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1936	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1966	<= warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1967	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1993	<= warp 0 × lane 0-3
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx:1996	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:40	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:132	warp * × lane * | runs when %r29@122 ≥ 1 (warp-uniform, branch at line 129)
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:169	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:182	warp * × lane * | runs when %r42@175 > %r4@115 (warp-uniform, branch at line 179)
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:229	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:240	warp * × lane * | runs when %r59@233 > 64·%r3@112 (warp-uniform, branch at line 237)
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:289	warp * × lane *
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:306	warp * × lane * | runs when %r78@299 > 96·%r3@112 (warp-uniform, branch at line 303)
+tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_kernel_stage2.sm_100a.ptx:354	warp * × lane *
 tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ptx:56	warp * × lane *
 tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ptx:128	warp * × lane * | runs when %r15@121 > %r14@117 (warp-uniform, branch at line 125)
 tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ptx:209	<= warp 0-1 × lane *
@@ -694,6 +1094,490 @@ tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ptx:
 tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ptx:1131	warp * × lane *
 tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ptx:1157	<= warp 0 × lane 0-3
 tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ptx:1160	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:64	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:72	warp 0 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:80	warp 0 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:135	warp * × lane * | runs when %rd238@105 > 128·%ctaid.z + %rd236@95 (warp-uniform, branch at line 132)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:373	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:381	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:389	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:397	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:405	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:413	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:421	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:429	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:487	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:494	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:501	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:508	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:532	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:556	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:685	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:707	warp 0 × lane * | runs when %r54@126 > %r53@116 (warp-uniform, branch at line 705)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:780	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:908	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:1032	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:1043	warp * × lane * | runs when %r54@126 > %r53@116 (warp-uniform, branch at line 1040)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:1048	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:1707	warp 0 × lane * | runs when %r54@126 > %r53@116 (warp-uniform, branch at line 1705)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:1766	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:1789	warp 0 × lane * | runs when %r54@126 ≥ %r53@116 + 129 (warp-uniform, branch at line 1787)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:1865	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:1977	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:2080	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:2092	warp * × lane * | runs when %r54@126 ≥ %r53@116 + 129 (warp-uniform, branch at line 2089)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:2159	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:2324	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:2443	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:2456	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:2540	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:2550	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3133	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3141	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3239	warp 0 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3299	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3329	warp 0 × lane * | runs when 128·iv[$L__BB0_11] + %r53@116 < %r54@126 - 256 (warp-uniform, branch at line 3326)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3390	warp * × lane * | runs when %rd238@105 ≤ 128·%ctaid.z + %rd236@95 (warp-uniform, branch at line 132)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3394	warp 0 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3398	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3410	warp * × lane * | runs when %r54@126 ≥ %r53@116 + 1 (warp-uniform, branch at line 3407)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3495	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3503	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3577	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3583	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3589	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3595	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3622	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3629	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3636	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3643	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:3961	warp 0 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:4035	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:4263	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:4268	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5011	warp 0 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5069	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5076	warp 0 × lane * | runs when %rd180@3602 ≥ 129 (warp-uniform, branch at line 5074)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5152	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5376	warp * × lane * | runs when %rd180@3602 ≥ 129 (warp-uniform, branch at line 5373)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5494	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5713	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5797	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:5807	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6519	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6527	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6625	warp 0 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6685	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6708	warp 0 × lane * | runs when 128·iv[$L__BB0_26] < %rd180@3602 - 256 (warp-uniform, branch at line 6705)
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6769	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6849	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6858	warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6871	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6877	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6883	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:6889	warp 0 × lane 0
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7095	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7099	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7103	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7107	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7111	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7115	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7119	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7123	<= warp * × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7129	warp 0 × lane *
+tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx:7132	warp * × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:68	warp * × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:71	warp * × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:94	warp 0 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:101	warp 0 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:115	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:245	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:251	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:265	warp 0-1 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:274	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:282	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:286	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:298	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:305	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:312	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:319	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:329	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:338	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:343	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:350	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:359	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:367	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:386	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:393	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:401	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:408	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:415	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:422	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:430	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:437	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:444	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:451	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:461	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:468	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:477	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:484	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:504	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:516	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:524	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:528	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:545	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:553	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:569	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:651	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:659	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:663	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1262	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1270	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1278	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1290	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1297	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1305	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1307	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1318	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1328	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1339	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1349	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1356	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1363	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1370	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1380	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1389	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1394	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1401	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1410	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1418	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1434	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1441	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1449	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1456	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1463	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1470	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1478	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1485	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1492	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1499	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1509	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1516	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1525	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1532	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1548	warp 0-3 × lane * | runs when 128·%ctaid.x ≥ 1 (CTA-uniform, branch at line 1545)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1553	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1564	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1572	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1576	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1593	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1601	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1617	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1699	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1707	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:1711	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2310	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2318	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2327	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2339	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2340	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2355	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2364	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2368	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2379	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2389	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2400	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2410	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2417	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2424	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2431	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2440	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2449	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2454	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2461	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2470	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2478	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2493	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2500	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2508	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2515	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2522	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2529	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2537	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2544	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2551	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2558	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2568	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2575	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2584	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2591	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2604	warp 0-3 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 2601)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2611	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2619	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2623	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2794	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2804	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:2815	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:3520	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:3528	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:3532	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4003	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4011	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4020	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4026	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4043	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4052	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4056	warp 0-3 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4067	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4077	warp 0-3 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4088	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4326	warp 0-1 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4337	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4343	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4351	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4357	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4365	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4371	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4377	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4383	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4390	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4396	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4402	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4408	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4415	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4421	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4428	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4434	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4441	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4447	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4453	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4459	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4467	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4473	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4481	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4487	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4495	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4501	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4507	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4513	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4520	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4526	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4532	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4538	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4545	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4551	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4558	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4564	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4571	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4577	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4583	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4589	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4597	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4603	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4611	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4617	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4625	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4631	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4637	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4643	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4650	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4656	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4662	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4668	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4675	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4681	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4688	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4694	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4701	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4707	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4713	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4719	warp 0 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4728	warp 0 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4732	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4757	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4771	warp 4-11 × lane * | runs when 128·%ctaid.x < -2147483520 (CTA-uniform, branch at line 4768)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4776	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4782	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4797	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4814	warp 4-11 × lane * | runs when predicate %p3 (line 4810) is false (warp-uniform, branch at line 4811)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4815	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4823	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4824	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4851	warp 4-11 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 4848)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4856	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4866	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4894	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4899	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4907	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4914	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4921	warp 4-11 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 4918)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4930	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4938	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4941	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4960	warp 4-11 × lane * | runs when 128·%ctaid.x < -2147483520 (CTA-uniform, branch at line 4957)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4965	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4973	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4986	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:4987	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5002	warp 4-11 × lane * | runs when 128·%ctaid.x ≥ 1 (CTA-uniform, branch at line 4998)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5009	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5021	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5029	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5033	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5044	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5052	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5056	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5251	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5260	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5269	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5272	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5273	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5274	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5285	warp 4-11 × lane * | runs when (%ctaid.x mod 33554432) ≠ 16777215 (CTA-uniform, branch at line 5281)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5297	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5305	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5309	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5320	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5328	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5332	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5527	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5536	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5544	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5547	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5583	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5591	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5595	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5814	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5822	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:5825	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6013	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6037	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6045	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6050	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6252	warp 4-11 × lane * | runs when 128·iv[$L__BB0_23] < 1792 (CTA-uniform, branch at line 6249)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6257	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6266	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6453	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6454	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6461	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6473	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6484	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6492	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6496	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6507	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6515	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6519	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6714	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6723	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6732	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6735	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6741	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6747	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6761	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6770	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6776	warp 10 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6856	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6864	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6873	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6879	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6888	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6891	warp 10 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6974	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6975	warp 4-11 × lane * | runs when predicate %p3 (line 4810) is true (warp-uniform, branch at line 4811)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:6980	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7006	warp 4-11 × lane * | runs when 128·%ctaid.x > 0 (CTA-uniform, branch at line 7003)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7011	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7024	warp 10 × lane * | runs when 128·%ctaid.x ≥ 1 (CTA-uniform, branch at line 7022)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7104	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7116	warp 4-11 × lane * | runs when 128·%ctaid.x > 0 (CTA-uniform, branch at line 7113)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7121	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7137	warp 4-11 × lane * | runs when 128·%ctaid.x > 128 (CTA-uniform, branch at line 7134)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7142	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7152	warp 10 × lane * | runs when 128·%ctaid.x ≥ 129 (CTA-uniform, branch at line 7150)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7236	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7250	warp 4-11 × lane * | runs when 128·%ctaid.x > 128 (CTA-uniform, branch at line 7247)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7255	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7266	warp 4-11 × lane * | runs when 128·%ctaid.x ≥ 1 (CTA-uniform, branch at line 7262)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7292	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7308	warp 4-11 × lane * | runs when 128·iv[$L__BB0_35] < 128·%ctaid.x - 256 (CTA-uniform, branch at line 7305)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7313	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7323	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7339	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7347	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7356	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7364	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7370	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7378	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7383	warp 10 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7454	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7467	warp 4-11 × lane * | runs when 128·iv[$L__BB0_35] < 128·%ctaid.x - 256 (CTA-uniform, branch at line 7464)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7472	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7483	warp 10 × lane * | runs when 128·iv[$L__BB0_35] < 128·%ctaid.x - 256 (CTA-uniform, branch at line 7480)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7555	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7581	warp 4-11 × lane * | runs when 128·%ctaid.x > 0 (CTA-uniform, branch at line 7578)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7586	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7596	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7625	warp 4-11 × lane * | runs when 128·%ctaid.x > 128 (CTA-uniform, branch at line 7622)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7630	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7639	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7655	warp 4-11 × lane * | runs when 128·%ctaid.x ≥ 1 (CTA-uniform, branch at line 7651)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7659	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7678	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7686	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7689	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7711	warp 4-11 × lane * | runs when 128·iv[$L__BB0_42] < 128·%ctaid.x - 256 (CTA-uniform, branch at line 7708)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7716	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7725	warp 4-11 × lane 0
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7739	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7740	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7746	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7747	warp 4-11 × lane * | runs when jump table at line 4814 selects this target (warp-uniform)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7767	warp 4-11 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 7764)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7772	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7784	warp 10 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 7783)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7870	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7879	warp 4-11 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 7876)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7884	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7898	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7903	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7923	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7928	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7939	warp 4-11 × lane * | runs when 128·%ctaid.x ≠ 2147483520 (CTA-uniform, branch at line 7935)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7950	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7959	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7965	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7973	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7979	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7987	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:7991	warp 10 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8061	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8073	warp 4-11 × lane * | runs when 128·%ctaid.x < -2147483520 (CTA-uniform, branch at line 8070)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8078	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8089	warp 10 × lane * | runs when 128·%ctaid.x ≤ -2147483521 (CTA-uniform, branch at line 8086)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8174	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8175	warp 4-9,11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8196	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8207	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8215	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8222	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8237	warp 4-11 × lane * | runs when 128·iv[$L__BB0_16] < 1792 (CTA-uniform, branch at line 8234)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8242	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8253	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8269	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8277	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8286	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8294	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8300	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8308	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8313	warp 10 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8384	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8399	warp 4-11 × lane * | runs when 128·iv[$L__BB0_16] < 1792 (CTA-uniform, branch at line 8396)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8404	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8415	warp 10 × lane * | runs when 128·iv[$L__BB0_16] ≤ 1791 (CTA-uniform, branch at line 8412)
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8487	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8488	warp 4-11 × lane *
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8492	no thread
+tests/fixtures/b200/sg_extend__llama3-8b@tl__tut_gather_ws.attn_fwd.sm_100a.ptx:8495	warp * × lane *
 tests/fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ptx:54	warp * × lane *
 tests/fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ptx:134	<= warp * × lane *
 tests/fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ptx:138	<= warp * × lane *
@@ -995,6 +1879,160 @@ tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx:2912	warp 0 × l
 tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx:3239	<= warp * × lane *
 tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx:3242	warp * × lane *
 tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ptx:3246	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:66	warp * × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:68	warp * × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:81	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:88	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:97	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:121	warp 0-7 × lane * | runs when param_34 ≥ 1 (CTA-uniform, branch at line 118)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:334	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:342	warp 0-7 × lane * | runs when 4294967296·⌊%rd434@337/4294967296⌋ ≠ 0 (warp-uniform, branch at line 340)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:343	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:353	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:378	warp 0-7 × lane * | runs when 4294967296·⌊%rd195@373/4294967296⌋ ≠ 0 (warp-uniform, branch at line 376)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:380	no thread
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:381	warp 0-7 × lane * | runs when 4294967296·⌊%rd434@337/4294967296⌋ = 0 (warp-uniform, branch at line 340)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:388	warp 0-7 × lane * | runs when 4294967296·⌊%rd195@373/4294967296⌋ = 0 (warp-uniform, branch at line 376)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:396	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:416	warp 0-7 × lane * | runs when %rd447@$L__BB0_31 < param_32·%rd443@$L__BB0_34 (warp-uniform, branch at line 412)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:428	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:441	warp 0-1 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:450	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:456	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:465	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:471	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:479	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:485	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:492	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:498	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:505	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:511	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:518	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:524	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:531	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:537	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:544	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:550	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:557	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:563	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:569	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:578	warp 0-7 × lane * | runs when 4294967296·⌊%rd199@573/4294967296⌋ ≠ 0 (warp-uniform, branch at line 576)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:580	warp 0-7 × lane * | runs when 4294967296·⌊%rd199@573/4294967296⌋ = 0 (warp-uniform, branch at line 576)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:585	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:966	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:973	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:983	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:992	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:997	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1004	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1013	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1021	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1045	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1052	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1060	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1067	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1075	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1082	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1090	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1097	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1105	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1112	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1121	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1128	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1137	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1144	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1163	warp 0-7 × lane * | runs when %rd69@606 ≥ %rd224@602 + 1 (warp-uniform, branch at line 1159)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1187	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1198	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1208	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1214	warp 0-7 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1323	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1331	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1338	warp 0-7 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1347	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1355	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1358	warp 0-7 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1429	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1437	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1446	warp 0-7 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1484	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1492	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1496	warp 0-7 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1505	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1515	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1523	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1525	warp 0-7 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1629	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1639	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1650	warp 0 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1881	<= warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1884	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1900	warp 8-19 × lane * | runs when jump table at line 1920 selects this target (warp-uniform)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1906	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1920	warp 8-19 × lane * | runs when predicate %p3 (line 1916) is false (warp-uniform, branch at line 1917)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1921	warp 8-19 × lane * | runs when jump table at line 1920 selects this target (warp-uniform)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1932	warp 8-19 × lane * | runs when %rd436@1924 > 0 (warp-uniform, branch at line 1928)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1969	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1980	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1988	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:1995	warp 8-19 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2032	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2040	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2045	warp 8-19 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2151	warp 8-19 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2164	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2172	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2176	warp 8-19 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2189	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2198	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2201	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2202	warp 8-19 × lane * | runs when jump table at line 1920 selects this target (warp-uniform)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2215	warp 8-19 × lane * | runs when %rd440@2205 ≥ 1 (warp-uniform, branch at line 2211)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2237	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2247	<= warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2258	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2266	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2269	warp 8-19 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2454	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2462	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2465	warp 8-19 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2637	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2645	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2648	warp 8-19 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2700	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2705	warp 8-19 × lane * | runs when jump table at line 1920 selects this target (warp-uniform)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2718	warp 8-19 × lane * | runs when %rd437@2708 ≥ 1 (warp-uniform, branch at line 2714)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2880	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2888	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2897	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2900	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2910	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2919	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2924	warp 18 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:2992	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3000	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3009	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3012	warp 18 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3084	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3092	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3101	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3104	warp 18 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3133	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3141	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3149	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3155	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3163	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3166	warp 18 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3201	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3214	warp 8-19 × lane * | runs when predicate %p3 (line 1916) is true (warp-uniform, branch at line 1917)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3219	warp 8-19 × lane * | runs when %rd436@1924 ≤ 0 (warp-uniform, branch at line 1928)
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3226	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3231	warp 8-19 × lane 0
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3246	warp 0-7 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3253	warp 0 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3257	warp 8-19 × lane *
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3261	no thread
+tests/fixtures/b200/tma_ws_Q64N64w8s2._stage1_tma.sm_100a.ptx:3264	warp * × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:68	warp * × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:71	warp * × lane *
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ptx:90	warp 0 × lane *
