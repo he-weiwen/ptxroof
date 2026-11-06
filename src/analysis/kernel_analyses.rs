@@ -7,10 +7,11 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::control_flow::sync_dependence::{exit_branches, join_blocks};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
+use crate::ptx::modifier::Form;
 use crate::ptx::register_effects;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(crate) struct KernelAnalyses<'a> {
     pub(crate) module: &'a Module,
@@ -130,6 +131,80 @@ impl<'a> KernelAnalyses<'a> {
         (instr.mnemonic == Opcode::Setp).then_some((op, instr, place == 1))
     }
 
+    /// Predicate value `g` holding makes `p` hold: `g` is `p`, or an
+    /// unguarded `and.pred` or `mov.pred` of a predicate that does.
+    pub(crate) fn implies(&self, g: Value, p: Value) -> bool {
+        let Value::Result { op, .. } = g else {
+            return g == p;
+        };
+        let Stmt::Instr(instr) = &self.kernel.stmts[op] else {
+            return false;
+        };
+        let read = register_effects::split_operands(self.module, instr).1;
+        g == p
+            || instr.predicate.is_none()
+                && matches!(instr.mnemonic, Opcode::And | Opcode::Mov)
+                && Form::of(self.module, instr) == Form::Pred
+                && read.iter().any(|&o| match *self.module.operand(o) {
+                    Operand::Register(r) => (self.ssa.value_before(op, Register::Named(r)))
+                        .is_some_and(|a| self.implies(a, p)),
+                    _ => false,
+                })
+    }
+
+    /// Every read of `v` runs where predicate `p` holds: under a guard that
+    /// implies `p`, or by an unguarded pure instruction whose result is
+    /// read so in turn; none through a φ. A read is of an operand, the
+    /// guard or CC.
+    pub(crate) fn read_only_under(&self, v: Value, p: Value) -> bool {
+        let (mut work, mut seen) = (vec![(v, 0)], HashSet::new());
+        while let Some((w @ Value::Result { reg, .. }, depth)) = work.pop() {
+            if !seen.insert(w) {
+                continue;
+            }
+            for pos in self.cfg.blocks.iter().flat_map(|b| b.start..b.end) {
+                let Stmt::Instr(instr) = &self.kernel.stmts[pos] else {
+                    continue;
+                };
+                let at = |r: Register| self.ssa.value_before(pos, r);
+                let reads: Vec<Value> = (register_effects::split_operands(self.module, instr).1)
+                    .iter()
+                    .flat_map(|&o| register_effects::registers(self.module, o))
+                    .map(Register::Named)
+                    .chain(instr.predicate.map(|g| Register::Named(g.reg)))
+                    .chain(register_effects::reads_cc(self.module, instr).then_some(Register::Cc))
+                    .filter(|&r| r == reg)
+                    .filter_map(at)
+                    .collect();
+                let phi = |x: &Value| {
+                    matches!(x, Value::Argument { .. }) && self.ssa.sources(*x).contains(&w)
+                };
+                if reads.iter().any(phi) {
+                    return false;
+                }
+                if !reads.contains(&w) {
+                    continue;
+                }
+                match instr.predicate {
+                    Some(g)
+                        if !g.negated
+                            && at(Register::Named(g.reg)).is_some_and(|g| self.implies(g, p)) => {}
+                    None if register_effects::is_pure(instr.mnemonic) && depth < 16 => {
+                        let written =
+                            register_effects::writes(self.module, &self.kernel.stmts[pos]);
+                        work.extend(
+                            written
+                                .into_iter()
+                                .map(|reg| (Value::Result { op: pos, reg }, depth + 1)),
+                        );
+                    }
+                    _ => return false,
+                }
+            }
+        }
+        true
+    }
+
     /// The block holding statement `stmt`.
     pub(crate) fn block_of(&self, stmt: usize) -> BlockId {
         (0..self.cfg.blocks.len() as u32)
@@ -179,5 +254,45 @@ impl<'a> KernelAnalyses<'a> {
             let blk = self.cfg.block(b);
             blk.start <= stmt && stmt < blk.end
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::control_flow::loop_forest;
+    use crate::ptx::cfg::build_cfg;
+    use crate::ptx::parse::parser::parse;
+
+    /// %p6, a copy of %p3 ∧ (%p1 ∧ %p2), holds only where each of the three
+    /// does; `!%p1 ∧ %p2`, `%p1 ∨ %p2` and a guarded `and.pred` do not make
+    /// %p1 hold.
+    #[test]
+    fn an_and_pred_chain_implies_each_operand() {
+        let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
+                   .visible .entry k()\n{\n\
+                   mov.u32 %r1, %tid.x;\nsetp.lt.u32 %p1, %r1, 16;\nsetp.lt.u32 %p2, %r1, 8;\n\
+                   setp.lt.u32 %p3, %r1, 4;\nand.pred %p4, %p1, %p2;\nand.pred %p5, %p3, %p4;\n\
+                   mov.pred %p6, %p5;\nand.pred %p7, !%p1, %p2;\nor.pred %p8, %p1, %p2;\n\
+                   @%p3 and.pred %p9, %p1, %p2;\nret;\n}\n";
+        let m = parse(src).expect("test source parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let forest = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &forest);
+        let end = k.stmts.len() - 1;
+        let value = |name| {
+            let reg = Register::Named(m.interner.get(name).expect("register"));
+            data.ssa.value_before(end, reg).expect("reachable")
+        };
+        let implies = |g, p| data.implies(value(g), value(p));
+        assert!(
+            ["%p1", "%p2", "%p3", "%p6"]
+                .iter()
+                .all(|p| implies("%p6", p))
+        );
+        assert!(implies("%p4", "%p1") && !implies("%p4", "%p3"));
+        assert!(!implies("%p7", "%p1") && implies("%p7", "%p2"));
+        assert!(!implies("%p8", "%p1") && !implies("%p9", "%p1"));
     }
 }

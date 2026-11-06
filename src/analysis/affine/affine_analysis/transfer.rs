@@ -47,7 +47,8 @@ impl AffineAnalysis<'_> {
             && let elements = module.operand_ids(*children)
             && let Some(place) = (elements.iter())
                 .position(|&c| matches!(module.operand(c), Operand::Register(r) if *r == reg))
-            && let Some(value) = self.unpacked(src, def, place, elements.len(), depth)
+            && let Some(value) = (self.unpacked(src, def, place, elements.len(), depth))
+                .or_else(|| self.element(ops[1], def, place, elements.len(), form, depth))
         {
             return value;
         }
@@ -78,6 +79,13 @@ impl AffineAnalysis<'_> {
                 Opcode::Add | Opcode::Sub | Opcode::Mul | Opcode::Mad | Opcode::Div | Opcode::Rem,
                 Form::Float { .. },
             ) => Err(format!("`{}` is floating-point arithmetic", module.opcode(instr)).into()),
+            (Opcode::Mov, Form::Int { ty, .. })
+                if ty.kind == IntKind::Bits
+                    && let Some(Operand::VectorList { children }) =
+                        ops.get(1).map(|&o| module.operand(o)) =>
+            {
+                self.packed(module.operand_ids(*children), def, ty, depth)
+            }
             (Opcode::Mov, _) => arg(1),
             (Opcode::Cvta, _) => {
                 self.operand_at(*ops.last().expect("cvta has operands"), def, depth + 1)
@@ -279,7 +287,9 @@ impl AffineAnalysis<'_> {
                 }
             }
             (Opcode::Selp, Form::Int { ty, .. }) if ops.len() == 4 => {
-                (self.selected(&ops, def, depth, ty)).ok_or_else(|| self.unread(instr, def))
+                (self.selected(&ops, def, depth, ty).map(Ok))
+                    .or_else(|| self.guarded_arm(&ops, def, reg, depth))
+                    .unwrap_or_else(|| Err(self.unread(instr, def)))
             }
             (Opcode::Shl, _) if ops.len() == 3 => {
                 let v = arg(1)?;
@@ -538,6 +548,28 @@ impl AffineAnalysis<'_> {
         }
     }
 
+    /// `selp a, b, c`'s `a` where `c` is a predicate register every read of
+    /// the result `reg` runs where it holds (`read_only_under`), as a
+    /// masked load reads it: no read sees `b` (PTX ISA §9.7.6.3: "If c is
+    /// True, a is stored in d, b otherwise").
+    fn guarded_arm(
+        &self,
+        ops: &[OperandId],
+        def: usize,
+        reg: Symbol,
+        depth: u32,
+    ) -> Option<Result<AffineExpr, UnknownReason>> {
+        let &Operand::Register(c) = self.data.module.operand(ops[3]) else {
+            return None;
+        };
+        let p = self.data.ssa.value_before(def, Register::Named(c))?;
+        let v = Value::Result {
+            op: def,
+            reg: Register::Named(reg),
+        };
+        (self.data.read_only_under(v, p)).then(|| self.operand_at(ops[1], def, depth + 1))
+    }
+
     /// Why statement `def`'s instruction gives no value: what its inputs
     /// depend on behind it (`depends_on`), else the instruction.
     fn unread(&self, instr: &Instr, def: usize) -> UnknownReason {
@@ -610,6 +642,58 @@ impl AffineAnalysis<'_> {
             return Some(Err(format!("{name} is written under a guard").into()));
         }
         Some(value)
+    }
+
+    /// Element `place` of the `count` a `mov` of `form` unpacks from `src`
+    /// at `def`, read from `src`'s value where `form` is a bit-size type
+    /// (`.b128` is none): its `b = width / count` bits from bit place·b,
+    /// ⌊src / 2^(place·b)⌋ mod 2^b (PTX ISA §9.7.9.4: "{ d.x, d.y } =
+    /// { a[0..15], a[16..31] }").
+    fn element(
+        &self,
+        src: OperandId,
+        def: usize,
+        place: usize,
+        count: usize,
+        form: Form,
+        depth: u32,
+    ) -> Option<Result<AffineExpr, UnknownReason>> {
+        let ty = form.int_type().filter(|t| t.kind == IntKind::Bits)?;
+        let bits = ty.width / u32::try_from(count).ok().filter(|&n| n >= 2)?;
+        let bound = |v: &Var| self.var_bounds(v);
+        Some(self.operand_at(src, def, depth + 1).and_then(|a| {
+            let shifted = (a.clone().div_const(1i64 << (place as u32 * bits), &bound))
+                .ok_or_else(|| refuse(&a, "shift"))?;
+            (shifted.clone().modulo_const(1i64 << bits, &bound))
+                .ok_or_else(|| refuse(&shifted, "mod"))
+        }))
+    }
+
+    /// The value a `mov` of `ty` packs from `elements` at `def`: element i
+    /// as an unsigned value of `b = width / n` bits at bit i·b,
+    /// Σ_i a_i·2^(i·b) (PTX ISA §9.7.9.4: "d = a.x | (a.y << 16)",
+    /// "d = a.x | (a.y << 32)"), an immediate its low b bits (§4.5.1: "each
+    /// integer constant is converted to the appropriate size based on the
+    /// data or instruction type at its use").
+    fn packed(
+        &self,
+        elements: &[OperandId],
+        def: usize,
+        ty: IntInstrType,
+        depth: u32,
+    ) -> Result<AffineExpr, UnknownReason> {
+        let width = ty.width / elements.len() as u32;
+        let element = IntInstrType {
+            kind: IntKind::Unsigned,
+            width,
+        };
+        let mut sum = AffineExpr::constant(0);
+        for (i, &e) in elements.iter().enumerate() {
+            let a = self.operand_at(e, def, depth + 1)?;
+            let a = self.extend(&a, element).ok_or_else(|| refuse(&a, "pack"))?;
+            sum = sum + a.scale(SymExpr::Const(1i64 << (i as u32 * width)));
+        }
+        Ok(sum)
     }
 
     /// A product's operands as it reads them: a `.wide` one's as its type

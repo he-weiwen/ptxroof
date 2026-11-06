@@ -1,0 +1,47 @@
+//
+// HAND-WRITTEN: census 00125's shape. x = %tid.x & 255, as a u16, is
+// packed into both halves of a 32-bit register, `mov.b32 %r3,
+// {%rs1, %rs1}` (PTX ISA §9.7.9.4: d = a.x | (a.y << 16)), or'd with
+// 256 and unpacked, `mov.b32 {%rs2, %rs3}, %r4`: the low half is x +
+// 256, the high half x. Thread t stores at param_0 + 8·(x + 256) and at
+// param_0 + 8·x. ptxas 13.4 (sm_89):
+//   LOP3.LUT R0, R0, 0xff, RZ, 0xc0, !PT
+//   PRMT R0, R0, 0x5410, R0
+//   LOP3.LUT R0, R0, 0x100, RZ, 0xfc, !PT
+//   LOP3.LUT R2, R0.reuse, 0xffff, RZ, 0xc0, !PT
+//   PRMT R4, R0, 0x7732, RZ
+//   IMAD.WIDE.U32 R2, R2, R5, c[0x0][0x160]
+//   IMAD.WIDE.U32 R4, R4, R5, c[0x0][0x160]
+// An RTX 4090 run of one CTA of 512 threads writes words 2·x + 512 and
+// 2·x for x in [0, 255], 512 words.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_pack_or_unpack(
+	.param .u64 micro_pack_or_unpack_param_0
+)
+.reqntid 512, 1, 1
+{
+	.reg .b16 	%rs<4>;
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [micro_pack_or_unpack_param_0];
+	mov.u32 	%r1, %tid.x;
+	and.b32 	%r2, %r1, 255;
+	cvt.u16.u32 	%rs1, %r2;
+	mov.b32 	%r3, {%rs1, %rs1};
+	or.b32 	%r4, %r3, 256;
+	mov.b32 	{%rs2, %rs3}, %r4;
+	cvt.u32.u16 	%r5, %rs2;
+	mul.wide.u32 	%rd2, %r5, 8;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], 1;
+	cvt.u32.u16 	%r6, %rs3;
+	mul.wide.u32 	%rd4, %r6, 8;
+	add.s64 	%rd5, %rd1, %rd4;
+	st.global.u32 	[%rd5], 1;
+	ret;
+}

@@ -13,13 +13,20 @@
 // micro_unpack_join: one pack on each side of a branch, unpacked after
 // the join.
 // micro_unpack_halves: two 32-bit values packed, four 16-bit halves
-// unpacked.
-// micro_unpack_wide: a 64-bit product unpacked, no pack.
+// unpacked; the lowest is 4·%tid.x mod 2^16 (ptxas:
+// `LOP3.LUT R0, R0, 0xffff, RZ, 0xc0, !PT`), and thread t stores at
+// param_0 + 16·t.
+// micro_unpack_wide: a 64-bit product unpacked, no pack; the low
+// element is 4·%tid.x (ptxas: `SHF.L.U32 R2, R5, 0x2, RZ`), and thread
+// t stores at param_0 + 16·t.
 // micro_unpack_twice: the low element unpacked again into 16-bit halves;
 // the high half of 4·%tid.x is 0 (ptxas: `PRMT R2, R0, 0x7732, RZ`), not
 // the pack's high element %tid.x.
 // micro_unpack_imm: low elements 4294967296, whose low 32 bits are 0,
 // and 16; ptxas stores at `[R2.64]` and `[R2.64+0x40]`.
+// An RTX 4090 run of one CTA, each store's value 1, writes words 4·t
+// for t in [0, 63] in micro_unpack_halves and micro_unpack_wide, word 0
+// in micro_unpack_twice, and words 0 and 16 in micro_unpack_imm.
 // micro_unpack_redefined: an element register written between the pack
 // and the unpack; the unpack gives the packed 4·%tid.x (ptxas:
 // `SHF.L.U32 R2, R2, 0x2, RZ`, `IMAD.WIDE.U32 R2, R2, R3, c[0x0][0x160]`).

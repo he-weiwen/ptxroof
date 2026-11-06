@@ -457,7 +457,11 @@ output_tallies` rewrites it.
   (the grouped tile schedule's
   `pid / num_pid_n` in the Gluon fp8 GEMM's global copies, k1's
   remainder loop reading the main loop's final k;
-  `micro/uniform_address.ptx`). An xor reads when each side is an xor
+  `micro/uniform_address.ptx`). A `selp` every read of which runs under
+  a guard implying its predicate, the predicate or an `and.pred` or
+  `mov.pred` of it, as a masked load reads it, is its first operand
+  (`micro/selp_under_guard.ptx`; read also unguarded, it is refused,
+  `micro_selp_under_guard_data`). An xor reads when each side is an xor
   of thread index fields, `%tid.x` or a floor or remainder of it by a
   power of two, times a constant it carries nothing under, no two of a
   side's fields setting one bit, and constants: one variable, the xor of
@@ -527,7 +531,9 @@ output_tallies` rewrites it.
   (`micro/magic_div.ptx`: "`mul.hi.u32` keeps a product's upper half";
   sglang `bmm_kernel_persistent`'s `/ 148` leaves its trip count
   unknown); a floor or mod of a value that, past its multiple of the
-  divisor, is neither a term c·v, c a divisor, plus a rest the ranges
+  divisor, none taken from a negative coefficient (`(−3·%tid.x) mod 2`,
+  `affine_expr`'s `a_coefficient_past_the_divisor_splits_by_it`),
+  is neither a term c·v, c a divisor, plus a rest the ranges
   keep in [0, c), nor symbols whose factors share a divisor a of d plus
   a rest in [0, a), nor in one block of d over its range, such as a 0-based
   counter's `i % 2` read before its increment, `(k − 1) mod 2`, which
@@ -538,14 +544,11 @@ output_tallies` rewrites it.
   `00337.ptx`'s signed remainder `x − ((x + ((x >> 31) >>> 26)) & −64)`
   of `x = param_4 + 1 + i` in its loop, its lines 60–66: "shift of an
   induction variable"); an element a
-  `mov.b64 {…}` unpacks from a register no single `mov` packed, after a
-  join of packs (`micro/unpack.ptx`'s `micro_unpack_join`; b200
-  `bmm_kernel_persistent`'s `cp.async` sources, whose `%rd175` three
-  `mov`s pack, lines 372, 540 and 711), with another element
-  count (`micro_unpack_halves`), from 64-bit arithmetic
-  (`micro_unpack_wide`) or from an unpacked element
-  (`micro_unpack_twice`), or packed as an immediate wider than its
-  element (`micro_unpack_imm`), or one a `mov.b128 {…}` unpacks, no
+  `mov.b64 {…}` unpacks after a join of packs, a φ no one value
+  (`micro/unpack.ptx`'s `micro_unpack_join`: "%rd2 has more than one
+  reaching definition"; b200 `bmm_kernel_persistent`'s `cp.async`
+  sources, whose `%rd175` three `mov`s pack, lines 372, 540 and 711),
+  or one a `mov.b128 {…}` packs or unpacks, no
   form the analyses read (`selections_and_moves_take_one_type`; the
   Blackwell corpus's one file with `mov.b128` only packs). In the
   Blackwell corpus (`trap` entry above), not read either: an `or` in

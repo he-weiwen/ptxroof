@@ -1,0 +1,12 @@
+# A selp whose every read runs under a guard implying its predicate reads
+# as its first operand: the store at 4·%tid.x past param_0 on the threads
+# %tid.x < param_1, lanes 0-19 at param_1 = 20, and under an and.pred of
+# the predicate with %tid.x < 16, lanes 0-15. Stored unguarded too, the
+# selp stays refused.
+RUN: %ptxroof analyze %fixtures/micro/selp_under_guard.ptx | FileCheck --check-prefix=ANN "%s"
+RUN: %ptxroof analyze %fixtures/micro/selp_under_guard.ptx --bind 1:n=20 | FileCheck --check-prefix=BIND "%s"
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], 1; // <= warp * × lane * | exec <= 32/CTA | global store [4·%tid.x + param_0] sectors/req <= 4 (ideal <= 4){{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], 1; // <= warp * × lane * | exec <= 32/CTA | global store addr ? (depends on special register %tid.x, behind `selp.b32`){{$}}
+ANN: {{^}}	@%p3 st.global.u32 	[%rd3], 1; // <= warp * × lane 0-15 | exec <= 16/CTA | global store [4·%tid.x + param_0] sectors/req <= 2 (ideal <= 2){{$}}
+BIND: {{^}}	@%p1 st.global.u32 	[%rd3], 1; // warp * × lane 0-19 | exec 20/CTA | global store [4·%tid.x + param_0] sectors/req 3 (ideal 3){{$}}
+BIND: {{^}}	@%p3 st.global.u32 	[%rd3], 1; // warp * × lane 0-15 | exec 16/CTA | global store [4·%tid.x + param_0] sectors/req 2 (ideal 2){{$}}

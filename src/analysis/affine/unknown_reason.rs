@@ -92,14 +92,15 @@ impl UnknownReason {
                     return format!("{prefix}depends on {}, in a {what}", u.render(&name));
                 }
                 for v in vars {
-                    match v {
-                        Var::Iteration(l) if Some(*l) == scope => {}
-                        Var::Iteration(_) => {
+                    match v.counter() {
+                        Some(l) if Some(l) == scope => {}
+                        Some(_) => {
                             return format!("{prefix}depends on an enclosing loop's counter");
                         }
-                        other => {
+                        None => {
                             return format!(
-                                "{prefix}depends on special register {other}, in a {what}"
+                                "{prefix}depends on special register {}, in a {what}",
+                                v.render(&name)
                             );
                         }
                     }
