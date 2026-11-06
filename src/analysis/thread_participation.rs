@@ -33,6 +33,7 @@ use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
 
 /// One condition `form cmp 0` over the thread index and, with the grid
 /// bound, the CTA index: `cta` is the least and greatest value of the
@@ -345,6 +346,17 @@ impl Pred {
             Pred::And(a, b) => Pred::And(at(a), at(b)),
             Pred::Or(a, b) => Pred::Or(at(a), at(b)),
             p => p,
+        }
+    }
+
+    /// Every `elect.sync` it reads is a conjunct of it: no thread but the
+    /// elected one is in the set.
+    fn elect_is_conjunct(&self) -> bool {
+        match self {
+            Pred::And(a, b) => a.elect_is_conjunct() && b.elect_is_conjunct(),
+            Pred::Not(p) => p.elect_active().is_none(),
+            Pred::Or(a, b) => a.elect_active().is_none() && b.elect_active().is_none(),
+            _ => true,
         }
     }
 
@@ -845,7 +857,8 @@ impl Pred {
     /// unspecified (PTX ISA §9.7.14.15 promises only that the same leader
     /// is elected every time), so every active lane is tried as the
     /// leader, and no leader when no lane is certainly active, and the
-    /// range covers those choices.
+    /// range covers those choices; where every election is a conjunct,
+    /// only the leader's thread is evaluated.
     fn tally(&self, shape: [u32; 3], env: Env) -> Option<(Counted, Counted)> {
         if !self.has_condition() || shape.contains(&0) {
             return None;
@@ -856,9 +869,9 @@ impl Pred {
         };
         let (mut threads, mut warps) = (zero, zero);
         for lanes in warps_of(shape) {
-            let lanes_as = |leader: Leader| {
+            let lanes_as = |leader: Leader, among: Range<i64>| {
                 let (mut yes, mut maybe) = (0, 0);
-                for l in lanes.clone() {
+                for l in among {
                     match self.eval_as(to_3d(l, shape), shape, leader, env) {
                         Tri::Yes => yes += 1,
                         Tri::Maybe => maybe += 1,
@@ -869,16 +882,17 @@ impl Pred {
             };
             let (min, max) = match self.elect_active() {
                 None => {
-                    let (yes, maybe) = lanes_as(Leader::Lowest);
+                    let (yes, maybe) = lanes_as(Leader::Lowest, lanes.clone());
                     (yes, yes + maybe)
                 }
                 Some(active) => {
                     let state = |l| active.eval_as(to_3d(l, shape), shape, Leader::Lowest, env);
                     let certain = lanes.clone().any(|l| state(l) == Tri::Yes);
+                    let conjunct = self.elect_is_conjunct();
+                    let among = |l: i64| if conjunct { l..l + 1 } else { lanes.clone() };
                     (lanes.clone().filter(|&l| state(l) != Tri::No))
-                        .map(Leader::Thread)
-                        .chain((!certain).then_some(Leader::Nobody))
-                        .map(lanes_as)
+                        .map(|l| lanes_as(Leader::Thread(l), among(l)))
+                        .chain((!certain).then(|| lanes_as(Leader::Nobody, lanes.clone())))
                         .fold((u32::MAX, 0), |(min, max), (yes, maybe)| {
                             (min.min(yes), max.max(yes + maybe))
                         })
