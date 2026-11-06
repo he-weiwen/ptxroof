@@ -11,3 +11,20 @@ results/rca_attn/ncu/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.ncu-rep att
 results/rca_ssm/run2/ncu/ssd_pass_tlrange.ncu-rep _state_passing_fwd_kernel
 results/rca_small_r4/ncu/rca_small__ropec.ncu-rep rope_cache_tile_flip
 results/rca_mla_run2/ncu/tma_best_Q64N64w8s3.ncu-rep _stage1_tma
+# Then the variants whose instruction forms, refusals or analysis paths
+# none of the above reach.
+results/rca_gemm/ncu/blk_tma_ws_128x128_w8s4.ncu-rep blockfp8_tma
+results/rca_attn/ncu/sg_decode_BN128_w4_s3_splits4.ncu-rep _fwd_grouped_kernel_stage1
+results/rca_attn/ncu/sg_decode_BN128_w4_s3_splits4.ncu-rep _fwd_kernel_stage2
+results/rca_mla_run2/ncu/tma_ws_Q64N64w8s2.ncu-rep _stage1_tma
+results/gluon_attn_ncu2_extend/ncu/sg_extend__llama3-8b@tl__tut_gather_ws.ncu-rep attn_fwd
+results/rca_small_r2/ncu/rca_small__ds2.ncu-rep _rotary_kernel
+results/rca_ssm/run2/ncu/delta_gluon_best.ncu-rep delta_rule_fwd_gluon
+results/rca_attn/ncu/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue.ncu-rep _fwd_kernel
+results/rca_gemm/ncu/bmm_corpus_128x256x64_w4s4.ncu-rep bmm_kernel_persistent
+results/rca_ssm/run2/ncu/conv_orig_best.ncu-rep _causal_conv1d_fwd_kernel
+results/rca_ssm/run2/ncu/delta_prefetch_best.ncu-rep fused_recurrent_delta_rule_fwd_kernel
+results/rca_attn/ncu/ll_decode_BN32_w4_s4.ncu-rep _fwd_kernel_flash_decode_stage1
+results/rca_small_r2/ncu/rca_small__topk.ncu-rep gtopk_tile#1
+results/rca_small_r4/ncu/rca_small__fp.ncu-rep gated_rms_fastmath
+results/rca_small_r4/ncu/rca_small__fp.ncu-rep _layer_norm_fwd_1pass_kernel#2

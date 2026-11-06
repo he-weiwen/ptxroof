@@ -127,7 +127,8 @@ def write_record(path, record):
 
 def selected(sol):
     """reports.txt: a report glob relative to the sol-study checkout per line,
-    optionally followed by the one kernel to take from it."""
+    optionally followed by the one kernel to take from it, or NAME#ID for
+    one of the report's launches of a kernel it launches more than once."""
     for line in (HERE / "reports.txt").read_text().splitlines():
         if line.strip() and not line.startswith("#"):
             pattern, *kernel = line.split()
@@ -173,7 +174,7 @@ def import_reports(sol, corpus, launches_path, out):
     for rep, only in selected(sol):
         label = str(rep.relative_to(sol))
         created, ncu = session(rep)
-        kernels = [k for k in report_kernels(rep) if only in (None, k["kernel"])]
+        kernels = [k for k in report_kernels(rep) if only in (None, k["kernel"], f"{k['kernel']}#{k['id']}")]
         assert kernels, (label, only)
         for k in kernels:
             digest = sass.digest(k["sass"])

@@ -70,7 +70,10 @@ fn written_operands_across_the_corpus() {
 
 /// Every register an instruction or its guard reads is written somewhere
 /// in its kernel: a read of a name nothing writes is a name the parser
-/// resolved to the wrong register, or a read before any write.
+/// resolved to the wrong register, or a read before any write. The four
+/// listed are halves LLVM leaves undefined in a `mov.b64` pack: in
+/// `mov.b64 %rd6, {%r113, %r114};` nothing writes `%r114`, and
+/// `mov.b64 {%r217, _}, %rd6;` reads back the other half only.
 #[test]
 fn every_register_read_is_written_in_its_kernel() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -98,8 +101,15 @@ fn every_register_read_is_written_in_its_kernel() {
         }
     }
     let unwritten: Vec<_> = unwritten.into_iter().collect();
-    assert!(
-        unwritten.is_empty(),
+    let undefined_halves = [
+        "tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx: %r114",
+        "tests/fixtures/b200/sg_decode_BN128_w4_s3_splits4._fwd_grouped_kernel_stage1.sm_100a.ptx: %r577",
+        "tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx: %r117",
+        "tests/fixtures/b200/sg_extend_BM128_BN128_w8_s3_exp2True_novscaleTrue._fwd_kernel.sm_100a.ptx: %r202",
+    ];
+    assert_eq!(
+        unwritten,
+        undefined_halves,
         "read but never written:\n{}",
         unwritten.join("\n")
     );
