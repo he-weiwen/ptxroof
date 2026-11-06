@@ -1,0 +1,36 @@
+//
+// HAND-WRITTEN: a loop each thread leaves after max(%tid.x, 1) trips,
+// its count then read by a store's address and by a second loop's
+// latch; ptxas 13.4 (sm_89) assembles it. Neither reads the count as
+// one value for the warp, and each reason names it alike.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_counter_names(
+	.param .u64 micro_counter_names_param_0
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<5>;
+
+	ld.param.u64 	%rd1, [micro_counter_names_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, 0;
+$L__BB0_1:
+	add.s32 	%r2, %r2, 1;
+	setp.lt.s32 	%p1, %r2, %r1;
+	@%p1 bra 	$L__BB0_1;
+	mul.wide.s32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	mov.u32 	%r3, 0;
+$L__BB0_3:
+	add.s32 	%r3, %r3, 1;
+	setp.lt.s32 	%p2, %r3, %r2;
+	@%p2 bra 	$L__BB0_3;
+	ret;
+}

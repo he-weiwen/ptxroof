@@ -94,28 +94,32 @@ impl<'a> KernelAnalyses<'a> {
             .find(|&d| blk.start <= d && d < before)
     }
 
-    /// The last write of `pred` in block `b` before statement `before`,
-    /// if it is a `setp` whose first output is `pred`.
-    pub(crate) fn find_setp(
-        &self,
-        b: BlockId,
-        before: usize,
-        pred: Symbol,
-    ) -> Option<(usize, &Instr)> {
-        let d = self.last_write_in(b, before, pred)?;
-        let Stmt::Instr(instr) = &self.kernel.stmts[d] else {
+    /// Which destination of `instr` register `reg` is: 0, or 1 for the
+    /// second of `d|p`.
+    pub(crate) fn destination(&self, instr: &Instr, reg: Symbol) -> Option<usize> {
+        let first = *self.module.operand_ids(instr.operands).first()?;
+        let places = match self.module.operand(first) {
+            Operand::MultipleDestinations { children } => self.module.operand_ids(*children),
+            _ => std::slice::from_ref(&first),
+        };
+        (places.iter()).position(|&id| *self.module.operand(id) == Operand::Register(reg))
+    }
+
+    /// The `setp` whose output `pred` holds where statement `pos` reads
+    /// it, and whether `pred` is its second output: of a `setp` with no
+    /// Boolean operator, the complement of the comparison (PTX ISA
+    /// §9.7.6.2: "A related value computed using the complement of the
+    /// compare result is written to the second destination operand").
+    pub(crate) fn setp_at(&self, pred: Symbol, pos: usize) -> Option<(usize, &Instr, bool)> {
+        let Some(Value::Result { op, .. }) = self.ssa.value_before(pos, Register::Named(pred))
+        else {
             return None;
         };
-        let first = match self
-            .module
-            .operand(*self.module.operand_ids(instr.operands).first()?)
-        {
-            Operand::MultipleDestinations { children } => self
-                .module
-                .operand(*self.module.operand_ids(*children).first()?),
-            op => op,
+        let Stmt::Instr(instr) = &self.kernel.stmts[op] else {
+            return None;
         };
-        (instr.mnemonic == Opcode::Setp && *first == Operand::Register(pred)).then_some((d, instr))
+        let place = self.destination(instr, pred)?;
+        (instr.mnemonic == Opcode::Setp).then_some((op, instr, place == 1))
     }
 
     /// The block holding statement `stmt`.
@@ -154,6 +158,12 @@ impl<'a> KernelAnalyses<'a> {
             Value::Undef(_) => return false,
         };
         self.forest.get(l).blocks.binary_search(&b).is_ok()
+    }
+
+    /// Loop `inner` is `outer` or nested in it, and so runs again on each
+    /// of `outer`'s trips.
+    pub(crate) fn loop_within(&self, inner: LoopId, outer: LoopId) -> bool {
+        std::iter::successors(Some(inner), |&l| self.forest.get(l).parent).any(|l| l == outer)
     }
 
     pub(crate) fn in_loop(&self, id: LoopId, stmt: usize) -> bool {

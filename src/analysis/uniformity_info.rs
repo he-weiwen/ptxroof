@@ -19,6 +19,7 @@ use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{Form, Memory, ParamAccess, Sem, ShflMode, Space, param_access};
 use crate::ptx::register_effects::{is_pure, reads_cc, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register};
+use crate::ptx::thread_hierarchy::whole_warp_shuffle;
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -249,7 +250,7 @@ fn warp_reads(
                 return None;
             };
             let c = parse_int(module.interner.resolve(*c))?;
-            if c & 0x1f != 0x1f || (c >> 8) & 0x1f != 0 {
+            if !whole_warp_shuffle(c) {
                 return None;
             }
             operand_reads(t, &[*lane], d)

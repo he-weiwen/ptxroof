@@ -1,9 +1,9 @@
-# A loaded word mod 8 compared `gt` 7 and `ge` 0: the first store runs
-# on no thread, the second on every thread, but the thread sets read a
-# comparison free of %tid and %ctaid as an unknown without testing its
-# range, so both stores print `exec <= 32/CTA`; the third store's
-# address shows the remainder as `uniform(…) mod 8`, of range [0, 7].
+# A loaded word mod 8 compared `gt` 7 and `ge` 0: the remainder's range
+# [0, 7] decides both, so the first store runs on no thread, its `setp`
+# unused, and the second on every thread; the third store's address
+# shows the remainder as `uniform(…) mod 8`.
 RUN: %ptxroof analyze %fixtures/micro/uniform_mod_range.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}	@%p1 st.global.u32 	[%rd1+4], %r2; // exec <= 32/CTA | global store [param_0 + 4] sectors/req 1 (ideal 1){{$}}
-ANN: {{^}}	@%p2 st.global.u32 	[%rd1+8], %r2; // exec <= 32/CTA | global store [param_0 + 8] sectors/req 1 (ideal 1){{$}}
+ANN: {{^}}	setp.gt.u32 	%p1, %r2, 7; // unused{{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd1+4], %r2; // no thread | exec 0/CTA | global store [param_0 + 4] sectors/req 0 (ideal 0){{$}}
+ANN: {{^}}	@%p2 st.global.u32 	[%rd1+8], %r2; // global store [param_0 + 8] sectors/req 1 (ideal 1){{$}}
 ANN: {{^}}	st.global.u32 	[%rd3+16], %r2; // global store [4·(uniform(%r1@{{[0-9]+}}) mod 8) + param_0 + 16] sectors/req 1 (ideal 1){{$}}

@@ -48,23 +48,14 @@ impl AffineAnalysis<'_> {
             continue_if_true = !continue_if_true;
         }
 
-        // The setp defining the branch predicate: in the latch block, or in
-        // a block of this loop, not of a nested one, that dominates it.
-        let dominating = || {
-            let Some(Value::Result { op, .. }) = self
-                .data
-                .ssa
-                .value_before(branch.0, Register::Named(pred.reg))
-            else {
-                return None;
-            };
-            let b = self.data.block_of(op);
-            let own = self.data.forest.block_loop[b.0 as usize] == Some(id);
-            (own && self.data.forest.doms.dominates(b, latch))
-                .then(|| self.data.find_setp(b, op + 1, pred.reg))?
-        };
-        let found = (self.data.find_setp(latch, branch.0, pred.reg)).or_else(dominating);
-        let Some((setp_idx, setp)) = found else {
+        // The setp defining the branch predicate, in a block of this loop,
+        // not of a nested one, that dominates the latch.
+        let found = (self.data.setp_at(pred.reg, branch.0)).filter(|&(d, ..)| {
+            let b = self.data.block_of(d);
+            self.data.forest.block_loop[b.0 as usize] == Some(id)
+                && self.data.forest.doms.dominates(b, latch)
+        });
+        let Some((setp_idx, setp, complement)) = found else {
             return self
                 .predicate_phi_trips(id, latch, branch.0, pred.reg, continue_if_true)
                 .unwrap_or_else(|| Err(self.predicate_reason(latch, branch.0, pred.reg)))
@@ -128,7 +119,11 @@ impl AffineAnalysis<'_> {
         if a1 == i64::MIN {
             return Err("induction step is −2^63, which has no negation".into());
         }
-        let cond = if continue_if_true { cmp } else { cmp.inverse() };
+        let cond = if continue_if_true != complement {
+            cmp
+        } else {
+            cmp.inverse()
+        };
         let trips = exit_limit(cond, a1, d.base.clone())?;
         let distance =
             (cond == Cmp::Ne).then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
@@ -190,14 +185,7 @@ impl AffineAnalysis<'_> {
         }
         let (pos, bra) = self.data.last_instr(g)?;
         let pred = bra.predicate?;
-        let Some(Value::Result { op, .. }) =
-            self.data.ssa.value_before(pos, Register::Named(pred.reg))
-        else {
-            return None;
-        };
-        let (def, setp) = self
-            .data
-            .find_setp(self.data.block_of(op), op + 1, pred.reg)?;
+        let (def, setp, complement) = self.data.setp_at(pred.reg, pos)?;
         let Form::IntCompare {
             pred: compare,
             width,
@@ -218,16 +206,13 @@ impl AffineAnalysis<'_> {
         );
         let (a, b) = self.cta_uniform_symbols(id, def, a, b).ok()?;
         let (form, cmp) = self.loop_cmp(id, compare, width, &a, &b)?;
-        let cmp = if (taken == into) != pred.negated {
+        let cmp = if ((taken == into) != pred.negated) != complement {
             cmp
         } else {
             cmp.inverse()
         };
         let e = form.is_symbolic_or_constant().then_some(form.base)?;
-        let nonneg = |e: &SymExpr| {
-            self.least(&AffineExpr::from_base(e.clone()))
-                .is_some_and(|l| l >= 0)
-        };
+        let nonneg = |e: &SymExpr| self.nonnegative(&AffineExpr::from_base(e.clone()));
         let (cmp, e) = match cmp {
             Cmp::Ne | Cmp::Eq => {
                 let e = if nonneg(&e) {
@@ -313,7 +298,7 @@ impl AffineAnalysis<'_> {
     ) -> Option<(AffineExpr, Cmp)> {
         let nonnegative = |x: &AffineExpr| {
             let counted = x.terms.keys().any(|v| v.counter() == Some(id));
-            (!counted && self.range(x).is_none()) || self.least(x).is_some_and(|l| l >= 0)
+            (!counted && self.range(x).is_none()) || self.nonnegative(x)
         };
         match &self.setp_to_zero_cmps(pred, width, a, b, &nonnegative)?[..] {
             [(form, cmp)] => Some((form.clone(), *cmp)),
@@ -330,11 +315,6 @@ impl AffineAnalysis<'_> {
             .last_write_in(latch, before, pred)
             .map(|d| &self.data.kernel.stmts[d]);
         match definer {
-            Some(Stmt::Instr(i)) if i.mnemonic == Opcode::Setp => format!(
-                "latch predicate is not `{}`'s first output",
-                module.opcode(i)
-            )
-            .into(),
             Some(Stmt::Instr(i)) => format!(
                 "latch predicate is defined by `{}`, not a comparison",
                 module.opcode(i)

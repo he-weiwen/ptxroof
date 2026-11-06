@@ -125,6 +125,18 @@ impl Cmp {
         }
     }
 
+    /// Whether `x cmp 0` holds.
+    pub fn holds(self, x: i128) -> bool {
+        match self {
+            Cmp::Lt => x < 0,
+            Cmp::Le => x <= 0,
+            Cmp::Gt => x > 0,
+            Cmp::Ge => x >= 0,
+            Cmp::Eq => x == 0,
+            Cmp::Ne => x != 0,
+        }
+    }
+
     /// The comparison with its operands swapped (LLVM's
     /// `CmpInst::getSwappedPredicate`).
     pub fn swapped(self) -> Cmp {
@@ -376,6 +388,14 @@ impl Form {
             _ => None,
         }
     }
+}
+
+/// A shift's count: b's unsigned 32-bit value, clamped to the width
+/// (PTX ISA §9.7.8.8, §9.7.8.9: "Shift a left by the amount specified by
+/// unsigned 32-bit value in b", "Shift amounts greater than the register
+/// width N are clamped to N").
+pub(crate) fn shift_count(b: i64, width: u32) -> u32 {
+    (b as u32).min(width)
 }
 
 /// The width `instr` reads its immediate operand `op` at (PTX ISA

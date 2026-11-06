@@ -47,6 +47,12 @@ fn undivided(e: SymExpr) -> SymExpr {
     }
 }
 
+/// A `!=` latch's counter meets its bound: `distance` is a positive
+/// multiple of `step`.
+pub(crate) fn reaches(distance: i64, step: i64) -> bool {
+    distance.checked_rem(step) == Some(0) && distance.checked_div(step).is_some_and(|n| n >= 1)
+}
+
 /// Solve `continue while A1·k + A0 cmp 0` (k = 1, 2, ...) for the
 /// iteration count: `ne` → −A0/A1, the division taken exact
 /// (compiler-generated not-equal latches step in divisor units; a
@@ -64,7 +70,7 @@ pub(crate) fn exit_limit(cond: Cmp, a1: i64, a0: SymExpr) -> Result<SymExpr, Str
             }
             let num = if a1 > 0 { neg(a0) } else { a0 };
             if let Some(n) = num.as_const()
-                && (n <= 0 || n % a1.abs() != 0)
+                && !reaches(n, a1.abs())
             {
                 return Err("latch condition never meets its `!=` bound".to_owned());
             }

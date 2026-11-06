@@ -1,0 +1,32 @@
+//
+// HAND-WRITTEN: a loop whose latch bound %r2 is 7 on entry (`mov.u32
+// %r2, 7`) and 7 again on the back edge (`add.u32 %r2, %r3, 4` of
+// %r3 = 3): 7 trips. ptxas 13.4 (sm_89) folds the loop into
+// `IMAD.MOV.U32 R5, RZ, RZ, 0x7` and `STG.E [R2.64], R5`; an RTX 4090
+// run stores 7.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_header_same_value(
+	.param .u64 micro_header_same_value_param_0
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_header_same_value_param_0];
+	mov.u32 	%r3, 3;
+	mov.u32 	%r2, 7;
+	mov.u32 	%r1, 0;
+$L__BB0_1:
+	add.s32 	%r1, %r1, 1;
+	setp.lt.s32 	%p1, %r1, %r2;
+	add.u32 	%r2, %r3, 4;
+	@%p1 bra 	$L__BB0_1;
+	st.global.u32 	[%rd1], %r1;
+	ret;
+}

@@ -3,6 +3,7 @@
 //! analysis reads.
 
 use super::*;
+use crate::ptx::thread_hierarchy::whole_warp_shuffle;
 use crate::support::integer::same_window;
 
 impl AffineAnalysis<'_> {
@@ -213,8 +214,8 @@ impl AffineAnalysis<'_> {
                 // LLVM writes an add as `or` when no bit is set on both
                 // sides (its `or disjoint`, which PTX does not keep).
                 let (a, b) = (arg(1)?, arg(2)?);
-                let largest = |v: &Var| self.var_bounds(v).map(|(_, hi)| hi);
-                match a.may_set(&largest) & b.may_set(&largest) {
+                let bound = |v: &Var| self.var_bounds(v);
+                match a.may_set(&bound) & b.may_set(&bound) {
                     0 => Ok(a + b),
                     both => Err(format!(
                         "or whose sides may both set bit {}",
@@ -282,14 +283,15 @@ impl AffineAnalysis<'_> {
             }
             (Opcode::Shl, _) if ops.len() == 3 => {
                 let v = arg(1)?;
-                // PTX ISA §9.7.8.8: the count is b's unsigned 32-bit value,
-                // and one past the width is clamped to it, which shifts
-                // every bit out.
-                let width = form.int_type().map(|t| i64::from(t.width));
-                match arg(2)?.as_const().map(|c| i64::from(c as u32)) {
-                    Some(c) if width.is_some_and(|w| c >= w) => Ok(AffineExpr::constant(0)),
-                    Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
-                    _ => Err("shift by a non-constant amount".into()),
+                let Some(b) = arg(2)?.as_const() else {
+                    return Err("shift by a non-constant amount".into());
+                };
+                let width = form.int_type().map_or(64, |t| t.width);
+                // A shift by 63 scales by 1 << 63, −2^63, which is 2^63
+                // modulo the 64 bits it is read in.
+                match shift_count(b, width) {
+                    c if c == width => Ok(AffineExpr::constant(0)),
+                    c => Ok(v.scale(SymExpr::Const(1i64 << c))),
                 }
             }
             (Opcode::Shr, _) if ops.len() == 3 => {
@@ -304,9 +306,17 @@ impl AffineAnalysis<'_> {
                     })?,
                     None => arg(1)?,
                 };
-                let Some(c) = arg(2)?.as_const() else {
+                let Some(b) = arg(2)?.as_const() else {
                     return Err("shift by a non-constant amount".into());
                 };
+                let width = ty.map_or(64, |t| t.width);
+                let signed = ty.is_some_and(|t| t.kind == IntKind::Signed);
+                let c = match shift_count(b, width) {
+                    c if signed => c.min(width - 1),
+                    c if c == width => return Ok(AffineExpr::constant(0)),
+                    c => c,
+                };
+                let c = i64::from(c);
                 if !v.is_symbolic_or_constant() {
                     if !(0..63).contains(&c) {
                         return Err(format!("shift by {c} is out of range").into());
@@ -317,10 +327,9 @@ impl AffineAnalysis<'_> {
                 let signed_width = (ty.filter(|t| t.kind == IntKind::Signed && t.width >= 16))
                     .map(|t| i64::from(t.width));
                 // PTX ISA §9.7.8.9 (shr): "Signed shifts fill with the sign
-                // bit" — in this module's nonnegative domain that bit is 0
-                // unless the value is known negative, so shifting it down is
-                // nvcc's `x / 2^n` sign fix-up.
-                if signed_width == Some(c + 1) && self.within(&v, (0, i128::MAX)) {
+                // bit", 0 where no bound shows the value negative: nvcc's
+                // `x / 2^n` sign fix-up.
+                if signed_width == Some(c + 1) && self.not_known_negative(&v) {
                     return Ok(AffineExpr::constant(0));
                 }
                 if (0..63).contains(&c) {
@@ -331,20 +340,26 @@ impl AffineAnalysis<'_> {
             }
             (Opcode::Div | Opcode::Rem, _) if ops.len() == 3 => {
                 let (mut a, mut b) = (arg(1)?, arg(2)?);
-                // PTX ISA §9.7.1.10: a negative number's remainder, and so
-                // the quotient's rounding, is machine-dependent.
-                if let Some(ty) = form.int_type() {
-                    let opcode = module.opcode(instr);
-                    let read = |x: &AffineExpr| {
-                        (self.extend(x, ty))
-                            .filter(|x| self.within(x, (0, i128::MAX)))
-                            .ok_or_else(|| format!("`{opcode}` of a value that may be negative"))
-                    };
-                    (a, b) = (read(&a)?, read(&b)?);
+                let ty = form.int_type();
+                if let Some(ty) = ty {
+                    b = self.extend(&b, ty).unwrap_or(b);
                 }
                 let Some(d) = b.as_const().filter(|&d| d > 0) else {
                     return Err(format!("{} by a non-constant divisor", mnemonic.name()).into());
                 };
+                // PTX ISA §9.7.1.10: a negative number's remainder, and so
+                // the quotient's rounding, is machine-dependent.
+                if let Some(ty) = ty {
+                    let opcode = module.opcode(instr);
+                    a = (self.extend(&a, ty))
+                        .filter(|x| match ty.kind {
+                            IntKind::Signed => self.not_known_negative(x),
+                            IntKind::Unsigned | IntKind::Bits => {
+                                self.within_or_unknown(x, (0, i128::MAX))
+                            }
+                        })
+                        .ok_or_else(|| format!("`{opcode}` of a value that may be negative"))?;
+                }
                 let result = if mnemonic == Opcode::Div {
                     a.clone().div_const(d, &|v| self.var_bounds(v))
                 } else {
@@ -364,7 +379,7 @@ impl AffineAnalysis<'_> {
                 let Some(c) = arg(2)?.as_const().filter(|c| (0..WARP_SZ).contains(c)) else {
                     return Err("shfl.idx from a non-constant lane".into());
                 };
-                if arg(3)?.as_const() != Some(WARP_SZ - 1) {
+                if !arg(3)?.as_const().is_some_and(whole_warp_shuffle) {
                     return Err("shfl.idx in segments of the warp or a clamped lane".into());
                 }
                 let warp = |v: Var| AffineExpr::var(Var::FloorDiv(Box::new(v), WARP_SZ));
@@ -471,9 +486,9 @@ impl AffineAnalysis<'_> {
 
     /// `selp a, b, c` of constants `a` and `b` of `ty`'s width by a `c` that an
     /// unguarded integer `setp.eq` or `setp.ne` writes, as its first output
-    /// or the complement as its second (PTX ISA §9.7.6.2, §9.7.6.3), of two
-    /// forms whose difference is k·v + d, v a bit of `%tid.x`: the value
-    /// chosen at v = 0, plus v times the change at v = 1.
+    /// or the complement as its second (PTX ISA §9.7.6.2, §9.7.6.3), that
+    /// `setp_to_zero_cmps` reads as `k·v + d cmp 0`, v a bit of `%tid.x`:
+    /// the value chosen at v = 0, plus v times the change at v = 1.
     fn selected(
         &self,
         ops: &[OperandId],
@@ -485,13 +500,7 @@ impl AffineAnalysis<'_> {
         let &Operand::Register(c) = module.operand(ops[3]) else {
             return None;
         };
-        let Some(Value::Result { op, .. }) = self.data.ssa.value_before(def, Register::Named(c))
-        else {
-            return None;
-        };
-        let Stmt::Instr(setp) = &self.data.kernel.stmts[op] else {
-            return None;
-        };
+        let (op, setp, complement) = self.data.setp_at(c, def)?;
         let Form::IntCompare {
             pred: pred @ (IntPredicate::Eq | IntPredicate::Ne),
             width,
@@ -501,21 +510,14 @@ impl AffineAnalysis<'_> {
             return None;
         };
         let sops = module.operand_ids(setp.operands);
-        if setp.mnemonic != Opcode::Setp || setp.predicate.is_some() || sops.len() != 3 {
+        if setp.predicate.is_some() || sops.len() != 3 {
             return None;
         }
-        let writes = |id: OperandId| matches!(module.operand(id), Operand::Register(r) if *r == c);
-        let complement = match module.operand(sops[0]) {
-            Operand::MultipleDestinations { children } => match *module.operand_ids(*children) {
-                [p, _] if writes(p) => false,
-                [_, q] if writes(q) => true,
-                _ => return None,
-            },
-            _ if writes(sops[0]) => false,
-            _ => return None,
-        };
         let read = |id, at| self.operand_at(id, at, depth + 1).ok();
-        let diff = read(sops[1], op)? - read(sops[2], op)?;
+        let (x, y) = (read(sops[1], op)?, read(sops[2], op)?);
+        let [(diff, cmp)] = &self.setp_to_zero_cmps(pred, width, &x, &y, &|_| false)?[..] else {
+            return None;
+        };
         let &[(v, k)] = diff.terms.iter().collect::<Vec<_>>().as_slice() else {
             return None;
         };
@@ -524,8 +526,7 @@ impl AffineAnalysis<'_> {
             return None;
         }
         let (k, d) = (i128::from(k.as_const()?), i128::from(diff.base.as_const()?));
-        let ne = pred == IntPredicate::Ne;
-        let holds = |x: i128| (x.rem_euclid(1 << width) == 0) ^ ne ^ complement;
+        let holds = |x: i128| cmp.holds(x) != complement;
         let (lo, hi) = (-(1i128 << (ty.width - 1)), 1i128 << ty.width);
         let arm = |id| (read(id, def)?.as_const()).filter(|&x| (lo..hi).contains(&i128::from(x)));
         let (a, b) = (arm(ops[1])?, arm(ops[2])?);
@@ -639,9 +640,16 @@ impl AffineAnalysis<'_> {
         })
     }
 
+    /// `a` is negative under no bound known of it: its range over the
+    /// launch nor its `least`, every symbol nonnegative; one of no bound
+    /// is read so by the input contract (PLAN.md).
+    fn not_known_negative(&self, a: &AffineExpr) -> bool {
+        self.within_or_unknown(a, (0, i128::MAX)) && self.least(a).is_none_or(|l| l >= 0)
+    }
+
     /// `a`'s range over the known launch and constant trip counts lies in
     /// [lo, hi), or is unknown.
-    fn within(&self, a: &AffineExpr, (lo, hi): (i128, i128)) -> bool {
+    fn within_or_unknown(&self, a: &AffineExpr, (lo, hi): (i128, i128)) -> bool {
         self.range(a).is_none_or(|(x, y)| lo <= x && y < hi)
     }
 
@@ -692,9 +700,10 @@ impl AffineAnalysis<'_> {
     /// of `width`-bit operands `a` and `b` holds on, each operand the integer
     /// its bits read as (`extend`); Polly's `ScopBuilder::buildConditionSets`
     /// translates an icmp likewise. `None` where `extend` reads no form of
-    /// one. An `eq` or `ne` is `a − b cmp 0` where `a − b` lies in
-    /// (−2^width, 2^width), so that it is zero exactly when it is zero modulo
-    /// 2^width. An `lt`, `le`, `gt` or `ge` of a signed type is `A − B cmp 0`
+    /// one. An `eq` or `ne` is `a − b − m·2^width cmp 0` for the one
+    /// multiple m·2^width in the range of `a − b`, so that it is zero exactly
+    /// where `a − b` is zero modulo 2^width; `1 cmp 0` where the range holds
+    /// none, and `a − b cmp 0` where it is unknown. An `lt`, `le`, `gt` or `ge` of a signed type is `A − B cmp 0`
     /// of the operands as signed. Of an unsigned type (PTX ISA §9.3.1.1: "The
     /// unsigned comparisons are eq, ne, lo (lower), ls (lower-or-same), hi
     /// (higher), and hs (higher-or-same)") it is `A − B cmp 0` of them as
@@ -728,7 +737,18 @@ impl AffineAnalysis<'_> {
         match pred.reads() {
             IntKind::Bits => {
                 let form = a.clone() - b.clone();
-                return (self.within(&form, (1 - w, w))).then(|| vec![(form, pred.cmp())]);
+                let Some((lo, hi)) = self.range(&form) else {
+                    return Some(vec![(form, pred.cmp())]);
+                };
+                let (first, last) = (lo.checked_add(w - 1)?.div_euclid(w), hi.div_euclid(w));
+                return match last.checked_sub(first)? {
+                    ..0 => Some(vec![(AffineExpr::constant(1), pred.cmp())]),
+                    0 => {
+                        let multiple = i64::try_from(first.checked_mul(w)?).ok()?;
+                        Some(vec![(form - AffineExpr::constant(multiple), pred.cmp())])
+                    }
+                    _ => None,
+                };
             }
             IntKind::Unsigned if let (Some(a), Some(b)) = (unsigned(a), unsigned(b)) => {
                 return Some(vec![(a - b, pred.cmp())]);

@@ -2,8 +2,8 @@
 source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nwavefront lines {wavefronts:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
-blocks {"confirmed": 152, "consistent": 284, "unchecked": 479}
-sector lines {"differ": 3, "exact": 1257, "not compared, its SASS ran otherwise": 2, "within a bound": 221, "within a range": 43}
+blocks {"confirmed": 155, "consistent": 281, "unchecked": 479}
+sector lines {"differ": 3, "exact": 1287, "not compared, its SASS ran otherwise": 2, "within a bound": 191, "within a range": 43}
 wavefront lines {"agree": 1486}
 launch sectors {"loads agrees, stores agrees": 41, "loads differs, stores agrees": 1, "not compared": 26}
 
@@ -335,11 +335,11 @@ tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ncu.json
   waitLoop$scope4	unchecked	2 of 2 with SASS, 0 agreeing
   <block 12>	confirmed	65 of 96 with SASS, 55 agreeing
   <block 13>	consistent	102 of 148 with SASS, 80 agreeing
-  $L__BB0_22	consistent	121 of 181 with SASS, 87 agreeing
+  $L__BB0_22	confirmed	121 of 181 with SASS, 87 agreeing
   waitLoop$scope5	unchecked	2 of 2 with SASS, 0 agreeing
-  <block 16>	consistent	92 of 141 with SASS, 75 agreeing
+  <block 16>	confirmed	92 of 141 with SASS, 75 agreeing
   waitLoop$scope6	unchecked	2 of 2 with SASS, 0 agreeing
-  <block 18>	consistent	68 of 107 with SASS, 45 agreeing
+  <block 18>	confirmed	68 of 107 with SASS, 45 agreeing
   $L__BB0_23	confirmed	4 of 4 with SASS, 2 agreeing
   waitLoop$scope7	unchecked	2 of 2 with SASS, 0 agreeing
   <block 21>	confirmed	12 of 18 with SASS, 6 agreeing
@@ -370,7 +370,7 @@ tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ncu.json
   $L__BB0_4	unchecked	3 of 3 with SASS, 0 agreeing
   $L__BB0_5	unchecked	2 of 2 with SASS, 0 agreeing
   $L__BB0_6	unchecked	1 of 1 with SASS, 0 agreeing
-  sectors	{"exact": 3, "within a bound": 7}
+  sectors	{"exact": 8, "within a bound": 2}
   wavefronts	{"agree": 39}
 tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ncu.json
   launch sectors	not compared, line 269
@@ -401,7 +401,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._bmm_chunk_fwd_kernel.sm_100a
   <block 3>	consistent	1 of 1 with SASS, 1 agreeing
   $L__BB0_1	consistent	1 of 5 with SASS, 1 agreeing
   $L__BB0_4	confirmed	62 of 78 with SASS, 44 agreeing
-  sectors	{"within a bound": 9}
+  sectors	{"exact": 6, "within a bound": 3}
   wavefronts	{"agree": 2}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_scan_fwd_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
@@ -411,7 +411,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_scan_fwd_kernel.sm_100
   <block 3>	consistent	1 of 1 with SASS, 1 agreeing
   $L__BB0_1	consistent	6 of 6 with SASS, 6 agreeing
   $L__BB0_4	confirmed	65 of 79 with SASS, 54 agreeing
-  sectors	{"exact": 9, "within a bound": 17}
+  sectors	{"exact": 18, "within a bound": 8}
   wavefronts	{"agree": 35}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_fwd_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
@@ -421,7 +421,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_fwd_kernel.sm_10
   <block 3>	consistent	1 of 1 with SASS, 1 agreeing
   $L__BB0_1	consistent	5 of 8 with SASS, 5 agreeing
   $L__BB0_4	confirmed	35 of 43 with SASS, 28 agreeing
-  sectors	{"exact": 3, "within a bound": 15}
+  sectors	{"exact": 13, "within a bound": 5}
   wavefronts	{"agree": 5}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_varlen_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 493

@@ -1,0 +1,7 @@
+# An inner loop's count read after it, in the loop around it, changes
+# from trip to trip of that loop: its 4 trips' unique bytes are unknown,
+# where an RTX 4090 run stores 12 distinct bytes, not the 4 of a base
+# that stays put.
+RUN: %ptxroof analyze %fixtures/micro/inner_exit_counter.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_1: // loop: trips 4 | global per CTA: requested 16 B, unique ? | warp * × lane * | exec 4/CTA{{$}}
+ANN: {{^}}	st.global.u32 	[%rd3], 1; // global store [4·iv[$L__BB0_2] + param_0 + 4] sectors/req 1 (ideal 1){{$}}

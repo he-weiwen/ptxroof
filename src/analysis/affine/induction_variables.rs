@@ -164,11 +164,10 @@ impl Walk<'_> {
         let term = |o: OperandId, sign: i64| -> Option<Step> {
             match self.module.operand(o) {
                 Operand::Immediate(t) => Some(Step {
-                    constant: sign
-                        * parse_bits(
-                            self.module.interner.resolve(*t),
-                            immediate_width(self.module, instr, o),
-                        )?,
+                    constant: sign.checked_mul(parse_bits(
+                        self.module.interner.resolve(*t),
+                        immediate_width(self.module, instr, o),
+                    )?)?,
                     ..Step::default()
                 }),
                 Operand::Register(r) => Some(Step {
@@ -304,6 +303,13 @@ mod tests {
         let offset = "mov.u32 %r1, 0;\n$L:\nadd.u32 %r2, %r1, 2;\nadd.s32 %r1, %r2, -1;\n\
                       setp.lt.u32 %p1, %r1, 4;\n@%p1 bra $L;\nret;";
         assert_eq!(recurrences_of(offset, 0), ["%r1: w0 → +1"]);
+    }
+
+    #[test]
+    fn a_step_whose_negation_leaves_i64_is_no_recurrence() {
+        let body = "mov.u64 %r1, 0;\n$L:\nsub.s64 %r1, %r1, 0x8000000000000000;\n\
+                    setp.ne.s64 %p1, %r1, 0;\n@%p1 bra $L;\nret;";
+        assert!(recurrences_of(body, 0).is_empty());
     }
 
     #[test]

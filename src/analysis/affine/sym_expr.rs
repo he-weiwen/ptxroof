@@ -28,7 +28,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::ptx::ir::SpecialReg;
 use crate::ssa::Value;
-use crate::support::integer::same_window;
+use crate::support::integer::remainder_range;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -93,12 +93,14 @@ impl SymExpr {
         SymExpr::Sym(SymbolicConstant::AddressOf(name.into()))
     }
 
-    /// The constant summand: the value with every symbol at 0.
-    pub fn const_part(&self) -> i64 {
+    /// The constant summand, the value with every symbol at 0, where it
+    /// fits `i64`: a constant past it stays a term or a factor of its own.
+    pub fn const_part(&self) -> Option<i64> {
         match self {
-            SymExpr::Const(c) => *c,
-            SymExpr::Sum(ts) => ts.iter().map(SymExpr::const_part).sum(),
-            _ => 0,
+            SymExpr::Const(c) => Some(*c),
+            SymExpr::Sum(ts) => (ts.iter()).try_fold(0i64, |s, t| s.checked_add(t.const_part()?)),
+            SymExpr::Prod(fs) if fs.iter().all(|f| f.as_const().is_some()) => None,
+            _ => Some(0),
         }
     }
 
@@ -156,8 +158,8 @@ impl SymExpr {
     }
 
     /// The least and the greatest value, every symbol within `sym`'s
-    /// bounds: `Err(false)` where a symbol has no bounds and `Err(true)`
-    /// where a bound leaves `i128`.
+    /// bounds and a remainder within its modulus: `Err(false)` where a
+    /// symbol has no bounds and `Err(true)` where a bound leaves `i128`.
     pub fn span(
         &self,
         sym: &dyn Fn(&SymbolicConstant) -> Option<(i64, i64)>,
@@ -185,13 +187,7 @@ impl SymExpr {
                 let (a, b) = e.span(sym)?;
                 (up(a)?, up(b)?)
             }
-            SymExpr::Mod(e, c) => {
-                let (c, (a, b)) = (i128::from(*c), e.span(sym)?);
-                match same_window(a, b, 0, c) {
-                    Some(_) => (a.rem_euclid(c), b.rem_euclid(c)),
-                    None => (0, c - 1),
-                }
-            }
+            SymExpr::Mod(e, c) => remainder_range(e.span(sym).ok(), i128::from(*c)),
             SymExpr::Min(x, y) => {
                 let ((a, b), (c, d)) = pair(x, y)?;
                 (a.min(c), b.min(d))
@@ -776,6 +772,8 @@ mod tests {
         assert_eq!(big.as_const(), None); // stayed symbolic
         let bigp = E::mul(E::Const(i64::MAX), E::Const(2));
         assert_eq!(bigp.as_const(), None);
+        assert_eq!((big.const_part(), bigp.const_part()), (None, None));
+        assert_eq!(E::add(k(), E::Const(-3)).const_part(), Some(-3));
     }
 
     #[test]
@@ -829,6 +827,8 @@ mod tests {
         assert_eq!(E::modulo(k(), 64).span(&sym), Ok((0, 63)));
         assert_eq!(E::max(k(), E::Const(1)).span(&sym), Ok((1, 100)));
         assert_eq!(E::add(k(), E::sym("n")).span(&sym), Err(false));
+        let unbounded = E::modulo(E::add(k(), E::sym("n")), 8);
+        assert_eq!(unbounded.span(&sym), Ok((0, 7)));
         let huge = E::mul(E::Const(i64::MAX), E::mul(k(), k()));
         assert_eq!(huge.span(&|_| Some((i64::MIN, i64::MAX))), Err(true));
     }

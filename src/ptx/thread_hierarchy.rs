@@ -7,6 +7,13 @@ use std::ops::Range;
 /// threads", which PTX names `WARP_SZ`.
 pub(crate) const WARP_SZ: i64 = 32;
 
+/// A `shfl.sync` control c that reads the whole warp: a clamp value
+/// c[4:0] of 31 and a segment mask c[12:8] of 0 (PTX ISA §9.7.9.6:
+/// "cval[4:0] = c[4:0]; // clamp value", "segmask[4:0] = c[12:8];").
+pub(crate) fn whole_warp_shuffle(c: i64) -> bool {
+    c & 0x1f == 0x1f && (c >> 8) & 0x1f == 0
+}
+
 /// The threads of a block of `shape`.
 pub(crate) fn threads(shape: [u32; 3]) -> i64 {
     shape.iter().map(|&n| i64::from(n)).product()

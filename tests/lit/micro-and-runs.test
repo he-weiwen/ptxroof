@@ -3,7 +3,9 @@
 # bit; a value negative on some threads keeps its sign through a run to
 # the top bit, read as mul.wide.s32 reads it and refused by mul.wide.u32.
 # In a mask of more runs, a run that clears bit 31 of a parameter, whose
-# range is unknown, is its remainder mod 2^31. A run from bit 63 above a
+# range is unknown, is its remainder mod 2^31, and the runs' sum, whose
+# remainders' ranges taken apart reach below 0, is read mod 2^32: the
+# same value. A run from bit 63 above a
 # clear bit 62 and a remainder whose modulus does not divide the form's
 # offset stay unknown. Each kernel's store, past its `.entry` line,
 # prints its address, or `addr ?` and why, and its sectors per warp
@@ -26,4 +28,4 @@ ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store [1024·⌊%tid.x/256⌋ +
 ANN: {{^}}.visible .entry micro_and_top_unsigned( // block 512×1×1 | per CTA: global store 2,048 B; param load 4,096 B{{$}}
 ANN: {{^}}	st.global.u32 	[%rd3], %r1; // global store addr ? (`mul.wide.u32` reads a value its type does not hold){{$}}
 ANN: {{^}}.visible .entry micro_and_sign_runs( // block 128×1×1 | pointer params assumed 32 B aligned | per CTA: global store 512 B; param load 1,536 B{{$}}
-ANN: {{^}}	st.global.u32 	[%rd3], %r2; // global store [param_0 + 4·(param_1 mod 16) + 4·(param_1 mod 2147483648) - 4·(param_1 mod 256)] sectors/req 1 (ideal 1){{$}}
+ANN: {{^}}	st.global.u32 	[%rd3], %r2; // global store [param_0 + 4·((param_1 mod 16 + param_1 mod 2147483648 - param_1 mod 256) mod 4294967296)] sectors/req 1 (ideal 1){{$}}

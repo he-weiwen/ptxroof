@@ -1,0 +1,8 @@
+# An `eq` reads its operands' difference modulo 2^width: a `.u32`
+# parameter bound to 4294967295 or to −1 equals the immediate −1 on
+# every thread, as an RTX 4090 run's 32 stores are; bound to 7, on none.
+RUN: %ptxroof analyze %fixtures/micro/bind_width_eq.ptx --bind 1:n=4294967295 | FileCheck --check-prefix=ALL "%s"
+RUN: %ptxroof analyze %fixtures/micro/bind_width_eq.ptx --bind 1:n=-1 | FileCheck --check-prefix=ALL "%s"
+RUN: %ptxroof analyze %fixtures/micro/bind_width_eq.ptx --bind 1:n=7 | FileCheck --check-prefix=NONE "%s"
+ALL: {{^}}	@%p1 st.global.u32 	[%rd3], 1; // global store [4·%tid.x + param_0] sectors/req 4 (ideal 4){{$}}
+NONE: {{^}}	@%p1 st.global.u32 	[%rd3], 1; // no thread | exec 0/CTA | global store [4·%tid.x + param_0] sectors/req 0 (ideal 0){{$}}

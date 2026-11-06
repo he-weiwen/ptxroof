@@ -1,0 +1,30 @@
+//
+// HAND-WRITTEN: a `.u32` parameter compared `setp.eq.u32` with the
+// immediate −1, whose low 32 bits are 0xffffffff: a binding of
+// 4294967295 or of −1 is the same register. ptxas 13.4 (sm_89) keeps
+// `ISETP.NE.U32.AND P0, PT, R0, -0x1, PT` and `@P0 EXIT`; an RTX 4090
+// run of 32 threads with 4294967295 sets words 0 to 31, with 7 none.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_bind_width_eq(
+	.param .u64 micro_bind_width_eq_param_0,
+	.param .u32 micro_bind_width_eq_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_bind_width_eq_param_0];
+	ld.param.u32 	%r1, [micro_bind_width_eq_param_1];
+	mov.u32 	%r2, %tid.x;
+	setp.eq.u32 	%p1, %r1, -1;
+	mul.wide.u32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], 1;
+	ret;
+}

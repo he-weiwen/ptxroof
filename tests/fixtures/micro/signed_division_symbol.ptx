@@ -1,0 +1,30 @@
+//
+// HAND-WRITTEN: `div.s32` by 4 of n − 5, n a parameter: for n below 5
+// the dividend is negative, where PTX ISA §9.7.1.10 makes the rounding
+// machine-dependent. ptxas 13.4 (sm_89) divides with `IABS R6, R0` and
+// `IMAD.HI.U32`, rounding toward zero; an RTX 4090 run stores at word 1
+// for n = 2 (a quotient of 0, where ⌊(n − 5)/4⌋ is −1) and at word 3
+// for n = 13.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_signed_division_symbol(
+	.param .u64 micro_signed_division_symbol_param_0,
+	.param .u32 micro_signed_division_symbol_param_1
+)
+.reqntid 1, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_signed_division_symbol_param_0];
+	ld.param.u32 	%r1, [micro_signed_division_symbol_param_1];
+	add.s32 	%r2, %r1, -5;
+	div.s32 	%r3, %r2, 4;
+	mul.wide.s32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3+4], 1;
+	ret;
+}
