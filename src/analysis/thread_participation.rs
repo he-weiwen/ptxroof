@@ -419,7 +419,9 @@ impl Pred {
 
 /// Whether `tid` is the lowest lane of its warp that `active` admits, a
 /// representative of the elected lane: yes when no lower lane may be
-/// active, maybe when the leader is one of several lanes that may be.
+/// active, maybe when the leader is one of several lanes that may be,
+/// and only the warp's first lane where the lanes of a warp are active
+/// together, `active` holding unknowns uniform in the CTA or a warp only.
 fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
     let id = to_1d(tid, shape);
     let warp = usize::try_from(id / WARP_SZ)
@@ -428,6 +430,13 @@ fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
     let Some(warp) = warp else {
         return Tri::Maybe;
     };
+    if active.uniform_only() {
+        return if id == warp.start {
+            Tri::Maybe
+        } else {
+            Tri::No
+        };
+    }
     let mut candidates = Vec::new();
     for l in warp {
         match active.eval_as(to_3d(l, shape), shape, Leader::Lowest, env) {
@@ -1820,6 +1829,8 @@ mod tests {
         let maybe = Pred::Elect(Box::new(cta(0)));
         let range = |certain, possible| Some(Counted { certain, possible });
         assert_eq!(maybe.count([64, 1, 1]), range(0, 2));
+        // A warp's lanes are active together: its first is the leader.
+        assert_eq!(maybe.lane_masks([64, 1, 1], None), vec![(1, 0), (1, 0)]);
         assert_eq!((!maybe).count([64, 1, 1]), range(62, 64));
     }
 

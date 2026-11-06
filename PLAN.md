@@ -230,7 +230,7 @@ output_tallies` rewrites it.
 | block: CTAs | 85 | 85 (100%) |  |  |  |
 | block: `runs when` | 147 | 147 (100%) |  |  |  |
 | block: exec | 818 | 286 (35%) | 112 (14%) | 420 (51%) |  |
-| instruction: threads, where a guard narrows its block's | 898 | 724 (81%) | 174 (19%) |  |  |
+| instruction: threads, where a guard narrows its block's | 952 | 778 (82%) | 174 (18%) |  |  |
 | instruction: exec, where it differs from its block's | 651 | 556 (85%) | 91 (14%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
 | instruction: `not classified` | 423 | | | | |
@@ -634,19 +634,6 @@ output_tallies` rewrites it.
   `exec <= 1/CTA` but reads `no thread` and `sectors/req 0`, where lane
   1, if elected, requests one (`micro-elect-lane.test`). The census has no election
   under a condition that varies by lane.
-- **An `elect.sync` in a block a CTA- or warp-uniform unknown selects
-  reads every lane as elected.** The lanes of a warp enter such a
-  block together and one is elected (PTX ISA §9.7.14.15), but
-  `elected()` takes each lane the block may hold as a leader, so the
-  statement's lanes read `lane *`, not a bound; its count is right.
-  b200 `attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cache`
-  under its record: line 449, `@%p113 mbarrier.inval.shared::cta.b64
-  [%r968]; // warp 0 × lane *`. In the Blackwell corpus 66,201
-  elect-guarded statements in 1,342 files read so (`tcgen05.mma`
-  39,272, `cp.async.bulk(.tensor)` 11,655, `tcgen05.commit` 7,592,
-  `mbarrier.init` and `.inval` 3,841 each): 9,565 print `lane *`, and
-  the rest print nothing, the block's text being the same. None has a
-  sectors or wavefronts number.
 
 ### Reported as unknowns
 
