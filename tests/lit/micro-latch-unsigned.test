@@ -1,7 +1,11 @@
-# Wrong output (PLAN.md): the latch reads `setp.lt.u32` of -4 as a
-# signed comparison, so the loop is counted 1 trip, where it runs
-# 2^32 - 4 (ptxas 13.4: `ISETP.GE.U32 ... -0x4`, `@!P0 BRA`); the guard
-# reads the same comparison under the input contract, as a bound.
+# The latch reads `setp.lt.u32` of -4 as unsigned, 2^32 - 4, its counter
+# counting from 1 and so never negative; the loop runs 2^32 - 4 trips
+# (ptxas 13.4: `ISETP.GE.U32 ... -0x4`, `@!P0 BRA`; an RTX 4090 run
+# stores 4294967292). The guard reads the same
+# comparison of %tid.x as unsigned, true on every thread. A signed
+# latch reads 0xFFFFFFFF as its `.s32` value, -1, so the loop runs one
+# trip (ptxas 13.4: `ISETP.GE.AND ... -0x1`; the RTX 4090 run stores 1).
 RUN: %ptxroof analyze %fixtures/micro/latch_unsigned.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}$L__BB0_1: // loop: trips 1 | global per CTA: requested 128 B, unique 4 B, sectors 32 B | warp * × lane * | exec 32/CTA{{$}}
-ANN: {{^}}	st.global.u32 	[%rd1], %r1; // [<block 1>] <= warp * × lane * | exec <= 32/CTA | global store [param_0] sectors/req <= 1 (ideal <= 1){{$}}
+ANN: {{^}}$L__BB0_1: // loop: trips 4294967292 | warp * × lane * | exec 137,438,953,344/CTA{{$}}
+ANN: {{^}}	st.global.u32 	[%rd1], %r1; // [<block 1>] warp * × lane * | exec 32/CTA | global store [param_0] sectors/req 1 (ideal 1){{$}}
+ANN: {{^}}$L__BB2_1: // loop: trips 1 | global per CTA: requested 4 B, unique 4 B, sectors 32 B | warp * × lane * | exec 1/CTA{{$}}

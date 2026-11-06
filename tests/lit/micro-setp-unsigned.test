@@ -1,12 +1,19 @@
 # `setp.lt.u32` compares unsigned. ptxas runs the first store on threads
-# 16 to 47, %tid.x - 16 wrapping below 16, and the second on the
-# threads with %tid.x mod 16 == 0, %tid.x << 28 wrapping above 15. An
-# unsigned comparison is read only when both operands lie in [0, 2^32)
-# on every thread, so in each kernel the store runs on at most the
-# CTA's 64 threads: its count, its sectors per request and the CTA's
-# global store bytes are bounds.
+# 16 to 47, %tid.x - 16 wrapping below 16: an unsigned comparison of an
+# operand that may be negative is read as signed, 0 <= %tid.x - 16 and
+# %tid.x - 16 < 32, the CTA's 32 threads and 128 B. It runs the second
+# on the threads with %tid.x mod 16 == 0, %tid.x << 28 wrapping above
+# 15, read as its low 32 bits, 2^28·(%tid.x mod 16): lanes 0 and 16 of
+# each warp, 16 B. The third swaps
+# the first's operands, `hi`, and runs on the same threads; the fourth
+# reads %tid.x - 64, in [-64, 0), as 2^32 - 64 + %tid.x, at or above
+# 0xffffffe0 on threads 32 to 63.
 RUN: %ptxroof analyze %fixtures/micro/setp_unsigned.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_setp_unsigned( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store <= 256 B; param load 512 B{{$}}
-ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 4 (ideal <= 4){{$}}
-ANN: {{^}}.visible .entry micro_setp_unsigned_wraps( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store <= 256 B; param load 512 B{{$}}
-ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // <= warp * × lane * | exec <= 64/CTA | global store [4·%tid.x + param_0] sectors/req <= 4 (ideal <= 4){{$}}
+ANN: {{^}}.visible .entry micro_setp_unsigned( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store 128 B; param load 512 B{{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // warp 0 × lane 16-31 ∪ warp 1 × lane 0-15 | exec 32/CTA | global store [4·%tid.x + param_0] sectors/req 2 (ideal 2){{$}}
+ANN: {{^}}.visible .entry micro_setp_unsigned_wraps( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store 16 B; param load 512 B{{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // warp * × lane 0,16 | exec 4/CTA | global store [4·%tid.x + param_0] sectors/req 2 (ideal 1){{$}}
+ANN: {{^}}.visible .entry micro_setp_unsigned_hi( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store 128 B; param load 512 B{{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // warp 0 × lane 16-31 ∪ warp 1 × lane 0-15 | exec 32/CTA | global store [4·%tid.x + param_0] sectors/req 2 (ideal 2){{$}}
+ANN: {{^}}.visible .entry micro_setp_unsigned_hs( // block 64×1×1 | pointer params assumed 32 B aligned | per CTA: global store 128 B; param load 512 B{{$}}
+ANN: {{^}}	@%p1 st.global.u32 	[%rd3], %r1; // warp 1 × lane * | exec 32/CTA | global store [4·%tid.x + param_0] sectors/req 4 (ideal 4){{$}}

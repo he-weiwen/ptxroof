@@ -90,10 +90,11 @@ a bound (`micro-guards-annotate.test`,
 `gluon-attn-fwd-ws-annotate.test`); with the grid, where they read
 the CTA index, the conjuncts that read it, the `not` of an `or` taken
 as the `and` of its parts' negations, each as `runs when` prints a
-comparison, and the CTAs that run it, `| CTAs %ctaid.x < 64
-(64/128)`, `| CTAs %ctaid.x ≥ 1 (3/4)` (`micro-cta-trips-annotate.test`,
-`b200-cta-condition-annotate.test`), or where the lanes differ by CTA
-the most CTAs' lanes, `in 3844/3969 CTAs, other 125 CTAs differ`
+comparison, and the CTAs that run it, `| CTAs %ctaid.x < 4 (4/8)`,
+`| CTAs %ctaid.x ≥ 1 (3/4)` (`micro-cta-guards.test`,
+`micro-cta-trips-annotate.test`, `b200-cta-condition-annotate.test`),
+or where the lanes differ by CTA the most CTAs' lanes, `in 3844/3969
+CTAs, other 125 CTAs differ`
 (`k1-annotate.test`); and without the block shape the condition
 that selects them, a loop's iteration k printed as
 `(iv[<header>] + 1)`
@@ -112,10 +113,10 @@ CTA, else `warp-uniform`, and the lines of the branches deciding them
 (`gluon-attn-fwd-ws-annotate.test`, `micro-or-entry-annotate.test`,
 `a_block_names_the_uniform_conditions_it_runs_under`); one that is
 not a comparison read within its type as `predicate <register> (line
-<L>) is true|false`: gluon attn_fwd_ws's `setp.lt.u32 %p60, %r1880,
--190`, an unsigned comparison with a value of unknown range (the same
-test); a jump table's target as `jump table at line <L> selects this
-target` (`b200-jump-table-annotate.test`), a loop's exit as `leaves
+<L>) is true|false`: `micro/branchy.ptx`'s `setp.lt.f32` of a loaded
+value (`s9-branchy.test`); a jump table's target as `jump table at
+line <L> selects this target` (`b200-jump-table-annotate.test`), a
+loop's exit as `leaves
 loop <header> toward <block>`
 (`micro-loop-guard-sibling-annotate.test`). A comparison of a loop's
 counter, the same for the CTA, joins them, `runs when iv[$L__BB0_1] ≥
@@ -169,14 +170,24 @@ program run without undefined behavior, whose integer arithmetic on
 addresses, trip counts and thread-index comparisons does not wrap its
 type, and whose signed comparisons read values in their signed range.
 A value of unknown range is read in the integers on that premise; one
-whose range under the bindings leaves its type is refused (the entries
-below). An unsigned comparison is read only on operands known to be
-nonnegative, since C's `(unsigned)i < n` wraps a negative `i` on
-purpose (`micro/setp_unknown_range.ptx`: `n + %tid.x < n + 32` stores
-on 32 threads signed, a bound unsigned). C++ defines unsigned wrap and
-the conversion of an unsigned value past 2^31 − 1 to `int`, so the
-premise is stronger than the absence of undefined behavior where such
-a value reaches an address, a comparison or a widening: that file's
+of known range keeps the value it computes, and an operand whose range
+crosses an edge of its type's values is read past its multiples of
+2^width where its form allows and else refused (the entries below). A
+thread selector reads an unsigned comparison's operands as
+unsigned where each has a known range lying in [0, 2^width) shifted
+by a multiple of 2^width, or is proven nonnegative and so, of unknown
+range, below 2^(width−1) by this contract (`n + %tid.x <u −16` reads
+as n + %tid.x < 2^32 − 16,
+`an_unsigned_setp_reads_an_operand_its_caller_takes_as_nonnegative`);
+else as signed, every symbol taken as nonnegative, and x <u y as
+0 ≤ x and x < y where y is proven nonnegative, since C's
+`(unsigned)i < n` wraps a negative `i` on purpose
+(`micro/setp_unsigned.ptx`: `%tid.x − 16 <u 32` stores on threads 16
+to 47; `micro/setp_unknown_range.ptx`: `n + %tid.x <u n + 32` stores
+on 32 threads, where n = −8 would leave out threads 0 to 7). C++ defines unsigned wrap and the conversion of an unsigned value
+past 2^31 − 1 to `int`, so the premise is stronger than the absence
+of undefined behavior where such a value reaches an address, a
+comparison or a widening: that file's
 third kernel, `add.u32` of n and `%tid.x` compared `setp.lt.s32` with
 n + 32, reads `%tid.x < 32`, and n = 0x7fffffe0, which makes n + 32
 the signed minimum and the store run on no thread, is outside the
@@ -209,17 +220,17 @@ output_tallies` rewrites it.
 | loop: global bytes unique per CTA | 16 | 6 (38%) | 4 (25%) | 6 (38%) |  |
 | loop: global sector bytes per CTA | 16 | 6 (38%) | 4 (25%) |  | 6 (38%) |
 | block: threads | 854 | 825 (97%) | 29 (3%) |  |  |
-| block: CTAs | 87 | 87 (100%) |  |  |  |
-| block: `runs when` | 154 | 154 (100%) |  |  |  |
-| block: exec | 824 | 278 (34%) | 124 (15%) | 422 (51%) |  |
+| block: CTAs | 85 | 85 (100%) |  |  |  |
+| block: `runs when` | 152 | 152 (100%) |  |  |  |
+| block: exec | 820 | 278 (34%) | 122 (15%) | 420 (51%) |  |
 | instruction: threads, where a guard narrows its block's | 908 | 724 (80%) | 184 (20%) |  |  |
 | instruction: exec, where it differs from its block's | 661 | 547 (83%) | 110 (17%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
 | instruction: `not classified` | 423 | | | | |
 | instruction: `bytes ?` | 109 | | | | |
-| operand: address | 4,399 | 3,978 (90%) |  | 421 (10%) |  |
-| operand: global sectors/req | 2,221 | 1,393 (63%) | 473 (21%) |  | 355 (16%) |
-| operand: global sectors/req, ideal | 1,866 | 1,674 (90%) | 192 (10%) |  |  |
+| operand: address | 4,399 | 4,050 (92%) |  | 349 (8%) |  |
+| operand: global sectors/req | 2,221 | 1,465 (66%) | 473 (21%) |  | 283 (13%) |
+| operand: global sectors/req, ideal | 1,938 | 1,746 (90%) | 192 (10%) |  |  |
 | operand: shared wavefronts/req | 2,178 | 1,442 (66%) |  | 557 (26%) | 179 (8%) |
 | operand: shared wavefronts/req, ideal | 1,442 | 1,442 (100%) |  |  |  |
 <!-- end tests/output_tallies.rs -->
@@ -310,22 +321,32 @@ output_tallies` rewrites it.
   thread index an earlier `mov.b32 %v.x, %r1` wrote: the address is
   `[4·%tid.x + param_0]`, where ptxas takes it from the load.
 - **Integer arithmetic is taken not to wrap where its range is
-  unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
-  or `bfe` result, and an integer `cvt`'s source and destination, or a
-  `min` or `max`'s operands, are
-  refused when the value's range, over constants, the block shape
-  `.reqntid` or `--launch` gives, the grid `--grid` gives, and constant
-  trip counts, leaves the type, and read as a value of its own where it
-  is the same for every thread (`micro/mul_wrap.ptx`: `mul.lo.s32` of
-  2^30 and 4, so its address reads `uniform(%r2@24)`;
-  `micro/cvt_reads.ptx`: `cvt.u32.u64` of `%tid.x` + 2^32;
-  `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`;
-  `micro/trip_max.ptx`: `min.u32` of n − 4 under `--bind 1:n=2`, where
-  the loop runs 8 trips, `max(uniform(%r3@54), 1)`, unbound
-  `max(min(param_1 - 4, 8), 1)`); one
-  through a parameter, `%ctaid` with no grid given or a symbolic trip
-  count is read under the input contract above. A conversion to or from
-  floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
+  unbounded**: a value through a parameter, `%ctaid` with no grid given
+  or a symbolic trip count is read under the input contract above. An
+  `add.sat` or `sub.sat` is read only where its operands and its sum
+  lie in its type's values (`a_saturating_add_reads_a_sum_its_type_holds`).
+  A conversion to or from floating point, or
+  a pack, is refused (`micro/cvt_reads.ptx`).
+- **An operand read as its type is refused where its range crosses the
+  edge of the type's values.** An integer `cvt`'s source and result, a
+  `.wide` product's, `shr`'s, `div`'s, `rem`'s, `min`'s and `max`'s
+  operands and a signed `bfe` field from bit 0 are read as the integer
+  their low bits are (PTX ISA §9.4, §9.4.1), the value less a multiple
+  of 2^width, where its range over the same bounds lies in one window
+  of the type's values (`micro/cvt_reads.ptx`: `cvt.u32.u64` of
+  `%tid.x` + 2^32 is `%tid.x`; `micro/trip_max.ptx`: `min.u32` of n − 4
+  under `--bind 1:n=2` is 8, the 8 trips its record measures), and as
+  itself where the range is unknown, under the input contract. Where
+  the range crosses, the value below 63 bits reads past its multiples
+  of 2^width, the rest shifted into the values where it lies in one
+  window and else as `divmod` reads its remainder (unit test
+  `an_operand_reads_as_its_type_in_the_one_window_of_its_range`:
+  2^32·%tid.y + %tid.x as a `u32` is %tid.x, 2^28·%tid.x is
+  2^28·(%tid.x mod 16)); else each thread's value is one of two forms
+  and the operand is refused (`micro/wide_operands.ptx`: `%tid.x` − 256 as
+  `mul.wide.u32` reads it, 2^32 + `%tid.x` − 256 below `%tid.x` = 256,
+  "reads a value its type does not hold"; `micro/division_operands.ptx`'s
+  `div.u32` and `shr.u32`).
 - **An and-mask that clears the sign bit keeps a value of unknown range
   as itself.** Up to the bit below the sign bit (nvcc's
   `& 0x7fffffc0`) the and is read as the value itself where its range
@@ -387,16 +408,13 @@ output_tallies` rewrites it.
   the load at offset 0, so comparing two fields of a by-value
   aggregate is always true (`micro/param_fields.ptx`: the store runs on
   every thread, `store 256 B` per CTA).
-- **Integer literals are read in decimal and hexadecimal below 2^63
-  only**; PTX ISA §4.5.1 also writes them in octal and binary, with the
-  suffix `U`, and up to 2^64 − 1 as `.u64`. In `micro/int_literals.ptx`,
-  where ptxas folds each offset into the store, octal `020` reads as
-  twenty (`[param_0 + 20]`, ptxas `[R2.64+0x10]`), `0b10000` and `16U`
-  as symbols (`[param_0 + 0b10000]`), and `0xfffffffffffffff0` as no
-  integer, the address a uniform variable (ptxas `[R2.64+-0x10]`). In
-  the census the forms are 7,019 `prmt` selectors with a `U`
-  (`0x3340U`, 119 kernels) and 19 masked loads' default
-  `0xffffffffffffffff` (`mov.u64`, 3 kernels; `00101.ptx`).
+- **Integer literals are read in decimal and hexadecimal only**; PTX
+  ISA §4.5.1 also writes them in octal and binary, and with the suffix
+  `U`. In `micro/int_literals.ptx`, where ptxas folds each offset into
+  the store, octal `020` reads as twenty (`[param_0 + 20]`, ptxas
+  `[R2.64+0x10]`), and `0b10000` and `16U` as symbols (`[param_0 +
+  0b10000]`). In the census the forms are 7,019 `prmt` selectors with
+  a `U` (`0x3340U`, 119 kernels).
 - **A `!=` latch with a symbolic distance is taken to meet its
   bound**: the trip solver divides the distance by the step, rounding
   down, as `src/analysis/affine/exit_limit.rs`'s `exit_limit` assumes the
@@ -404,30 +422,24 @@ output_tallies` rewrites it.
   `micro/two_register_counter.ptx`). A constant distance that is no
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
   stepping by 2 from 0 while `!= 5`, reads `loop: trips ?`, where the
-  loop does not exit.
+  loop does not exit; a bound distance reads as the constant it is.
+  A distance of 0 is refused even where a guard skips the loop: k2's
+  remainder loop under `--bind 2:K=4096` reads `trips ? (latch
+  condition never meets its != bound) | no thread`
+  (`tests/lit/k2-bind.test`), and `tests/gen_loops.py`'s seed-1 kernel
+  5 at n = 64, which its guard skips, is unsupported.
 - **A loop's count drops its max with 0 or 1 on nonnegative
   parameters.** A loop is counted max(T, 0) per execution of a guard
   that skips it where its latch fails at k = 0 (`micro/loop_guard.ptx`),
   and max(T, 1) per entry otherwise (`micro/latch_exits_first.ptx`);
-  the max is dropped where T is never below it with every parameter,
-  and every value a count reads as `uniform(…)`, taken as nonnegative
-  (`src/analysis/affine/sym_expr.rs`'s doc):
+  the max is dropped where T is never below it under the bindings,
+  every unbound parameter and every value a count reads as `uniform(…)`
+  taken as nonnegative (`src/analysis/affine/sym_expr.rs`'s doc), and
+  kept where a binding makes it below (`micro/negative_bind.ptx` under
+  `--bind 1:n=-3`: 0 and 1 trips, as an RTX 4090 runs them):
   `micro/single_loop.ptx` reads its `ld.param.u32` n as `param_1`,
   with exact totals, where an n of 2^31 or more, below 1 as its
   `setp.lt.s32` compares it, runs no trips.
-- **A loop's latch or guard reads an unsigned comparison as a signed
-  one.** The input contract reads an unsigned comparison only on
-  operands known to be nonnegative, as thread selectors do
-  (`thread_participation.rs`'s `condition`), but `counted_trips` and
-  `guard_test` (`loop_trip_count.rs`) subtract the operands whatever
-  the type. `micro/latch_unsigned.ptx`'s `micro_latch_unsigned` counts
-  from 1 while `setp.lt.u32` of the counter and -4 holds, 2^32 − 4
-  trips (PTX ISA §9.7.6.2; ptxas 13.4 keeps the loop, `ISETP.GE.U32
-  … -0x4`), and reads `loop: trips 1`, its store 32 per CTA; its
-  `micro_guard_unsigned` reads the same comparison of `%tid.x` as a
-  bound (constructed). Of the census's 114 latches on an unsigned
-  `setp` (a predicated backward `bra` and the nearest `setp` writing
-  its predicate), none compares with a negative immediate.
 - **Addresses affine analysis cannot read are unknown rows**, with the
   reason, unless the lanes of a warp compute the part it cannot read
   alike: that part is then a variable, `uniform(%r54@90)`, or,
@@ -510,8 +522,9 @@ output_tallies` rewrites it.
   (`micro/magic_div.ptx`: "`mul.hi.u32` keeps a product's upper half";
   sglang `bmm_kernel_persistent`'s `/ 148` leaves its trip count
   unknown); a floor or mod of a value that, past its multiple of the
-  divisor, holds two terms, or one whose coefficient the divisor is no
-  multiple of, or a base not below that coefficient, such as a 0-based
+  divisor, is neither a term c·v, c a divisor, plus a rest the ranges
+  keep in [0, c), nor symbols whose factors share a divisor a of d plus
+  a rest in [0, a), nor in one block of d over its range, such as a 0-based
   counter's `i % 2` read before its increment, `(k − 1) mod 2`, which
   is the same for every thread and so
   a uniform variable the loop defines (`micro/counter_mod_offset.ptx`:
@@ -624,14 +637,6 @@ output_tallies` rewrites it.
 
 ### Reported as unknowns
 
-- **A counter's no-wrap check reads its update's type, not the
-  comparison's.** The values a counter's back edges feed are checked
-  against the type of the `add` that steps it: k5's
-  `for (uint bkIdx = 0; bkIdx < K; bkIdx += BK)` steps by `add.s32`
-  and compares `setp.lt.u32`, so under `--bind 2:K=2147483647` its
-  outer loop reads `loop: trips ?`, "`add.s32` leaves 32 bits", where
-  it runs 2^28 trips, its last value 2^31 lying in `.u32`
-  (`a_count_its_counter_refuses_once_known_is_unknown_to_every_reader`).
 - **Shared wavefronts are not counted for a `cp.async` destination, a
   shared atomic, or a 16-byte load two of whose lanes share a word**
   (13,489 and 6,723 census rows, 832 of the loads by name, every lane
@@ -672,14 +677,18 @@ output_tallies` rewrites it.
   measured on an RTX 4090), and stays unknown where those threads are
   not counted at every CTA, past 2^24 CTAs on the axes the count
   reads, or where the count at a CTA is negative or not a constant.
-- **A product reads its factors as traced, before the bindings**: `mul`
-  and `mad` need one factor free of variables, so a product of two
-  forms with variables is unknown even where a binding makes one of
-  them 0, and a floor or mod reads the form as traced before the form
-  under the bindings: `micro/floor_mod_remainder.ptx`'s
-  `micro_floor_bound_zero`, ⌊(16·p·%tid.x + 1)/16⌋·%tid.y, reads
-  p·%tid.x for the floor and is unknown with `--bind 1:p=0` ("in a
-  product"), where every thread stores at param_0 (RTX 4090).
+- **A floor or mod can print a term that is always 0, or a remainder of
+  a remainder**: where the rest of a term c·v lies in [0, c), the floor
+  and the remainder keep ⌊v/(d/c)⌋ and v mod d/c even where v's range
+  makes them 0 or v (census `01452.ptx`'s first load:
+  `4096·⌊(%tid.x mod 128)/256⌋ + 16·((%tid.x mod 128) mod 128)`); the
+  value is exact.
+- **A product of two forms with variables is unknown**: `mul` and
+  `mad` need one factor free of variables, after the bindings, which
+  give a symbol its value where it is loaded (`micro_floor_bound_zero`
+  reads `[param_0]` with `--bind 1:p=0`). 400 lines of 81 corpus files
+  read "in a product" (`grep -c 'in a product'` over the 5,668-file
+  run).
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unrolled main loop and its remainder, LLVM's two-register counter and
@@ -870,15 +879,19 @@ output_tallies` rewrites it.
   compares floats, not the traced integer forms, and `.f16x2` and
   `.bf16x2` each half on its own (PTX ISA §9.7.6.2, §9.7.7.2); an
   `lt`, `le`, `gt` or `ge` is not read where an operand's range, for
-  every `%tid` below 1024 (§10.2) and every `%ctaid` below the grid,
-  leaves its type, [0, 2^width) or [−2^(width−1), 2^(width−1)), nor,
-  unsigned, where an operand is not nonnegative for every `%ctaid` of
-  any grid (§10.7); an `eq` or `ne` where their difference's range
-  leaves (−2^width, 2^width). What it guards is then a bound
+  `%tid` below the block shape, else below 1024 (§10.2), and `%ctaid`
+  below the grid, crosses an edge of [−2^(width−1), 2^(width−1))
+  shifted by a multiple of 2^width and, unsigned, of [0, 2^width) so
+  shifted, and its value past its multiples of 2^width is no form
+  (`extend`); nor, unsigned and read as signed, where the operand the
+  other must stay below is not known nonnegative, with every `%ctaid`
+  of any grid (§10.7) and every symbol nonnegative (gluon
+  attn_fwd_ws's `setp.lt.u32 %p60, %r1880, -190` without its record's
+  launch); an `eq` or `ne` where their difference's range leaves
+  (−2^width, 2^width). What it guards is then a bound
   (`micro/setp_float.ptx`, `micro/setp_f16x2.ptx`,
-  `micro/setp_unsigned.ptx`, `micro/setp_wraps.ptx`: `<= warp * ×
-  lane *`, `global store <= 256 B`; the unsigned kernel of
-  `micro/setp_unknown_range.ptx`).
+  `micro/setp_wraps.ptx`'s first kernel, a signed comparison of
+  2^28·%tid.x: `<= warp * × lane *`, `global store <= 256 B`).
 - **A guard comparing the thread index with a CTA index needs the
   grid, and one with an unbound parameter or a loop counter is an
   unknown selector.** A comparison over `%tid` and `%ctaid` with
@@ -1238,7 +1251,7 @@ output_tallies` rewrites it.
   shares it (`micro/uniform_address.ptx`,
   `micro/uniform_counter.ptx`, `micro/uniform_bases.ptx`), and trip
   counts where every thread of the CTA shares it and no enclosing loop
-  defines it (`micro/trip_max.ptx`: `max(uniform(%r3@54), 1)`), else
+  defines it (`micro/trip_div_param.ptx`: `uniform(%r3@30)`), else
   their reason names it (`micro-trip-uniform.test`); thread selectors
   do not. Register SSA
   itself

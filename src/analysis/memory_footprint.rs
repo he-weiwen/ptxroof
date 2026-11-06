@@ -14,6 +14,7 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::thread_participation::Pred;
 use crate::ptx::modifier::Space;
 use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_3d, warps_of};
+use crate::support::integer::gcd;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub const SECTOR: i64 = 32;
@@ -135,15 +136,9 @@ pub fn warp_footprint(
 /// alignment `pointer` gives where the address sits on its parameter,
 /// and each other symbol's constant factor.
 fn uniform_residues(a: &AffineExpr, pointer: Option<(usize, u32)>) -> (i64, i64) {
-    let gcd = |mut a: i64, mut b: i64| {
-        while b != 0 {
-            (a, b) = (b, a % b);
-        }
-        a.abs()
-    };
-    let mut g = SECTOR;
+    let mut g = SECTOR.unsigned_abs();
     for (_, k) in a.terms.iter().filter(|(v, _)| !v.depends_on_tid()) {
-        g = gcd(g, k.as_const().unwrap_or(1));
+        g = gcd(g, k.as_const().unwrap_or(1).unsigned_abs());
     }
     let summands = match &a.base {
         SymExpr::Sum(ts) => ts.as_slice(),
@@ -166,9 +161,9 @@ fn uniform_residues(a: &AffineExpr, pointer: Option<(usize, u32)>) -> (i64, i64)
             },
             _ => 1,
         };
-        g = gcd(g, factor);
+        g = gcd(g, factor.unsigned_abs());
     }
-    (c, g)
+    (c, i64::try_from(g).expect("g divides a sector"))
 }
 
 /// The shifts of `aligned` congruent to `c` modulo `g`; all of them

@@ -1,0 +1,32 @@
+//
+// HAND-WRITTEN: a latch bound of `shl.b32` of %ctaid.x by 30, then
+// `shr.u32` by 28: the shift keeps %ctaid.x's low two bits, so the
+// bound is 4·(%ctaid.x mod 4) and each CTA runs max(4·(%ctaid.x mod 4),
+// 1) trips, an atomic add each.
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_cta_mod_latch(
+	.param .u64 micro_cta_mod_latch_param_0
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [micro_cta_mod_latch_param_0];
+	cvta.to.global.u64 	%rd2, %rd1;
+	mov.u32 	%r1, %ctaid.x;
+	shl.b32 	%r2, %r1, 30;
+	shr.u32 	%r3, %r2, 28;
+	mov.u32 	%r4, 0;
+$L__BB0_1:
+	atom.global.add.u32 	%r5, [%rd2], 1;
+	add.s32 	%r4, %r4, 1;
+	setp.lt.u32 	%p1, %r4, %r3;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}

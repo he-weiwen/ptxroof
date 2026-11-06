@@ -1,4 +1,5 @@
-//! Sharing and stability of PTX special-register values within one CTA.
+//! Sharing and stability of PTX special-register values within one CTA,
+//! and the ranges the ISA gives them.
 
 use crate::ptx::ir::{Element, SpecialReg, SpecialScalar, SpecialVector};
 
@@ -68,6 +69,31 @@ pub(crate) fn special_register(reg: SpecialReg) -> Option<SpecialRegister> {
     })
 }
 
+/// The least and greatest value the ISA lets `reg` take on any target.
+/// PTX ISA §10.1 "0 <= %tid.x < %ntid.x"; §10.2 "CTA dimensions are
+/// non-zero", and its "Maximum values of %ntid.{x,y,z}" at most 1024,
+/// 1024 and 64; §10.3 "The lane identifier ranges from zero to
+/// WARP_SZ-1", and §4.5.1 "all target architectures have a WARP_SZ value
+/// of 32"; §10.6 "0 <= %ctaid.x < %nctaid.x"; §10.7 "each element having
+/// a value of at least 1", and its "Maximum values of %nctaid.{x,y,z}"
+/// at most 2^31 − 1, 65535 and 65535. `None` for the rest.
+pub(crate) fn special_register_range(reg: SpecialReg) -> Option<(i64, i64)> {
+    use Element::*;
+    use SpecialVector::*;
+    Some(match reg {
+        SpecialReg::Scalar(SpecialScalar::Laneid) => (0, 31),
+        SpecialReg::Vector(Tid, Some(X | Y)) => (0, 1023),
+        SpecialReg::Vector(Tid, Some(Z)) => (0, 63),
+        SpecialReg::Vector(Ntid, Some(X | Y)) => (1, 1024),
+        SpecialReg::Vector(Ntid, Some(Z)) => (1, 64),
+        SpecialReg::Vector(Ctaid, Some(X)) => (0, (1 << 31) - 2),
+        SpecialReg::Vector(Ctaid, Some(Y | Z)) => (0, 65534),
+        SpecialReg::Vector(Nctaid, Some(X)) => (1, (1 << 31) - 1),
+        SpecialReg::Vector(Nctaid, Some(Y | Z)) => (1, 65535),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +121,28 @@ mod tests {
             ("%reserved_smem_offset_cap", None),
         ] {
             assert_eq!(of(name), class, "{name}");
+        }
+    }
+
+    #[test]
+    fn special_register_ranges_are_the_isa_s_on_any_target() {
+        let of = |name| special_register_range(SpecialReg::from_name(name).expect(name));
+        for (name, range) in [
+            ("%tid.x", Some((0, 1023))),
+            ("%tid.y", Some((0, 1023))),
+            ("%tid.z", Some((0, 63))),
+            ("%tid.w", None),
+            ("%ntid.y", Some((1, 1024))),
+            ("%ntid.z", Some((1, 64))),
+            ("%laneid", Some((0, 31))),
+            ("%ctaid.x", Some((0, (1 << 31) - 2))),
+            ("%ctaid.z", Some((0, 65534))),
+            ("%nctaid.x", Some((1, (1 << 31) - 1))),
+            ("%nctaid.y", Some((1, 65535))),
+            ("%ntid", None),
+            ("%warpid", None),
+        ] {
+            assert_eq!(of(name), range, "{name}");
         }
     }
 }

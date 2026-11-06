@@ -1,0 +1,32 @@
+//
+// HAND-WRITTEN: no .reqntid, and a store on the threads whose %tid.x
+// << 28, shifted back down by 28, is 0. The shift left keeps %tid.x's
+// low 4 bits of a 32-bit register, so the test is %tid.x mod 16 == 0,
+// true on every sixteenth thread. ptxas 13.4 (sm_80):
+//   IMAD.SHL.U32 R0, R5, 0x10000000, RZ
+//   SHF.R.U32.HI R0, RZ, 0x1c, R0
+//   ISETP.NE.U32.AND P0, PT, R0, RZ, PT
+//   @P0 EXIT
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_tid_range(
+	.param .u64 micro_tid_range_param_0
+)
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_tid_range_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 28;
+	shr.u32 	%r3, %r2, 28;
+	setp.eq.u32 	%p1, %r3, 0;
+	@!%p1 bra 	$L__BB0_2;
+	st.global.u32 	[%rd1], %r1;
+$L__BB0_2:
+	ret;
+}

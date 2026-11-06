@@ -21,7 +21,7 @@ only declare modules and selected public entry points.
 | `ptx/print` | Canonical PTX dump |
 | `ptx/cfg` | PTX basic blocks, edges and CFG construction |
 | `ptx/register_effects` | Instruction register reads and writes, CC included, and whether they are an instruction's only effect |
-| `ptx/special_registers` | Sharing and stability of PTX special-register values |
+| `ptx/special_registers` | Sharing, stability and ranges of PTX special-register values |
 | `ptx/thread_hierarchy` | A CTA's threads by thread ID and its warps, and the threads of a block and CTAs of a grid |
 | `ptx/count_constraint` | Constraints on comparing PTX and measured instruction counts |
 | `analysis/control_flow/dominators` | Dominance, post-dominance and frontiers |
@@ -37,7 +37,7 @@ only declare modules and selected public entry points.
 | `analysis/affine/unknown_reason` | Why a value has no affine expression, and its sentence where it is read |
 | `analysis/affine/affine_analysis` | Register values as affine forms and one loop's trip count; their mutual recursion and the cache of both |
 | `analysis/affine/affine_analysis/loop_trip_count` | A loop's trip count from its latch, guard and predicate φ, as methods of the analysis |
-| `analysis/affine/affine_analysis/transfer` | The value each instruction writes, from the values it reads, as methods of the analysis |
+| `analysis/affine/affine_analysis/transfer` | The value each instruction writes, from the values it reads, and the comparisons with 0 an integer `setp` holds on, as methods of the analysis |
 | `analysis/affine/trip_counts` | Every loop's trip count |
 | `analysis/loop_names` | Source-derived loop names |
 | `analysis/thread_participation` | Predicates and sets of threads executing blocks and accesses |

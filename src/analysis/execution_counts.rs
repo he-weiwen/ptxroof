@@ -242,7 +242,7 @@ impl<'a> ExecutionCounts<'a> {
             .iter()
             .enumerate()
             .map(|(i, t)| match t {
-                Ok(e) => e.bind(bind_map),
+                Ok(e) => e.clone(),
                 Err(_) => SymExpr::Sym(SymbolicConstant::TripCount(LoopId(i as u32))),
             })
             .collect();
@@ -430,7 +430,7 @@ impl<'a> ExecutionCounts<'a> {
             loops.iter().try_fold(1u64, |w, l| {
                 let n = self.trip_exprs[l.0 as usize].bind(&at).as_const()?;
                 if let Some((x, step)) = &self.trip_info.distances[l.0 as usize] {
-                    let x = x.bind(self.bind_map).bind(&at).as_const()?;
+                    let x = x.bind(&at).as_const()?;
                     if x.checked_rem(*step)? != 0 || x.checked_div(*step)? < 1 {
                         return None;
                     }

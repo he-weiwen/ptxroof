@@ -5,10 +5,10 @@
 // thread index plus 2^32, and a saturating conversion of an integer
 // parameter, 0 for a negative one (PTX ISA §9.7.9.22: ".sat limits
 // the result to MININT..MAXINT for the size of the operation"). Only
-// the third address is 4·%tid.x; the tracer refuses all four: two
-// conversions change bits, the truncation's source leaves 32 bits,
-// and the saturation is a value it does not read, the same for every
-// thread.
+// the third address is 4·%tid.x; the tracer reads the truncation's
+// low 32 bits, that address, and refuses the other three: two
+// conversions change bits, and the saturation is a value it does not
+// read, the same for every thread.
 //
 .version 8.7
 .target sm_80

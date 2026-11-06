@@ -1,9 +1,10 @@
 # Numeric counts via --bind 2:K=4096 (PR 12): the binding is echoed on
 # the `.entry` line, every K-dependent expression collapses to a number
 # (trips 1024 / 0, per thread 8 x 1024 + 3 = 8195 flops at most, behind
-# the bounds guard), and the remainder loop's 4096 mod 4 = 0 trips read
-# as exactly that, its blocks on no thread.
+# the bounds guard), and the remainder loop, which its guard skips at
+# 4096 mod 4 = 0, runs on no thread; its `!=` latch at that distance of 0
+# reads no count, as a constant distance does (PLAN.md).
 RUN: %ptxroof analyze %fixtures/k2/k2.sm_80.ptx --bind 2:K=4096 | FileCheck --check-prefix=ANN "%s"
 ANN: {{^}}.visible .entry _Z15hgemm_coalescediiifPK6__halfS1_fPS_( // param_2 = 4096 | per thread: flops f32 <= 8,195; global load <= 16,386 B, store <= 2 B; param load 44 B{{$}}
 ANN: {{^}}$L__BB0_4: // loop: trips 1024 | exec <= 1,024/thread{{$}}
-ANN: {{^}}$L__BB0_7: // loop: trips 0 | no thread{{$}}
+ANN: {{^}}$L__BB0_7: // loop: trips ? (latch condition never meets its `!=` bound) | no thread{{$}}

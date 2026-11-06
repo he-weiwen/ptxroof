@@ -28,8 +28,8 @@ pub struct TripCountResults {
     pub distances: Vec<Option<(SymExpr, i64)>>,
 }
 
-/// Every loop's trip count, its latch traced under `bindings` (`--bind`,
-/// the launch shape) where a constant is needed.
+/// Every loop's trip count, each symbol `bindings` (`--bind`, the launch
+/// shape) fixes read as its value.
 pub fn trip_counts(
     module: &Module,
     kernel: &Kernel,
@@ -129,7 +129,8 @@ mod tests {
         let free = HashMap::new();
         let shape = |x: &str| Some(format!("({x} - {x} mod 4) / 4"));
         assert_eq!(pairs(&src, &free), shape("param_0"));
-        // A min-bounded pair keeps its shape under the bindings.
+        // A min-bounded pair; under the bindings min(100, 8) is 8, two
+        // trips of four.
         let src = src.replace(
             "ld.param.u32 %r1, [k_param_0];",
             "ld.param.u32 %r0, [k_param_0];\nmin.s32 %r1, %r0, 8;",
@@ -138,7 +139,7 @@ mod tests {
             .into_iter()
             .collect();
         assert_eq!(pairs(&src, &free), shape("min(param_0, 8)"));
-        assert_eq!(pairs(&src, &bound), shape("min(param_0, 8)"));
+        assert_eq!(pairs(&src, &bound), Some("2".to_owned()));
         // A unit-step main loop below (X − X mod 4)/4, behind a guard that
         // tests its latch at k = 0.
         let src = String::from(

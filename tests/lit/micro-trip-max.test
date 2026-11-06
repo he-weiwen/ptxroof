@@ -2,12 +2,11 @@
 # max and min. On an RTX 4090 micro_trip_max at n = 1 runs 2 trips.
 # min.u32 compares unsigned: at n = 2, n − 4 reads as 2^32 − 2 and the
 # loop runs 8 trips, where a signed min would give −2; with n bound to 2
-# the operand leaves its type and is not read: the count is the min,
-# one value for every thread, as a symbol.
+# the operand is read so, and the count is 8, as the record measures.
 RUN: %ptxroof analyze %fixtures/micro/trip_max.ptx | FileCheck --check-prefix=ANN "%s"
 RUN: %ptxroof analyze %fixtures/micro/trip_max.ptx --ncu %fixtures/micro/trip_max.ncu.json | FileCheck --check-prefix=NCUANN "%s"
 RUN: %ptxroof analyze %fixtures/micro/trip_max.ptx --ncu %fixtures/micro/trip_max.unsigned.ncu.json | FileCheck --check-prefix=UNSIGNEDANN "%s"
 ANN: {{^}}$L__BB0_1: // loop: trips max(param_1, 2) | warp * × lane * | exec (32·max(param_1, 2))/CTA{{$}}
 ANN: {{^}}$L__BB1_1: // loop: trips max(min(param_1 - 4, 8), 1) | warp * × lane * | exec (32·max(min(param_1 - 4, 8), 1))/CTA{{$}}
 NCUANN: {{^}}$L__BB0_1: // loop: trips 2 | global per CTA: requested 256 B, unique 4 B, sectors 64 B | warp * × lane * | exec 64/launch{{$}}
-UNSIGNEDANN: {{^}}$L__BB1_1: // loop: trips max(uniform(%r3@54), 1) | warp * × lane * | exec ?{{$}}
+UNSIGNEDANN: {{^}}$L__BB1_1: // loop: trips 8 | global per CTA: requested 1,024 B, unique 4 B, sectors 256 B | warp * × lane * | exec 256/launch{{$}}

@@ -1,7 +1,5 @@
 # mul.lo.s32 of 2^30 and 4 wraps to 0, and ptxas stores at param_0. The
-# product's range, both factors constant, leaves 32 bits, so it is no
-# affine form; every thread computes the same value, so the address is
-# read with it as a uniform variable, one sector per warp, rather than
-# param_0 + 2^34.
+# product is 2^32 as traced; the address reads its `.s32` value, 0,
+# rather than param_0 + 2^34.
 RUN: %ptxroof analyze %fixtures/micro/mul_wrap.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}	st.global.u32 	[%rd3], 0; // global store [4·uniform(%r2@24) + param_0] sectors/req 1 (ideal 1){{$}}
+ANN: {{^}}	st.global.u32 	[%rd3], 0; // global store [param_0] sectors/req 1 (ideal 1){{$}}

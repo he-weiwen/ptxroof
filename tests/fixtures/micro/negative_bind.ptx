@@ -1,0 +1,76 @@
+//
+// HAND-WRITTEN: a parameter n the analysis takes as nonnegative where
+// unbound, launched with n = -3. The first stores at 4·max(n, 0) bytes
+// past param_0, so at param_0; the second skips its loop where n < 1;
+// the third enters its loop where n != 0 and runs one trip, its
+// `k < n` latch failing at k = 1 (an RTX 4090 run of each).
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_negative_bind_max(
+	.param .u64 micro_negative_bind_max_param_0,
+	.param .u32 micro_negative_bind_max_param_1
+)
+.reqntid 1, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_negative_bind_max_param_0];
+	ld.param.u32 	%r1, [micro_negative_bind_max_param_1];
+	max.s32 	%r2, %r1, 0;
+	mul.wide.s32 	%rd2, %r2, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_negative_bind_lt_guard(
+	.param .u64 micro_negative_bind_lt_guard_param_0,
+	.param .u32 micro_negative_bind_lt_guard_param_1
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_negative_bind_lt_guard_param_0];
+	ld.param.u32 	%r1, [micro_negative_bind_lt_guard_param_1];
+	setp.lt.s32 	%p1, %r1, 1;
+	@%p1 bra 	$L__BB1_3;
+	mov.u32 	%r2, 0;
+$L__BB1_2:
+	add.s32 	%r2, %r2, 1;
+	st.global.u32 	[%rd1], %r2;
+	setp.lt.s32 	%p2, %r2, %r1;
+	@%p2 bra 	$L__BB1_2;
+$L__BB1_3:
+	ret;
+}
+
+.visible .entry micro_negative_bind_ne_guard(
+	.param .u64 micro_negative_bind_ne_guard_param_0,
+	.param .u32 micro_negative_bind_ne_guard_param_1
+)
+.reqntid 1, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_negative_bind_ne_guard_param_0];
+	ld.param.u32 	%r1, [micro_negative_bind_ne_guard_param_1];
+	setp.eq.s32 	%p1, %r1, 0;
+	@%p1 bra 	$L__BB2_3;
+	mov.u32 	%r2, 0;
+$L__BB2_2:
+	add.s32 	%r2, %r2, 1;
+	st.global.u32 	[%rd1], %r2;
+	setp.lt.s32 	%p2, %r2, %r1;
+	@%p2 bra 	$L__BB2_2;
+$L__BB2_3:
+	ret;
+}

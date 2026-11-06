@@ -3,6 +3,7 @@
 //! analysis reads.
 
 use super::*;
+use crate::support::integer::same_window;
 
 impl AffineAnalysis<'_> {
     /// The value statement `def` writes to `reg`, were its guard true.
@@ -80,18 +81,18 @@ impl AffineAnalysis<'_> {
             (Opcode::Cvta, _) => {
                 self.operand_at(*ops.last().expect("cvta has operands"), def, depth + 1)
             }
-            // PTX ISA §9.7.9.22: an integer `cvt` keeps a value its source
-            // type reads that its destination type holds; any other
-            // conversion changes the value's bits.
+            // PTX ISA §9.7.9.22: an integer `cvt` converts "the lower n bits
+            // corresponding to the instruction-type width" of its source, and
+            // its result "is sign-extended to the destination register width
+            // for signed integers"; any other conversion changes the bits.
             (Opcode::Cvt, Form::IntConvert { from, to, sat }) if !sat => {
                 let a = self.operand_at(*ops.last().expect("cvt has operands"), def, depth + 1)?;
-                for ty in [from, to] {
-                    if !self.within(&a, ty.values()) {
-                        let opcode = module.opcode(instr);
-                        return Err(format!("`{opcode}` leaves {} bits", ty.width).into());
-                    }
-                }
-                Ok(a)
+                let opcode = module.opcode(instr);
+                let read = |a: &AffineExpr, ty: IntInstrType| {
+                    (self.extend(a, ty))
+                        .ok_or_else(|| format!("`{opcode}` leaves {} bits", ty.width).into())
+                };
+                read(&read(&a, from)?, to)
             }
             (Opcode::Cvt, Form::IntConvert { .. }) => {
                 let opcode = module.opcode(instr);
@@ -104,11 +105,32 @@ impl AffineAnalysis<'_> {
                 if let Some(ParamAccess::KernelParam { index, .. }) =
                     param_access(module, self.data.kernel, instr)
                 {
-                    return Ok(AffineExpr::from_base(SymExpr::Sym(
-                        SymbolicConstant::KernelParam(index),
-                    )));
+                    return Ok(AffineExpr::from_base(
+                        self.symbol(SymbolicConstant::KernelParam(index)),
+                    ));
                 }
                 Err(UnknownReason::Load { def })
+            }
+            // PTX ISA §9.7.1.1, §9.7.1.2: `.sat` "limits result to
+            // MININT..MAXINT (no overflow) for the size and signedness of
+            // the operation", which leaves a sum its type holds.
+            (Opcode::Add | Opcode::Sub, Form::Int { ty, sat: true, .. }) if ops.len() == 3 => {
+                let opcode = module.opcode(instr);
+                let read = |x: AffineExpr| {
+                    (self.extend(&x, ty))
+                        .ok_or_else(|| format!("`{opcode}` reads a value its type does not hold"))
+                };
+                let (a, b) = (read(arg(1)?)?, read(arg(2)?)?);
+                let value = if mnemonic == Opcode::Add {
+                    a + b
+                } else {
+                    a - b
+                };
+                (self.extend(&value, ty).as_ref() == Some(&value))
+                    .then_some(value)
+                    .ok_or_else(|| {
+                        format!("`{opcode}` clamps a value its type does not hold").into()
+                    })
             }
             (Opcode::Add, _) if ops.len() == 3 => Ok(arg(1)? + arg(2)?),
             (Opcode::Sub, _) if ops.len() == 3 => Ok(arg(1)? - arg(2)?),
@@ -129,7 +151,7 @@ impl AffineAnalysis<'_> {
             (Opcode::And, _) if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
                 let (val, mask) = (arg(1)?, arg(2)?);
-                let (affine, konst) = match (self.constant(&mask), self.constant(&val)) {
+                let (affine, konst) = match (mask.as_const(), val.as_const()) {
                     (Some(c), _) => (val, c),
                     (_, Some(c)) => (mask, c),
                     _ => return Err("and-mask with two non-constant operands".into()),
@@ -144,7 +166,7 @@ impl AffineAnalysis<'_> {
                 // instruction's size.
                 let width = form.int_type().map_or(32, |t| t.width);
                 let modulo = |x: AffineExpr, k: u32| -> Result<AffineExpr, UnknownReason> {
-                    (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.var_bounds(v))))
+                    (x.clone().modulo_const(1i64 << k, &|v| self.var_bounds(v)))
                         .ok_or_else(|| refuse(&x, "mod"))
                 };
                 let range = self.range(&affine);
@@ -180,10 +202,8 @@ impl AffineAnalysis<'_> {
                                     format!("and-mask {konst:#x} keeps bit 63 without 62").into()
                                 );
                             }
-                            _ => (self.reduced(&hi, |x| {
-                                x.align_down(1i64 << low, &|v| self.var_bounds(v))
-                            }))
-                            .ok_or_else(|| refuse(&hi, "mod"))?,
+                            _ => (hi.clone().align_down(1i64 << low, &|v| self.var_bounds(v)))
+                                .ok_or_else(|| refuse(&hi, "mod"))?,
                         };
                     bits &= u64::MAX.checked_shl(top).unwrap_or(0);
                 }
@@ -194,7 +214,7 @@ impl AffineAnalysis<'_> {
                 // sides (its `or disjoint`, which PTX does not keep).
                 let (a, b) = (arg(1)?, arg(2)?);
                 let largest = |v: &Var| self.var_bounds(v).map(|(_, hi)| hi);
-                match self.bind(&a).may_set(&largest) & self.bind(&b).may_set(&largest) {
+                match a.may_set(&largest) & b.may_set(&largest) {
                     0 => Ok(a + b),
                     both => Err(format!(
                         "or whose sides may both set bit {}",
@@ -206,7 +226,7 @@ impl AffineAnalysis<'_> {
             // PTX ISA §9.7.8.3: a bitwise exclusive-or, of two xors of
             // thread index fields their xor.
             (Opcode::Xor, _) if ops.len() == 3 => {
-                let bits = |x: AffineExpr| self.bind(&x).xor_swizzle();
+                let bits = |x: AffineExpr| x.xor_swizzle();
                 match (arg(1).map(bits), arg(2).map(bits)) {
                     (Ok(Some(x)), Ok(Some(y))) => Ok(x.xor(&y).affine()),
                     _ => Err(self.unread(instr, def)),
@@ -218,8 +238,7 @@ impl AffineAnalysis<'_> {
             // A signed field from past the msb ptxas 13.4 folds otherwise
             // (micro/bfe_fields.ptx).
             (Opcode::Bfe, _) if ops.len() == 4 => {
-                let (Some(pos), Some(len)) = (self.constant(&arg(2)?), self.constant(&arg(3)?))
-                else {
+                let (Some(pos), Some(len)) = (arg(2)?.as_const(), arg(3)?.as_const()) else {
                     return Err("bfe with a non-constant position or length".into());
                 };
                 let (pos, len) = (pos & 0xff, len & 0xff);
@@ -235,12 +254,11 @@ impl AffineAnalysis<'_> {
                 }
                 let a = arg(1)?;
                 let field = |pos: i64, len: i64| {
-                    let shifted = (self
-                        .reduced(&a, |x| x.div_const(1i64 << pos, &|v| self.var_bounds(v))))
-                    .ok_or_else(|| refuse(&a, "bit field"))?;
-                    (self.reduced(&shifted, |x| {
-                        x.modulo_const(1i64 << len, &|v| self.var_bounds(v))
-                    }))
+                    let shifted = (a.clone().div_const(1i64 << pos, &|v| self.var_bounds(v)))
+                        .ok_or_else(|| refuse(&a, "bit field"))?;
+                    (shifted
+                        .clone()
+                        .modulo_const(1i64 << len, &|v| self.var_bounds(v)))
                     .ok_or_else(|| refuse(&shifted, "bit field"))
                 };
                 match (signed, pos, len.min(w - pos)) {
@@ -248,11 +266,12 @@ impl AffineAnalysis<'_> {
                         Ok(field(p, 1)?.scale(SymExpr::Const(-1)))
                     }
                     (true, 0, _) => {
-                        let half = 1i128 << (len.min(w) - 1);
-                        match self.within(&a, (-half, half)) {
-                            false => Err(format!("bfe of {len} bits leaves them").into()),
-                            true => Ok(a),
-                        }
+                        let field = IntInstrType {
+                            kind: IntKind::Signed,
+                            width: len.min(w) as u32,
+                        };
+                        (self.extend(&a, field))
+                            .ok_or_else(|| format!("bfe of {len} bits leaves them").into())
                     }
                     (false, p, n) if p < 63 && n < 63 => field(p, n),
                     _ => Err(format!("bfe at {pos} of {len} bits").into()),
@@ -267,36 +286,32 @@ impl AffineAnalysis<'_> {
                 // and one past the width is clamped to it, which shifts
                 // every bit out.
                 let width = form.int_type().map(|t| i64::from(t.width));
-                match self.constant(&arg(2)?).map(|c| i64::from(c as u32)) {
+                match arg(2)?.as_const().map(|c| i64::from(c as u32)) {
                     Some(c) if width.is_some_and(|w| c >= w) => Ok(AffineExpr::constant(0)),
                     Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".into()),
                 }
             }
             (Opcode::Shr, _) if ops.len() == 3 => {
-                let v = arg(1)?;
                 // PTX ISA §9.7.8.9: "Signed shifts fill with the sign bit,
                 // unsigned and untyped shifts fill with 0", of the value as
                 // the type reads it.
                 let ty = form.int_type();
-                if let Some(ty) = ty
-                    && let read = match ty.kind {
-                        IntKind::Signed => ty.values(),
-                        IntKind::Unsigned | IntKind::Bits => ty.nonnegative(),
-                    }
-                    && !self.within(&v, read)
-                {
-                    let opcode = module.opcode(instr);
-                    return Err(format!("`{opcode}` reads a value its type does not hold").into());
-                }
-                let Some(c) = self.constant(&arg(2)?) else {
+                let v = match ty {
+                    Some(ty) => self.extend(&arg(1)?, ty).ok_or_else(|| {
+                        let opcode = module.opcode(instr);
+                        format!("`{opcode}` reads a value its type does not hold")
+                    })?,
+                    None => arg(1)?,
+                };
+                let Some(c) = arg(2)?.as_const() else {
                     return Err("shift by a non-constant amount".into());
                 };
                 if !v.is_symbolic_or_constant() {
                     if !(0..63).contains(&c) {
                         return Err(format!("shift by {c} is out of range").into());
                     }
-                    return (self.reduced(&v, |x| x.div_const(1i64 << c, &|v| self.var_bounds(v))))
+                    return (v.clone().div_const(1i64 << c, &|v| self.var_bounds(v)))
                         .ok_or_else(|| refuse(&v, "shift"));
                 }
                 let signed_width = (ty.filter(|t| t.kind == IntKind::Signed && t.width >= 16))
@@ -315,22 +330,25 @@ impl AffineAnalysis<'_> {
                 }
             }
             (Opcode::Div | Opcode::Rem, _) if ops.len() == 3 => {
-                let (a, b) = (arg(1)?, arg(2)?);
+                let (mut a, mut b) = (arg(1)?, arg(2)?);
                 // PTX ISA §9.7.1.10: a negative number's remainder, and so
                 // the quotient's rounding, is machine-dependent.
-                if let Some(ty) = form.int_type()
-                    && !(self.within(&a, ty.nonnegative()) && self.within(&b, ty.nonnegative()))
-                {
+                if let Some(ty) = form.int_type() {
                     let opcode = module.opcode(instr);
-                    return Err(format!("`{opcode}` of a value that may be negative").into());
+                    let read = |x: &AffineExpr| {
+                        (self.extend(x, ty))
+                            .filter(|x| self.within(x, (0, i128::MAX)))
+                            .ok_or_else(|| format!("`{opcode}` of a value that may be negative"))
+                    };
+                    (a, b) = (read(&a)?, read(&b)?);
                 }
-                let Some(d) = self.constant(&b).filter(|&d| d > 0) else {
+                let Some(d) = b.as_const().filter(|&d| d > 0) else {
                     return Err(format!("{} by a non-constant divisor", mnemonic.name()).into());
                 };
                 let result = if mnemonic == Opcode::Div {
-                    self.reduced(&a, |x| x.div_const(d, &|v| self.var_bounds(v)))
+                    a.clone().div_const(d, &|v| self.var_bounds(v))
                 } else {
-                    self.reduced(&a, |x| x.modulo_const(d, &|v| self.var_bounds(v)))
+                    a.clone().modulo_const(d, &|v| self.var_bounds(v))
                 };
                 result.ok_or_else(|| refuse(&a, "division"))
             }
@@ -343,10 +361,10 @@ impl AffineAnalysis<'_> {
                 // with %tid.x replaced by 32·⌊%tid.x/32⌋ + c; a warp-uniform
                 // a (a function of ⌊%tid.x/32⌋) is unchanged.
                 let a = arg(1)?;
-                let Some(c) = self.constant(&arg(2)?).filter(|c| (0..WARP_SZ).contains(c)) else {
+                let Some(c) = arg(2)?.as_const().filter(|c| (0..WARP_SZ).contains(c)) else {
                     return Err("shfl.idx from a non-constant lane".into());
                 };
-                if self.constant(&arg(3)?) != Some(WARP_SZ - 1) {
+                if arg(3)?.as_const() != Some(WARP_SZ - 1) {
                     return Err("shfl.idx in segments of the warp or a clamped lane".into());
                 }
                 let warp = |v: Var| AffineExpr::var(Var::FloorDiv(Box::new(v), WARP_SZ));
@@ -400,17 +418,19 @@ impl AffineAnalysis<'_> {
             // that type reads both operands; `.relu` and the packed types
             // are other operations.
             (Opcode::Min | Opcode::Max, Form::Int { ty, relu, .. }) if ops.len() == 3 && !relu => {
-                let (a, b) = (per_cta(arg(1)?), per_cta(arg(2)?));
+                let (a, b) = (self.per_cta(arg(1)?), self.per_cta(arg(2)?));
                 if !(a.is_symbolic_or_constant() && b.is_symbolic_or_constant()) {
                     return Err(refuse(&(a + b), mnemonic.name()));
                 }
-                if !(self.within(&a, ty.values()) && self.within(&b, ty.values())) {
-                    let opcode = module.opcode(instr);
-                    return Err(format!("`{opcode}` of a value its type does not hold").into());
-                }
+                let opcode = module.opcode(instr);
+                let read = |x: &AffineExpr| {
+                    (self.extend(x, ty))
+                        .ok_or_else(|| format!("`{opcode}` of a value its type does not hold"))
+                };
+                let (a, b) = (read(&a)?, read(&b)?);
                 Ok(AffineExpr::from_base(match mnemonic {
                     Opcode::Min => SymExpr::min(a.base, b.base),
-                    _ => SymExpr::max(a.base, b.base),
+                    _ => self.max(a.base, b.base),
                 }))
             }
             // PTX ISA §9.7.1.3, §9.7.1.4: `.hi` keeps the product's upper
@@ -423,8 +443,7 @@ impl AffineAnalysis<'_> {
                 },
             ) => Err(format!("`{}` keeps a product's upper half", module.opcode(instr)).into()),
             (Opcode::Mul, _) if ops.len() == 3 => {
-                let (a, b) = (arg(1)?, arg(2)?);
-                self.wide_operands(&[&a, &b], instr, form)?;
+                let [a, b] = self.wide_operands([arg(1)?, arg(2)?], instr, form)?;
                 if a.is_symbolic_or_constant() {
                     Ok(b.scale(a.base))
                 } else if b.is_symbolic_or_constant() {
@@ -435,7 +454,7 @@ impl AffineAnalysis<'_> {
             }
             (Opcode::Mad, _) if ops.len() == 4 => {
                 let (a, b, c) = (arg(1)?, arg(2)?, arg(3)?);
-                self.wide_operands(&[&a, &b], instr, form)?;
+                let [a, b] = self.wide_operands([a, b], instr, form)?;
                 let prod = if a.is_symbolic_or_constant() {
                     b.scale(a.base)
                 } else if b.is_symbolic_or_constant() {
@@ -443,14 +462,14 @@ impl AffineAnalysis<'_> {
                 } else {
                     return Err(refuse(&(a + b), "product"));
                 };
-                Ok(self.fits(prod, instr, form)? + c)
+                Ok(prod + c)
             }
             _ => Err(self.unread(instr, def)),
         }?;
-        self.fits(value, instr, form)
+        Ok(value)
     }
 
-    /// `selp a, b, c` of constants `a` and `b` of `ty` by a `c` that an
+    /// `selp a, b, c` of constants `a` and `b` of `ty`'s width by a `c` that an
     /// unguarded integer `setp.eq` or `setp.ne` writes, as its first output
     /// or the complement as its second (PTX ISA §9.7.6.2, §9.7.6.3), of two
     /// forms whose difference is k·v + d, v a bit of `%tid.x`: the value
@@ -495,10 +514,7 @@ impl AffineAnalysis<'_> {
             _ if writes(sops[0]) => false,
             _ => return None,
         };
-        let read = |id, at| {
-            let x = self.operand_at(id, at, depth + 1).ok()?;
-            Some(self.bind(&x))
-        };
+        let read = |id, at| self.operand_at(id, at, depth + 1).ok();
         let diff = read(sops[1], op)? - read(sops[2], op)?;
         let &[(v, k)] = diff.terms.iter().collect::<Vec<_>>().as_slice() else {
             return None;
@@ -510,11 +526,8 @@ impl AffineAnalysis<'_> {
         let (k, d) = (i128::from(k.as_const()?), i128::from(diff.base.as_const()?));
         let ne = pred == IntPredicate::Ne;
         let holds = |x: i128| (x.rem_euclid(1 << width) == 0) ^ ne ^ complement;
-        let (lo, hi) = ty.values();
-        let arm = |id| {
-            self.constant(&read(id, def)?)
-                .filter(|&x| (lo..hi).contains(&i128::from(x)))
-        };
+        let (lo, hi) = (-(1i128 << (ty.width - 1)), 1i128 << ty.width);
+        let arm = |id| (read(id, def)?.as_const()).filter(|&x| (lo..hi).contains(&i128::from(x)));
         let (a, b) = (arm(ops[1])?, arm(ops[2])?);
         let [r0, r1] = [d, k + d].map(|x| if holds(x) { a } else { b });
         let base = AffineExpr::constant(r0);
@@ -602,30 +615,28 @@ impl AffineAnalysis<'_> {
         Some(value)
     }
 
-    /// A `.wide` product's operands, which it reads as its type (PTX ISA
-    /// §9.7.1.3, §9.7.1.4): one whose range over the known launch and
-    /// constant trip counts the type does not hold is refused.
+    /// A product's operands as it reads them: a `.wide` one's as its type
+    /// (PTX ISA §9.7.1.3, §9.7.1.4), through `extend`, refused where one
+    /// crosses the edge of the type's values.
     fn wide_operands(
         &self,
-        ops: &[&AffineExpr],
+        ops: [AffineExpr; 2],
         instr: &Instr,
         form: Form,
-    ) -> Result<(), UnknownReason> {
+    ) -> Result<[AffineExpr; 2], UnknownReason> {
         let Form::Int {
             ty,
             mode: Some(MulMode::Wide),
             ..
         } = form
         else {
-            return Ok(());
+            return Ok(ops);
         };
-        for a in ops {
-            if !self.within(a, ty.values()) {
-                let opcode = self.data.module.opcode(instr);
-                return Err(format!("`{opcode}` reads a value its type does not hold").into());
-            }
-        }
-        Ok(())
+        let [a, b] = ops.map(|a| self.extend(&a, ty));
+        a.zip(b).map(|(a, b)| [a, b]).ok_or_else(|| {
+            let opcode = self.data.module.opcode(instr);
+            format!("`{opcode}` reads a value its type does not hold").into()
+        })
     }
 
     /// `a`'s range over the known launch and constant trip counts lies in
@@ -634,38 +645,107 @@ impl AffineAnalysis<'_> {
         self.range(a).is_none_or(|(x, y)| lo <= x && y < hi)
     }
 
-    /// A 16- or 32-bit `add`, `sub`, `neg`, `not`, `mul.lo`, `mad.lo`, `shl` or
-    /// `bfe` result, which wraps (PTX ISA §9.7.1), whose range over the known
-    /// launch and constant trip counts leaves its type is refused.
-    pub(super) fn fits(
-        &self,
-        value: AffineExpr,
-        instr: &Instr,
-        form: Form,
-    ) -> Result<AffineExpr, UnknownReason> {
-        let checked = match instr.mnemonic {
-            Opcode::Add | Opcode::Sub | Opcode::Neg | Opcode::Not | Opcode::Shl | Opcode::Bfe => {
-                true
-            }
-            Opcode::Mul | Opcode::Mad => matches!(
-                form,
-                Form::Int {
-                    mode: Some(MulMode::Lo),
-                    ..
-                }
-            ),
-            _ => false,
+    /// The integer the low `ty.width` bits of `a` read as, sign-extended
+    /// where `ty` is signed and zero-extended otherwise (PTX ISA §9.4:
+    /// "integer operands are silently cast to the instruction type";
+    /// §9.4.1: "If the corresponding instruction type is signed integer, the
+    /// data is sign-extended; otherwise, the data is zero-extended"): `a`
+    /// where its range over the known launch and constant trip counts
+    /// lies in those values or is unknown, as the input contract
+    /// (PLAN.md) reads such a value; `a − m·2^w` where it lies in them
+    /// shifted by m·2^w; else, below 63 bits, least + (a − least) mod 2^w,
+    /// the rest past its multiples of 2^w shifted into the values where
+    /// its range lies in one block of 2^w, else as `divmod` reads it.
+    pub(super) fn extend(&self, a: &AffineExpr, ty: IntInstrType) -> Option<AffineExpr> {
+        let Some((lo, hi)) = self.range(a) else {
+            return Some(a.clone());
         };
-        let ty = form.int_type().filter(|ty| matches!(ty.width, 16 | 32));
-        match ty {
-            Some(ty) if checked && !self.within(&value, ty.values()) => Err(format!(
-                "`{}` leaves {} bits",
-                self.data.module.opcode(instr),
-                ty.width
-            )
-            .into()),
-            _ => Ok(value),
+        let least = match ty.kind {
+            IntKind::Signed => ty.values().0,
+            IntKind::Unsigned | IntKind::Bits => 0,
+        };
+        let shifted = |x: AffineExpr, m: i128| -> Option<AffineExpr> {
+            let shift = i64::try_from(m.checked_mul(1i128 << ty.width)?).ok()?;
+            Some(x - AffineExpr::constant(shift))
+        };
+        match same_window(lo, hi, least, 1i128 << ty.width) {
+            Some(0) => Some(a.clone()),
+            Some(m) => shifted(a.clone(), m),
+            None if ty.width < 63 => {
+                let (d, least) = (1i64 << ty.width, i64::try_from(least).ok()?);
+                let (_, r) = (a.clone() - AffineExpr::constant(least)).multiple_part(d)?;
+                let rem = match self
+                    .range(&r)
+                    .and_then(|(lo, hi)| same_window(lo, hi, 0, d.into()))
+                {
+                    Some(0) => r,
+                    Some(m) => shifted(r, m)?,
+                    None => r.divmod(d, &|v| self.var_bounds(v))?.1,
+                };
+                Some(rem + AffineExpr::constant(least))
+            }
+            None => None,
         }
+    }
+
+    /// The comparisons `form cmp 0` whose conjunction an integer `setp` `pred`
+    /// of `width`-bit operands `a` and `b` holds on, each operand the integer
+    /// its bits read as (`extend`); Polly's `ScopBuilder::buildConditionSets`
+    /// translates an icmp likewise. `None` where `extend` reads no form of
+    /// one. An `eq` or `ne` is `a − b cmp 0` where `a − b` lies in
+    /// (−2^width, 2^width), so that it is zero exactly when it is zero modulo
+    /// 2^width. An `lt`, `le`, `gt` or `ge` of a signed type is `A − B cmp 0`
+    /// of the operands as signed. Of an unsigned type (PTX ISA §9.3.1.1: "The
+    /// unsigned comparisons are eq, ne, lo (lower), ls (lower-or-same), hi
+    /// (higher), and hs (higher-or-same)") it is `A − B cmp 0` of them as
+    /// unsigned where each has a known range or is `nonnegative`, a value of
+    /// unknown range below 2^(width−1) by the input contract (PLAN.md); else
+    /// of them as signed, X the lower side and Y the higher, `lo` and `ls`
+    /// comparing A with B and `hi` and `hs` B with A, where Y is
+    /// `nonnegative`: the bits of X are below those of Y in [0, 2^(width−1))
+    /// when 0 ≤ X and X < Y, at or below them when 0 ≤ X and X ≤ Y, `0 ≤ X`
+    /// dropped where X is `nonnegative`. A thread condition takes as
+    /// `nonnegative` only what `least` proves, the premise of LLVM's fold of
+    /// `0 ≤ i && i < n` into `i <u n` (`InstCombinerImpl::simplifyRangeCheck`
+    /// makes it only where n's known bits are nonnegative). A loop's latch
+    /// or guard also takes so an operand of unknown range free of its
+    /// counter, as the input contract reads a trip count, and as SCEV's
+    /// `howManyLessThans` reads an unsigned bound as its unsigned value,
+    /// asking only that the counter not wrap.
+    pub(crate) fn setp_to_zero_cmps(
+        &self,
+        pred: IntPredicate,
+        width: u32,
+        a: &AffineExpr,
+        b: &AffineExpr,
+        nonnegative: &dyn Fn(&AffineExpr) -> bool,
+    ) -> Option<Vec<(AffineExpr, Cmp)>> {
+        let read = |x: &AffineExpr, kind| self.extend(x, IntInstrType { kind, width });
+        let unsigned = |x: &AffineExpr| {
+            read(x, IntKind::Unsigned).filter(|_| self.range(x).is_some() || nonnegative(x))
+        };
+        let w = 1i128 << width;
+        match pred.reads() {
+            IntKind::Bits => {
+                let form = a.clone() - b.clone();
+                return (self.within(&form, (1 - w, w))).then(|| vec![(form, pred.cmp())]);
+            }
+            IntKind::Unsigned if let (Some(a), Some(b)) = (unsigned(a), unsigned(b)) => {
+                return Some(vec![(a - b, pred.cmp())]);
+            }
+            IntKind::Signed | IntKind::Unsigned => {}
+        }
+        let (a, b) = (read(a, IntKind::Signed)?, read(b, IntKind::Signed)?);
+        let (x, y) = match pred {
+            IntPredicate::Ult | IntPredicate::Ule => (&a, &b),
+            IntPredicate::Ugt | IntPredicate::Uge => (&b, &a),
+            _ => return Some(vec![(a - b, pred.cmp())]),
+        };
+        if !nonnegative(y) {
+            return None;
+        }
+        let sign = (!nonnegative(x)).then(|| (x.clone(), Cmp::Ge));
+        Some(sign.into_iter().chain([(a - b, pred.cmp())]).collect())
     }
 }
 

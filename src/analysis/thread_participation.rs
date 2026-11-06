@@ -27,7 +27,7 @@ use crate::analysis::uniformity_info::Uniform;
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
-use crate::ptx::modifier::{Cmp, Form, IntInstrType, IntKind, cp_async_size_operand};
+use crate::ptx::modifier::{Cmp, Form, cp_async_size_operand};
 use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_1d, to_3d, warps_of};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
@@ -557,26 +557,6 @@ type CtaKey = Vec<(Tri, i128)>;
 /// evaluates over its groups of CTAs.
 pub(crate) const CTA_BUDGET: u64 = 1 << 24;
 const LANE_BUDGET: u64 = 1 << 26;
-
-/// The thread index's values on any block, PTX ISA §10.1, §10.2:
-/// `%tid.x` and `%tid.y` below 1024, `%tid.z` below 64.
-fn any_block(v: &Var) -> Option<(i64, i64)> {
-    match v {
-        Var::Tid(Axis::Z) => Some((0, 63)),
-        Var::Tid(_) => Some((0, 1023)),
-        _ => None,
-    }
-}
-
-/// The CTA index's values on any grid, PTX ISA §10.6, §10.7: `%ctaid.x`
-/// below 2^31 − 1, `%ctaid.y` and `%ctaid.z` below 65535.
-fn any_grid(v: &Var) -> Option<(i64, i64)> {
-    match v {
-        Var::Ctaid(Axis::X) => Some((0, (1 << 31) - 2)),
-        Var::Ctaid(_) => Some((0, 65534)),
-        _ => None,
-    }
-}
 
 impl Constraint {
     /// The value of the form's `%ctaid` terms at the CTA `c`.
@@ -1422,19 +1402,13 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
     }
 }
 
-/// The `setp` at `def` as `a − b cmp 0` over the thread index, its
+/// The `setp` at `def` as the conjunction of its comparisons `form cmp 0`
+/// over the thread index (`AffineAnalysis::setp_to_zero_cmps`), its
 /// operands read under affine analysis's bindings (`--bind`, the block
-/// shape), when it compares two such forms as integers: an `lt`, `le`,
-/// `gt` or `ge`
-/// only when both lie in the range of its type, [0, 2^width) or
-/// [−2^(width−1), 2^(width−1)), on every thread, an `eq` or `ne` only
-/// when `a − b` lies in (−2^width, 2^width), so that it is zero
-/// exactly when it is zero modulo 2^width. A form free of the thread
-/// index whose comparison the uniformity analysis finds divergent is
-/// none, unless it is a loop counter's compared within its type, one
-/// value at each trip. Such a comparison free of the thread index and
-/// of loop counters that reads as an unknown for the CTA, or as none,
-/// is kept in `forms` as `form cmp 0`.
+/// shape), each comparison read by `comparison`; one it does not read, free
+/// of the thread index, as an unknown for the CTA where the uniformity
+/// analysis finds it so. The comparison of a `setp` read as one comparison
+/// is kept in `forms` where `comparison` keeps it.
 fn condition(
     module: &Module,
     kernel: &Kernel,
@@ -1455,64 +1429,57 @@ fn condition(
     else {
         return None;
     };
-    let (cmp, int) = (
-        pred.cmp(),
-        IntInstrType {
-            kind: pred.reads(),
-            width,
-        },
-    );
     let ops = module.operand_ids(setp.operands);
     if ops.len() != 3 {
         return None;
     }
-    let bound = |op| {
-        let x = affine.operand_at(op, def, 0).ok()?;
-        Some(affine.bind(&x))
+    let read = |op| affine.operand_at(op, def, 0).ok();
+    let (a, b) = (read(ops[1])?, read(ops[2])?);
+    let proven = |x: &AffineExpr| affine.least(x).is_some_and(|l| l >= 0);
+    let Some(atoms) = affine.setp_to_zero_cmps(pred, width, &a, &b, &proven) else {
+        let on_tid = (a - b).depends_on_tid();
+        let uniform = affine.uniformity().def_uniformity(def) == Ok(Uniform::Cta);
+        return (!on_tid && uniform).then(|| Pred::uniform(Uniform::Cta, AtomKey::Def(def)));
     };
-    let (a, b) = (bound(ops[1])?, bound(ops[2])?);
-    let form = a.clone() - b.clone();
-    // %ctaid below the bound grid, PTX ISA §10.6.
-    let range = |v: &Var| match v {
-        Var::Ctaid(_) | Var::Iteration(_) => affine.var_bounds(v),
-        _ => any_block(v),
-    };
-    // The input contract (PLAN.md): an operand of unknown range does not
-    // wrap its type; an unsigned one may still be negative, as in C's
-    // `(unsigned)i < n`.
-    let fits = |x: &AffineExpr, (min, end): (i128, i128)| {
-        (x.range(&range)).is_none_or(|(lo, hi)| min <= lo && hi < end)
-    };
-    let nonnegative = |x: &AffineExpr| {
-        let any = |v: &Var| range(v).or_else(|| any_grid(v));
-        (x.range(&any)).is_some_and(|(lo, _)| lo >= 0)
-    };
-    let comparable = |a: &AffineExpr, b: &AffineExpr| match int.kind {
-        IntKind::Bits => {
-            let w = 1i128 << int.width;
-            fits(&(a.clone() - b.clone()), (1 - w, w))
+    let only = atoms.len() == 1;
+    let mut set = Pred::True;
+    for (form, cmp) in atoms {
+        let (p, kept) = comparison(affine, def, form, cmp);
+        if let Some(kept) = kept.filter(|_| only) {
+            forms.insert(AtomKey::Def(def), kept);
         }
-        IntKind::Signed => fits(a, int.values()) && fits(b, int.values()),
-        IntKind::Unsigned => {
-            nonnegative(a) && nonnegative(b) && fits(a, int.values()) && fits(b, int.values())
-        }
-    };
-    if let Some(d) = form.as_const()
-        && comparable(&a, &b)
-    {
-        return Some(if holds(cmp, d.into()) {
+        set = set.and(p.unwrap_or(Pred::Unknown));
+    }
+    Some(set)
+}
+
+/// `form cmp 0`, a comparison of the `setp` at `def`, as the threads it
+/// holds on, and the comparison `forms` keeps for it. A form free of the
+/// thread index whose comparison the uniformity analysis finds divergent
+/// is none, unless it is a loop counter's, one value at each trip. Such a
+/// comparison free of the thread index and of loop counters that reads
+/// as an unknown for the CTA, or as none, is kept as `form cmp 0`.
+fn comparison(
+    affine: &AffineAnalysis,
+    def: usize,
+    form: AffineExpr,
+    cmp: Cmp,
+) -> (Option<Pred>, Option<(AffineExpr, Cmp)>) {
+    if let Some(d) = form.as_const() {
+        let p = if holds(cmp, d.into()) {
             Pred::True
         } else {
             Pred::False
-        });
+        };
+        return (Some(p), None);
     }
     let on_tid = form.depends_on_tid();
-    let trip = per_trip(affine, &form, def).filter(|_| comparable(&a, &b));
+    let trip = per_trip(affine, &form, def);
     let def_uniform = affine.uniformity().def_uniformity(def);
-    let kept = (!on_tid && trip.is_none() && comparable(&a, &b)).then(|| (form.clone(), cmp));
+    let kept = (!on_tid && trip.is_none()).then(|| (form.clone(), cmp));
     let p = if !on_tid && trip.is_none() && def_uniform != Ok(Uniform::Cta) {
         None
-    } else if on_tid_only(&form) && comparable(&a, &b) {
+    } else if on_tid_only(&form) {
         Some(Pred::Cmp(Constraint {
             form,
             cmp,
@@ -1527,10 +1494,7 @@ fn condition(
             trip: Some(trip),
         }))
     } else if on_index(&form)
-        && comparable(&a, &b)
-        && let Some(p) = across_ctas(&form, cmp, &|v| {
-            affine.var_bounds(v).or_else(|| any_block(v))
-        })
+        && let Some(p) = across_ctas(&form, cmp, &|v| affine.var_bounds(v))
     {
         Some(p)
     } else if !on_tid {
@@ -1538,12 +1502,8 @@ fn condition(
     } else {
         None
     };
-    if let Some(kept) = kept
-        && matches!(p, None | Some(Pred::Uniform(..)))
-    {
-        forms.insert(AtomKey::Def(def), kept);
-    }
-    p
+    let kept = kept.filter(|_| matches!(p, None | Some(Pred::Uniform(..))));
+    (p, kept)
 }
 
 /// A form of the thread index and one loop's counter, read in that loop

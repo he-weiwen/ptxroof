@@ -1,0 +1,146 @@
+//
+// HAND-WRITTEN: hexadecimal immediates of 2^31 or more in 32-bit
+// instructions, which PTX ISA §4.5.1 converts "to the appropriate size
+// based on the data or instruction type at its use": their low 32 bits,
+// 0xFFFFFFFF as an .s32 is -1. ptxas 13.4 (sm_80):
+//
+// micro_hex_latch: counts from -4 while the counter is below
+// 0xFFFFFFFF as an .s32, 3 trips; ptxas folds the loop to one store of
+// the last counter, -1:
+//   IMAD.MOV.U32 R5, RZ, RZ, -0x1
+//   STG.E [R2.64], R5
+// micro_hex_offset: n + 0xFFFFFFF0 is n - 16, widened signed:
+//   IADD3 R2, R2, -0x10, RZ
+//   IMAD.WIDE R2, R2, R3, c[0x0][0x160]
+// micro_hex_latch_unsigned: counts from 1 while the counter is below
+// 0xFFFFFFFC as a .u32, 2^32 - 4 trips:
+//   ISETP.GE.U32.AND P0, PT, R5, -0x4, PT
+//   @!P0 BRA 0x50
+// micro_hex_zext: 0xFFFFFFF0 zero-extended, param_0 + 2^32 - 16:
+//   UIADD3 UR4, UP0, UR4, -0x10, URZ
+//   UIADD3.X UR5, URZ, UR5, URZ, UP0, !UPT
+// micro_hex_guard_unsigned: %tid.x below 0xFFFFFFFC as a .u32 on every
+// thread; ptxas drops the branch and stores on each.
+// micro_hex_selp: 4·%tid.x plus 0xFFFFFFC0, -64, where %tid.x's bit 4
+// is 0, else plus 0, widened signed:
+//   LEA R3, R5, 0xffffffc0, 0x2
+//   @P0 IMAD.MOV R3, RZ, RZ, R0
+//   LEA.HI.X.SX32 R3, R3, c[0x0][0x164], 0x1, P0
+//
+.version 8.7
+.target sm_80
+.address_size 64
+
+.visible .entry micro_hex_latch(
+	.param .u64 micro_hex_latch_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_hex_latch_param_0];
+	mov.u32 	%r1, -4;
+$L__BB0_1:
+	add.s32 	%r1, %r1, 1;
+	st.global.u32 	[%rd1], %r1;
+	setp.lt.s32 	%p1, %r1, 0xFFFFFFFF;
+	@%p1 bra 	$L__BB0_1;
+	ret;
+}
+
+.visible .entry micro_hex_offset(
+	.param .u64 micro_hex_offset_param_0,
+	.param .u32 micro_hex_offset_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_hex_offset_param_0];
+	ld.param.u32 	%r1, [micro_hex_offset_param_1];
+	mov.u32 	%r2, %tid.x;
+	add.s32 	%r3, %r1, 0xFFFFFFF0;
+	mul.wide.s32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r2;
+	ret;
+}
+
+.visible .entry micro_hex_latch_unsigned(
+	.param .u64 micro_hex_latch_unsigned_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_hex_latch_unsigned_param_0];
+	mov.u32 	%r1, 0;
+$L__BB2_1:
+	add.s32 	%r1, %r1, 1;
+	st.global.u32 	[%rd1], %r1;
+	setp.lt.u32 	%p1, %r1, 0xFFFFFFFC;
+	@%p1 bra 	$L__BB2_1;
+	ret;
+}
+
+.visible .entry micro_hex_zext(
+	.param .u64 micro_hex_zext_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_hex_zext_param_0];
+	mov.u32 	%r1, %tid.x;
+	mov.u32 	%r2, 0xFFFFFFF0;
+	cvt.u64.u32 	%rd2, %r2;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
+
+.visible .entry micro_hex_guard_unsigned(
+	.param .u64 micro_hex_guard_unsigned_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<2>;
+	.reg .b64 	%rd<2>;
+
+	ld.param.u64 	%rd1, [micro_hex_guard_unsigned_param_0];
+	mov.u32 	%r1, %tid.x;
+	setp.lt.u32 	%p1, %r1, 0xFFFFFFFC;
+	@!%p1 bra 	$L__BB4_2;
+	st.global.u32 	[%rd1], %r1;
+$L__BB4_2:
+	ret;
+}
+
+.visible .entry micro_hex_selp(
+	.param .u64 micro_hex_selp_param_0
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_hex_selp_param_0];
+	mov.u32 	%r1, %tid.x;
+	shl.b32 	%r2, %r1, 2;
+	and.b32 	%r3, %r1, 16;
+	setp.eq.b32 	%p1, %r3, 0;
+	selp.u32 	%r4, 0xFFFFFFC0, 0, %p1;
+	add.s32 	%r5, %r2, %r4;
+	cvt.s64.s32 	%rd2, %r5;
+	add.s64 	%rd3, %rd1, %rd2;
+	st.global.u32 	[%rd3], %r1;
+	ret;
+}
