@@ -379,6 +379,10 @@ pub struct Kernel {
     /// The other performance-tuning directives (PTX ISA §11.4):
     /// `.maxnreg`, `.minnctapersm`, `.maxnctapersm`, for the printer.
     pub tuning: Vec<(Symbol, u32)>,
+    /// The cluster dimension directives `.reqnctapercluster x, y, z` and
+    /// `.explicitcluster` (PTX ISA §11.7.1–2).
+    pub reqnctapercluster: Option<[u32; 3]>,
+    pub explicitcluster: bool,
     pub stmts: Vec<Stmt>,
 }
 

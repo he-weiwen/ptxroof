@@ -60,6 +60,12 @@ fn dump_kernel(m: &Module, k: &Kernel, out: &mut String) {
     for &(name, value) in &k.tuning {
         let _ = writeln!(out, ".{} {value}", m.interner.resolve(name));
     }
+    if k.explicitcluster {
+        let _ = writeln!(out, ".explicitcluster");
+    }
+    if let Some([x, y, z]) = k.reqnctapercluster {
+        let _ = writeln!(out, ".reqnctapercluster {x}, {y}, {z}");
+    }
     let _ = writeln!(out, "{{");
 
     let mut seen = std::collections::HashSet::new();

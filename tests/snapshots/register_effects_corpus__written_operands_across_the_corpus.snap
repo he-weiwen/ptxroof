@@ -30,7 +30,7 @@ barrier.sync	0	71
 bfe.s32	1	43
 bfe.u32	1	148
 bfi.b32	1	1
-bra	0	457
+bra	0	458
 bra.uni	0	300
 brx.idx	0	2
 call	1	1
@@ -80,7 +80,7 @@ div.full.f32	1	837
 div.s32	1	96
 div.s64	1	7
 div.u32	1	35
-elect.sync	1	343
+elect.sync	1	344
 ex2.approx.f32	1	271
 ex2.approx.ftz.f32	1	675
 exit	0	1
@@ -113,7 +113,7 @@ ld.param.f32	1	21
 ld.param.s32	1	36
 ld.param.u16	1	1
 ld.param.u32	1	103
-ld.param.u64	1	308
+ld.param.u64	1	310
 ld.param::entry.u32	1	1
 ld.param::entry.u64	1	1
 ld.shared.b16	1	26
@@ -160,12 +160,12 @@ mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32	1	764
 mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32	1	33
 mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32	1	96
 mov.b16	1	23
-mov.b32	1	3820
+mov.b32	1	3822
 mov.b64	1	4025
 mov.f32	1	913
 mov.pred	1	108
 mov.u16	1	294
-mov.u32	1	1398
+mov.u32	1	1400
 mov.u64	1	51
 mul.f32	1	1828
 mul.hi.s32	1	1
@@ -193,14 +193,14 @@ not.pred	1	132
 or.b16	1	30
 or.b32	1	1026
 or.b64	1	126
-or.pred	1	59
+or.pred	1	60
 prmt.b32	1	114
 red.global.gpu.relaxed.add.f32	0	32
 redux.sync.max.f32	1	1
 rem.s32	1	35
 rem.s64	1	10
 rem.u32	1	9
-ret	0	319
+ret	0	320
 rsqrt.approx.ftz.f32	1	8
 selp.b16	1	136
 selp.b32	1	805
@@ -224,7 +224,7 @@ setp.ge.u64	1	3
 setp.gt.f32	1	175
 setp.gt.s32	1	184
 setp.gt.s64	1	23
-setp.gt.u32	1	11
+setp.gt.u32	1	12
 setp.gt.u64	1	6
 setp.hi.u32	1	2
 setp.hs.u32	1	1
@@ -246,7 +246,7 @@ setp.ne.b16	1	1
 setp.ne.b32	1	91
 setp.ne.b64	1	26
 setp.ne.s16	1	1
-setp.ne.s32	1	12
+setp.ne.s32	1	14
 setp.ne.s64	1	2
 setp.ne.u32	1	9
 setp.ne.u64	1	1
@@ -310,6 +310,7 @@ tcgen05.ld.sync.aligned.32x32b.x64.b32	1	23
 tcgen05.mma.cta_group::1.kind::f16	0	288
 tcgen05.mma.cta_group::1.kind::f8f6f4	0	24
 tcgen05.mma.cta_group::1.kind::mxf8f6f4.block_scale.block32	0	8
+tcgen05.mma.cta_group::2.kind::f16	0	1
 tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned	0	12
 tcgen05.st.sync.aligned.16x32bx2.x16.b32	0	6
 tcgen05.st.sync.aligned.16x32bx2.x32.b32	0	3

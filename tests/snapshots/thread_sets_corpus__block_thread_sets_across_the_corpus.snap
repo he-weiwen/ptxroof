@@ -1814,6 +1814,9 @@ tests/fixtures/micro/chain_offset.ptx:39	warp * × lane *
 tests/fixtures/micro/chain_start.ptx:28	warp * × lane *
 tests/fixtures/micro/chain_start.ptx:31	warp * × lane *
 tests/fixtures/micro/chain_start.ptx:39	warp * × lane *
+tests/fixtures/micro/cluster_pair.ptx:24	warp * × lane *
+tests/fixtures/micro/cluster_pair.ptx:32	warp 0 × lane * | runs when %cluster_ctarank = 0 (CTA-uniform, branch at line 31)
+tests/fixtures/micro/cluster_pair.ptx:37	warp * × lane *
 tests/fixtures/micro/commuted_sum.ptx:22	warp * × lane *
 tests/fixtures/micro/commuted_sum.ptx:35	warp * × lane *
 tests/fixtures/micro/commuted_sum.ptx:41	warp * × lane *

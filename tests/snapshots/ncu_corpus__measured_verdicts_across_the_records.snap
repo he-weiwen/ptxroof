@@ -1,14 +1,16 @@
 ---
 source: tests/ncu_corpus.rs
-expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nwavefront lines {wavefronts:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
+expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nwavefront lines {wavefronts:?}\\nlaunch sectors {totals:?}\\nlaunch tensor FLOPs {tensor:?}\\n\\n{out}\")"
 ---
 blocks {"confirmed": 155, "consistent": 281, "unchecked": 479}
 sector lines {"differ": 3, "exact": 1287, "not compared, its SASS ran otherwise": 2, "within a bound": 191, "within a range": 43}
 wavefront lines {"agree": 1486}
 launch sectors {"loads agrees, stores agrees": 41, "loads differs, stores agrees": 1, "not compared": 26}
+launch tensor FLOPs {"exact": 19, "not compared": 12, "within a bound": 2}
 
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ncu.json
   launch sectors	not compared, line 420
+  launch tensor FLOPs	not compared
   $L__func_begin0	consistent	5 of 8 with SASS, 2 agreeing
   <block 1>	consistent	119 of 261 with SASS, 61 agreeing
   $L__BB0_18	consistent	2 of 4 with SASS, 1 agreeing
@@ -38,6 +40,7 @@ tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_
   sectors not compared	lines 420
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage2.sm_100a.ncu.json
   launch sectors	not compared, line 225
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	consistent	16 of 28 with SASS, 10 agreeing
   <block 1>	consistent	2 of 2 with SASS, 2 agreeing
   $L__BB0_1	consistent	2 of 4 with SASS, 1 agreeing
@@ -49,6 +52,7 @@ tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_
   wavefronts	{"agree": 2}
 tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage1.sm_100a.ncu.json
   launch sectors	not compared, line 162
+  launch tensor FLOPs	not compared
   $L__func_begin0	consistent	10 of 13 with SASS, 6 agreeing
   <block 1>	consistent	84 of 174 with SASS, 82 agreeing
   $L__BB0_5	unchecked	7 of 8 with SASS, 0 agreeing
@@ -66,6 +70,7 @@ tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_st
   wavefronts	{"agree": 25}
 tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_stage2.sm_100a.ncu.json
   launch sectors	not compared, line 115
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	consistent	14 of 22 with SASS, 10 agreeing
   <block 1>	consistent	7 of 18 with SASS, 1 agreeing
   $L__BB0_2	unchecked	21 of 24 with SASS, 0 agreeing
@@ -73,6 +78,7 @@ tests/fixtures/b200/attn_lightllm__llama3-8b__decode._fwd_kernel_flash_decode_st
   sectors	{"exact": 2}
 tests/fixtures/b200/attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cache.sm_100a.ncu.json
   launch sectors	not compared, line 581
+  launch tensor FLOPs	not compared
   $L__func_begin0	confirmed	104 of 160 with SASS, 70 agreeing
   <block 1>	consistent	106 of 142 with SASS, 84 agreeing
   $L__BB0_7	unchecked	1 of 1 with SASS, 0 agreeing
@@ -90,6 +96,7 @@ tests/fixtures/b200/attn_lightllm__llama3-8b__prefill._fwd_kernel_no_prompt_cach
   wavefronts	{"agree": 57}
 tests/fixtures/b200/attn_sglang__llama3-8b__extend._fwd_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 611
+  launch tensor FLOPs	not compared
   $L__func_begin0	confirmed	20 of 28 with SASS, 7 agreeing
   <block 1>	consistent	79 of 151 with SASS, 41 agreeing
   <block 2>	consistent	57 of 104 with SASS, 46 agreeing
@@ -119,6 +126,7 @@ tests/fixtures/b200/attn_sglang__llama3-8b__extend._fwd_kernel.sm_100a.ncu.json
   wavefronts	{"agree": 29}
 tests/fixtures/b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	not compared
   $L__func_begin0	confirmed	62 of 136 with SASS, 29 agreeing
   waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
   <block 2>	consistent	14 of 21 with SASS, 8 agreeing
@@ -137,6 +145,7 @@ tests/fixtures/b200/blk_mx_128x256_s4w4.mx_block_scaled.sm_100a.ncu.json
   wavefronts	{"agree": 33}
 tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul.sm_100a.ncu.json
   launch sectors	not compared, line 253
+  launch tensor FLOPs	exact, 4329327034368 predicted, 4329327034368 measured
   $L__func_begin0	confirmed	148 of 211 with SASS, 99 agreeing
   <block 1>	consistent	22 of 28 with SASS, 15 agreeing
   $L__BB0_2	consistent	21 of 79 with SASS, 18 agreeing
@@ -155,6 +164,7 @@ tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._
   wavefronts	{"agree": 17}
 tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 7696581394432 predicted, 7696581394432 measured
   $L__func_begin0	confirmed	139 of 349 with SASS, 54 agreeing
   <block 1>	consistent	22 of 27 with SASS, 15 agreeing
   $L__BB0_2	consistent	22 of 104 with SASS, 8 agreeing
@@ -171,6 +181,7 @@ tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_k
   wavefronts	{"agree": 65}
 tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_kernel_persistent.sm_100a.ncu.json
   launch sectors	not compared, line 421
+  launch tensor FLOPs	not compared
   $L__func_begin0	confirmed	27 of 36 with SASS, 17 agreeing
   <block 1>	consistent	2 of 2 with SASS, 2 agreeing
   <block 2>	unchecked	0 of 5 with SASS, 0 agreeing
@@ -205,6 +216,7 @@ tests/fixtures/b200/gemm__llama3-8b__prefill__sgl_bmm_persistent.gate_up.bmm_ker
   wavefronts	{"agree": 33}
 tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 672
+  launch tensor FLOPs	within a bound, 4799089082368 predicted, 4325568937984 measured
   $L__func_begin0	confirmed	31 of 39 with SASS, 19 agreeing
   <block 1>	consistent	36 of 66 with SASS, 26 agreeing
   <block 2>	consistent	8 of 16 with SASS, 8 agreeing
@@ -246,6 +258,7 @@ tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.s
   wavefronts	{"agree": 17}
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 423
+  launch tensor FLOPs	within a bound, 463453814784 predicted, 438891970560 measured
   $L__func_begin0	confirmed	31 of 39 with SASS, 19 agreeing
   <block 1>	consistent	21 of 37 with SASS, 15 agreeing
   <block 2>	consistent	8 of 12 with SASS, 8 agreeing
@@ -273,6 +286,7 @@ tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel
   wavefronts	{"agree": 9}
 tests/fixtures/b200/norm_act__llama3-8b__train__liger_swiglu_bwd_rowwise._swiglu_backward_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	confirmed	492 of 666 with SASS, 415 agreeing
   sectors	{"exact": 20}
 tests/fixtures/b200/norm_act__qwen3-next-80b__prefill__sglang_fla_gated_rmsnorm._layer_norm_fwd_1pass_kernel.sm_100a.ncu.json
@@ -280,20 +294,24 @@ tests/fixtures/b200/norm_act__qwen3-next-80b__prefill__sglang_fla_gated_rmsnorm.
   sectors	{"exact": 8}
 tests/fixtures/b200/quant__deepseek-v3__prefill__sglang_group_quant_fp8_hidden._per_token_group_quant_8bit.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	confirmed	43 of 61 with SASS, 31 agreeing
   sectors	{"exact": 3}
 tests/fixtures/b200/rca_small__ropec.rope_cache_tile_flip.sm_100a.ncu.json
   launch sectors	not compared, line 120
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	confirmed	558 of 695 with SASS, 473 agreeing
   sectors	{"exact": 13, "within a range": 2}
   wavefronts	{"agree": 28}
 tests/fixtures/b200/rmsnorm_sglang__deepseek-v3__prefill.fused_rmsnorm_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	confirmed	97 of 131 with SASS, 88 agreeing
   sectors	{"exact": 3}
   wavefronts	{"agree": 2}
 tests/fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	consistent	5 of 5 with SASS, 4 agreeing
   <block 1>	consistent	5 of 15 with SASS, 4 agreeing
   $L__BB0_2	confirmed	1556 of 2076 with SASS, 907 agreeing
@@ -301,10 +319,12 @@ tests/fixtures/b200/rope_kv__deepseek-v3__prefill__ll_ds2_rope._rotary_kernel.sm
   sectors	{"exact": 518}
 tests/fixtures/b200/rope_kv__deepseek-v3__prefill__sgl_mla_set_norope.set_mla_kv_buffer_kernel_norope.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	consistent	20 of 29 with SASS, 14 agreeing
   sectors	{"exact": 1, "within a range": 2}
 tests/fixtures/b200/rope_kv__qwen3-30b-a3b__prefill__sgl_rope_cache._fused_qk_rope_reshape_and_cache_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 148
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	consistent	8 of 25 with SASS, 7 agreeing
   <block 1>	consistent	73 of 122 with SASS, 54 agreeing
   <block 2>	consistent	4 of 7 with SASS, 3 agreeing
@@ -316,11 +336,13 @@ tests/fixtures/b200/rope_kv__qwen3-30b-a3b__prefill__sgl_rope_cache._fused_qk_ro
   sectors	{"exact": 4, "within a bound": 5}
 tests/fixtures/b200/routing__deepseek-v3__prefill__grouped_topk.grouped_topk_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	confirmed	5229 of 6781 with SASS, 4952 agreeing
   sectors	{"exact": 12}
   wavefronts	{"agree": 8}
 tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	not compared
   $L__func_begin0	unchecked	0 of 0 with SASS, 0 agreeing
   JTI0_0	confirmed	11 of 14 with SASS, 4 agreeing
   <block 2>	confirmed	48 of 83 with SASS, 28 agreeing
@@ -374,6 +396,7 @@ tests/fixtures/b200/scan_tma_ws_best._chunk_scan_fwd_tma.sm_100a.ncu.json
   wavefronts	{"agree": 39}
 tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ncu.json
   launch sectors	not compared, line 269
+  launch tensor FLOPs	not compared
   $L__func_begin0	consistent	17 of 28 with SASS, 11 agreeing
   <block 1>	consistent	136 of 265 with SASS, 133 agreeing
   $L__BB0_2	unchecked	164 of 216 with SASS, 0 agreeing
@@ -387,6 +410,7 @@ tests/fixtures/b200/sg_decode_BN32_w4_s2._fwd_grouped_kernel_stage1.sm_100a.ncu.
   wavefronts	{"agree": 28}
 tests/fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 526
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	consistent	83 of 160 with SASS, 35 agreeing
   <block 1>	consistent	32 of 49 with SASS, 11 agreeing
   $L__BB0_2	confirmed	72 of 102 with SASS, 38 agreeing
@@ -395,6 +419,7 @@ tests/fixtures/b200/ssd_pass_tlrange._state_passing_fwd_kernel.sm_100a.ncu.json
   wavefronts	{"agree": 6}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._bmm_chunk_fwd_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 1073741824 predicted, 1073741824 measured
   $L__func_begin0	consistent	59 of 101 with SASS, 35 agreeing
   <block 1>	consistent	40 of 56 with SASS, 25 agreeing
   $L__BB0_3	confirmed	25 of 35 with SASS, 15 agreeing
@@ -405,6 +430,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._bmm_chunk_fwd_kernel.sm_100a
   wavefronts	{"agree": 2}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_scan_fwd_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 44291850240 predicted, 44291850240 measured
   $L__func_begin0	confirmed	237 of 364 with SASS, 142 agreeing
   <block 1>	consistent	56 of 76 with SASS, 28 agreeing
   $L__BB0_3	confirmed	53 of 77 with SASS, 27 agreeing
@@ -415,6 +441,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_scan_fwd_kernel.sm_100
   wavefronts	{"agree": 35}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_fwd_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 21474836480 predicted, 21474836480 measured
   $L__func_begin0	consistent	104 of 169 with SASS, 54 agreeing
   <block 1>	consistent	63 of 90 with SASS, 37 agreeing
   $L__BB0_3	confirmed	56 of 78 with SASS, 35 agreeing
@@ -425,6 +452,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_fwd_kernel.sm_10
   wavefronts	{"agree": 5}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_varlen_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 493
+  launch tensor FLOPs	not compared
   $L__func_begin0	consistent	97 of 156 with SASS, 63 agreeing
   <block 1>	consistent	48 of 72 with SASS, 35 agreeing
   $L__BB0_2	unchecked	53 of 79 with SASS, 0 agreeing
@@ -437,6 +465,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._chunk_state_varlen_kernel.sm
   wavefronts	{"agree": 5}
 tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._state_passing_fwd_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 200
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	consistent	17 of 25 with SASS, 10 agreeing
   <block 1>	consistent	23 of 44 with SASS, 5 agreeing
   $L__BB0_2	confirmed	21 of 28 with SASS, 10 agreeing
@@ -444,6 +473,7 @@ tests/fixtures/b200/ssm__mamba2-2.7b__prefill__ssd._state_passing_fwd_kernel.sm_
   sectors	{"exact": 4}
 tests/fixtures/b200/ssm__qwen3-next-80b__decode__delta_rule_T64.fused_recurrent_delta_rule_fwd_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	confirmed	39 of 104 with SASS, 30 agreeing
   <block 1>	consistent	40 of 66 with SASS, 24 agreeing
   $L__BB0_2	confirmed	271 of 371 with SASS, 242 agreeing
@@ -452,6 +482,7 @@ tests/fixtures/b200/ssm__qwen3-next-80b__decode__delta_rule_T64.fused_recurrent_
   wavefronts	{"agree": 28}
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 783
+  launch tensor FLOPs	exact, 0 predicted, 0 measured
   $L__func_begin0	consistent	10 of 14 with SASS, 7 agreeing
   <block 1>	consistent	4 of 8 with SASS, 2 agreeing
   <block 2>	consistent	14 of 21 with SASS, 7 agreeing
@@ -469,6 +500,7 @@ tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kern
   wavefronts	{"agree": 2}
 tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ncu.json
   launch sectors	not compared, line 544
+  launch tensor FLOPs	not compared
   $L__func_begin0	confirmed	13 of 16 with SASS, 4 agreeing
   <block 1>	consistent	242 of 360 with SASS, 92 agreeing
   $L__BB0_34	consistent	3 of 4 with SASS, 3 agreeing
@@ -539,6 +571,7 @@ tests/fixtures/b200/tma_best_Q64N64w8s3._stage1_tma.sm_100a.ncu.json
   sectors not compared	lines 544
 tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	not compared
   $L__func_begin0	unchecked	0 of 0 with SASS, 0 agreeing
   JTI0_0	confirmed	16 of 18 with SASS, 8 agreeing
   <block 2>	confirmed	19 of 35 with SASS, 9 agreeing
@@ -695,6 +728,7 @@ tests/fixtures/b200/tut_ll_BM128_BN128_w4_s2_wsTrue.attn_fwd.sm_100a.ncu.json
   wavefronts	{"agree": 25}
 tests/fixtures/b200/tut_sg_prefixdense_tma_BM128_BN64_w8_s2_wsFalse.attn_fwd.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
+  launch tensor FLOPs	not compared
   $L__func_begin0	confirmed	35 of 53 with SASS, 20 agreeing
   waitLoop$scope1	unchecked	2 of 2 with SASS, 0 agreeing
   <block 2>	confirmed	30 of 56 with SASS, 15 agreeing

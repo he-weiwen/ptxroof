@@ -7,7 +7,8 @@ before 2026-09-08 is in git: `git show 3ba19b5:PLAN.md`.
 ## What it does
 
 Reads a PTX file and prints it back, each line followed by nothing or
-by ` // ` and what the analysis says of it (`tests/report_invariants.rs`),
+by ` // ` and what the analysis says of it
+(`annotated_ptx_is_the_input_with_a_comment_on_some_lines`),
 two statements' annotations on one line joined by ` ; `
 (`statements_on_one_line_join_their_annotations`). Per kernel the
 analysis finds the loop forest with trip counts as symbolic expressions
@@ -217,11 +218,11 @@ output_tallies` rewrites it.
 | Output | Count | Exact | Bound | ? | No number |
 |---|---|---|---|---|---|
 | `.entry`: shared memory per CTA | 36 | 1 (3%) | 35 (97%) |  |  |
-| `.entry`: FLOPs of a pipe it prints | 119 | 44 (37%) | 15 (13%) | 60 (50%) |  |
-| `.entry`: global load bytes | 47 | 22 (47%) | 11 (23%) | 14 (30%) |  |
-| `.entry`: global store bytes | 47 | 27 (57%) | 5 (11%) | 15 (32%) |  |
+| `.entry`: FLOPs of a pipe it prints | 101 | 52 (51%) | 13 (13%) | 36 (36%) |  |
+| `.entry`: global load bytes | 47 | 24 (51%) | 11 (23%) | 12 (26%) |  |
+| `.entry`: global store bytes | 47 | 28 (60%) | 9 (19%) | 10 (21%) |  |
 | `.entry`: shared load bytes | 36 | 16 (44%) | 9 (25%) | 11 (31%) |  |
-| `.entry`: shared store bytes | 36 | 15 (42%) | 12 (33%) | 9 (25%) |  |
+| `.entry`: shared store bytes | 36 | 17 (47%) | 12 (33%) | 7 (19%) |  |
 | loop: trips | 194 | 31 (16%) |  | 163 (84%), 135 mbarrier waits |  |
 | loop: global bytes requested per CTA | 16 | 14 (88%) | 2 (13%) |  |  |
 | loop: global bytes unique per CTA | 16 | 6 (38%) | 4 (25%) | 6 (38%) |  |
@@ -233,8 +234,8 @@ output_tallies` rewrites it.
 | instruction: threads, where a guard narrows its block's | 898 | 724 (81%) | 174 (19%) |  |  |
 | instruction: exec, where it differs from its block's | 651 | 556 (85%) | 91 (14%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
-| instruction: `not classified` | 423 | | | | |
-| instruction: `bytes ?` | 109 | | | | |
+| instruction: `not classified` | 14 | | | | |
+| instruction: `bytes ?` | 413 | | | | |
 | operand: address | 4,399 | 4,050 (92%) |  | 349 (8%) |  |
 | operand: global sectors/req | 2,221 | 1,491 (67%) | 447 (20%) |  | 283 (13%) |
 | operand: global sectors/req, ideal | 1,938 | 1,772 (91%) | 166 (9%) |  |  |
@@ -307,7 +308,9 @@ output_tallies` rewrites it.
   edge into one, so a loop holding an assert check exits there and a
   block a check can bypass is conditional. In the Blackwell corpus (the
   census's 2,837 kernels and sol-study's 2,601 PTX files, sm_100
-  family, analyzed without launch arguments) 2,628 `trap`s sit in 23
+  family, analyzed without launch arguments; its figures in this file
+  were measured on 2026-11-03, when its 158 files with cluster
+  directives did not parse) 2,628 `trap`s sit in 23
   parsed files: reading `trap` as a terminator changes 2,498 bounds of
   assert blocks in 10 of them, and dropping the edges into those blocks
   changes 9,923 lines in 11. 20 of the corpus's 24 loops refused as
@@ -1112,19 +1115,22 @@ output_tallies` rewrites it.
 - **Opaque kernel parameters are a parse error.** `.texref`,
   `.samplerref` and `.surfref` parameters (PTX ISA §11.2.1) are not
   fundamental types (`opaque_params_are_a_parse_error`).
-- **Cluster launches are a parse error, and the model has no
-  cluster.** `.explicitcluster` and `.reqnctapercluster` (PTX ISA
-  §11.7.1–2; `.maxclusterrank` and `.blocksareclusters` take the same
-  path) between a kernel's signature and its body stop the parse,
-  "expected '{' starting kernel body", and the file prints nothing:
-  158 files of the Blackwell corpus (`trap` entry), every Gluon 2-CTA
-  kernel of sol-study (`mla_decode_2cta_kernel`, the 2-CTA GEMMs),
-  holding every `cta_group::2` `tcgen05` and TMA form, `barrier.cluster`,
-  `mapa`, `ld.shared::cluster`, `clusterlaunchcontrol` and
-  `ld.param::entry` of the corpus. With the two lines deleted they
-  analyze, but no cluster shape is kept: `%cluster_ctarank` is a symbol
-  per CTA, so a block under `runs when %cluster_ctarank = 0` (5,903
-  notes in 143 of them) counts as a bound per launch, where a cluster
+- **The model has no cluster.** A kernel's `.explicitcluster` and
+  `.reqnctapercluster` (PTX ISA §11.7.1–2) are kept and printed
+  (`cluster_dimension_directives`, `micro/cluster_pair.ptx`), so the 158
+  files of the Blackwell corpus (`trap` entry) that hold them, every
+  Gluon 2-CTA kernel of sol-study (`mla_decode_2cta_kernel`, the 2-CTA
+  GEMMs), with every `cta_group::2` `tcgen05` and TMA form,
+  `barrier.cluster`, `mapa`, `ld.shared::cluster`,
+  `clusterlaunchcontrol` and `ld.param::entry` of the corpus, analyze.
+  `.maxclusterrank` and `.blocksareclusters`, which no corpus file
+  holds, still stop the parse, "expected '{' starting kernel body"
+  (`.blocksareclusters` makes the launch's grid count clusters,
+  §11.8.1). No cluster shape is used: `%cluster_ctarank` is a symbol
+  per CTA, so a block under `runs when %cluster_ctarank = 0` (5,849
+  notes in 143 of the 158 files, measured 2026-11-06;
+  `micro/cluster_pair.ptx`'s
+  `tcgen05.mma`, `exec <= 1/CTA`) counts as a bound per launch, where a cluster
   of n CTAs gives each rank to grid/n of them (§2.2.2, §10.16), and a
   successful `clusterlaunchcontrol.try_cancel` (§9.7.14.18) leaves
   CTAs of the grid unlaunched (sol-study's `gemm_g2clc.ptx`). No record
@@ -1139,7 +1145,7 @@ output_tallies` rewrites it.
   failing side does not rejoin (Triton's concurrency sanitizer: `@%p
   bra` to `__assertfail; trap;`) costs time and memory quadratic in
   their number: 29 sanitizer builds of sol-study's Gluon kernels
-  (20,036–44,815 statements; 24 behind the cluster parse error) take
+  (20,036–44,815 statements; 24 of them cluster kernels) take
   up to a minute and 1.5 GB each, most of it evaluating thread sets
   (the slowest run alone: 61 s), where no other Blackwell corpus file
   takes 3 s. Bindings that differ
@@ -1378,9 +1384,19 @@ One line each, with the trigger that would start it.
   lines the `P0` rule leaves without sectors). In 39
   records both agree. 25 have a line not predicted so (ce_chunk's
   `ld.global.b64` that ptxas loads as 32-bit `LDG.E`), and the gated
-  rmsnorm record has no counts. `tests/ncu_corpus.rs` keeps
+  rmsnorm record has no counts. The B200 records also keep their
+  report's nonzero `sm__ops_path_tensor_src_*.sum`, added to them by
+  `import_reports.py`'s `report_kernels` over each record's own report
+  (none for the gated rmsnorm report, which reads them as nan); the
+  launch's tensor-pipe FLOPs, where exact or a bound, are compared with
+  their sum (the `Comparison`'s `tensor_flops`;
+  `b200_tensor_flops_agree_with_nsight_compute`): 19 of the 33 agree
+  exactly (the three Mamba2 chunk kernels' `mma.sync` FLOPs, the two FP8
+  GEMMs' `tcgen05.mma` FLOPs, 14 launches with none), the two fused MoE
+  kernels' bounds hold, and 12 are not compared, their tensor FLOPs `?`.
+  The RTX 4090 records keep no tensor ops. `tests/ncu_corpus.rs` keeps
   every record's block verdicts, their counts, its sector lines by
-  outcome and its launch totals in one snapshot: 145 blocks confirmed,
+  outcome, its launch totals and tensor FLOPs in one snapshot: 145 blocks confirmed,
   276 consistent, 491 unchecked; 1,442 sector lines agree, 3 differ
   (the copies above), 2 not compared; 40 launches' totals agree, the
   39 above and `tests/lit/Inputs`' one. `ci.sh` measures every record again on the GPU it
@@ -1390,14 +1406,51 @@ One line each, with the trigger that would start it.
   `PTXROOF_REQUIRE_GPU=1`; each prints whether it was measured.
 - Per-line HTML view. Trigger: wanting it.
 - `capabilities` verb that generates the audit doc's tables.
-- sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): need a
-  per-instruction issue scope, which the model lacks; sm_100 fixtures
-  exist (`tests/fixtures/b200`), sm_90 ones do not.
-  `blk_mx_128x256_s4w4.mx_block_scaled` counts 224 `tcgen05.mma` per
-  CTA and no FLOPs for them, though an MMA's M and N are in its idesc
-  (PTX ISA §9.7.17.4.2 Table 45; K by `.kind`, Table 42), a `mov.b32`
-  of an immediate before each of the Blackwell corpus's 49,606 parsed
-  `tcgen05.mma` (56 through a copy of one). A TMA store's bytes and a
+- Tensor memory traffic. `Space` has no tensor memory, so `tcgen05.ld`
+  and `tcgen05.st` (PTX ISA §9.7.17.8.3–4), which move data between it
+  and registers, count in no total, as `tcgen05.alloc` does: 56 and 49
+  statements of the B200 records. `tcgen05.cp`, `tcgen05.shift` and
+  `tcgen05.ld.red` stay `not classified`. Trigger: wanting tensor
+  memory bandwidth.
+- sm_90 and sm_100 families (`wgmma`, TMA, `tcgen05`): `wgmma`'s
+  FLOPs are not counted; sm_100 fixtures exist (`tests/fixtures/b200`),
+  sm_90 ones do not. `tcgen05.mma` is 2·M·N·K tensor FLOPs of the
+  thread that issues it (PTX ISA §9.7.17.10.9.1: "single thread
+  semantics"), M, N and the types read from its idesc's constant
+  (§9.7.17.4.2 Table 45; K by `.kind`, Table 42), for the dense
+  `.kind::f16`, `.kind::tf32` and FP8 `.kind::f8f6f4` forms
+  (`tcgen05_mma_is_its_idesc_s_2mnk_tensor_flops`; the two FP8 GEMMs'
+  records equal Nsight Compute's,
+  `b200_tensor_flops_agree_with_nsight_compute`). A `.cta_group::2` MMA
+  counts once for the CTA pair, M the pair's (Table 49: "Issue from a
+  single thread from the CTA-Pair would initiate the base operation"),
+  all 7,224 in the 158 cluster files (measured 2026-11-06), but no
+  record holds a cluster launch to check them (the cluster entry), and
+  a block that only the pair's rank 0 runs counts as a bound. Left `not
+  classified`: the block-scaled kinds (8 statements of
+  `blk_mx_128x256_s4w4.mx_block_scaled`), `.kind::i8`, sparse and
+  `.ws` forms, FP6 and FP4 types, and an idesc with no constant
+  value. Its A and B, which it reads from shared memory through
+  descriptors, are `bytes ?` (304 statements of the B200 records), so a
+  kernel's shared load bytes stay a bound or `?`. Of the 12 B200 records
+  with `tcgen05.mma`, 24.3·10¹² measured tensor ops, the launch's tensor
+  FLOPs are exact for 49.5% (the two FP8 GEMMs), a bound that holds for
+  19.6% (the two fused MoE kernels), `?` for 13.1% and not classified
+  for 17.8% (`blk_mx_128x256_s4w4.mx_block_scaled`). Over the Blackwell
+  corpus rebuilt on 2026-11-06 (5,528 files, all of which analyze),
+  without launch arguments, the 1,759 kernels with `tcgen05.mma` (the
+  census's 345 in parentheses) read, on the `.entry` line's `tensor
+  flops` per CTA: a number or a formula of the parameters in 222 (57),
+  an upper bound over the parameters in 481 (156), which a launch can
+  make exact (the two FP8 GEMMs'), a formula of a value known only at
+  run time, `uniform(…)`, in 150 (12), part counted and `+ ?` in 7 (7),
+  none in 3 (0), whose `tcgen05.mma` is in a `.func` they call, not
+  counted (`call (its callee not counted)`), not classified in 57 (4),
+  and `?` in 839 (109), by the reason on the loop it names: several
+  latches, Triton's warp-specialize switch loop (Trip shapes), in 453
+  (0); a bound read from memory or arithmetic not read, such as
+  `bmm_kernel_persistent`'s `/ 148`, in 360 (93); an exit not at the
+  latch in 13 (11); other shapes in 13 (5). A TMA store's bytes and a
   copy's global address need its descriptor's shape, strides, box and
   swizzle (a load's shared bytes are in its barrier's `expect_tx`,
   **A tensor copy's bytes are unknown.**): the B200 records keep

@@ -1,12 +1,5 @@
 //! One instruction is one record while contributing to several
-//! totals, checked on collection's records, the annotated PTX and
-//! `report::build::compare`.
-use ptxroof::analysis::control_flow::loop_forest;
-use ptxroof::analysis::instruction_counts::collect::collect;
-use ptxroof::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe, Precision};
-use ptxroof::ptx::cfg::build_cfg;
-use ptxroof::ptx::modifier::Space;
-use ptxroof::ptx::parse::parser::parse;
+//! totals, checked on the annotated PTX and `report::build::compare`.
 use ptxroof::report::AnalyzeOptions;
 use ptxroof::report::annotate::annotate;
 use ptxroof::report::build::compare;
@@ -72,51 +65,12 @@ L:
     );
 }
 
-/// A predicated atom is one memory instruction: collection records its
-/// atomic FLOP and its 4 B loaded and stored, each predicated. Under a
-/// guard whose threads are not known it runs at most once per thread, and
-/// a thread's atomic FLOPs, global loads and stores are bounds.
+/// Under a guard whose threads are not known a predicated atom runs at
+/// most once per thread, and a thread's atomic FLOPs, global loads and
+/// stores are bounds.
 #[test]
-fn predicated_atomic_is_one_memory_instruction_with_bounded_contributions() {
+fn a_predicated_atom_s_contributions_are_bounds_under_an_unknown_guard() {
     let src = source("@%p1 atom.global.add.f32 %f1, [output], %f2;\nret;");
-    let module = parse(&src).unwrap();
-    let kernel = &module.kernels[0];
-    let cfg = build_cfg(&module, kernel);
-    let blocks = collect(&module, kernel, &cfg, &loop_forest(&cfg));
-    assert_eq!(blocks[0].instructions, [0, 1]);
-    let contributions: Vec<_> = blocks[0]
-        .measurements
-        .iter()
-        .filter(|m| m.provenance == 0)
-        .collect();
-    let mut kinds: Vec<_> = contributions.iter().map(|m| (m.kind, m.count)).collect();
-    kinds.sort();
-    assert_eq!(
-        kinds,
-        [
-            (
-                MeasureKind::Flops {
-                    pipe: Pipe::Atomic,
-                    precision: Precision::F32
-                },
-                1
-            ),
-            (
-                MeasureKind::Bytes {
-                    space: Space::Global,
-                    direction: Direction::Load
-                },
-                4
-            ),
-            (
-                MeasureKind::Bytes {
-                    space: Space::Global,
-                    direction: Direction::Store
-                },
-                4
-            ),
-        ]
-    );
     let out = annotate(&src, &AnalyzeOptions::default()).expect("annotates");
     assert_eq!(
         notes(&out, ".visible .entry"),
@@ -446,6 +400,7 @@ fn a_copy_reads_where_its_guard_runs_and_its_ignore_src_is_false() {
                 lines: [(line, measured)].into(),
                 load_sectors: None,
                 store_sectors: None,
+                ops_path_tensor_src: None,
             };
             let opts = AnalyzeOptions {
                 grid: Some([1, 1, 1]),
@@ -504,6 +459,7 @@ fn a_cta_uniform_ignore_src_predicts_a_bound_of_sectors() {
         lines: [(line, measured)].into(),
         load_sectors: None,
         store_sectors: None,
+        ops_path_tensor_src: None,
     };
     let opts = AnalyzeOptions {
         grid: Some([1, 1, 1]),

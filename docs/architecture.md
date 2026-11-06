@@ -44,7 +44,7 @@ only declare modules and selected public entry points.
 | `analysis/dead_code` | Instructions with no live effect through register SSA |
 | `analysis/memory_footprint` | Warp sectors and loop requested, distinct and sector bytes |
 | `analysis/instruction_counts/measurement` | Accounting dimensions and contribution/measurement records |
-| `analysis/instruction_counts/classify` | Decode instructions into contributions |
+| `analysis/instruction_counts/classify` | Decode instructions into contributions, reading through `AffineAnalysis` an operand whose value holds the instruction's shape (`tcgen05.mma`'s idesc) |
 | `analysis/instruction_counts/collect` | Attach block/loop execution context to instruction contributions |
 | `analysis/execution_counts` | The threads, warps and trips that run each block and statement, per thread, per CTA or over the launch, exact or a bound; the FLOPs and bytes they sum to |
 | `report/bindings` | Caller parameter bindings and their text syntax |
@@ -99,7 +99,7 @@ then:
 1. builds the kernel's `UniformityInfo` and one `AffineAnalysis` under those
    bindings;
 2. names loops and collects every loop's trip count from that instance;
-3. collects instruction contributions per block;
+3. collects instruction contributions per block over that instance;
 4. computes thread participation from the same instance;
 5. takes compile-time thread sets: the same sets when the bindings are exactly
    the `.reqntid` block shape, otherwise from a second `AffineAnalysis` over the
