@@ -12,7 +12,7 @@ use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::dead_code::unused;
 use crate::analysis::execution_counts::{CtaSize, ExecutionCounts, Participation, Per, Resolution};
 use crate::analysis::instruction_counts::collect::{BlockMeasurements, CountQualifier, collect};
-use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind};
+use crate::analysis::instruction_counts::measurement::{Direction, MeasureKind, Pipe};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::loop_names::{LoopName, loop_names};
 use crate::analysis::memory_footprint::{
@@ -105,7 +105,17 @@ pub fn compare(source: &str, opts: &AnalyzeOptions) -> Result<Option<Comparison>
             exact: true,
         };
         let (blocks, launch) = builder.measured(record, builder.lines, &cta);
-        out = Some(Comparison { blocks, launch });
+        let per = Per::Launch(&cta, ctas(record.grid));
+        let workload = builder.counts.workload(&builder.blocks, None, per);
+        let tensor = &workload.flops[&Pipe::Tensor].total;
+        let tensor_flops = (tensor.expr().as_const())
+            .filter(|_| !tensor.at_least)
+            .and_then(|n| record.compare_tensor_flops(u64::try_from(n).ok()?, tensor.at_most));
+        out = Some(Comparison {
+            blocks,
+            launch,
+            tensor_flops,
+        });
     })?;
     Ok(out)
 }
@@ -570,7 +580,7 @@ impl<'a> KernelReportBuilder<'a> {
         let names = loop_names(module, kernel, cfg, forest);
         let name = |v: &Var| Self::var_text(data, lines, v);
         let trip_info = trip_counts_from(&affine, &name);
-        let mut blocks = collect(module, kernel, cfg, forest);
+        let mut blocks = collect(&affine);
 
         let display: Vec<String> = names.iter().map(|n| n.display.clone()).collect();
 

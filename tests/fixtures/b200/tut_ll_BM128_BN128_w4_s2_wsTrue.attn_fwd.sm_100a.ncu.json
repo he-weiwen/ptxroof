@@ -13,6 +13,7 @@
  "sass_sha256": "dd1023a71309a5e6c4770814cedc668bef924ecc9b23163352dc061fe0dd027c",
  "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum": 0,
  "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum": 0,
+ "sm__ops_path_tensor_src": {"sm__ops_path_tensor_src_bf16_dst_fp32.sum": 146028888064},
  "lines": {
   "83": {"ptx": "ld.param.b32 %r28, [attn_fwd_param_1];", "sass": {"LDC": 1}, "executions": 786432},
   "86": {"ptx": "mov.u32 %r1, %tid.x;", "sass": {"S2R": 1}, "executions": 786432},

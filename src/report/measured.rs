@@ -16,6 +16,9 @@ pub struct NcuRecord {
     pub load_sectors: Option<u64>,
     #[serde(rename = "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum")]
     pub store_sectors: Option<u64>,
+    /// The launch's nonzero `sm__ops_path_tensor_src_*.sum`, by metric.
+    #[serde(rename = "sm__ops_path_tensor_src")]
+    pub ops_path_tensor_src: Option<BTreeMap<String, u64>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,6 +152,22 @@ impl NcuRecord {
             incomplete: None,
             loads: Some(total(sums[0], loads)),
             stores: Some(total(sums[1], stores)),
+        })
+    }
+
+    /// The launch's predicted tensor-pipe FLOPs, an upper bound if
+    /// `at_most`, against the sum of its `sm__ops_path_tensor_src_*.sum`.
+    pub fn compare_tensor_flops(
+        &self,
+        predicted: u64,
+        at_most: bool,
+    ) -> Option<MeasuredTensorFlops> {
+        let measured = self.ops_path_tensor_src.as_ref()?.values().sum();
+        Some(MeasuredTensorFlops {
+            predicted,
+            at_most,
+            measured,
+            agrees: measured == predicted || at_most && measured < predicted,
         })
     }
 
@@ -287,10 +306,11 @@ fn wavefronts(p: &Prediction, measured: &NcuLine) -> Option<MeasuredWavefronts> 
 }
 
 /// A kernel's predictions against its record: per block, and the
-/// launch's global sectors.
+/// launch's global sectors and tensor-pipe FLOPs.
 pub struct Comparison {
     pub blocks: Vec<MeasuredBlock>,
     pub launch: Option<MeasuredTotals>,
+    pub tensor_flops: Option<MeasuredTensorFlops>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -339,6 +359,15 @@ pub struct MeasuredTotals {
 #[derive(Debug, PartialEq, Eq)]
 pub struct MeasuredTotal {
     pub predicted: SectorCount,
+    pub at_most: bool,
+    pub measured: u64,
+    pub agrees: bool,
+}
+
+/// Predicted tensor-pipe FLOPs over the launch against Nsight Compute's.
+#[derive(Debug, PartialEq, Eq)]
+pub struct MeasuredTensorFlops {
+    pub predicted: u64,
     pub at_most: bool,
     pub measured: u64,
     pub agrees: bool,
@@ -433,6 +462,7 @@ mod tests {
                 .collect(),
             load_sectors: None,
             store_sectors: None,
+            ops_path_tensor_src: None,
         }
     }
 

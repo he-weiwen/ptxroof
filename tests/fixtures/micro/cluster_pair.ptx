@@ -1,0 +1,39 @@
+//
+// HAND-WRITTEN: a kernel launched in clusters of two CTAs (PTX ISA
+// §11.7.1–2: `.explicitcluster`, `.reqnctapercluster 2`), whose rank 0
+// CTA's elected lane of warp 0 issues one `.cta_group::2` MMA for the
+// pair (§9.7.17.10.9.1, Table 49), of idesc 136316048: M = N = 128 of
+// BF16 (§9.7.17.4.2, Table 45).
+//
+.version 8.7
+.target sm_100a
+.address_size 64
+
+.visible .entry cluster_pair(
+	.param .u64 cluster_pair_param_0,
+	.param .u64 cluster_pair_param_1
+)
+.reqntid 128, 1, 1
+.explicitcluster
+.reqnctapercluster 2
+{
+	.reg .pred 	%p<4>;
+	.reg .b32 	%r<6>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [cluster_pair_param_0];
+	ld.param.u64 	%rd2, [cluster_pair_param_1];
+	mov.u32 	%r1, %cluster_ctarank;
+	mov.u32 	%r2, %tid.x;
+	setp.ne.s32 	%p1, %r1, 0;
+	setp.gt.u32 	%p2, %r2, 31;
+	or.pred 	%p3, %p1, %p2;
+	@%p3 bra 	$L__BB0_2;
+	elect.sync 	%r3|%p1, -1;
+	mov.b32 	%r4, 136316048;
+	mov.b32 	%r5, 0;
+	setp.ne.s32 	%p2, %r5, 0;
+	@%p1 tcgen05.mma.cta_group::2.kind::f16 [%r5], %rd1, %rd2, %r4, %p2;
+$L__BB0_2:
+	ret;
+}

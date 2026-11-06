@@ -14,7 +14,9 @@ with an LDGSTS reading P0 keeps no sectors (measure.py's
 ldgsts_reading_p0). For the launch it keeps the L1TEX hardware counts
 of the sectors its global loads and stores request, unless the report
 reads its L1TEX global load requests as nan: the gated rmsnorm report's
-L1TEX, L2 and DRAM counters read 0 or nan although its loads ran.
+L1TEX, L2 and DRAM counters read 0 or nan although its loads ran. It
+also keeps the launch's nonzero sm__ops_path_tensor_src_*.sum counts,
+unless the report reads one as nan, as the gated rmsnorm report does.
 
 A report's kernel is matched to the PTX it ran by SASS and block size among
 the study's Triton caches, nearest its own run first, and to its launch by
@@ -71,6 +73,7 @@ def report_kernels(rep):
         space = lambda r, s: s in re.findall(r"\w+", r[column["Address Space"]]) and r[column["Access Size"]].isdigit()
         sectors = ("L2 Theoretical Sectors Global", "L2 Theoretical Sectors Global Ideal", "Access Size")
         wavefronts = ("Access Size", "Instructions Executed", "L1 Wavefronts Shared", "L1 Wavefronts Shared Ideal")
+        tensor = [(m, v) for m, v in zip(raw[0], row) if re.fullmatch(r"sm__ops_path_tensor_src_\w+\.sum", m)]
         yield {
             "id": row[col["ID"]],
             "kernel": name,
@@ -82,6 +85,8 @@ def report_kernels(rep):
             "shared": [space(r, "Shared") and [int(r[column[c]]) for c in wavefronts] for r in instrs],
             "counters": {m: integral(row[raw[0].index(m)]) for m in L1TEX_SECTORS}
             if row[raw[0].index("l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum")] != "nan" else {},
+            "tensor_ops": {"sm__ops_path_tensor_src": {m: integral(v) for m, v in tensor if integral(v)}}
+            if all(v != "nan" for _, v in tensor) else {},
         }
 
 
@@ -244,7 +249,8 @@ def import_reports(sol, corpus, launches_path, out):
                 "ptx": str(ptx.resolve().relative_to(REPO)), "kernel": k["kernel"], "grid": k["grid"],
                 "block": k["block"], "shared": mine[0]["shared"], "params": list(params.pop()), "gpu": "NVIDIA B200",
                 "arch": "sm_100a", "ptxas": f"{tool} {release}", "ptxas_flags": flags, "ncu": ncu,
-                "sass_sha256": digest, **k["counters"], "lines": dict(sorted(lines.items(), key=lambda kv: int(kv[0]))),
+                "sass_sha256": digest, **k["counters"], **k["tensor_ops"],
+                "lines": dict(sorted(lines.items(), key=lambda kv: int(kv[0]))),
             })
             print(name)
 

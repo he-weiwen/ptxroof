@@ -301,6 +301,8 @@ impl<'a> Parser<'a> {
             maxntid: None,
             reqntid: None,
             tuning: Vec::new(),
+            reqnctapercluster: None,
+            explicitcluster: false,
             stmts: Vec::new(),
         };
 
@@ -322,6 +324,8 @@ impl<'a> Parser<'a> {
             match self.interner.resolve(name) {
                 "maxntid" => kernel.maxntid = Some(self.parse_dim3()?),
                 "reqntid" => kernel.reqntid = Some(self.parse_dim3()?),
+                "reqnctapercluster" => kernel.reqnctapercluster = Some(self.parse_dim3()?),
+                "explicitcluster" => kernel.explicitcluster = true,
                 "maxnreg" | "minnctapersm" | "maxnctapersm" => {
                     let value = self.expect_u32("directive argument")?;
                     kernel.tuning.push((name, value));
@@ -1694,6 +1698,15 @@ mod tests {
             (m.interner.resolve(tuning[0].0), tuning[0].1),
             ("maxnreg", 168)
         );
+    }
+
+    #[test]
+    fn cluster_dimension_directives() {
+        let src = ".version 8.7\n.target sm_100a\n.visible .entry k()\n\
+                   .reqntid 128, 1, 1\n.explicitcluster\n.reqnctapercluster 2\n{\nret;\n}\n";
+        let m = parse(src).expect("parses");
+        assert!(m.kernels[0].explicitcluster);
+        assert_eq!(m.kernels[0].reqnctapercluster, Some([2, 1, 1]));
     }
 
     #[test]

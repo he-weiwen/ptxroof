@@ -1,7 +1,8 @@
 //! Every Nsight Compute record's comparison in one reviewable snapshot:
 //! each block's verdict and counts, each record's L2 sector lines,
 //! those that differ by line, its shared wavefront lines, and its
-//! launch's load and store sectors against the L1TEX counts. A block that loses its verdict or a line
+//! launch's load and store sectors against the L1TEX counts and tensor-pipe
+//! FLOPs against `sm__ops_path_tensor_src_*`. A block that loses its verdict or a line
 //! or total that stops agreeing changes it as a contradiction would.
 
 use ptxroof::report::build::{AnalyzeOptions, compare};
@@ -45,6 +46,7 @@ fn measured_verdicts_across_the_records() {
     let mut sectors: BTreeMap<&str, u64> = BTreeMap::new();
     let mut wavefronts: BTreeMap<&str, u64> = BTreeMap::new();
     let mut totals: BTreeMap<String, u64> = BTreeMap::new();
+    let mut tensor: BTreeMap<String, u64> = BTreeMap::new();
     let mut out = String::new();
     for path in &records {
         let text = fs::read_to_string(path).expect("record readable");
@@ -59,7 +61,11 @@ fn measured_verdicts_across_the_records() {
             ncu: Some(record),
             ..Default::default()
         };
-        let Comparison { blocks, launch } = (compare(&src, &opts).expect("record analyzes"))
+        let Comparison {
+            blocks,
+            launch,
+            tensor_flops,
+        } = (compare(&src, &opts).expect("record analyzes"))
             .expect("the record's kernel, its block shape");
         let rel = path.strip_prefix(&root).expect("under the repo").display();
         let _ = writeln!(out, "{rel}");
@@ -76,6 +82,25 @@ fn measured_verdicts_across_the_records() {
             let key = line.split(", line").next().unwrap_or_default().to_owned();
             *totals.entry(key).or_default() += 1;
             let _ = writeln!(out, "  launch sectors\t{line}");
+        }
+        if fields.get("sm__ops_path_tensor_src").is_some() {
+            let line = match &tensor_flops {
+                Some(t) => format!(
+                    "{}, {} predicted, {} measured",
+                    match (t.agrees, t.at_most) {
+                        (false, _) => "differs",
+                        (true, false) => "exact",
+                        (true, true) => "within a bound",
+                    },
+                    t.predicted,
+                    t.measured
+                ),
+                None => "not compared".to_owned(),
+            };
+            *tensor
+                .entry(line.split(",").next().unwrap_or_default().to_owned())
+                .or_default() += 1;
+            let _ = writeln!(out, "  launch tensor FLOPs\t{line}");
         }
         let mut lines: BTreeMap<&str, u64> = BTreeMap::new();
         let mut differing = Vec::new();
@@ -137,6 +162,6 @@ fn measured_verdicts_across_the_records() {
         None
     );
     insta::assert_snapshot!(format!(
-        "blocks {verdicts:?}\nsector lines {sectors:?}\nwavefront lines {wavefronts:?}\nlaunch sectors {totals:?}\n\n{out}"
+        "blocks {verdicts:?}\nsector lines {sectors:?}\nwavefront lines {wavefronts:?}\nlaunch sectors {totals:?}\nlaunch tensor FLOPs {tensor:?}\n\n{out}"
     ));
 }

@@ -268,6 +268,54 @@ fn no_b200_block_is_contradicted() {
     assert_eq!(contradicted, Vec::<String>::new());
 }
 
+/// Every B200 launch's tensor-pipe FLOPs against the sum of its
+/// `sm__ops_path_tensor_src_*.sum` (`fixtures/b200/import_reports.py`):
+/// none differs; the three Mamba2 chunk kernels' `mma.sync` FLOPs and the
+/// two FP8 GEMMs' `tcgen05.mma` FLOPs, 2·M·N·K of each MMA's idesc, are
+/// exact.
+#[test]
+fn b200_tensor_flops_agree_with_nsight_compute() {
+    let records = records("tests/fixtures/b200");
+    let differ: Vec<&str> = (records.iter())
+        .filter(|(_, c)| c.tensor_flops.as_ref().is_some_and(|t| !t.agrees))
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(differ, Vec::<&str>::new());
+    for (record, flops) in [
+        (
+            "ssm__mamba2-2.7b__prefill__ssd._bmm_chunk_fwd_kernel",
+            1_073_741_824,
+        ),
+        (
+            "ssm__mamba2-2.7b__prefill__ssd._chunk_scan_fwd_kernel",
+            44_291_850_240,
+        ),
+        (
+            "ssm__mamba2-2.7b__prefill__ssd._chunk_state_fwd_kernel",
+            21_474_836_480,
+        ),
+        (
+            "gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._w8a8_block_fp8_matmul",
+            4_329_327_034_368,
+        ),
+        (
+            "gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel",
+            7_696_581_394_432,
+        ),
+    ] {
+        let path = format!("tests/fixtures/b200/{record}.sm_100a.ncu.json");
+        let (_, c) = (records.iter())
+            .find(|(p, _)| *p == path)
+            .expect("the record");
+        let t = c.tensor_flops.as_ref().expect("compared");
+        assert_eq!(
+            (t.predicted, t.at_most, t.measured),
+            (flops, false, flops),
+            "{record}"
+        );
+    }
+}
+
 /// Every Gluon kernel against its Nsight Compute record (`regen.sh`): no
 /// block's predicted count is contradicted by the measured one, each
 /// compares the L2 sectors of some line and none differs from the

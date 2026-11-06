@@ -403,6 +403,6 @@ mod tests {
     #[test]
     fn unreachable_block_has_no_frontier_and_is_in_none() {
         let df = frontiers_of("bra $L__END;\nadd.f32 %f1, %f1, %f1;\n$L__END:\nret;");
-        assert_eq!(df, [vec![], vec![], vec![]]);
+        assert_eq!(df, [Vec::<u32>::new(), vec![], vec![]]);
     }
 }

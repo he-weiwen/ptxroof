@@ -432,24 +432,27 @@ and CUTLASS emit these on H100).
 
 ## §9.7.17 TensorCore 5th Generation Family Instructions
 
-Allocation, waits, fences and `commit` contribute nothing; the rest is
-`UnknownOps` via the `tcgen05` mnemonic. Tier 2. Two family-wide misfits:
+Allocation, waits, fences, `commit` and the register loads and stores
+`ld` and `st` contribute nothing; the rest is `UnknownOps` via the
+`tcgen05` mnemonic. Tier 2. Two family-wide misfits:
 **tensor memory** is a fifth memory space the `Space` enum doesn't
 have (§B/§C), and most operations are issued by a *single thread* on
-behalf of a CTA or CTA pair (§B) — per-thread multiplication would be
-wildly wrong.
+behalf of a CTA or CTA pair (§B). `tcgen05.mma` is counted per issuing
+thread: the thread sets count the one thread that issues it, and the
+w8a8 GEMM's 8,257,536 executions equal Nsight Compute's
+`smsp__sass_inst_executed_op_utcmma.sum`.
 
 | § | Instruction | Today | Verdict & recommendation |
 |---|---|---|---|
 | 9.7.17.7.1 | `tcgen05.alloc` | none | OK — allocates tensor-memory columns: a per-CTA resource like `.shared`, so the eventual home is the `.entry` line beside `shared memory`, not an op class. Its 4-byte write of the address to `[dst]` is not counted. |
 | 9.7.17.7.1 | `tcgen05.dealloc` | none | OK — moves no bytes. |
 | 9.7.17.7.1 | `tcgen05.relinquish_alloc_permit` | none | OK — moves no bytes. |
-| 9.7.17.8.3 | `tcgen05.ld` | `UnknownOps` | OK (deferred, Tier 2) — ⚠ misfit §B: tensor-memory→register load, warp-collective; needs the new space and PerWarp scope. |
-| 9.7.17.8.4 | `tcgen05.st` | `UnknownOps` | OK (deferred, Tier 2) — same, store side. |
+| 9.7.17.8.3 | `tcgen05.ld` | none | OK — tensor memory → register load; tensor memory is no counted space (PLAN.md, Missing features). `tcgen05.ld.red`, which also reduces, stays `UnknownOps`. |
+| 9.7.17.8.4 | `tcgen05.st` | none | OK — same, register → tensor memory store. |
 | 9.7.17.8.5 | `tcgen05.wait` | none | OK — moves no bytes. |
 | 9.7.17.9.2 | `tcgen05.cp` | `UnknownOps` | OK (deferred, Tier 2) — ⚠ misfit §B+§C: single-thread-issued shared→tensor-memory copy, and the optional decompression modes (4-bit/6-bit → 8-bit) make bytes-read ≠ bytes-written; pick a side per space and document. |
 | 9.7.17.9.3 | `tcgen05.shift` | `UnknownOps` | OK (deferred, Tier 2) — tensor-memory row shift; data movement within the new space. |
-| 9.7.17.10.9.1 | `tcgen05.mma` | `UnknownOps` | OK (deferred, Tier 2) — ⚠⚠ misfit §B at its most extreme: a single thread issues an MMA executed for a CTA (or CTA *pair* with `cta_group::2`); no current scope expresses "per-CTA-pair, issued once". Also §E (descriptor-sourced smem/tmem operands) and §D (block-scaled `mxf4`/`mxf8f6f4` kinds). The flop math itself is still 2·M·N·K — the model question is *whose* flops. |
+| 9.7.17.10.9.1 | `tcgen05.mma` | tensor flops 2·M·N·K + `UnquantifiedBytes` shared load | OK for dense `.kind::f16`, `.kind::tf32` and FP8 `.kind::f8f6f4`: "single thread semantics", so the FLOPs are the issuing thread's, once per CTA pair with `.cta_group::2` (Table 49), M the pair's; M, N and the types from the idesc's constant (§9.7.17.4.2 Table 45), K by `.kind` (Table 42); A and B are read from shared memory through descriptors, bytes not counted (§E). `UnknownOps` for the block-scaled kinds (§D), `.kind::i8`, FP6/FP4 types and an idesc with no constant value. |
 | 9.7.17.10.9.2 | `tcgen05.mma.sp` | `UnknownOps` | OK (deferred, Tier 2) — plus the sparse convention (§D). |
 | 9.7.17.10.9.3 | `tcgen05.mma.ws` | `UnknownOps` | OK (deferred, Tier 2) — weight-stationary variant; same misfits. |
 | 9.7.17.10.9.4 | `tcgen05.mma.ws.sp` | `UnknownOps` | OK (deferred, Tier 2) — same. |
@@ -558,7 +561,8 @@ CTA-scale copy is not a whole number of bytes — so **a scope axis on
 family**, and the reason those arms should not be added piecemeal
 ahead of it. `cp.async.bulk.tensor` landed without it: its bytes are
 unquantified, an op per issuing thread, so there is no byte count to
-overcount.
+overcount. `tcgen05.mma` landed without it too: the whole MMA is the
+issuing thread's, and the thread sets count that one thread.
 
 **§C — bytes that are not in the instruction text.**
 `cp.async.bulk.tensor` (+`.reduce`/`.prefetch` tensor forms): the byte
@@ -597,8 +601,8 @@ named unknown for calls to bodies the module doesn't contain).
 `wgmma.mma_async`/`tcgen05.mma` descriptor-sourced operands: matrix
 data streams from shared/tensor memory with **no load instructions to
 count** — instruction-level accounting is structurally blind to it;
-the MMA arms must decide whether to emit implicit operand-traffic
-bytes. `prefetch`/`applypriority`/`discard`/`griddepcontrol`/
+`tcgen05.mma` emits an `UnquantifiedBytes` shared load for it, so a
+kernel's shared load bytes stay a bound. `prefetch`/`applypriority`/`discard`/`griddepcontrol`/
 `nanosleep`: affect *when/where*, never *how much* — no contribution is
 correct and these fit fine; listed only because the reasoning differs
 from "does nothing".
@@ -670,7 +674,7 @@ per-family**.
 - TMA: `cp.async.bulk`, `cp.reduce.async.bulk` (+ `.tensor`), `cp.async.bulk.prefetch` (+ `.tensor`) (`cp.async.bulk.commit_group` / `wait_group` have landed, with no contribution); tensor variants land as honest unquantified bytes (misfit §C), as `cp.async.bulk.tensor` has
 - Hopper warp-specialization boilerplate is already classified: `elect.sync` (with the `d|p` operand form in the parser) and `setmaxnreg`, with no contribution
 - `red.async`, `movmatrix`, `mma.sp` (sparse policy, misfit §D), `st.async` remote-attribution review
-- `tcgen05.*` (the 8 entries but allocation, wait, fence and commit) — tensor memory as a new `Space`, single-thread-issue scope
+- `tcgen05.*` (`cp`, `shift`, `ld.red` and the sparse, weight-stationary, block-scaled and integer `mma` forms) — tensor memory as a new `Space`, single-thread-issue scope
 
 ### Tier 3 — cheap correctness sweep — landed; historical priorities
 

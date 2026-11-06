@@ -65,8 +65,8 @@ parameters taken as 32 B aligned unless `--ptr-align` says otherwise.
   request touches, and per loop the bytes requested and touched.
 - An instruction whose results nothing reads counts in no total.
 
-Not covered, among others: `tcgen05` and `wgmma` flops, TMA bytes, loops
-bounded by a loaded value or an mbarrier wait, a cache or DRAM model, and
+Not covered, among others: `wgmma` flops and those of block-scaled,
+integer or sparse `tcgen05.mma`, TMA bytes, loops bounded by a loaded value or an mbarrier wait, a cache or DRAM model, and
 kernels shipped only as SASS. `PLAN.md` lists every known limitation and
 missing feature with its evidence.
 
@@ -75,7 +75,8 @@ missing feature with its evidence.
 - 65 Nsight Compute records (RTX 4090 launches of the Gluon kernels, k5
   and micro kernels, and imported B200 reports): `tests/ncu_corpus.rs`
   and `tests/ncu_comparisons.rs` compare each PTX line's predicted
-  executions and L2 sectors and the launch's L1TEX sectors with them
+  executions and L2 sectors, the launch's L1TEX sectors and, for the
+  B200 records, its tensor-pipe FLOPs with them
   (`report::build::compare`).
 - Every fixture's re-printed PTX (`--dump-ast`) must assemble to the
   original's SASS, but for the cases `tests/roundtrip-allowlist.txt`

@@ -26,7 +26,8 @@
 
 use super::measurement::{Contribution, Direction, MeasureKind, Pipe, Precision};
 
-use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId};
+use crate::analysis::affine::affine_analysis::AffineAnalysis;
+use crate::ptx::ir::{Instr, Module, Opcode, Operand, OperandId, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{
     ParamAccess, Space, copy_spaces, cp_async_size_operand, param_access, space,
@@ -59,10 +60,15 @@ fn unknown() -> Vec<Contribution> {
     vec![Contribution::new(MeasureKind::UnknownOps, 1)]
 }
 
-/// The contributions of `instr` in `kernel`; an access to a
-/// device-function parameter, which a call passes or returns, has none.
-pub fn classify(module: &Module, kernel: &Kernel, instr: &Instr) -> Vec<Contribution> {
+/// The contributions of statement `stmt` of `affine`'s kernel; an
+/// access to a device-function parameter, which a call passes or
+/// returns, has none.
+pub(crate) fn classify(affine: &AffineAnalysis, stmt: usize) -> Vec<Contribution> {
     use Opcode::*;
+    let (module, kernel) = (affine.data.module, affine.data.kernel);
+    let Stmt::Instr(instr) = &kernel.stmts[stmt] else {
+        return Vec::new();
+    };
     if param_access(module, kernel, instr) == Some(ParamAccess::DeviceFunctionParam) {
         return Vec::new();
     }
@@ -160,6 +166,19 @@ pub fn classify(module: &Module, kernel: &Kernel, instr: &Instr) -> Vec<Contribu
             ) =>
         {
             Vec::new()
+        }
+        // PTX ISA §9.7.17.8.3–4: `ld` "loads data from the Tensor Memory
+        // ... into the destination register r", `st` "stores data from the
+        // source register r into the Tensor Memory", no space the totals
+        // count.
+        Tcgen05 if mods.starts_with(&["ld", "sync"]) || mods.starts_with(&["st", "sync"]) => {
+            Vec::new()
+        }
+        Tcgen05 if mods.first() == Some(&"mma") => {
+            let idesc = (module.operand_ids(instr.operands).get(3))
+                .and_then(|&op| affine.operand_at(op, stmt, 0).ok())
+                .and_then(|a| a.as_const());
+            tcgen05_mma(&mods, idesc)
         }
 
         // -- unsupported instruction families ------------------------------
@@ -341,6 +360,62 @@ fn mma(mods: &[&str]) -> Vec<Contribution> {
     )
 }
 
+/// `tcgen05.mma` (PTX ISA §9.7.17.10.9.1) "has single thread semantics
+/// ... a single thread issuing the tcgen05.mma will result in the
+/// initiation of the whole matrix multiply and accumulate operation": its
+/// 2·M·N·K FLOPs are the issuing thread's. M, N and the multiplicand types
+/// are fields of `idesc` (§9.7.17.4.2, Table 45), K follows the dense
+/// `.kind` (§9.7.17.2.1, Table 42), and "a-desc and b-desc are the matrix
+/// descriptors which represent the matrices A and B in shared memory",
+/// whose bytes are not counted. With `.cta_group::2`, "Issue from a single
+/// thread from the CTA-Pair would initiate the base operation" (Table 49),
+/// M the pair's. "If no .collector_usage qualifier is specified, then it
+/// defaults to .collector::a::discard".
+fn tcgen05_mma(mods: &[&str], idesc: Option<i64>) -> Vec<Contribution> {
+    let collector = |m: &&str| m.starts_with("collector::a::");
+    let (Some(&group), Some(&kind), true) =
+        (mods.get(1), mods.get(2), mods.iter().skip(3).all(collector))
+    else {
+        return unknown();
+    };
+    let Some(bits) = idesc.and_then(|v| u32::try_from(v).ok()) else {
+        return unknown();
+    };
+    let field = |at: u32, width: u32| bits >> at & ((1 << width) - 1);
+    let (m, n) = (field(24, 5) << 4, field(17, 6) << 3);
+    let (precision, k) = match (kind, field(7, 3), field(10, 3)) {
+        ("kind::f16", 0, 0) => (Precision::F16, 16),
+        ("kind::f16", 1, 1) => (Precision::BF16, 16),
+        ("kind::tf32", 2, 2) => (Precision::TF32, 8),
+        ("kind::f8f6f4", 0 | 1, 0 | 1) => (Precision::FP8, 32),
+        _ => return unknown(),
+    };
+    let shape = match group {
+        "cta_group::1" => matches!(m, 64 | 128),
+        "cta_group::2" => matches!(m, 128 | 256) && n.is_multiple_of(16),
+        _ => false,
+    };
+    if field(2, 1) != 0 || !shape || !(8..=256).contains(&n) {
+        return unknown();
+    }
+    vec![
+        Contribution::new(
+            MeasureKind::Flops {
+                pipe: Pipe::Tensor,
+                precision,
+            },
+            u64::from(2 * m * n * k),
+        ),
+        Contribution::new(
+            MeasureKind::UnquantifiedBytes {
+                space: Space::Shared,
+                direction: Direction::Load,
+            },
+            1,
+        ),
+    ]
+}
+
 /// `ldmatrix` / `stmatrix` (PTX ISA §9.7.15.5.15–16): `.num` matrices
 /// of the shape modifier, always in shared memory ("If no state space
 /// is provided, generic addressing is used, such that the address in p
@@ -469,6 +544,10 @@ fn bytes_of(mods: &[&str]) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::control_flow::loop_forest;
+    use crate::analysis::kernel_analyses::KernelAnalyses;
+    use crate::analysis::uniformity_info::UniformityInfo;
+    use crate::ptx::cfg::build_cfg;
     use crate::ptx::ir::Stmt;
     use crate::ptx::parse::parser::parse;
 
@@ -480,15 +559,15 @@ mod tests {
              .visible .entry k(.param .u64 k_param_0)\n{{\n{text}\n}}\n"
         );
         let m = parse(&src).expect("snippet parses");
-        let instr = m.kernels[0]
-            .stmts
-            .iter()
-            .find_map(|s| match s {
-                Stmt::Instr(i) => Some(*i),
-                _ => None,
-            })
-            .expect("one instruction");
-        classify(&m, &m.kernels[0], &instr)
+        let k = &m.kernels[0];
+        let stmt = (k.stmts.iter())
+            .rposition(|s| matches!(s, Stmt::Instr(_)))
+            .expect("an instruction");
+        let cfg = build_cfg(&m, k);
+        let forest = loop_forest(&cfg);
+        let data = KernelAnalyses::new(&m, k, &cfg, &forest);
+        let uniformity = UniformityInfo::new(&data);
+        classify(&AffineAnalysis::new(&data, &uniformity, None), stmt)
     }
 
     #[test]
@@ -596,17 +675,78 @@ mod tests {
             "tcgen05.fence::before_thread_sync;",
             "tcgen05.fence::after_thread_sync;",
             "tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.b64 [%r1];",
+            "tcgen05.ld.sync.aligned.32x32b.x2.b32 {%r1, %r2}, [%r3];",
+            "tcgen05.st.sync.aligned.32x32b.x2.b32 [%r3], {%r1, %r2};",
         ] {
             assert_eq!(class_of(text), Vec::new(), "{text}");
         }
         for text in [
             "tcgen05.mma.cta_group::1.kind::f16 [%r1], %rd1, %rd2, %r2, %p1;",
-            "tcgen05.ld.sync.aligned.32x32b.x2.b32 {%r1, %r2}, [%r3];",
-            "tcgen05.st.sync.aligned.32x32b.x2.b32 [%r3], {%r1, %r2};",
+            "tcgen05.ld.red.sync.aligned.32x32b.x2.u32.max {%r2, %r3}, %r1, [%r5];",
             "tcgen05.cp.cta_group::1.warpx4.32x128b [%r1], %rd1;",
             "tcgen05.shift.cta_group::1.down [%r1];",
         ] {
             assert_eq!(class_of(text), unknown(), "{text}");
+        }
+    }
+
+    /// `tcgen05.mma` is 2·M·N·K tensor FLOPs of its idesc (PTX ISA
+    /// §9.7.17.4.2, Table 45) and a shared load of bytes not counted: the
+    /// w8a8 GEMM's 69206032 is M = 64, N = 128 of E4M3 and K = 32,
+    /// 136316048 M = N = 128 of BF16 and K = 16, 68159760 M = N = 64 of
+    /// TF32 and K = 8, for one CTA or, M the pair's, a CTA pair. A sparse
+    /// idesc, E2M3 types (69209488) under `.kind::f8f6f4`, a pair's M of 64
+    /// or N of 8 (134349968: M = 128, N = 8) and a block-scaled kind are left
+    /// unknown.
+    #[test]
+    fn tcgen05_mma_is_its_idesc_s_2mnk_tensor_flops() {
+        let mma = |idesc: i64, form: &str| {
+            class_of(&format!(
+                "mov.b32 %r2, {idesc};\n\
+                 tcgen05.mma.cta_group::{form} [%r1], %rd1, %rd2, %r2, %p1;"
+            ))
+        };
+        let tensor = |precision, flops| {
+            let shared = MeasureKind::UnquantifiedBytes {
+                space: Space::Shared,
+                direction: Direction::Load,
+            };
+            let mut c = flop(Pipe::Tensor, precision, flops);
+            c.push(Contribution::new(shared, 1));
+            c
+        };
+        assert_eq!(
+            mma(69206032, "1.kind::f8f6f4"),
+            tensor(Precision::FP8, 524_288)
+        );
+        assert_eq!(
+            mma(136316048, "1.kind::f16"),
+            tensor(Precision::BF16, 524_288)
+        );
+        assert_eq!(
+            mma(136316048, "1.kind::f16.collector::a::fill"),
+            tensor(Precision::BF16, 524_288)
+        );
+        assert_eq!(
+            mma(68159760, "1.kind::tf32"),
+            tensor(Precision::TF32, 65_536)
+        );
+        assert_eq!(
+            mma(136316048, "2.kind::f16"),
+            tensor(Precision::BF16, 524_288)
+        );
+        assert_eq!(
+            mma(134349968, "1.kind::f16"),
+            tensor(Precision::BF16, 32_768)
+        );
+        for (idesc, form) in [
+            (69206032 | 4, "1.kind::f8f6f4"),
+            (69206032, "2.kind::f8f6f4"),
+            (134349968, "2.kind::f16"),
+            (69209488, "1.kind::f8f6f4"),
+            (69206032, "1.kind::mxf8f6f4.block_scale.block32"),
+        ] {
+            assert_eq!(mma(idesc, form), unknown(), "{idesc} {form}");
         }
     }
 
@@ -1056,5 +1196,140 @@ mod tests {
     fn out_of_audience_families_are_unknown_not_zero() {
         let tex = "tex.2d.v4.f32.f32 {%f1, %f2, %f3, %f4}, [t, {%f5, %f6}];";
         assert_eq!(class_of(tex), unknown());
+    }
+}
+
+#[cfg(test)]
+mod corpus {
+    //! Corpus-wide classification coverage: every
+    //! instruction in every fixture contributes no `UnknownOps`, or its
+    //! mnemonic is listed in tests/classify-allowlist.txt. This is the
+    //! check that makes "useful in the majority of cases" a tested number:
+    //! when a new toolchain or kernel family introduces an idiom we don't
+    //! classify, this names it before any user files a bug.
+
+    use crate::analysis::affine::affine_analysis::AffineAnalysis;
+    use crate::analysis::control_flow::loop_forest;
+    use crate::analysis::instruction_counts::classify::classify;
+    use crate::analysis::instruction_counts::measurement::{MeasureKind, Pipe};
+    use crate::analysis::kernel_analyses::KernelAnalyses;
+    use crate::analysis::uniformity_info::UniformityInfo;
+    use crate::ptx::cfg::build_cfg;
+    use crate::ptx::ir::Stmt;
+    use crate::ptx::parse::parser::parse;
+    use crate::ptx::register_effects::is_pure;
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn collect_ptx(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).expect("fixture dir readable") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                collect_ptx(&path, out);
+            } else if path.extension().is_some_and(|e| e == "ptx") {
+                out.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn every_corpus_instruction_classifies_or_is_allowlisted() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let allow: Vec<String> = fs::read_to_string(root.join("tests/classify-allowlist.txt"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_owned)
+            .collect();
+
+        let mut files = Vec::new();
+        collect_ptx(&root.join("tests/fixtures"), &mut files);
+        files.sort();
+        assert!(files.len() >= 8, "fixture corpus missing?");
+
+        // mnemonic -> count of UnknownOps contributions, across the corpus
+        let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
+        let mut total = 0usize;
+        for path in &files {
+            let src = fs::read_to_string(path).expect("fixture readable");
+            let m = parse(&src).expect("fixture parses");
+            for k in &m.kernels {
+                let cfg = build_cfg(&m, k);
+                let forest = loop_forest(&cfg);
+                let data = KernelAnalyses::new(&m, k, &cfg, &forest);
+                let uniformity = UniformityInfo::new(&data);
+                let affine = AffineAnalysis::new(&data, &uniformity, None);
+                for (s, stmt) in k.stmts.iter().enumerate() {
+                    if let Stmt::Instr(i) = stmt {
+                        total += 1;
+                        if classify(&affine, s)
+                            .iter()
+                            .any(|c| c.kind == MeasureKind::UnknownOps)
+                        {
+                            let name = i.mnemonic.name().to_owned();
+                            *unknown.entry(name).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            total > 1000,
+            "corpus suspiciously small: {total} instructions"
+        );
+
+        let violations: Vec<String> = unknown
+            .iter()
+            .filter(|(name, _)| !allow.contains(name))
+            .map(|(name, count)| format!("{name} (x{count})"))
+            .collect();
+        assert!(
+            violations.is_empty(),
+            "unclassified mnemonics not in classify-allowlist.txt: {}",
+            violations.join(", ")
+        );
+    }
+
+    /// An instruction `is_pure` takes as pure moves no memory and is
+    /// classified: it contributes only flops on the CUDA cores or the SFU.
+    #[test]
+    fn a_pure_instruction_contributes_only_cuda_core_or_sfu_flops() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        collect_ptx(&root.join("tests/fixtures"), &mut files);
+        files.sort();
+        let mut other: BTreeMap<String, usize> = BTreeMap::new();
+        for path in &files {
+            let src = fs::read_to_string(path).expect("fixture readable");
+            let m = parse(&src).expect("fixture parses");
+            for k in &m.kernels {
+                let cfg = build_cfg(&m, k);
+                let forest = loop_forest(&cfg);
+                let data = KernelAnalyses::new(&m, k, &cfg, &forest);
+                let uniformity = UniformityInfo::new(&data);
+                let affine = AffineAnalysis::new(&data, &uniformity, None);
+                for (s, stmt) in k.stmts.iter().enumerate() {
+                    let Stmt::Instr(i) = stmt else { continue };
+                    let flops = classify(&affine, s).iter().all(|c| {
+                        matches!(
+                            c.kind,
+                            MeasureKind::Flops {
+                                pipe: Pipe::CudaCore | Pipe::Sfu,
+                                ..
+                            }
+                        )
+                    });
+                    if is_pure(i.mnemonic) && !flops {
+                        *other.entry(m.opcode(i)).or_default() += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            other.is_empty(),
+            "pure instructions with other contributions: {other:?}"
+        );
     }
 }
