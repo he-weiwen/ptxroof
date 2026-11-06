@@ -1652,7 +1652,7 @@ $L__BB0_8:
     }
 
     /// `mov.b64 {%r2, %r3}, %rd1` writes %r2 as half of %rd1, not %rd1:
-    /// an address through it is a uniform variable, not param_0.
+    /// an address through it is param_0's low 32 bits, not param_0.
     #[test]
     fn a_vector_destination_is_not_the_whole_source() {
         let src = ".version 8.7\n.target sm_80\n.address_size 64\n\
@@ -1661,7 +1661,7 @@ $L__BB0_8:
                    cvt.u64.u32 %rd2, %r2;\nld.global.f32 %f1, [%rd2];\nret;\n}\n";
         assert_eq!(
             addresses(src, &AnalyzeOptions::default()),
-            ["global load [uniform(%r2@9)]"]
+            ["global load [param_0 mod 4294967296]"]
         );
     }
 

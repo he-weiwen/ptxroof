@@ -471,9 +471,11 @@ impl AffineExpr {
     }
 
     /// `(q, r)` for the form `d·q + r`: q the terms whose coefficients are
-    /// known multiples of d and the multiple of d in the base, divided by
-    /// d; r the other terms, the base's symbols no known multiple of d,
-    /// and the base's constants' remainder, in [0, d).
+    /// known multiples of d, the multiple of d in each other constant
+    /// coefficient of at least d and the multiple of d in the base,
+    /// divided by d; r the other terms, the remainder by d of such a
+    /// coefficient, the base's symbols no known multiple of d, and the
+    /// base's constants' remainder, in [0, d).
     pub(super) fn multiple_part(&self, d: i64) -> Option<(AffineExpr, AffineExpr)> {
         let (multiples, others) = self.multiple_terms(d);
         let mut q = AffineExpr::constant(0);
@@ -501,7 +503,13 @@ impl AffineExpr {
         q.base = SymExpr::add(SymExpr::floor_div(multiple, d), SymExpr::add(whole, carry));
         let mut r = AffineExpr::from_base(SymExpr::add(SymExpr::Const(k), other));
         for (v, c) in others {
-            r = r + AffineExpr::term(v.clone(), c.clone());
+            match c.as_const().filter(|&c| c >= d) {
+                Some(c) => {
+                    q = q + AffineExpr::term(v.clone(), SymExpr::Const(c / d));
+                    r = r + AffineExpr::term(v.clone(), SymExpr::Const(c % d));
+                }
+                None => r = r + AffineExpr::term(v.clone(), c.clone()),
+            }
         }
         Some((q, r))
     }
@@ -1305,6 +1313,31 @@ mod tests {
             + AffineExpr::from_base(c(48));
         assert_eq!(wraps.modulo_const(64, &free), None);
     }
+
+    /// A constant coefficient of at least the divisor splits into its
+    /// multiple of the divisor and its remainder: ⌊3t/2⌋ = t + ⌊t/2⌋ and
+    /// (3t) mod 2 = t mod 2; a negative one stays whole, so (3 − v) mod 4
+    /// over v in [0, 3] reads as 3 − v, and (−3t) mod 2 not at all.
+    #[test]
+    fn a_coefficient_past_the_divisor_splits_by_it() {
+        let block = |v: &Var| (*v == Var::Tid(Axis::X)).then_some((0, 127));
+        let at = |a: &AffineExpr, t: i64| a.eval(&at_tid([t, 0, 0]));
+        let three = tid().scale(SymExpr::Const(3));
+        let floor = three.clone().div_const(2, &block).unwrap();
+        let rem = three.modulo_const(2, &block).unwrap();
+        assert_eq!(floor.to_string(), "%tid.x + ⌊%tid.x/2⌋");
+        assert_eq!(rem.to_string(), "(%tid.x mod 2)");
+        assert!((0..128).all(|t| at(&floor, t) == Some((3 * t / 2).into())));
+        assert!((0..128).all(|t| at(&rem, t) == Some((3 * t % 2).into())));
+        let four = |v: &Var| (*v == Var::Tid(Axis::X)).then_some((0, 3));
+        let down = (AffineExpr::constant(3) - tid()).modulo_const(4, &four);
+        let down = down.unwrap();
+        assert_eq!(down.to_string(), "-%tid.x + 3");
+        assert!((0..4).all(|v| at(&down, v) == Some(((3 - v) % 4).into())));
+        let negative = tid().scale(SymExpr::Const(-3));
+        assert_eq!(negative.modulo_const(2, &block), None);
+    }
+
     #[test]
     fn terms_combine_cancel_and_scale_symbolically() {
         let k = SymExpr::Sym(SymbolicConstant::KernelParam(2));

@@ -1,0 +1,86 @@
+//
+// HAND-WRITTEN: Triton's masked load as a store. %p1 = %tid.x < param_1,
+// %r3 = selp %tid.x, 0, %p1, and the store at param_0 + 4·%r3 runs
+// under @%p1, so it never reads the 0 (PTX ISA §9.7.6.3: "If c is True,
+// a is stored in d, b otherwise"). ptxas 13.4 (sm_89) keeps the select,
+// `SEL R2, R2, RZ, !P0`, `IMAD.WIDE.U32 R2, R2, R3, c[0x0][0x160]`, and
+// stores after `@P0 EXIT`; an RTX 4090 run of 32 threads, param_1 = 20,
+// writes words 0 to 19.
+// micro_selp_under_guard_data also stores %r3 unguarded at param_0 +
+// 128, so threads where %p1 is false read its 0 (ptxas:
+// `STG.E [R4.64+0x80], R7`); the same run writes 1 to words 0 to 19,
+// and word 32 holds 0, the value threads 20 to 31 store.
+// micro_selp_under_guard_and stores under %p3 = %tid.x < 16 ∧ %p1,
+// which holds only where %p1 does (ptxas:
+// `ISETP.LT.U32.AND P0, PT, R2.reuse, 0x10, !P1`, `@!P0 EXIT`); the same
+// run writes words 0 to 15.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_selp_under_guard(
+	.param .u64 micro_selp_under_guard_param_0,
+	.param .u32 micro_selp_under_guard_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_selp_under_guard_param_0];
+	ld.param.u32 	%r1, [micro_selp_under_guard_param_1];
+	mov.u32 	%r2, %tid.x;
+	setp.lt.u32 	%p1, %r2, %r1;
+	selp.b32 	%r3, %r2, 0, %p1;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], 1;
+	ret;
+}
+
+.visible .entry micro_selp_under_guard_data(
+	.param .u64 micro_selp_under_guard_data_param_0,
+	.param .u32 micro_selp_under_guard_data_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<2>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_selp_under_guard_data_param_0];
+	ld.param.u32 	%r1, [micro_selp_under_guard_data_param_1];
+	mov.u32 	%r2, %tid.x;
+	setp.lt.u32 	%p1, %r2, %r1;
+	selp.b32 	%r3, %r2, 0, %p1;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p1 st.global.u32 	[%rd3], 1;
+	st.global.u32 	[%rd1+128], %r3;
+	ret;
+}
+
+.visible .entry micro_selp_under_guard_and(
+	.param .u64 micro_selp_under_guard_and_param_0,
+	.param .u32 micro_selp_under_guard_and_param_1
+)
+.reqntid 32, 1, 1
+{
+	.reg .pred 	%p<4>;
+	.reg .b32 	%r<4>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_selp_under_guard_and_param_0];
+	ld.param.u32 	%r1, [micro_selp_under_guard_and_param_1];
+	mov.u32 	%r2, %tid.x;
+	setp.lt.u32 	%p1, %r2, %r1;
+	setp.lt.u32 	%p2, %r2, 16;
+	and.pred 	%p3, %p2, %p1;
+	selp.b32 	%r3, %r2, 0, %p1;
+	mul.wide.u32 	%rd2, %r3, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	@%p3 st.global.u32 	[%rd3], 1;
+	ret;
+}

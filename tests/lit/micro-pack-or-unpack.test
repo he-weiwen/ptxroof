@@ -1,0 +1,6 @@
+# A pack of x = %tid.x & 255 into both halves of a 32-bit register is
+# x + 65536·x (PTX ISA §9.7.9.4); an or with 256 adds it, and the halves
+# unpacked from the sum, which no mov packed, are x + 256 and x.
+RUN: %ptxroof analyze %fixtures/micro/pack_or_unpack.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}	st.global.u32 	[%rd3], 1; // global store [8·(%tid.x mod 256) + param_0 + 2048] sectors/req 8 (ideal 4){{$}}
+ANN: {{^}}	st.global.u32 	[%rd5], 1; // global store [8·((%tid.x mod 256) mod 65536) + param_0] sectors/req 8 (ideal 4){{$}}

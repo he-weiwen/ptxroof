@@ -1,0 +1,50 @@
+//
+// HAND-WRITTEN: an address that is a remainder by 3 of ⌊k/2⌋ +
+// (%tid.x & 31), k the counter of a loop of param_1 trips, stored in
+// that loop and in a loop of param_2 trips nested in it. ptxas 13.4
+// (sm_89) computes ⌊k/2⌋ + (%tid.x & 31) with
+// `LOP3.LUT R0, R0, 0x1f, RZ, 0xc0, !PT` and
+// `LEA.HI R2, R4, R0, RZ, 0x1f`, the remainder by 3 from
+// `IMAD.HI.U32 R7, R7, R2, RZ`, and stores at
+// `IMAD.WIDE.U32 R2, R2, R3, c[0x0][0x160]` in both loops. An RTX 4090
+// run of one CTA, param_1 = 4 and param_2 = 2, writes words 0, 1 and 2.
+//
+.version 8.7
+.target sm_89
+.address_size 64
+
+.visible .entry micro_counter_floor_reason(
+	.param .u64 micro_counter_floor_reason_param_0,
+	.param .u32 micro_counter_floor_reason_param_1,
+	.param .u32 micro_counter_floor_reason_param_2
+)
+.reqntid 64, 1, 1
+{
+	.reg .pred 	%p<3>;
+	.reg .b32 	%r<10>;
+	.reg .b64 	%rd<4>;
+
+	ld.param.u64 	%rd1, [micro_counter_floor_reason_param_0];
+	ld.param.u32 	%r1, [micro_counter_floor_reason_param_1];
+	ld.param.u32 	%r2, [micro_counter_floor_reason_param_2];
+	mov.u32 	%r3, %tid.x;
+	and.b32 	%r4, %r3, 31;
+	mov.u32 	%r5, 0;
+$L__BB0_1:
+	add.s32 	%r5, %r5, 1;
+	shr.u32 	%r6, %r5, 1;
+	add.s32 	%r7, %r6, %r4;
+	rem.u32 	%r8, %r7, 3;
+	mul.wide.u32 	%rd2, %r8, 4;
+	add.s64 	%rd3, %rd1, %rd2;
+	mov.u32 	%r9, 0;
+$L__BB0_2:
+	add.s32 	%r9, %r9, 1;
+	st.global.u32 	[%rd3], 1;
+	setp.lt.u32 	%p1, %r9, %r2;
+	@%p1 bra 	$L__BB0_2;
+	st.global.u32 	[%rd3], 1;
+	setp.lt.u32 	%p2, %r5, %r1;
+	@%p2 bra 	$L__BB0_1;
+	ret;
+}
