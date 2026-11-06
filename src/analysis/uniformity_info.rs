@@ -290,15 +290,11 @@ fn is_tid_x(t: &KernelAnalyses, op: OperandId, pos: usize) -> bool {
         *t.module.operand(op) == Operand::Special(SpecialVector::Tid.components()[0])
     };
     match t.module.operand(op) {
-        Operand::Register(r) => match t.ssa.value_before(pos, Register::Named(*r)) {
-            Some(Value::Result { op: def, .. }) => matches!(
-                &t.kernel.stmts[def],
-                Stmt::Instr(i) if i.mnemonic == Opcode::Mov
-                    && i.predicate.is_none()
-                    && matches!(t.module.operand_ids(i.operands), [_, src] if tid_x(*src))
-            ),
-            _ => false,
-        },
+        Operand::Register(r) => t.def_at(*r, pos).is_some_and(|(_, i)| {
+            i.mnemonic == Opcode::Mov
+                && i.predicate.is_none()
+                && matches!(t.module.operand_ids(i.operands), [_, src] if tid_x(*src))
+        }),
         _ => tid_x(op),
     }
 }

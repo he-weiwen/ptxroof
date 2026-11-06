@@ -94,6 +94,20 @@ impl<'a> KernelAnalyses<'a> {
             .find(|&d| blk.start <= d && d < before)
     }
 
+    /// The statement writing the value `reg` holds where statement `pos`
+    /// reads it, and its instruction; `None` for a φ, a value no path
+    /// writes or a statement the parser did not read.
+    pub(crate) fn def_at(&self, reg: Symbol, pos: usize) -> Option<(usize, &'a Instr)> {
+        let Some(Value::Result { op, .. }) = self.ssa.value_before(pos, Register::Named(reg))
+        else {
+            return None;
+        };
+        match &self.kernel.stmts[op] {
+            Stmt::Instr(instr) => Some((op, instr)),
+            _ => None,
+        }
+    }
+
     /// Which destination of `instr` register `reg` is: 0, or 1 for the
     /// second of `d|p`.
     pub(crate) fn destination(&self, instr: &Instr, reg: Symbol) -> Option<usize> {
@@ -111,13 +125,7 @@ impl<'a> KernelAnalyses<'a> {
     /// §9.7.6.2: "A related value computed using the complement of the
     /// compare result is written to the second destination operand").
     pub(crate) fn setp_at(&self, pred: Symbol, pos: usize) -> Option<(usize, &Instr, bool)> {
-        let Some(Value::Result { op, .. }) = self.ssa.value_before(pos, Register::Named(pred))
-        else {
-            return None;
-        };
-        let Stmt::Instr(instr) = &self.kernel.stmts[op] else {
-            return None;
-        };
+        let (op, instr) = self.def_at(pred, pos)?;
         let place = self.destination(instr, pred)?;
         (instr.mnemonic == Opcode::Setp).then_some((op, instr, place == 1))
     }

@@ -1153,12 +1153,7 @@ impl PredicateReader<'_> {
     }
 
     fn read_definition(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
-        let Some(Value::Result { op: def, .. }) =
-            self.affine.data.ssa.value_before(pos, Register::Named(reg))
-        else {
-            return (Pred::Unknown, false);
-        };
-        let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
+        let Some((def, instr)) = self.affine.data.def_at(reg, pos) else {
             return (Pred::Unknown, false);
         };
         let gates = self.affine.uniformity().gate_uniformity(reg, pos);
