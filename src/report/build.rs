@@ -4,7 +4,7 @@
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::{AffineExpr, Var};
-use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
+use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant, block_shape};
 use crate::analysis::affine::trip_counts::trip_counts_from;
 use crate::analysis::affine::unknown_reason::UnknownReason;
 use crate::analysis::control_flow::loop_forest;
@@ -565,7 +565,7 @@ impl<'a> KernelReportBuilder<'a> {
             forest,
             ..
         } = *data;
-        let uniformity = UniformityInfo::new(data);
+        let uniformity = UniformityInfo::new(data, block_shape(bind_map));
         let affine = AffineAnalysis::new(data, &uniformity, Some(bind_map));
         let names = loop_names(module, kernel, cfg, forest);
         let name = |v: &Var| Self::var_text(data, lines, v);
@@ -587,6 +587,7 @@ impl<'a> KernelReportBuilder<'a> {
         let compile_time_sets = match compile_time == *bind_map {
             true => &sets,
             false => {
+                let uniformity = UniformityInfo::new(data, block_shape(&compile_time));
                 static_sets =
                     thread_sets(&AffineAnalysis::new(data, &uniformity, Some(&compile_time)));
                 &static_sets

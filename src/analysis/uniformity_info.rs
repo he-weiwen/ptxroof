@@ -14,12 +14,16 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::ptx::cfg::BlockId;
-use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, SpecialReg, Stmt};
-use crate::ptx::literal::parse_int;
-use crate::ptx::modifier::{Form, Memory, ParamAccess, Sem, ShflMode, Space, param_access};
+use crate::ptx::ir::{
+    Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialVector, Stmt,
+};
+use crate::ptx::literal::{parse_bits, parse_int};
+use crate::ptx::modifier::{
+    Form, Memory, ParamAccess, Sem, ShflMode, Space, immediate_width, param_access, shift_count,
+};
 use crate::ptx::register_effects::{is_pure, reads_cc, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register};
-use crate::ptx::thread_hierarchy::whole_warp_shuffle;
+use crate::ptx::thread_hierarchy::{WARP_SZ, whole_warp_shuffle};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
@@ -57,7 +61,9 @@ pub(crate) struct UniformityInfo<'a> {
 }
 
 impl<'a> UniformityInfo<'a> {
-    pub(crate) fn new(t: &'a KernelAnalyses<'a>) -> Self {
+    /// The kernel's uniformity in a CTA of shape `block`, `None` where
+    /// the launch does not give it.
+    pub(crate) fn new(t: &'a KernelAnalyses<'a>, block: Option<[u32; 3]>) -> Self {
         let mut reads: Vec<(Node, Read)> = Vec::new();
         let defs: BTreeSet<usize> = (t.writes.iter())
             .filter(|(r, _)| matches!(r, Register::Named(_)))
@@ -65,14 +71,14 @@ impl<'a> UniformityInfo<'a> {
             .collect();
         for d in defs {
             reads.extend(
-                def_reads(t, d, false)
+                def_reads(t, d, false, block)
                     .into_iter()
                     .map(|r| (Node::Def(d), r)),
             );
         }
         for &d in t.writes.get(&Register::Cc).into_iter().flatten() {
             reads.extend(
-                def_reads(t, d, true)
+                def_reads(t, d, true, block)
                     .into_iter()
                     .map(|r| (Node::Carry(d), r)),
             );
@@ -197,7 +203,7 @@ impl<'a> UniformityInfo<'a> {
 /// What the registers statement `d` writes depend on, or with
 /// `carry_out` the CC.CF it writes: its inputs and, when guarded, the
 /// guard and the value it keeps where the guard is false.
-fn def_reads(t: &KernelAnalyses, d: usize, carry_out: bool) -> Vec<Read> {
+fn def_reads(t: &KernelAnalyses, d: usize, carry_out: bool, block: Option<[u32; 3]>) -> Vec<Read> {
     let Stmt::Instr(instr) = &t.kernel.stmts[d] else {
         return vec![Read::Divergent(
             "comes from a statement not parsed".to_owned(),
@@ -206,6 +212,7 @@ fn def_reads(t: &KernelAnalyses, d: usize, carry_out: bool) -> Vec<Read> {
     let lane_wise = lane_wise(t, instr);
     let (written, inputs) = split_operands(t.module, instr);
     let mut rs = match lane_wise {
+        _ if warp_index(t, instr, inputs, d, block) => vec![Read::Uniform(Uniform::Warp)],
         true => operand_reads(t, data_inputs(t, instr, inputs), d),
         false => match warp_reads(t, instr, inputs, d) {
             Some(rs) => rs,
@@ -228,6 +235,72 @@ fn def_reads(t: &KernelAnalyses, d: usize, carry_out: bool) -> Vec<Read> {
         }
     }
     rs
+}
+
+/// Whether `instr` reads `%tid.x` only through the bits above a warp's
+/// lanes, in a block of one row or whose rows are whole warps: a `shr`
+/// by at least 5, a `bfe` from bit 5 up (PTX ISA §9.7.1.20, "pos = b &
+/// 0xff"), a `div` by a multiple of 32 or an `and` with a mask clearing
+/// bits 0 to 4, of `%tid.x` or of an unguarded `mov` of it. A warp is 32 consecutive
+/// thread IDs from a multiple of 32 (§3.1), a thread's ID `%tid.x +
+/// %tid.y·%ntid.x + %tid.z·%ntid.x·%ntid.y` (§9.7.16.1), so there its
+/// lanes share `⌊%tid.x/32⌋`.
+fn warp_index(
+    t: &KernelAnalyses,
+    instr: &Instr,
+    inputs: &[OperandId],
+    d: usize,
+    block: Option<[u32; 3]>,
+) -> bool {
+    let (Some([x, y, z]), Some(ty)) = (block, Form::of(t.module, instr).int_type()) else {
+        return false;
+    };
+    if (y, z) != (1, 1) && i64::from(x) % WARP_SZ != 0 {
+        return false;
+    }
+    let lane_bits = WARP_SZ.trailing_zeros();
+    let imm = |op: OperandId| match t.module.operand(op) {
+        Operand::Immediate(c) => parse_bits(
+            t.module.interner.resolve(*c),
+            immediate_width(t.module, instr, op),
+        ),
+        _ => None,
+    };
+    let (a, high) = match (instr.mnemonic, inputs) {
+        (Opcode::Shr, [a, k]) => (
+            a,
+            imm(*k).is_some_and(|k| shift_count(k, ty.width) >= lane_bits),
+        ),
+        (Opcode::Bfe, [a, p, _]) => (a, imm(*p).is_some_and(|p| p & 0xff >= i64::from(lane_bits))),
+        (Opcode::Div, [a, c]) => (a, imm(*c).is_some_and(|c| c != 0 && c % WARP_SZ == 0)),
+        (Opcode::And, [p, q]) => match (imm(*q), imm(*p)) {
+            (Some(m), _) => (p, m % WARP_SZ == 0),
+            (None, Some(m)) => (q, m % WARP_SZ == 0),
+            (None, None) => return false,
+        },
+        _ => return false,
+    };
+    high && is_tid_x(t, *a, d)
+}
+
+/// Whether operand `op` read at `pos` is `%tid.x`, or a register an
+/// unguarded `mov` of `%tid.x` wrote.
+fn is_tid_x(t: &KernelAnalyses, op: OperandId, pos: usize) -> bool {
+    let tid_x = |op: OperandId| {
+        *t.module.operand(op) == Operand::Special(SpecialVector::Tid.components()[0])
+    };
+    match t.module.operand(op) {
+        Operand::Register(r) => match t.ssa.value_before(pos, Register::Named(*r)) {
+            Some(Value::Result { op: def, .. }) => matches!(
+                &t.kernel.stmts[def],
+                Stmt::Instr(i) if i.mnemonic == Opcode::Mov
+                    && i.predicate.is_none()
+                    && matches!(t.module.operand_ids(i.operands), [_, src] if tid_x(*src))
+            ),
+            _ => false,
+        },
+        _ => tid_x(op),
+    }
 }
 
 /// What a result one for the lanes of a warp executing it together
@@ -531,7 +604,8 @@ mod tests {
         let pos = (start..k.stmts.len())
             .find(|&i| matches!(&k.stmts[i], Stmt::Instr(i) if m.opcode(i) == opcode))
             .expect("the read");
-        UniformityInfo::new(&t).register_uniformity(m.interner.get(reg).expect("register"), pos)
+        UniformityInfo::new(&t, k.reqntid)
+            .register_uniformity(m.interner.get(reg).expect("register"), pos)
     }
 
     fn cta_uniform_at(
@@ -545,6 +619,47 @@ mod tests {
 
     fn tid() -> Result<(), String> {
         Err("depends on %tid.x".to_owned())
+    }
+
+    /// The bits of `%tid.x` above a warp's are one value per warp in a
+    /// block of one row or whose rows are whole warps; through another
+    /// instruction first, or with no block shape, they are divergent.
+    #[test]
+    fn a_warp_s_bits_of_tid_x_are_one_value_per_warp() {
+        let at = |shape: &str, body: &str| {
+            let src = format!(
+                ".version 8.7\n.target sm_80\n.address_size 64\n\
+                 .visible .entry k(\n.param .u32 k_param_0\n)\n{shape}\n{{\n\
+                 mov.u32 %r1, %tid.x;\n{body}\nst.global.u32 [%rd9], %r2;\nret;\n}}\n"
+            );
+            uniformity_at(&src, "%r2", None, "st.global.u32")
+        };
+        let row = ".reqntid 128, 1, 1";
+        for body in [
+            "shr.u32 %r2, %r1, 5;",
+            "bfe.u32 %r2, %r1, 6, 2;",
+            "div.u32 %r2, %r1, 64;",
+            "and.b32 %r2, %r1, 0xffffffe0;",
+            "and.b32 %r2, 64, %r1;",
+        ] {
+            assert_eq!(at(row, body), Ok(Uniform::Warp), "{body}");
+        }
+        assert_eq!(
+            at(".reqntid 64, 2, 1", "shr.u32 %r2, %r1, 5;"),
+            Ok(Uniform::Warp)
+        );
+        let divergent = |reg: &str| Err(format!("depends on {reg}"));
+        assert_eq!(
+            at(".reqntid 48, 2, 1", "shr.u32 %r2, %r1, 5;"),
+            divergent("%tid.x")
+        );
+        assert_eq!(at(row, "shr.u32 %r2, %r1, 4;"), divergent("%tid.x"));
+        assert_eq!(at(row, "and.b32 %r2, %r1, 127;"), divergent("%tid.x"));
+        assert_eq!(at("", "shr.u32 %r2, %r1, 5;"), divergent("%tid.x"));
+        let through_shl = "shl.b32 %r3, %r1, 4;\nand.b32 %r2, %r3, 512;";
+        assert_eq!(at(row, through_shl), divergent("%tid.x"));
+        let rows = ".reqntid 32, 4, 1";
+        assert_eq!(at(rows, "mov.u32 %r2, %tid.y;"), divergent("%tid.y"));
     }
 
     #[test]

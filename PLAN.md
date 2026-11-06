@@ -230,14 +230,14 @@ output_tallies` rewrites it.
 | block: CTAs | 85 | 85 (100%) |  |  |  |
 | block: `runs when` | 147 | 147 (100%) |  |  |  |
 | block: exec | 818 | 286 (35%) | 112 (14%) | 420 (51%) |  |
-| instruction: threads, where a guard narrows its block's | 952 | 778 (82%) | 174 (18%) |  |  |
+| instruction: threads, where a guard narrows its block's | 943 | 780 (83%) | 163 (17%) |  |  |
 | instruction: exec, where it differs from its block's | 651 | 556 (85%) | 91 (14%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
 | instruction: `not classified` | 423 | | | | |
 | instruction: `bytes ?` | 109 | | | | |
-| operand: address | 4,399 | 4,050 (92%) |  | 349 (8%) |  |
-| operand: global sectors/req | 2,221 | 1,491 (67%) | 447 (20%) |  | 283 (13%) |
-| operand: global sectors/req, ideal | 1,938 | 1,772 (91%) | 166 (9%) |  |  |
+| operand: address | 4,399 | 4,058 (92%) |  | 341 (8%) |  |
+| operand: global sectors/req | 2,221 | 1,494 (67%) | 452 (20%) |  | 275 (12%) |
+| operand: global sectors/req, ideal | 1,946 | 1,783 (92%) | 163 (8%) |  |  |
 | operand: shared wavefronts/req | 2,178 | 1,442 (66%) |  | 557 (26%) | 179 (8%) |
 | operand: shared wavefronts/req, ideal | 1,442 | 1,442 (100%) |  |  |  |
 <!-- end tests/output_tallies.rs -->
@@ -395,24 +395,16 @@ output_tallies` rewrites it.
   a fourth operand other than 31, which splits the warp into
   sub-segments or clamps the lane (PTX ISA §9.7.9.6), leaves it
   unknown: `micro/shfl_idx.ptx`.
-- **The warp index is one value per warp only through a shuffle.** The
-  uniformity analysis reads `⌊%tid.x/32⌋` as divergent, though in a
-  block of one row, or whose `%ntid.x` is a multiple of 32, every lane
-  of a warp holds the same (PTX ISA §3.1): a `brx.idx` on a load at
-  `param_0 + 4·⌊%tid.x/32⌋` selects its targets' threads as an
-  unknown, where with the index shuffled from lane 0 first, as Triton's
-  warp specialization does, each target runs on whole warps
-  (`a_jump_table_on_a_warp_s_index_selects_whole_warps`). So is an
-  and-mask keeping bits of `%tid.x` above its lane bits, `and.b32 d,
-  %tid.x, M` with M a multiple of 32, Triton's layout bits: b200
-  `attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding`
-  line 950's `ld.global.v4.b32` reads `addr ? (depends on a value
-  loaded inside the loop)`, its index loaded at line 909 at an address
-  built from line 98's `and.b32 %r2, %r1, 64`. In the Blackwell corpus
-  (`trap` entry above) the shift, `bfe` and division forms of the warp
-  index are 3,757 statements in 2,545 files and the masks 6,829 in
-  3,746; reading both as one value per warp turns 8,162 `addr ?` into
-  addresses.
+- **A warp's bits of `%tid.x` are one value per warp only where an
+  instruction reads them off `%tid.x`.** The uniformity analysis takes
+  a `shr` by 5 or more, a `bfe` from bit 5 up, a `div` by a multiple of
+  32 and an `and` clearing bits 0 to 4, of `%tid.x` or of a `mov` of
+  it, as one value per warp where the block shape (`.reqntid` or
+  `--launch`) has one row or rows of whole warps (PTX ISA §3.1,
+  §9.7.16.1). The same bits reached through another instruction,
+  `(%tid.x << 4) & 512`, are divergent, as is each such value where no
+  block shape is given, and `%tid.y` in rows of whole warps
+  (`a_warp_s_bits_of_tid_x_are_one_value_per_warp`).
 - **A parameter load at an offset reads the whole parameter** (PTX
   ISA §5.1.6.1): `ld.param.u32 %r3, [p+4]` reads as `param_1`, like
   the load at offset 0, so comparing two fields of a by-value

@@ -24,14 +24,6 @@ tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:702	<= warp * × lane *
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:792	warp * × lane * | runs when %rd44@507 ≥ %rd43@503 + 1 (warp-uniform, branch at line 788)
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:887	warp * × lane *
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:950	<= warp * × lane *
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:958	<= warp * × lane *
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:966	<= warp * × lane *
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:974	<= warp * × lane *
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:982	<= warp * × lane *
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:990	<= warp * × lane *
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:998	<= warp * × lane *
-tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:1006	<= warp * × lane *
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:1614	warp 0 × lane 0-15
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:1624	<= warp * × lane *
 tests/fixtures/b200/attn_lightllm__deepseek-v3__decode._fwd_kernel_flash_decode_stage1_padding.sm_100a.ptx:1647	warp * × lane *
@@ -817,7 +809,7 @@ tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kern
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:306	<= warp * × lane *
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:312	<= warp * × lane *
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:318	<= warp * × lane *
-tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:366	<= warp 0-2 × lane *
+tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:366	warp 0-2 × lane *
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:425	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:429	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:434	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
@@ -828,7 +820,6 @@ tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kern
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:456	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:461	warp * × lane * | runs when (%rs3@181 mod 256) = 0 (warp-uniform, branch at line 187)
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:472	warp * × lane * | runs when ((%rs3@181 mod 256) ≠ 0 and %r19@62 ≥ %r18@52 + 3) or ((%rs3@181 mod 256) = 0 and %r19@62 > %r18@52 + 2) (warp-uniform, branches at lines 187, 243, 471)
-tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:498	<= warp * × lane *
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:544	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:548	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:553	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
@@ -838,7 +829,7 @@ tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kern
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:571	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:575	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:580	warp * × lane * | runs when %r19@62 ≤ %r18@52 + 2 (warp-uniform, branch at line 471)
-tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:606	<= warp 0-2 × lane *
+tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:606	warp 0-2 × lane *
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:650	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:654	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30
 tests/fixtures/b200/ssm__qwen3-next-80b__prefill__conv1d._causal_conv1d_fwd_kernel.sm_100a.ptx:659	warp * × lane 0-2,4-6,8-10,12-14,16-18,20-22,24-26,28-30

@@ -903,7 +903,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let (pos, setp) = (k.stmts.iter().enumerate())
             .find_map(|(i, s)| match s {
                 Stmt::Instr(instr) if instr.mnemonic == Opcode::Setp => Some((i, instr)),
@@ -947,7 +947,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let reads = |mnemonic: Opcode| {
             (k.stmts.iter().enumerate())
                 .filter_map(move |(i, s)| match s {
@@ -1030,7 +1030,7 @@ mod tests {
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
         let k_max = HashMap::from([(SymbolicConstant::KernelParam(2), i64::from(i32::MAX))]);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let affine = AffineAnalysis::new(&data, &uniformity, Some(&k_max));
         let mut loops = (0..f.loops.len() as u32).map(LoopId);
         let outer = loops
@@ -2146,7 +2146,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let affine = AffineAnalysis::new(&data, &uniformity, None);
         let constant = AffineExpr::constant;
         let tid = |c| AffineExpr::var(Var::Tid(Axis::X)) + constant(c);
@@ -2189,7 +2189,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let affine = AffineAnalysis::new(&data, &uniformity, None);
         let var = AffineExpr::var;
         let constant = AffineExpr::constant;
@@ -2220,7 +2220,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let affine = AffineAnalysis::new(&data, &uniformity, None);
         let counter = || AffineExpr::var(Var::Iteration(LoopId(0)));
         let param = |i| SymExpr::Sym(SymbolicConstant::KernelParam(i));
@@ -2243,7 +2243,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let affine = AffineAnalysis::new(&data, &uniformity, None);
         let x = AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(0)))
             + AffineExpr::var(Var::Tid(Axis::X));

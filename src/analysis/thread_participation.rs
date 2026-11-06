@@ -2188,7 +2188,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &forest);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, k.reqntid);
         let sets = thread_sets(&AffineAnalysis::new(&data, &uniformity, None));
         (m, sets)
     }
@@ -2220,8 +2220,9 @@ mod tests {
     /// A `brx.idx` on a value each warp loads from one address, at the
     /// warp index its lane 0 shuffles to the others, sends all of a warp's
     /// threads to one target: each target runs on whole warps, which ones
-    /// unknown. Without the shuffle `⌊%tid.x/32⌋` reads as divergent, and
-    /// so do the targets.
+    /// unknown. Without the shuffle so does `⌊%tid.x/32⌋` in a block of one
+    /// row; a half-warp's index `⌊%tid.x/16⌋` reads as divergent, and so do
+    /// the targets.
     #[test]
     fn a_jump_table_on_a_warp_s_index_selects_whole_warps() {
         let table = |warp: &str| {
@@ -2243,7 +2244,9 @@ mod tests {
         assert_eq!(target(&shuffled.blocks[2]), Some(BlockId(2)));
         assert_eq!(target(&shuffled.blocks[3]), Some(BlockId(3)));
         let (_, divided) = sets_of(&table("mov.u32 %r3, %r2;"));
-        assert_eq!(divided.blocks[2], Pred::Unknown);
+        assert_eq!(target(&divided.blocks[2]), Some(BlockId(2)));
+        let (_, halves) = sets_of(&table("shr.u32 %r3, %r1, 4;"));
+        assert_eq!(halves.blocks[2], Pred::Unknown);
     }
 
     /// Three-valued logic does not see that an unknown and its negation
