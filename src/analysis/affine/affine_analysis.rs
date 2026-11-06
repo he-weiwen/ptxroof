@@ -1039,14 +1039,15 @@ mod tests {
         let k = |n: i64| HashMap::from([(SymbolicConstant::KernelParam(0), n)]);
         let trips = |n| trips_under(&src, &k(n))[0].1.clone().map(|t| t.to_string());
         assert_eq!(trips(4096), Ok("512".to_owned()));
-        let wraps = Err(
-            "uniform(%r2) is defined in an enclosing loop: `add.s32` leaves 32 bits".to_owned(),
-        );
+        let wraps = Err("latch condition does not read as one integer comparison".to_owned());
         assert_eq!(trips(i64::from(i32::MAX)), wraps);
     }
 
+    /// k5's outer counter, an `add.s32` its `setp.lt.u32` latch reads
+    /// unsigned, counts 2^28 trips at K = 2^31 − 1 to every reader: the
+    /// count `constant_trips` reads while computing it and the cached one.
     #[test]
-    fn a_count_its_counter_refuses_once_known_is_unknown_to_every_reader() {
+    fn a_count_known_once_is_the_count_to_every_reader() {
         let src = include_str!("../../../tests/fixtures/k5/k5.sm_80.ptx");
         let m = parse(src).expect("k5 parses");
         let k = &m.kernels[0];
@@ -1060,11 +1061,9 @@ mod tests {
         let outer = loops
             .find(|&l| f.get(l).parent.is_none())
             .expect("an outer loop");
-        assert_eq!(affine.constant_trips(outer), None);
-        let count = (affine.loop_trip_count(outer).err())
-            .map(|r| r.render(&data, Some(outer), true, &|v| unknown_by_register(&m, v)));
-        let wraps = "uniform(%r134) is defined in an enclosing loop: `add.s32` leaves 32 bits";
-        assert_eq!(count.as_deref(), Some(wraps));
+        assert_eq!(affine.constant_trips(outer), Some(1 << 28));
+        let count = affine.loop_trip_count(outer).ok().map(|t| t.count);
+        assert_eq!(count, Some(SymExpr::Const(1 << 28)));
     }
 
     #[test]
@@ -1156,10 +1155,10 @@ mod tests {
     }
 
     /// A 32-bit bound computed past its width: a shift by more than 32
-    /// leaves 0 (PTX ISA §9.7.8.8), a product past 2^32 is not read and
-    /// stays the value it computes, the same for every thread.
+    /// leaves 0 (PTX ISA §9.7.8.8), a product past 2^32 its low 32 bits as
+    /// the signed latch reads them.
     #[test]
-    fn a_bound_past_its_register_width_wraps_or_is_a_cta_uniform_value() {
+    fn a_bound_past_its_register_width_reads_its_low_bits() {
         let bound = |compute: &str| {
             let src = kernel_with(
                 N_PARAM,
@@ -1175,8 +1174,29 @@ mod tests {
         assert_eq!(bound("mul.lo.u32 %r4, %r3, 2;"), Ok("13".to_owned()));
         assert_eq!(
             bound("mul.lo.u32 %r4, %r3, 1073741824;"),
-            Ok("uniform(%r4) + 5".to_owned())
+            Ok("5".to_owned())
         );
+    }
+
+    /// PTX ISA §9.7.1.1: `add.sat` "limits result to MININT..MAXINT"; a
+    /// sum its type holds is the sum, one it clamps is not read and is a
+    /// value of its own.
+    #[test]
+    fn a_saturating_add_reads_a_sum_its_type_holds() {
+        let bound = |first: i64| {
+            let src = kernel_with(
+                N_PARAM,
+                &format!(
+                    "mov.u32 %r4, {first};\nadd.sat.s32 %r5, %r4, 5;\nmov.u32 %r2, 0;\n\
+                     $L__L:\nadd.s32 %r2, %r2, 1;\nsetp.lt.s32 %p1, %r2, %r5;\n\
+                     @%p1 bra $L__L;\nret;"
+                ),
+            );
+            trips_of(&src)[0].1.clone().map(|t| t.to_string())
+        };
+        assert_eq!(bound(7), Ok("12".to_owned()));
+        let clamped = "max(uniform(%r5), 1)";
+        assert_eq!(bound(i64::from(i32::MAX)), Ok(clamped.to_owned()));
     }
 
     /// A bound two paths set to 7, one after a 3 it overwrites: the 3
@@ -1512,7 +1532,7 @@ mod tests {
     /// A latch's `min` or `max` of the CTA index is one value per CTA, a
     /// row range's `min(16·%ctaid.y + 16, n) - 16·%ctaid.y`; ranged over
     /// the grid, a `max.u32(%ctaid.x, 1)` shifted by 31, or times
-    /// `%ctaid.x` and shifted, leaves 32 bits with 3 CTAs and is not read.
+    /// `%ctaid.x` and shifted, is 2^31 times its bit 0, CTA by CTA.
     #[test]
     fn a_latch_min_or_max_of_the_cta_index_is_one_per_cta() {
         let trips = |bound: &str, grid: Option<i64>| {
@@ -1542,11 +1562,12 @@ mod tests {
         assert_eq!(trips(rows, None), Ok(read.to_owned()));
         let shifted = "max.u32 %r3, %r2, 1;\nshl.b32 %r9, %r3, 31;";
         assert!(trips(shifted, None).is_ok());
-        let whole = "max(2147483648 * (uniform(%r9) / 2147483648), 1)";
-        assert_eq!(trips(shifted, Some(3)), Ok(whole.to_owned()));
+        let bit = "max(2147483648 * (max(%ctaid.x, 1) mod 2), 1)";
+        assert_eq!(trips(shifted, Some(3)), Ok(bit.to_owned()));
         let times = "max.u32 %r3, %r2, 1;\nmul.lo.u32 %r4, %r3, %r2;\nshl.b32 %r9, %r4, 31;";
         assert!(trips(times, None).is_ok());
-        assert_eq!(trips(times, Some(3)), Ok(whole.to_owned()));
+        let bit = "max(2147483648 * ((%ctaid.x * max(%ctaid.x, 1)) mod 2), 1)";
+        assert_eq!(trips(times, Some(3)), Ok(bit.to_owned()));
     }
 
     /// A guard that sums its bound in the other order than the latch
@@ -2149,6 +2170,10 @@ mod tests {
         let read = |a: &AffineExpr, kind, width| {
             (affine.extend(a, IntInstrType { kind, width })).map(|x| x.to_string())
         };
+        // Its range crosses windows: 2^32·%tid.y + %tid.x reads %tid.x past
+        // its multiples of 2^32, 2^28·%tid.x its low four bits.
+        let rows = || AffineExpr::var(Var::Tid(Axis::Y)).scale(SymExpr::Const(1 << 32)) + tid(0);
+        let shl28 = || AffineExpr::var(Var::Tid(Axis::X)).scale(SymExpr::Const(1 << 28));
         let (s, u, b) = (IntKind::Signed, IntKind::Unsigned, IntKind::Bits);
         for (a, kind, width, read_as) in [
             (tid(0), u, 32, Some("%tid.x")),
@@ -2162,6 +2187,10 @@ mod tests {
             (constant(-1), u, 16, Some("65535")),
             (constant(-1), u, 64, None),
             (param(-4), u, 32, Some("param_0 - 4")),
+            (rows(), u, 32, Some("%tid.x")),
+            (rows(), s, 32, Some("%tid.x")),
+            (shl28(), u, 32, Some("268435456 * (%tid.x mod 16)")),
+            (shl28(), s, 32, None),
         ] {
             let got = read(&a, kind, width);
             assert_eq!(got.as_deref(), read_as, "{a} as {kind:?}{width}");

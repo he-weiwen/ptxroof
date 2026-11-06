@@ -1858,6 +1858,9 @@ tests/fixtures/micro/cta_guards.ptx:86	warp * × lane *
 tests/fixtures/micro/cta_guards.ptx:94	<= warp * × lane *
 tests/fixtures/micro/cta_mask.ptx:23	warp * × lane *
 tests/fixtures/micro/cta_mask.ptx:32	<= warp * × lane *
+tests/fixtures/micro/cta_mod_latch.ptx:20	warp * × lane *
+tests/fixtures/micro/cta_mod_latch.ptx:26	warp * × lane *
+tests/fixtures/micro/cta_mod_latch.ptx:31	warp * × lane *
 tests/fixtures/micro/cta_trips.ptx:26	warp * × lane *
 tests/fixtures/micro/cta_trips.ptx:30	warp * × lane * | runs when %ctaid.x ≥ 1 (CTA-uniform, branch at line 29)
 tests/fixtures/micro/cta_trips.ptx:33	warp * × lane *
@@ -2143,7 +2146,7 @@ tests/fixtures/micro/setp_unknown_range.ptx:128	warp 0 × lane *
 tests/fixtures/micro/setp_unsigned.ptx:27	warp * × lane *
 tests/fixtures/micro/setp_unsigned.ptx:33	warp 0 × lane 16-31 ∪ warp 1 × lane 0-15
 tests/fixtures/micro/setp_unsigned.ptx:46	warp * × lane *
-tests/fixtures/micro/setp_unsigned.ptx:52	<= warp * × lane *
+tests/fixtures/micro/setp_unsigned.ptx:52	warp * × lane 0,16
 tests/fixtures/micro/setp_unsigned.ptx:65	warp * × lane *
 tests/fixtures/micro/setp_unsigned.ptx:72	warp 0 × lane 16-31 ∪ warp 1 × lane 0-15
 tests/fixtures/micro/setp_unsigned.ptx:85	warp * × lane *
@@ -2151,7 +2154,7 @@ tests/fixtures/micro/setp_unsigned.ptx:91	warp 1 × lane *
 tests/fixtures/micro/setp_wraps.ptx:23	warp * × lane *
 tests/fixtures/micro/setp_wraps.ptx:29	<= warp * × lane *
 tests/fixtures/micro/setp_wraps.ptx:42	warp * × lane *
-tests/fixtures/micro/setp_wraps.ptx:48	<= warp * × lane *
+tests/fixtures/micro/setp_wraps.ptx:48	warp 0 × lane 16
 tests/fixtures/micro/shared_scalar.ptx:22	warp * × lane *
 tests/fixtures/micro/shared_wavefronts.ptx:27	warp * × lane *
 tests/fixtures/micro/shared_wavefronts.ptx:583	warp * × lane *
@@ -2186,6 +2189,7 @@ tests/fixtures/micro/tensor_copies.ptx:74	warp * × lane *
 tests/fixtures/micro/tensor_copies.ptx:83	warp * × lane *
 tests/fixtures/micro/texture_outputs.ptx:22	warp * × lane *
 tests/fixtures/micro/texture_outputs.ptx:27	<= warp * × lane *
+tests/fixtures/micro/tid_range.ptx:29	(%tid.x mod 16) == 0
 tests/fixtures/micro/trip_div_param.ptx:27	warp * × lane *
 tests/fixtures/micro/trip_div_param.ptx:33	warp * × lane * | runs when %r3@30 ≥ 1 (CTA-uniform, branch at line 32)
 tests/fixtures/micro/trip_div_param.ptx:34	warp * × lane *

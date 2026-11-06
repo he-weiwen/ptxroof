@@ -170,8 +170,10 @@ program run without undefined behavior, whose integer arithmetic on
 addresses, trip counts and thread-index comparisons does not wrap its
 type, and whose signed comparisons read values in their signed range.
 A value of unknown range is read in the integers on that premise; one
-whose range under the bindings leaves its type is refused (the entries
-below). A thread selector reads an unsigned comparison's operands as
+of known range keeps the value it computes, and an operand whose range
+crosses an edge of its type's values is read past its multiples of
+2^width where its form allows and else refused (the entries below). A
+thread selector reads an unsigned comparison's operands as
 unsigned where each has a known range lying in [0, 2^width) shifted
 by a multiple of 2^width, or is proven nonnegative and so, of unknown
 range, below 2^(width−1) by this contract (`n + %tid.x <u −16` reads
@@ -226,9 +228,9 @@ output_tallies` rewrites it.
 | instruction: `unused` | 954 | | | | |
 | instruction: `not classified` | 423 | | | | |
 | instruction: `bytes ?` | 109 | | | | |
-| operand: address | 4,399 | 3,978 (90%) |  | 421 (10%) |  |
-| operand: global sectors/req | 2,221 | 1,393 (63%) | 473 (21%) |  | 355 (16%) |
-| operand: global sectors/req, ideal | 1,866 | 1,674 (90%) | 192 (10%) |  |  |
+| operand: address | 4,399 | 4,050 (92%) |  | 349 (8%) |  |
+| operand: global sectors/req | 2,221 | 1,465 (66%) | 473 (21%) |  | 283 (13%) |
+| operand: global sectors/req, ideal | 1,938 | 1,746 (90%) | 192 (10%) |  |  |
 | operand: shared wavefronts/req | 2,178 | 1,442 (66%) |  | 557 (26%) | 179 (8%) |
 | operand: shared wavefronts/req, ideal | 1,442 | 1,442 (100%) |  |  |  |
 <!-- end tests/output_tallies.rs -->
@@ -319,27 +321,12 @@ output_tallies` rewrites it.
   thread index an earlier `mov.b32 %v.x, %r1` wrote: the address is
   `[4·%tid.x + param_0]`, where ptxas takes it from the load.
 - **Integer arithmetic is taken not to wrap where its range is
-  unbounded**: a 16- or 32-bit `add`, `sub`, `mul.lo`, `mad.lo`, `shl`
-  or `bfe` result is
-  refused when the value's range, over constants, the block shape
-  `.reqntid` or `--launch` gives, else any block's (PTX ISA §10.1,
-  §10.2), the grid `--grid` gives, and constant trip counts, leaves the
-  type, and read as a value of its own where it is the same for every
-  thread (`micro/mul_wrap.ptx`: `mul.lo.s32` of 2^30 and 4, so its
-  address reads `uniform(%r2@24)`; `micro/latch_unsigned.ptx`'s
-  `micro_latch_unsigned`, whose counter's `add.s32` reaches 2^32 − 4
-  over the 2^32 − 4 trips its `setp.lt.u32` latch reads (an RTX 4090
-  run stores 4294967292), reads `loop: trips ?`; k5's
-  `for (uint bkIdx = 0; bkIdx < K; bkIdx += BK)`, stepped by `add.s32`
-  and compared `setp.lt.u32`, reaches 2^31 over its 2^28 trips under
-  `--bind 2:K=2147483647`, so its outer loop reads `loop: trips ?`
-  (`a_count_its_counter_refuses_once_known_is_unknown_to_every_reader`);
-  `micro/tid_range.ptx`, with no `.reqntid`: `shl.b32` of `%tid.x` by
-  28, so its store's thread test, `%tid.x mod 16 == 0`, is not read;
-  `micro/grid_wrap.ptx`: 2^24·`%ctaid.x` under `--grid 257`); one
-  through a parameter, `%ctaid` with no grid given or a symbolic trip
-  count is read under the input contract above. A conversion to or from
-  floating point, or a pack, is refused (`micro/cvt_reads.ptx`).
+  unbounded**: a value through a parameter, `%ctaid` with no grid given
+  or a symbolic trip count is read under the input contract above. An
+  `add.sat` or `sub.sat` is read only where its operands and its sum
+  lie in its type's values (`a_saturating_add_reads_a_sum_its_type_holds`).
+  A conversion to or from floating point, or
+  a pack, is refused (`micro/cvt_reads.ptx`).
 - **An operand read as its type is refused where its range crosses the
   edge of the type's values.** An integer `cvt`'s source and result, a
   `.wide` product's, `shr`'s, `div`'s, `rem`'s, `min`'s and `max`'s
@@ -350,8 +337,13 @@ output_tallies` rewrites it.
   `%tid.x` + 2^32 is `%tid.x`; `micro/trip_max.ptx`: `min.u32` of n − 4
   under `--bind 1:n=2` is 8, the 8 trips its record measures), and as
   itself where the range is unknown, under the input contract. Where
-  the range crosses, each thread's value is one of two forms and the
-  operand is refused (`micro/wide_operands.ptx`: `%tid.x` − 256 as
+  the range crosses, the value below 63 bits reads past its multiples
+  of 2^width, the rest shifted into the values where it lies in one
+  window and else as `divmod` reads its remainder (unit test
+  `an_operand_reads_as_its_type_in_the_one_window_of_its_range`:
+  2^32·%tid.y + %tid.x as a `u32` is %tid.x, 2^28·%tid.x is
+  2^28·(%tid.x mod 16)); else each thread's value is one of two forms
+  and the operand is refused (`micro/wide_operands.ptx`: `%tid.x` − 256 as
   `mul.wide.u32` reads it, 2^32 + `%tid.x` − 256 below `%tid.x` = 256,
   "reads a value its type does not hold"; `micro/division_operands.ptx`'s
   `div.u32` and `shr.u32`).
@@ -530,8 +522,9 @@ output_tallies` rewrites it.
   (`micro/magic_div.ptx`: "`mul.hi.u32` keeps a product's upper half";
   sglang `bmm_kernel_persistent`'s `/ 148` leaves its trip count
   unknown); a floor or mod of a value that, past its multiple of the
-  divisor, holds two terms, or one whose coefficient the divisor is no
-  multiple of, or a base not below that coefficient, such as a 0-based
+  divisor, is neither a term c·v, c a divisor, plus a rest the ranges
+  keep in [0, c), nor symbols whose factors share a divisor a of d plus
+  a rest in [0, a), nor in one block of d over its range, such as a 0-based
   counter's `i % 2` read before its increment, `(k − 1) mod 2`, which
   is the same for every thread and so
   a uniform variable the loop defines (`micro/counter_mod_offset.ptx`:
@@ -684,6 +677,12 @@ output_tallies` rewrites it.
   measured on an RTX 4090), and stays unknown where those threads are
   not counted at every CTA, past 2^24 CTAs on the axes the count
   reads, or where the count at a CTA is negative or not a constant.
+- **A floor or mod can print a term that is always 0, or a remainder of
+  a remainder**: where the rest of a term c·v lies in [0, c), the floor
+  and the remainder keep ⌊v/(d/c)⌋ and v mod d/c even where v's range
+  makes them 0 or v (census `01452.ptx`'s first load:
+  `4096·⌊(%tid.x mod 128)/256⌋ + 16·((%tid.x mod 128) mod 128)`); the
+  value is exact.
 - **A product of two forms with variables is unknown**: `mul` and
   `mad` need one factor free of variables, after the bindings, which
   give a symbol its value where it is loaded (`micro_floor_bound_zero`
@@ -883,15 +882,16 @@ output_tallies` rewrites it.
   `%tid` below the block shape, else below 1024 (§10.2), and `%ctaid`
   below the grid, crosses an edge of [−2^(width−1), 2^(width−1))
   shifted by a multiple of 2^width and, unsigned, of [0, 2^width) so
-  shifted; nor, unsigned and read as signed, where the operand the
+  shifted, and its value past its multiples of 2^width is no form
+  (`extend`); nor, unsigned and read as signed, where the operand the
   other must stay below is not known nonnegative, with every `%ctaid`
   of any grid (§10.7) and every symbol nonnegative (gluon
   attn_fwd_ws's `setp.lt.u32 %p60, %r1880, -190` without its record's
   launch); an `eq` or `ne` where their difference's range leaves
   (−2^width, 2^width). What it guards is then a bound
   (`micro/setp_float.ptx`, `micro/setp_f16x2.ptx`,
-  `micro/setp_unsigned.ptx`'s second kernel, `micro/setp_wraps.ptx`:
-  `<= warp * × lane *`, `global store <= 256 B`).
+  `micro/setp_wraps.ptx`'s first kernel, a signed comparison of
+  2^28·%tid.x: `<= warp * × lane *`, `global store <= 256 B`).
 - **A guard comparing the thread index with a CTA index needs the
   grid, and one with an unbound parameter or a loop counter is an
   unknown selector.** A comparison over `%tid` and `%ctaid` with

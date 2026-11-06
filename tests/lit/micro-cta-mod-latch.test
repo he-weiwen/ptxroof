@@ -1,0 +1,11 @@
+# A latch bound of (%ctaid.x << 30) >> 28 as `u32`s: the shift keeps
+# %ctaid.x's low two bits, so over a grid of 8 the bound reads
+# 4·(%ctaid.x mod 4), each CTA's count is read at its own index, and
+# the loop runs 1 + 4 + 8 + 12 trips twice, 50 atomic adds (ptxas 13.4
+# keeps `USHF.L.U32 ... 0x1e` and `USHF.R.U32.HI ... 0x1c`; an RTX 4090
+# run of 8 CTAs stores 50). Over 4 CTAs the shift wraps no index: 25
+# (the RTX 4090 run stores 25).
+RUN: %ptxroof analyze %fixtures/micro/cta_mod_latch.ptx --grid 8 | FileCheck --check-prefix=EIGHT "%s"
+RUN: %ptxroof analyze %fixtures/micro/cta_mod_latch.ptx --grid 4 | FileCheck --check-prefix=FOUR "%s"
+EIGHT: {{^}}$L__BB0_1: // loop: trips max(4·(%ctaid.x mod 4), 1) | warp * × lane * | exec 50/launch{{$}}
+FOUR: {{^}}$L__BB0_1: // loop: trips max(4·%ctaid.x, 1) | warp * × lane * | exec 25/launch{{$}}

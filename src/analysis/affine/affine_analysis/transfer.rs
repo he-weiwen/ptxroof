@@ -3,6 +3,7 @@
 //! analysis reads.
 
 use super::*;
+use crate::support::integer::same_window;
 
 impl AffineAnalysis<'_> {
     /// The value statement `def` writes to `reg`, were its guard true.
@@ -109,6 +110,27 @@ impl AffineAnalysis<'_> {
                     ));
                 }
                 Err(UnknownReason::Load { def })
+            }
+            // PTX ISA §9.7.1.1, §9.7.1.2: `.sat` "limits result to
+            // MININT..MAXINT (no overflow) for the size and signedness of
+            // the operation", which leaves a sum its type holds.
+            (Opcode::Add | Opcode::Sub, Form::Int { ty, sat: true, .. }) if ops.len() == 3 => {
+                let opcode = module.opcode(instr);
+                let read = |x: AffineExpr| {
+                    (self.extend(&x, ty))
+                        .ok_or_else(|| format!("`{opcode}` reads a value its type does not hold"))
+                };
+                let (a, b) = (read(arg(1)?)?, read(arg(2)?)?);
+                let value = if mnemonic == Opcode::Add {
+                    a + b
+                } else {
+                    a - b
+                };
+                (self.extend(&value, ty).as_ref() == Some(&value))
+                    .then_some(value)
+                    .ok_or_else(|| {
+                        format!("`{opcode}` clamps a value its type does not hold").into()
+                    })
             }
             (Opcode::Add, _) if ops.len() == 3 => Ok(arg(1)? + arg(2)?),
             (Opcode::Sub, _) if ops.len() == 3 => Ok(arg(1)? - arg(2)?),
@@ -440,11 +462,11 @@ impl AffineAnalysis<'_> {
                 } else {
                     return Err(refuse(&(a + b), "product"));
                 };
-                Ok(self.fits(prod, instr, form)? + c)
+                Ok(prod + c)
             }
             _ => Err(self.unread(instr, def)),
         }?;
-        self.fits(value, instr, form)
+        Ok(value)
     }
 
     /// `selp a, b, c` of constants `a` and `b` of `ty`'s width by a `c` that an
@@ -631,7 +653,9 @@ impl AffineAnalysis<'_> {
     /// where its range over the known launch and constant trip counts
     /// lies in those values or is unknown, as the input contract
     /// (PLAN.md) reads such a value; `a − m·2^w` where it lies in them
-    /// shifted by m·2^w; `None` where it crosses the edge of one.
+    /// shifted by m·2^w; else, below 63 bits, least + (a − least) mod 2^w,
+    /// the rest past its multiples of 2^w shifted into the values where
+    /// its range lies in one block of 2^w, else as `divmod` reads it.
     pub(super) fn extend(&self, a: &AffineExpr, ty: IntInstrType) -> Option<AffineExpr> {
         let Some((lo, hi)) = self.range(a) else {
             return Some(a.clone());
@@ -640,21 +664,35 @@ impl AffineAnalysis<'_> {
             IntKind::Signed => ty.values().0,
             IntKind::Unsigned | IntKind::Bits => 0,
         };
-        let window = |x: i128| x.checked_sub(least).map(|d| d >> ty.width);
-        match window(lo).filter(|&m| window(hi) == Some(m))? {
-            0 => Some(a.clone()),
-            m => {
-                let shift = i64::try_from(m.checked_mul(1i128 << ty.width)?).ok()?;
-                Some(a.clone() - AffineExpr::constant(shift))
+        let shifted = |x: AffineExpr, m: i128| -> Option<AffineExpr> {
+            let shift = i64::try_from(m.checked_mul(1i128 << ty.width)?).ok()?;
+            Some(x - AffineExpr::constant(shift))
+        };
+        match same_window(lo, hi, least, 1i128 << ty.width) {
+            Some(0) => Some(a.clone()),
+            Some(m) => shifted(a.clone(), m),
+            None if ty.width < 63 => {
+                let (d, least) = (1i64 << ty.width, i64::try_from(least).ok()?);
+                let (_, r) = (a.clone() - AffineExpr::constant(least)).multiple_part(d)?;
+                let rem = match self
+                    .range(&r)
+                    .and_then(|(lo, hi)| same_window(lo, hi, 0, d.into()))
+                {
+                    Some(0) => r,
+                    Some(m) => shifted(r, m)?,
+                    None => r.divmod(d, &|v| self.var_bounds(v))?.1,
+                };
+                Some(rem + AffineExpr::constant(least))
             }
+            None => None,
         }
     }
 
     /// The comparisons `form cmp 0` whose conjunction an integer `setp` `pred`
     /// of `width`-bit operands `a` and `b` holds on, each operand the integer
     /// its bits read as (`extend`); Polly's `ScopBuilder::buildConditionSets`
-    /// translates an icmp likewise. `None` where one crosses the edge of its
-    /// type's values. An `eq` or `ne` is `a − b cmp 0` where `a − b` lies in
+    /// translates an icmp likewise. `None` where `extend` reads no form of
+    /// one. An `eq` or `ne` is `a − b cmp 0` where `a − b` lies in
     /// (−2^width, 2^width), so that it is zero exactly when it is zero modulo
     /// 2^width. An `lt`, `le`, `gt` or `ge` of a signed type is `A − B cmp 0`
     /// of the operands as signed. Of an unsigned type (PTX ISA §9.3.1.1: "The
@@ -708,40 +746,6 @@ impl AffineAnalysis<'_> {
         }
         let sign = (!nonnegative(x)).then(|| (x.clone(), Cmp::Ge));
         Some(sign.into_iter().chain([(a - b, pred.cmp())]).collect())
-    }
-
-    /// A 16- or 32-bit `add`, `sub`, `neg`, `not`, `mul.lo`, `mad.lo`, `shl` or
-    /// `bfe` result, which wraps (PTX ISA §9.7.1), whose range over the known
-    /// launch and constant trip counts leaves its type is refused.
-    pub(super) fn fits(
-        &self,
-        value: AffineExpr,
-        instr: &Instr,
-        form: Form,
-    ) -> Result<AffineExpr, UnknownReason> {
-        let checked = match instr.mnemonic {
-            Opcode::Add | Opcode::Sub | Opcode::Neg | Opcode::Not | Opcode::Shl | Opcode::Bfe => {
-                true
-            }
-            Opcode::Mul | Opcode::Mad => matches!(
-                form,
-                Form::Int {
-                    mode: Some(MulMode::Lo),
-                    ..
-                }
-            ),
-            _ => false,
-        };
-        let ty = form.int_type().filter(|ty| matches!(ty.width, 16 | 32));
-        match ty {
-            Some(ty) if checked && !self.within(&value, ty.values()) => Err(format!(
-                "`{}` leaves {} bits",
-                self.data.module.opcode(instr),
-                ty.width
-            )
-            .into()),
-            _ => Ok(value),
-        }
     }
 }
 

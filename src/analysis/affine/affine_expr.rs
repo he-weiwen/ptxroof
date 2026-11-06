@@ -11,6 +11,7 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::ptx::ir::{Element, SpecialReg, SpecialVector};
 use crate::ptx::special_registers::special_register_range;
 use crate::ssa::Value;
+use crate::support::integer::{gcd, same_window};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -83,16 +84,12 @@ impl XorSwizzle {
     /// `c` times each column; below 2^62.
     fn times(&self, c: u64) -> Option<XorSwizzle> {
         let mut parts = [0u64; 64];
-        let mut seen = 0;
         for j in (0..64).filter(|&j| self.may_set() >> j & 1 == 1) {
-            let part = u64::try_from(u128::from(c) << j)
+            parts[j] = u64::try_from(u128::from(c) << j)
                 .ok()
                 .filter(|&p| p >> 62 == 0)?;
-            if seen & part != 0 {
-                return None;
-            }
-            (parts[j], seen) = (part, seen | part);
         }
+        disjoint_union(parts)?;
         let scale = |x: u64| {
             (0..64)
                 .filter(|&j| x >> j & 1 == 1)
@@ -340,12 +337,7 @@ impl AffineExpr {
     /// Divide exactly by `d`, when every coefficient and the base are
     /// known multiples of it.
     pub fn div_exact(self, d: i64) -> Option<AffineExpr> {
-        if !self
-            .terms
-            .values()
-            .chain([&self.base])
-            .all(|e| e.divisible_by(d))
-        {
+        if !(self.multiple_terms(d).1.is_empty() && self.base.divisible_by(d)) {
             return None;
         }
         Some(AffineExpr {
@@ -359,7 +351,7 @@ impl AffineExpr {
     }
 
     /// `⌊self / d⌋`, d > 0: exact when every part is a multiple of d; the
-    /// multiple of d divided and the floor of what remains, as `split`
+    /// multiple of d divided and the floor of what remains, as `divmod`
     /// takes it; a floor division when symbolic or constant. None
     /// otherwise.
     pub fn div_const(
@@ -373,12 +365,11 @@ impl AffineExpr {
         if let Some(exact) = self.clone().div_exact(d) {
             return Some(exact);
         }
-        let (q, floor, _) = self.split(d, bound)?;
-        Some(q + floor)
+        Some(self.divmod(d, bound)?.0)
     }
 
     /// `self mod m`, m > 0: zero when every part is a multiple of m; the
-    /// remainder of what remains past the multiple of m, as `split` takes
+    /// remainder of what remains past the multiple of m, as `divmod` takes
     /// it; a symbolic modulus when symbolic or constant. None otherwise.
     pub fn modulo_const(
         self,
@@ -391,8 +382,7 @@ impl AffineExpr {
         if self.clone().div_exact(m).is_some() {
             return Some(AffineExpr::constant(0));
         }
-        let (_, _, rem) = self.split(m, bound)?;
-        Some(rem)
+        Some(self.divmod(m, bound)?.1)
     }
 
     /// `self − self mod m`, the multiple of m at or below it: m times the
@@ -409,68 +399,120 @@ impl AffineExpr {
         if self.clone().div_exact(m).is_some() {
             return Some(self);
         }
-        let (q, floor, _) = self.split(m, bound)?;
-        Some((q + floor).scale(SymExpr::Const(m)))
+        Some(self.divmod(m, bound)?.0.scale(SymExpr::Const(m)))
     }
 
-    /// `(q, ⌊r/d⌋, r mod d)` for the form `d·q + r`: q holds the terms
-    /// whose coefficients are known multiples of d and the multiple of d
-    /// in the base, r at most one other term `c·v`, c a positive divisor
-    /// of d, and a constant k in [0, c), or one in [0, d) alone. A k of c
-    /// or more is read where `c·v + k` stays in [0, d) over v's range,
-    /// from `bound` or the one a remainder has whatever its operand.
-    fn split(
+    /// `(⌊self/d⌋, self mod d)`, d > 0, for the form `d·q + r`
+    /// (`multiple_part`) by ⌊(a·h + l)/d⌋ = ⌊h/(d/a)⌋ and
+    /// (a·h + l) mod d = a·(h mod d/a) + l for a dividing d and l in
+    /// [0, a): q plus ⌊v/(d/c)⌋ and c·(v mod d/c) plus the rest, for a
+    /// term `c·v` of r, c a positive divisor of d, the largest first, whose
+    /// rest lies in [0, c) over `bound`; else, for a the gcd of d and the
+    /// constant factors of r's symbols, h those symbols over a and the
+    /// multiple of a in r's constant, q plus ⌊h/(d/a)⌋ and a·(h mod d/a)
+    /// plus the rest, where the rest lies in [0, a); else q + m and
+    /// r − m·d where r lies in [m·d, (m + 1)·d).
+    pub(super) fn divmod(
         &self,
         d: i64,
         bound: &dyn Fn(&Var) -> Option<(i64, i64)>,
-    ) -> Option<(AffineExpr, AffineExpr, AffineExpr)> {
-        let mut q = AffineExpr::constant(0);
-        let mut rest = None;
-        for (v, c) in &self.terms {
-            if c.divisible_by(d) {
-                q = q + AffineExpr::term(v.clone(), SymExpr::floor_div(c.clone(), d));
-            } else if rest.is_some() {
-                return None;
-            } else {
-                rest = Some((v, c.as_const().filter(|&c| c > 0 && d % c == 0)?));
+    ) -> Option<(AffineExpr, AffineExpr)> {
+        let (q, r) = self.multiple_part(d)?;
+        let mut terms: Vec<(&Var, i64)> = (r.terms.iter())
+            .filter_map(|(v, c)| Some((v, c.as_const().filter(|&c| c > 0 && d % c == 0)?)))
+            .collect();
+        terms.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
+        for (v, c) in terms {
+            let rest = r.clone() - AffineExpr::term(v.clone(), SymExpr::Const(c));
+            if rest
+                .range(bound)
+                .is_some_and(|(lo, hi)| lo >= 0 && hi < c.into())
+            {
+                let floor = AffineExpr::var(Var::FloorDiv(Box::new(v.clone()), d / c));
+                let modulo = Var::Mod(Box::new(v.clone()), d / c);
+                return Some((
+                    q + floor,
+                    AffineExpr::term(modulo, SymExpr::Const(c)) + rest,
+                ));
             }
+        }
+        let summands = match &r.base {
+            SymExpr::Sum(ts) => ts.clone(),
+            base => vec![base.clone()],
+        };
+        let (k, symbols): (Vec<_>, Vec<_>) =
+            summands.into_iter().partition(|t| t.as_const().is_some());
+        if !symbols.is_empty() {
+            let factor = |t: &SymExpr| SymExpr::split_const(t.clone()).0.unsigned_abs();
+            let a = (symbols.iter()).fold(d.unsigned_abs(), |g, t| gcd(g, factor(t)));
+            let a = i64::try_from(a).expect("a divides d");
+            let k: i64 = k.iter().filter_map(SymExpr::as_const).sum();
+            let rest = AffineExpr {
+                terms: r.terms.clone(),
+                base: SymExpr::Const(k.rem_euclid(a)),
+            };
+            if rest
+                .range(bound)
+                .is_some_and(|(lo, hi)| lo >= 0 && hi < a.into())
+            {
+                let h = (symbols.into_iter()).fold(SymExpr::Const(k.div_euclid(a)), |h, t| {
+                    SymExpr::add(h, SymExpr::floor_div(t, a))
+                });
+                let floor = AffineExpr::from_base(SymExpr::floor_div(h.clone(), d / a));
+                let modulo = SymExpr::mul(SymExpr::Const(a), SymExpr::modulo(h, d / a));
+                return Some((q + floor, AffineExpr::from_base(modulo) + rest));
+            }
+        }
+        let (lo, hi) = r.range(bound)?;
+        match i64::try_from(same_window(lo, hi, 0, d.into())?).ok()? {
+            0 => Some((q, r)),
+            m => {
+                let shift = AffineExpr::constant(m.checked_mul(d)?);
+                Some((q + AffineExpr::constant(m), r - shift))
+            }
+        }
+    }
+
+    /// The terms whose coefficients are known multiples of `d`, and the
+    /// others.
+    fn multiple_terms(&self, d: i64) -> (Terms<'_>, Terms<'_>) {
+        self.terms.iter().partition(|(_, c)| c.divisible_by(d))
+    }
+
+    /// `(q, r)` for the form `d·q + r`: q the terms whose coefficients are
+    /// known multiples of d and the multiple of d in the base, divided by
+    /// d; r the other terms, the base's symbols no known multiple of d,
+    /// and the base's constants' remainder, in [0, d).
+    pub(super) fn multiple_part(&self, d: i64) -> Option<(AffineExpr, AffineExpr)> {
+        let (multiples, others) = self.multiple_terms(d);
+        let mut q = AffineExpr::constant(0);
+        for (v, c) in multiples {
+            q = q + AffineExpr::term(v.clone(), SymExpr::floor_div(c.clone(), d));
         }
         let summands = match &self.base {
             SymExpr::Sum(ts) => ts.clone(),
             base => vec![base.clone()],
         };
         let (mut k, mut whole, mut multiple) = (0i128, SymExpr::Const(0), SymExpr::Const(0));
+        let mut other = SymExpr::Const(0);
         for t in summands {
             match t.as_const() {
                 Some(c) => {
                     whole = SymExpr::add(whole, SymExpr::Const(c.div_euclid(d)));
                     k += i128::from(c.rem_euclid(d));
                 }
-                None => multiple = SymExpr::add(multiple, t),
+                None if t.divisible_by(d) => multiple = SymExpr::add(multiple, t),
+                None => other = SymExpr::add(other, t),
             }
         }
         let carry = SymExpr::Const(i64::try_from(k / i128::from(d)).ok()?);
         let k = i64::try_from(k % i128::from(d)).ok()?;
-        if !multiple.divisible_by(d) {
-            return None;
+        q.base = SymExpr::add(SymExpr::floor_div(multiple, d), SymExpr::add(whole, carry));
+        let mut r = AffineExpr::from_base(SymExpr::add(SymExpr::Const(k), other));
+        for (v, c) in others {
+            r = r + AffineExpr::term(v.clone(), c.clone());
         }
-        let whole = SymExpr::add(whole, carry);
-        q.base = SymExpr::add(SymExpr::floor_div(multiple, d), whole);
-        let rem = AffineExpr::constant(k);
-        let Some((v, c)) = rest else {
-            return Some((q, AffineExpr::constant(0), rem));
-        };
-        if k >= c {
-            let (lo, hi) = var_range(v, bound)?;
-            let at = |x: i64| i128::from(c) * i128::from(x) + i128::from(k);
-            return (at(lo) >= 0 && at(hi) < i128::from(d)).then(|| {
-                let r = AffineExpr::term(v.clone(), SymExpr::Const(c)) + rem;
-                (q, AffineExpr::constant(0), r)
-            });
-        }
-        let floor = AffineExpr::var(Var::FloorDiv(Box::new(v.clone()), d / c));
-        let modulo = AffineExpr::term(Var::Mod(Box::new(v.clone()), d / c), SymExpr::Const(c));
-        Some((q, floor, modulo + rem))
+        Some((q, r))
     }
 
     /// Substitute every variable by a form; None if any substitution is.
@@ -679,14 +721,15 @@ impl AffineExpr {
             columns: [0; 10],
             constant,
         };
-        let mut used = constant;
-        for (v, c) in &self.terms {
-            let b = v.xor_swizzle()?.times(u64::try_from(c.as_const()?).ok()?)?;
-            let shifted = b.may_set();
-            if used & shifted != 0 {
-                return None;
-            }
-            used |= shifted;
+        let parts = (self.terms.iter())
+            .map(|(v, c)| v.xor_swizzle()?.times(u64::try_from(c.as_const()?).ok()?))
+            .collect::<Option<Vec<_>>>()?;
+        let used = disjoint_union(
+            [constant]
+                .into_iter()
+                .chain(parts.iter().map(|b| b.may_set())),
+        )?;
+        for b in parts {
             for (to, from) in out.columns.iter_mut().zip(b.columns) {
                 *to |= from;
             }
@@ -714,11 +757,7 @@ impl AffineExpr {
                 None if self.base.divisible_by(p) => 0,
                 None => continue,
             };
-            let rest: Vec<_> = all
-                .iter()
-                .copied()
-                .filter(|(_, c)| !c.divisible_by(p))
-                .collect();
+            let (_, rest) = self.multiple_terms(p);
             if let Some(r) = bits(&rest, base, largest)
                 && r >> k == 0
             {
@@ -728,6 +767,15 @@ impl AffineExpr {
         set
     }
 }
+
+/// The union of `masks` when no two share a bit: then their sum carries
+/// nothing and is their or and their xor.
+fn disjoint_union(masks: impl IntoIterator<Item = u64>) -> Option<u64> {
+    (masks.into_iter()).try_fold(0, |seen, m| (seen & m == 0).then_some(seen | m))
+}
+
+/// Terms of a form, each a variable and its coefficient.
+type Terms<'a> = Vec<(&'a Var, &'a SymExpr)>;
 
 /// The bits a sum of `terms` and `base` may set, when the base is
 /// nonnegative and each term a positive constant times a variable that
@@ -755,8 +803,7 @@ fn bits(
         let product = (v.xor_swizzle().and_then(|b| b.times(c))).map_or(u64::MAX, |b| b.may_set());
         masks.push(upto(top) & (u64::MAX << c.trailing_zeros()) & product);
     }
-    let union = masks.iter().fold(0, |a, m| a | m);
-    if masks.iter().map(|m| m.count_ones()).sum::<u32>() == union.count_ones() {
+    if let Some(union) = disjoint_union(masks.iter().copied()) {
         return Some(union);
     }
     let low = (masks.iter().filter(|&&m| m != 0))
@@ -816,9 +863,9 @@ fn group_range(
         let d = d.filter(|&d| d > 0)?;
         let (lo, hi) = var_range(x, bound)?;
         let q = (lo.div_euclid(d), hi.div_euclid(d));
-        let r = match q.0 == q.1 {
-            true => (lo.rem_euclid(d), hi.rem_euclid(d)),
-            false => (0, d - 1),
+        let r = match same_window(lo.into(), hi.into(), 0, d.into()) {
+            Some(_) => (lo.rem_euclid(d), hi.rem_euclid(d)),
+            None => (0, d - 1),
         };
         let (a, b) = span(c[0].checked_mul(d.into())?.checked_add(c[1])?, q)?;
         let (e, f) = span(c[0].checked_add(c[2])?, r)?;
@@ -831,8 +878,8 @@ fn group_range(
 }
 
 /// A variable's least and greatest value, a floor from its operand's
-/// and a remainder by m from its operand's where that lies in [0, m),
-/// else [0, m − 1] whatever its operand.
+/// and a remainder by m from its operand's where that lies in one block
+/// of m, else [0, m − 1] whatever its operand.
 fn var_range(v: &Var, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i64, i64)> {
     match v {
         Var::FloorDiv(inner, d) => {
@@ -840,7 +887,9 @@ fn var_range(v: &Var, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i64
             Some((lo.div_euclid(*d), hi.div_euclid(*d)))
         }
         Var::Mod(inner, m) => match var_range(inner, bound) {
-            Some((lo, hi)) if lo >= 0 && hi < *m => Some((lo, hi)),
+            Some((lo, hi)) if same_window(lo.into(), hi.into(), 0, (*m).into()).is_some() => {
+                Some((lo.rem_euclid(*m), hi.rem_euclid(*m)))
+            }
             _ => Some((0, m - 1)),
         },
         Var::Swizzle(b) => Some(b.range(bound(&Var::Tid(Axis::X)))),
@@ -1179,6 +1228,71 @@ mod tests {
             text(wide.div_const(8, &free)).as_deref(),
             Some("⌊%tid.x/8⌋ + 1152921504606846976")
         );
+    }
+
+    /// The rest of a term c·v, several terms, read where their range keeps
+    /// it in [0, c): 16·%tid.x + 4·%tid.y + 3 by 64 in a block of 4 rows;
+    /// and a form no coefficient of which divides 64, read whole where it
+    /// lies in [0, 64).
+    #[test]
+    fn a_rest_of_several_terms_below_a_coefficient_reads() {
+        let c = |k| SymExpr::Const(k);
+        let text = |a: Option<AffineExpr>| a.map(|a| a.to_string());
+        let (x, y) = (|| Var::Tid(Axis::X), || Var::Tid(Axis::Y));
+        let rows = |v: &Var| match v {
+            Var::Tid(Axis::X) => Some((0, 1023)),
+            Var::Tid(Axis::Y) => Some((0, 3)),
+            _ => None,
+        };
+        let f = AffineExpr::var(x()).scale(c(16))
+            + AffineExpr::var(y()).scale(c(4))
+            + AffineExpr::constant(3);
+        assert_eq!(
+            text(f.clone().modulo_const(64, &rows)).as_deref(),
+            Some("4 * %tid.y + 16 * (%tid.x mod 4) + 3")
+        );
+        assert_eq!(text(f.div_const(64, &rows)).as_deref(), Some("⌊%tid.x/4⌋"));
+        let small = |v: &Var| match v {
+            Var::Tid(Axis::X) => Some((0, 7)),
+            Var::Tid(Axis::Y) => Some((0, 3)),
+            _ => None,
+        };
+        let g = AffineExpr::var(x()).scale(c(3)) + AffineExpr::var(y()).scale(c(5));
+        assert_eq!(
+            text(g.clone().modulo_const(64, &small)),
+            Some(g.to_string())
+        );
+        assert_eq!(text(g.div_const(64, &small)).as_deref(), Some("0"));
+        // 3·k + 62 over the counter of a two-trip loop lies in [64, 128).
+        let two = |v: &Var| matches!(v, Var::Iteration(_)).then_some((1, 2));
+        let h = AffineExpr::var(Var::Iteration(LoopId(0))).scale(c(3)) + AffineExpr::constant(62);
+        assert_eq!(
+            text(h.clone().modulo_const(64, &two)).as_deref(),
+            Some("3 * k[loop 0] - 2")
+        );
+        assert_eq!(text(h.div_const(64, &two)).as_deref(), Some("1"));
+    }
+
+    /// A symbol no known multiple of the divisor reads with the gcd of its
+    /// factor and the divisor: (256·p + %tid.x) by 2^18 in a block of 256
+    /// threads is 2^18·⌊p/1024⌋ + 256·(p mod 1024) + %tid.x.
+    #[test]
+    fn a_symbol_reads_by_the_gcd_of_its_factor_and_the_divisor() {
+        let c = |k| SymExpr::Const(k);
+        let text = |a: Option<AffineExpr>| a.map(|a| a.to_string());
+        let block = |v: &Var| matches!(v, Var::Tid(Axis::X)).then_some((0, 255));
+        let p = SymExpr::mul(c(256), SymExpr::Sym(SymbolicConstant::KernelParam(0)));
+        let f = AffineExpr::from_base(p) + AffineExpr::var(Var::Tid(Axis::X));
+        assert_eq!(
+            text(f.clone().modulo_const(1 << 18, &block)).as_deref(),
+            Some("%tid.x + 256 * (param_0 mod 1024)")
+        );
+        assert_eq!(
+            text(f.clone().div_const(1 << 18, &block)).as_deref(),
+            Some("param_0 / 1024")
+        );
+        let wide = |v: &Var| matches!(v, Var::Tid(Axis::X)).then_some((0, 511));
+        assert_eq!(f.modulo_const(1 << 18, &wide), None);
     }
 
     /// A constant at or past the coefficient of the term the divisor does

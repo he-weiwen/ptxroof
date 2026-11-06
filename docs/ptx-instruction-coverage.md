@@ -34,7 +34,11 @@ instruction types and forms (`Form`) in `ptx/modifier.rs` and special-register s
 ranges in `ptx/special_registers.rs`. It leaves the value of an `add`, `sub`, `mul`, `mad`, `div`
 or `rem` unknown when its type is a packed integer, which "computes per packed lane"
 (`micro/packed_add.ptx`), or a float, which "is floating-point arithmetic"
-(`micro/float_mul.ptx`). It reads an integer immediate, an induction
+(`micro/float_mul.ptx`). It keeps an integer result as computed, past
+its type's width, each reader taking its low bits as its type reads
+them (`extend`; `micro/mul_wrap.ptx`), and reads `add.sat` and
+`sub.sat` only where their operands and sum lie in their type
+(§9.7.1.1, §9.7.1.2). It reads an integer immediate, an induction
 variable's step included, at its instruction's width as the signed
 value of its bits (§4.5.1), a shift's count at 32 bits and a `.wide`
 `mad`'s addend at twice the type's (`ptx/modifier.rs`'s

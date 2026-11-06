@@ -3,7 +3,7 @@ source: tests/ncu_corpus.rs
 expression: "format!(\"blocks {verdicts:?}\\nsector lines {sectors:?}\\nwavefront lines {wavefronts:?}\\nlaunch sectors {totals:?}\\n\\n{out}\")"
 ---
 blocks {"confirmed": 152, "consistent": 284, "unchecked": 479}
-sector lines {"differ": 3, "exact": 1225, "not compared, its SASS ran otherwise": 2, "within a bound": 181, "within a range": 43}
+sector lines {"differ": 3, "exact": 1257, "not compared, its SASS ran otherwise": 2, "within a bound": 221, "within a range": 43}
 wavefront lines {"agree": 1486}
 launch sectors {"loads agrees, stores agrees": 41, "loads differs, stores agrees": 1, "not compared": 26}
 
@@ -151,7 +151,7 @@ tests/fixtures/b200/gemm__deepseek-v3__prefill__sgl_w8a8_block_fp8.mlp_gate_up._
   waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
   <block 12>	confirmed	120 of 155 with SASS, 118 agreeing
   $L__BB0_9	confirmed	119 of 175 with SASS, 93 agreeing
-  sectors	{"within a bound": 8}
+  sectors	{"exact": 32, "within a bound": 8}
   wavefronts	{"agree": 17}
 tests/fixtures/b200/gemm__llama3-70b__prefill__sgl_scaled_mm.gate_up.scaled_mm_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees
@@ -242,7 +242,7 @@ tests/fixtures/b200/moe_sglang__deepseek-v3__prefill__gate_up.fused_moe_kernel.s
   <block 34>	consistent	68 of 101 with SASS, 67 agreeing
   $L__BB0_32	consistent	110 of 187 with SASS, 80 agreeing
   $L__BB0_2	unchecked	1 of 1 with SASS, 0 agreeing
-  sectors	{"exact": 1, "within a bound": 16}
+  sectors	{"exact": 1, "within a bound": 48}
   wavefronts	{"agree": 17}
 tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel.sm_100a.ncu.json
   launch sectors	not compared, line 423
@@ -269,7 +269,7 @@ tests/fixtures/b200/moe_sglang__qwen3-30b-a3b__prefill__gate_up.fused_moe_kernel
   waitLoop$scope2	unchecked	2 of 2 with SASS, 0 agreeing
   $L__BB0_20	consistent	77 of 134 with SASS, 58 agreeing
   $L__BB0_2	unchecked	1 of 1 with SASS, 0 agreeing
-  sectors	{"exact": 1, "within a bound": 7}
+  sectors	{"exact": 1, "within a bound": 15}
   wavefronts	{"agree": 9}
 tests/fixtures/b200/norm_act__llama3-8b__train__liger_swiglu_bwd_rowwise._swiglu_backward_kernel.sm_100a.ncu.json
   launch sectors	loads agrees, stores agrees

@@ -28,6 +28,7 @@
 use crate::analysis::control_flow::loops::LoopId;
 use crate::ptx::ir::SpecialReg;
 use crate::ssa::Value;
+use crate::support::integer::same_window;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -186,9 +187,9 @@ impl SymExpr {
             }
             SymExpr::Mod(e, c) => {
                 let (c, (a, b)) = (i128::from(*c), e.span(sym)?);
-                match a.div_euclid(c) == b.div_euclid(c) {
-                    true => (a.rem_euclid(c), b.rem_euclid(c)),
-                    false => (0, c - 1),
+                match same_window(a, b, 0, c) {
+                    Some(_) => (a.rem_euclid(c), b.rem_euclid(c)),
+                    None => (0, c - 1),
                 }
             }
             SymExpr::Min(x, y) => {
