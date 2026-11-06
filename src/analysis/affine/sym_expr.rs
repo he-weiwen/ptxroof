@@ -137,7 +137,8 @@ impl SymExpr {
     }
 
     /// The least value with every symbol at 0 or above, where bounded;
-    /// read through `AffineAnalysis::least`, which binds first.
+    /// read through `AffineAnalysis::least`, whose forms have the bound
+    /// values.
     pub(super) fn least(&self) -> Option<i64> {
         match self {
             SymExpr::Const(c) => Some(*c),

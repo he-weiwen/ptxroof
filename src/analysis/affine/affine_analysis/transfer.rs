@@ -104,9 +104,9 @@ impl AffineAnalysis<'_> {
                 if let Some(ParamAccess::KernelParam { index, .. }) =
                     param_access(module, self.data.kernel, instr)
                 {
-                    return Ok(AffineExpr::from_base(SymExpr::Sym(
-                        SymbolicConstant::KernelParam(index),
-                    )));
+                    return Ok(AffineExpr::from_base(
+                        self.symbol(SymbolicConstant::KernelParam(index)),
+                    ));
                 }
                 Err(UnknownReason::Load { def })
             }
@@ -129,7 +129,7 @@ impl AffineAnalysis<'_> {
             (Opcode::And, _) if ops.len() == 3 => {
                 // and r, a, mask — PTX's lowering of `a mod 2^n`.
                 let (val, mask) = (arg(1)?, arg(2)?);
-                let (affine, konst) = match (self.constant(&mask), self.constant(&val)) {
+                let (affine, konst) = match (mask.as_const(), val.as_const()) {
                     (Some(c), _) => (val, c),
                     (_, Some(c)) => (mask, c),
                     _ => return Err("and-mask with two non-constant operands".into()),
@@ -144,7 +144,7 @@ impl AffineAnalysis<'_> {
                 // instruction's size.
                 let width = form.int_type().map_or(32, |t| t.width);
                 let modulo = |x: AffineExpr, k: u32| -> Result<AffineExpr, UnknownReason> {
-                    (self.reduced(&x, |x| x.modulo_const(1i64 << k, &|v| self.var_bounds(v))))
+                    (x.clone().modulo_const(1i64 << k, &|v| self.var_bounds(v)))
                         .ok_or_else(|| refuse(&x, "mod"))
                 };
                 let range = self.range(&affine);
@@ -180,10 +180,8 @@ impl AffineAnalysis<'_> {
                                     format!("and-mask {konst:#x} keeps bit 63 without 62").into()
                                 );
                             }
-                            _ => (self.reduced(&hi, |x| {
-                                x.align_down(1i64 << low, &|v| self.var_bounds(v))
-                            }))
-                            .ok_or_else(|| refuse(&hi, "mod"))?,
+                            _ => (hi.clone().align_down(1i64 << low, &|v| self.var_bounds(v)))
+                                .ok_or_else(|| refuse(&hi, "mod"))?,
                         };
                     bits &= u64::MAX.checked_shl(top).unwrap_or(0);
                 }
@@ -194,7 +192,7 @@ impl AffineAnalysis<'_> {
                 // sides (its `or disjoint`, which PTX does not keep).
                 let (a, b) = (arg(1)?, arg(2)?);
                 let largest = |v: &Var| self.var_bounds(v).map(|(_, hi)| hi);
-                match self.bind(&a).may_set(&largest) & self.bind(&b).may_set(&largest) {
+                match a.may_set(&largest) & b.may_set(&largest) {
                     0 => Ok(a + b),
                     both => Err(format!(
                         "or whose sides may both set bit {}",
@@ -206,7 +204,7 @@ impl AffineAnalysis<'_> {
             // PTX ISA §9.7.8.3: a bitwise exclusive-or, of two xors of
             // thread index fields their xor.
             (Opcode::Xor, _) if ops.len() == 3 => {
-                let bits = |x: AffineExpr| self.bind(&x).xor_swizzle();
+                let bits = |x: AffineExpr| x.xor_swizzle();
                 match (arg(1).map(bits), arg(2).map(bits)) {
                     (Ok(Some(x)), Ok(Some(y))) => Ok(x.xor(&y).affine()),
                     _ => Err(self.unread(instr, def)),
@@ -218,8 +216,7 @@ impl AffineAnalysis<'_> {
             // A signed field from past the msb ptxas 13.4 folds otherwise
             // (micro/bfe_fields.ptx).
             (Opcode::Bfe, _) if ops.len() == 4 => {
-                let (Some(pos), Some(len)) = (self.constant(&arg(2)?), self.constant(&arg(3)?))
-                else {
+                let (Some(pos), Some(len)) = (arg(2)?.as_const(), arg(3)?.as_const()) else {
                     return Err("bfe with a non-constant position or length".into());
                 };
                 let (pos, len) = (pos & 0xff, len & 0xff);
@@ -235,12 +232,11 @@ impl AffineAnalysis<'_> {
                 }
                 let a = arg(1)?;
                 let field = |pos: i64, len: i64| {
-                    let shifted = (self
-                        .reduced(&a, |x| x.div_const(1i64 << pos, &|v| self.var_bounds(v))))
-                    .ok_or_else(|| refuse(&a, "bit field"))?;
-                    (self.reduced(&shifted, |x| {
-                        x.modulo_const(1i64 << len, &|v| self.var_bounds(v))
-                    }))
+                    let shifted = (a.clone().div_const(1i64 << pos, &|v| self.var_bounds(v)))
+                        .ok_or_else(|| refuse(&a, "bit field"))?;
+                    (shifted
+                        .clone()
+                        .modulo_const(1i64 << len, &|v| self.var_bounds(v)))
                     .ok_or_else(|| refuse(&shifted, "bit field"))
                 };
                 match (signed, pos, len.min(w - pos)) {
@@ -268,7 +264,7 @@ impl AffineAnalysis<'_> {
                 // and one past the width is clamped to it, which shifts
                 // every bit out.
                 let width = form.int_type().map(|t| i64::from(t.width));
-                match self.constant(&arg(2)?).map(|c| i64::from(c as u32)) {
+                match arg(2)?.as_const().map(|c| i64::from(c as u32)) {
                     Some(c) if width.is_some_and(|w| c >= w) => Ok(AffineExpr::constant(0)),
                     Some(c) if (0..63).contains(&c) => Ok(v.scale(SymExpr::Const(1i64 << c))),
                     _ => Err("shift by a non-constant amount".into()),
@@ -286,14 +282,14 @@ impl AffineAnalysis<'_> {
                     })?,
                     None => arg(1)?,
                 };
-                let Some(c) = self.constant(&arg(2)?) else {
+                let Some(c) = arg(2)?.as_const() else {
                     return Err("shift by a non-constant amount".into());
                 };
                 if !v.is_symbolic_or_constant() {
                     if !(0..63).contains(&c) {
                         return Err(format!("shift by {c} is out of range").into());
                     }
-                    return (self.reduced(&v, |x| x.div_const(1i64 << c, &|v| self.var_bounds(v))))
+                    return (v.clone().div_const(1i64 << c, &|v| self.var_bounds(v)))
                         .ok_or_else(|| refuse(&v, "shift"));
                 }
                 let signed_width = (ty.filter(|t| t.kind == IntKind::Signed && t.width >= 16))
@@ -324,13 +320,13 @@ impl AffineAnalysis<'_> {
                     };
                     (a, b) = (read(&a)?, read(&b)?);
                 }
-                let Some(d) = self.constant(&b).filter(|&d| d > 0) else {
+                let Some(d) = b.as_const().filter(|&d| d > 0) else {
                     return Err(format!("{} by a non-constant divisor", mnemonic.name()).into());
                 };
                 let result = if mnemonic == Opcode::Div {
-                    self.reduced(&a, |x| x.div_const(d, &|v| self.var_bounds(v)))
+                    a.clone().div_const(d, &|v| self.var_bounds(v))
                 } else {
-                    self.reduced(&a, |x| x.modulo_const(d, &|v| self.var_bounds(v)))
+                    a.clone().modulo_const(d, &|v| self.var_bounds(v))
                 };
                 result.ok_or_else(|| refuse(&a, "division"))
             }
@@ -343,10 +339,10 @@ impl AffineAnalysis<'_> {
                 // with %tid.x replaced by 32·⌊%tid.x/32⌋ + c; a warp-uniform
                 // a (a function of ⌊%tid.x/32⌋) is unchanged.
                 let a = arg(1)?;
-                let Some(c) = self.constant(&arg(2)?).filter(|c| (0..WARP_SZ).contains(c)) else {
+                let Some(c) = arg(2)?.as_const().filter(|c| (0..WARP_SZ).contains(c)) else {
                     return Err("shfl.idx from a non-constant lane".into());
                 };
-                if self.constant(&arg(3)?) != Some(WARP_SZ - 1) {
+                if arg(3)?.as_const() != Some(WARP_SZ - 1) {
                     return Err("shfl.idx in segments of the warp or a clamped lane".into());
                 }
                 let warp = |v: Var| AffineExpr::var(Var::FloorDiv(Box::new(v), WARP_SZ));
@@ -400,7 +396,7 @@ impl AffineAnalysis<'_> {
             // that type reads both operands; `.relu` and the packed types
             // are other operations.
             (Opcode::Min | Opcode::Max, Form::Int { ty, relu, .. }) if ops.len() == 3 && !relu => {
-                let (a, b) = (per_cta(arg(1)?), per_cta(arg(2)?));
+                let (a, b) = (self.per_cta(arg(1)?), self.per_cta(arg(2)?));
                 if !(a.is_symbolic_or_constant() && b.is_symbolic_or_constant()) {
                     return Err(refuse(&(a + b), mnemonic.name()));
                 }
@@ -496,10 +492,7 @@ impl AffineAnalysis<'_> {
             _ if writes(sops[0]) => false,
             _ => return None,
         };
-        let read = |id, at| {
-            let x = self.operand_at(id, at, depth + 1).ok()?;
-            Some(self.bind(&x))
-        };
+        let read = |id, at| self.operand_at(id, at, depth + 1).ok();
         let diff = read(sops[1], op)? - read(sops[2], op)?;
         let &[(v, k)] = diff.terms.iter().collect::<Vec<_>>().as_slice() else {
             return None;
@@ -512,10 +505,7 @@ impl AffineAnalysis<'_> {
         let ne = pred == IntPredicate::Ne;
         let holds = |x: i128| (x.rem_euclid(1 << width) == 0) ^ ne ^ complement;
         let (lo, hi) = (-(1i128 << (ty.width - 1)), 1i128 << ty.width);
-        let arm = |id| {
-            self.constant(&read(id, def)?)
-                .filter(|&x| (lo..hi).contains(&i128::from(x)))
-        };
+        let arm = |id| (read(id, def)?.as_const()).filter(|&x| (lo..hi).contains(&i128::from(x)));
         let (a, b) = (arm(ops[1])?, arm(ops[2])?);
         let [r0, r1] = [d, k + d].map(|x| if holds(x) { a } else { b });
         let base = AffineExpr::constant(r0);
@@ -638,8 +628,8 @@ impl AffineAnalysis<'_> {
     /// "integer operands are silently cast to the instruction type";
     /// §9.4.1: "If the corresponding instruction type is signed integer, the
     /// data is sign-extended; otherwise, the data is zero-extended"): `a`
-    /// where its range over the known launch, bindings and constant trip
-    /// counts lies in those values or is unknown, as the input contract
+    /// where its range over the known launch and constant trip counts
+    /// lies in those values or is unknown, as the input contract
     /// (PLAN.md) reads such a value; `a − m·2^w` where it lies in them
     /// shifted by m·2^w; `None` where it crosses the edge of one.
     pub(super) fn extend(&self, a: &AffineExpr, ty: IntInstrType) -> Option<AffineExpr> {

@@ -430,7 +430,12 @@ output_tallies` rewrites it.
   `micro/two_register_counter.ptx`). A constant distance that is no
   positive multiple of the step is refused: `micro/ne_latch_unreached.ptx`,
   stepping by 2 from 0 while `!= 5`, reads `loop: trips ?`, where the
-  loop does not exit.
+  loop does not exit; a bound distance reads as the constant it is.
+  A distance of 0 is refused even where a guard skips the loop: k2's
+  remainder loop under `--bind 2:K=4096` reads `trips ? (latch
+  condition never meets its != bound) | no thread`
+  (`tests/lit/k2-bind.test`), and `tests/gen_loops.py`'s seed-1 kernel
+  5 at n = 64, which its guard skips, is unsupported.
 - **A loop's count drops its max with 0 or 1 on nonnegative
   parameters.** A loop is counted max(T, 0) per execution of a guard
   that skips it where its latch fails at k = 0 (`micro/loop_guard.ptx`),
@@ -679,14 +684,12 @@ output_tallies` rewrites it.
   measured on an RTX 4090), and stays unknown where those threads are
   not counted at every CTA, past 2^24 CTAs on the axes the count
   reads, or where the count at a CTA is negative or not a constant.
-- **A product reads its factors as traced, before the bindings**: `mul`
-  and `mad` need one factor free of variables, so a product of two
-  forms with variables is unknown even where a binding makes one of
-  them 0, and a floor or mod reads the form as traced before the form
-  under the bindings: `micro/floor_mod_remainder.ptx`'s
-  `micro_floor_bound_zero`, ⌊(16·p·%tid.x + 1)/16⌋·%tid.y, reads
-  p·%tid.x for the floor and is unknown with `--bind 1:p=0` ("in a
-  product"), where every thread stores at param_0 (RTX 4090).
+- **A product of two forms with variables is unknown**: `mul` and
+  `mad` need one factor free of variables, after the bindings, which
+  give a symbol its value where it is loaded (`micro_floor_bound_zero`
+  reads `[param_0]` with `--bind 1:p=0`). 400 lines of 81 corpus files
+  read "in a product" (`grep -c 'in a product'` over the 5,668-file
+  run).
 - **Trip shapes.** Recognised: nvcc's in-place counter (`add r, r, c`
   then `setp` in the latch), countdown, derived-register latch, nvcc's
   unrolled main loop and its remainder, LLVM's two-register counter and

@@ -101,8 +101,9 @@ pub(crate) struct AffineAnalysis<'a> {
     /// The value a trace was last cut at, for the query outside every
     /// trace to trace on its own.
     cut: Cell<Option<Value>>,
-    /// `--bind` values, applied where a trace needs a constant.
-    pub(crate) bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
+    /// The bound values: a symbol's where it is made (`symbol`), and the
+    /// block shape and grid `var_bounds` ranges `%tid` and `%ctaid` over.
+    bindings: Option<&'a HashMap<SymbolicConstant, i64>>,
     uniformity: &'a UniformityInfo<'a>,
 }
 
@@ -265,25 +266,29 @@ impl<'a> AffineAnalysis<'a> {
         })
     }
 
-    /// `f` of `a`, or of `a` under the bindings where `f` needs a
-    /// coefficient the bindings make a constant.
-    fn reduced(
-        &self,
-        a: &AffineExpr,
-        f: impl Fn(AffineExpr) -> Option<AffineExpr>,
-    ) -> Option<AffineExpr> {
-        f(a.clone()).or_else(|| f(a.bind(self.bindings?)))
+    /// Symbol `s`: its value where a binding fixes it, so that every
+    /// decision and every form reads the bound value from its leaf on.
+    fn symbol(&self, s: SymbolicConstant) -> SymExpr {
+        match self.bindings.and_then(|b| b.get(&s)) {
+            Some(&value) => SymExpr::Const(value),
+            None => SymExpr::Sym(s),
+        }
     }
 
-    /// `a` under the bindings, if there are any.
-    pub(crate) fn bind(&self, a: &AffineExpr) -> AffineExpr {
-        self.bindings.map_or(a.clone(), |m| a.bind(m))
+    /// `a` with its terms in the CTA index as symbols of its base: `%ctaid`
+    /// is the CTA's identifier, one value per CTA, never negative (PTX ISA
+    /// §10.6).
+    fn per_cta(&self, a: AffineExpr) -> AffineExpr {
+        a.as_symbols(&|v| {
+            let Var::Ctaid(axis) = v else { return None };
+            let reg = SpecialVector::Ctaid.components()[*axis as usize];
+            Some(self.symbol(SymbolicConstant::SpecialReg(reg)))
+        })
     }
 
-    /// `a`'s range under the bindings, over the known launch and
-    /// constant trip counts.
+    /// `a`'s range over the known launch and constant trip counts.
     pub(crate) fn range(&self, a: &AffineExpr) -> Option<(i128, i128)> {
-        self.bind(a).range(&|v| self.var_bounds(v))
+        a.range(&|v| self.var_bounds(v))
     }
 
     /// `v`'s least and greatest value as `var_bounds` gives it, and
@@ -294,14 +299,13 @@ impl<'a> AffineAnalysis<'a> {
         (self.var_bounds(v)).or_else(|| v.special_reg().and_then(special_register_range))
     }
 
-    /// `a`'s least value under the bindings over any grid: its range's
+    /// `a`'s least value over any grid: its range's
     /// over `var_bounds_any_grid`, else its terms' plus its base's
     /// `SymExpr::least`, every symbol taken as nonnegative (the input
     /// contract, PLAN.md); else the same with each counter of a
     /// nonnegative coefficient at its first trip, as `Var::Iteration`
     /// counts trips from 1.
     pub(crate) fn least(&self, a: &AffineExpr) -> Option<i128> {
-        let a = self.bind(a);
         let any = |v: &Var| self.var_bounds_any_grid(v);
         let least = |a: &AffineExpr| {
             let terms = AffineExpr {
@@ -320,11 +324,11 @@ impl<'a> AffineAnalysis<'a> {
                 first.base = SymExpr::add(first.base, c.clone());
             }
         }
-        least(&a).or_else(|| (first != a).then(|| least(&first)).flatten())
+        least(a).or_else(|| (first != *a).then(|| least(&first)).flatten())
     }
 
     /// The greater of `a` and `b`: one where `least` puts it never below
-    /// the other, a constant, under the bindings.
+    /// the other, a constant.
     fn max(&self, a: SymExpr, b: SymExpr) -> SymExpr {
         let at_least = |e: &SymExpr, c: Option<i64>| {
             c.is_some_and(|c| {
@@ -336,11 +340,6 @@ impl<'a> AffineAnalysis<'a> {
             (x, None) if at_least(&b, x) => b,
             _ => SymExpr::max(a, b),
         }
-    }
-
-    /// A constant, after the bindings if there are any.
-    pub(crate) fn constant(&self, a: &AffineExpr) -> Option<i64> {
-        self.bind(a).as_const()
     }
 
     pub(crate) fn operand_at(
@@ -365,8 +364,8 @@ impl<'a> AffineAnalysis<'a> {
             }
             // A named location (a shared array, the dynamic shared base):
             // its address is a symbol.
-            Operand::SymbolRef(s) => Ok(AffineExpr::from_base(SymExpr::sym(
-                module.interner.resolve(*s),
+            Operand::SymbolRef(s) => Ok(AffineExpr::from_base(self.symbol(
+                SymbolicConstant::AddressOf(module.interner.resolve(*s).to_owned()),
             ))),
             Operand::Offset { base, offset } => {
                 Ok(self.operand_at(*base, pos, depth)? + AffineExpr::constant(*offset))
@@ -393,7 +392,7 @@ impl<'a> AffineAnalysis<'a> {
             // One value for the CTA (the launch shape, the cluster, the
             // shared memory sizes): a symbol, bound when known.
             _ if special_register(reg) == Some(SpecialRegister::PerCta) => Ok(
-                AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::SpecialReg(reg))),
+                AffineExpr::from_base(self.symbol(SymbolicConstant::SpecialReg(reg))),
             ),
             _ => Err(UnknownReason::SpecialRegister(reg)),
         }
@@ -602,8 +601,7 @@ impl<'a> AffineAnalysis<'a> {
         })
     }
 
-    /// The address `offset` bytes past `base` at `pos` under the bindings,
-    /// one form for the lanes of a warp unless a variable of it is not
+    /// The address `offset` bytes past `base` at `pos`, one form for the lanes of a warp unless a variable of it is not
     /// one value for them (`alike`): then each lane reads its own.
     pub(crate) fn address(
         &self,
@@ -612,7 +610,6 @@ impl<'a> AffineAnalysis<'a> {
         pos: usize,
     ) -> Result<AffineExpr, UnknownReason> {
         let a = self.operand_at(base, pos, 0)? + AffineExpr::constant(offset);
-        let a = self.bind(&a);
         self.alike(&a, pos, Uniform::Warp, None)?;
         Ok(a)
     }
@@ -667,12 +664,12 @@ impl<'a> AffineAnalysis<'a> {
         Ok(())
     }
 
-    /// Loop `l`'s trip count when it is a constant of at least 1 under the
-    /// bindings, which makes its latch, and so its exit, the same for
+    /// Loop `l`'s trip count when it is a constant of at least 1, which
+    /// makes its latch, and so its exit, the same for
     /// every lane.
     fn constant_trips(&self, l: LoopId) -> Option<i64> {
         (self.loop_trip_count(l).ok().map(|t| t.count))
-            .and_then(|t| self.constant(&AffineExpr::from_base(t)))
+            .and_then(|t| t.as_const())
             .filter(|&n| n >= 1)
     }
 
@@ -840,17 +837,6 @@ pub(crate) struct LoopTripCount {
     pub(crate) distance: Option<(SymExpr, i64)>,
 }
 
-/// `a` with its terms in the CTA index as symbols of its base: `%ctaid`
-/// is the CTA's identifier, one value per CTA, never negative (PTX ISA
-/// §10.6).
-fn per_cta(a: AffineExpr) -> AffineExpr {
-    a.as_symbols(&|v| {
-        let Var::Ctaid(axis) = v else { return None };
-        let reg = SpecialVector::Ctaid.components()[*axis as usize];
-        Some(SymExpr::Sym(SymbolicConstant::SpecialReg(reg)))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,6 +997,38 @@ mod tests {
     }
 
     #[test]
+    fn a_bound_parameter_reads_as_the_constant_it_is() {
+        for latch in [
+            "add.s32 %r2, %r2, 2;\nsetp.ne.s32 %p1, %r2, %r1;",
+            "add.s32 %r2, %r2, 8;\nsetp.lt.s32 %p1, %r2, %r1;",
+        ] {
+            let src = |load: &str| {
+                let body =
+                    format!("{load}\nmov.u32 %r2, 0;\n$L__L:\n{latch}\n@%p1 bra $L__L;\nret;");
+                kernel_with(N_PARAM, &body)
+            };
+            let trips = |src: &str, bound: &HashMap<SymbolicConstant, i64>| {
+                trips_under(src, bound)[0].1.clone().map(|t| t.to_string())
+            };
+            let loaded = src("ld.param.u32 %r1, [k_param_0];");
+            let zero = HashMap::from([(SymbolicConstant::KernelParam(0), 0)]);
+            if latch.contains("ne") {
+                let never = "latch condition never meets its `!=` bound";
+                assert_eq!(trips(&loaded, &zero), Err(never.to_owned()));
+            }
+            for n in [-4, 0, 5, 4096, i64::from(i32::MAX)] {
+                let bound = HashMap::from([(SymbolicConstant::KernelParam(0), n)]);
+                let literal = src(&format!("mov.u32 %r1, {n};"));
+                assert_eq!(
+                    trips(&loaded, &bound),
+                    trips(&literal, &HashMap::new()),
+                    "{latch} at {n}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_signed_counter_that_wraps_before_its_count_has_no_count() {
         let src = kernel_with(
             N_PARAM,
@@ -1020,7 +1038,7 @@ mod tests {
         );
         let k = |n: i64| HashMap::from([(SymbolicConstant::KernelParam(0), n)]);
         let trips = |n| trips_under(&src, &k(n))[0].1.clone().map(|t| t.to_string());
-        assert_eq!(trips(4096), Ok("⌈param_0/8⌉".to_owned()));
+        assert_eq!(trips(4096), Ok("512".to_owned()));
         let wraps = Err(
             "uniform(%r2) is defined in an enclosing loop: `add.s32` leaves 32 bits".to_owned(),
         );
@@ -2123,32 +2141,29 @@ mod tests {
         let f = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &f);
         let uniformity = UniformityInfo::new(&data);
-        let n = HashMap::from([(SymbolicConstant::KernelParam(0), 2)]);
+        let affine = AffineAnalysis::new(&data, &uniformity, None);
         let constant = AffineExpr::constant;
         let tid = |c| AffineExpr::var(Var::Tid(Axis::X)) + constant(c);
         let param =
             |c| AffineExpr::from_base(SymExpr::Sym(SymbolicConstant::KernelParam(0))) + constant(c);
-        let read = |bindings, a: &AffineExpr, kind, width| {
-            let affine = AffineAnalysis::new(&data, &uniformity, bindings);
+        let read = |a: &AffineExpr, kind, width| {
             (affine.extend(a, IntInstrType { kind, width })).map(|x| x.to_string())
         };
         let (s, u, b) = (IntKind::Signed, IntKind::Unsigned, IntKind::Bits);
-        for (bindings, a, kind, width, read_as) in [
-            (None, tid(0), u, 32, Some("%tid.x")),
-            (None, tid(1 << 32), u, 32, Some("%tid.x")),
-            (None, tid(-1024), u, 16, Some("%tid.x + 64512")),
-            (None, tid(-1024), b, 16, Some("%tid.x + 64512")),
-            (None, tid(-256), u, 32, None),
-            (None, tid(-256), s, 32, Some("%tid.x - 256")),
-            (None, tid(1 << 31), s, 32, Some("%tid.x - 2147483648")),
-            (None, tid((1 << 31) - 512), s, 32, None),
-            (None, constant(-1), u, 16, Some("65535")),
-            (None, constant(-1), u, 64, None),
-            (None, param(-4), u, 32, Some("param_0 - 4")),
-            (Some(&n), param(-4), u, 32, Some("param_0 + 4294967292")),
-            (Some(&n), param(-4), s, 32, Some("param_0 - 4")),
+        for (a, kind, width, read_as) in [
+            (tid(0), u, 32, Some("%tid.x")),
+            (tid(1 << 32), u, 32, Some("%tid.x")),
+            (tid(-1024), u, 16, Some("%tid.x + 64512")),
+            (tid(-1024), b, 16, Some("%tid.x + 64512")),
+            (tid(-256), u, 32, None),
+            (tid(-256), s, 32, Some("%tid.x - 256")),
+            (tid(1 << 31), s, 32, Some("%tid.x - 2147483648")),
+            (tid((1 << 31) - 512), s, 32, None),
+            (constant(-1), u, 16, Some("65535")),
+            (constant(-1), u, 64, None),
+            (param(-4), u, 32, Some("param_0 - 4")),
         ] {
-            let got = read(bindings, &a, kind, width);
+            let got = read(&a, kind, width);
             assert_eq!(got.as_deref(), read_as, "{a} as {kind:?}{width}");
         }
     }

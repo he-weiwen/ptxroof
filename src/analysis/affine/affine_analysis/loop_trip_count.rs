@@ -122,16 +122,13 @@ impl AffineAnalysis<'_> {
         let Some(coeff) = d.terms.get(&k) else {
             return Err("latch condition does not involve an induction variable".into());
         };
-        let a1 = (self.constant(&AffineExpr::from_base(coeff.clone())))
+        let a1 = coeff
+            .as_const()
             .ok_or_else(|| "induction step is not a constant".to_owned())?;
         if a1 == i64::MIN {
             return Err("induction step is −2^63, which has no negation".into());
         }
         let cond = if continue_if_true { cmp } else { cmp.inverse() };
-        let bound = self.bindings.and_then(|b| d.base.bind(b).as_const());
-        if cond == Cmp::Ne && bound.is_some_and(|x| x.checked_rem(a1).is_some_and(|r| r != 0)) {
-            return Err("latch condition never meets its `!=` bound".into());
-        }
         let trips = exit_limit(cond, a1, d.base.clone())?;
         let distance =
             (cond == Cmp::Ne).then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
@@ -292,8 +289,8 @@ impl AffineAnalysis<'_> {
             .unwrap_or(id);
         self.alike(&(a.clone() - b.clone()), pos, Uniform::Cta, Some(top))?;
         let symbols = |x: AffineExpr| {
-            per_cta(x.as_symbols(&|v| match v {
-                Var::Unknown(u) => Some(SymExpr::Sym(SymbolicConstant::Unknown(*u))),
+            self.per_cta(x.as_symbols(&|v| match v {
+                Var::Unknown(u) => Some(self.symbol(SymbolicConstant::Unknown(*u))),
                 _ => None,
             }))
         };

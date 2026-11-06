@@ -1433,11 +1433,8 @@ fn condition(
     if ops.len() != 3 {
         return None;
     }
-    let bound = |op| {
-        let x = affine.operand_at(op, def, 0).ok()?;
-        Some(affine.bind(&x))
-    };
-    let (a, b) = (bound(ops[1])?, bound(ops[2])?);
+    let read = |op| affine.operand_at(op, def, 0).ok();
+    let (a, b) = (read(ops[1])?, read(ops[2])?);
     let proven = |x: &AffineExpr| affine.least(x).is_some_and(|l| l >= 0);
     let Some(atoms) = affine.setp_to_zero_cmps(pred, width, &a, &b, &proven) else {
         let on_tid = (a - b).depends_on_tid();

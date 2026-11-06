@@ -764,9 +764,7 @@ impl KernelReportBuilder<'_> {
     /// prints as `a·b`.
     fn trips(&self, l: LoopId) -> String {
         match &self.counts.trip_info.trips[l.0 as usize] {
-            Ok(e) => {
-                (e.bind(self.bind_map).render(&|leaf| self.leaf_name(leaf))).replace(" * ", "·")
-            }
+            Ok(e) => (e.render(&|leaf| self.leaf_name(leaf))).replace(" * ", "·"),
             Err(reason) => format!("? ({reason})"),
         }
     }
