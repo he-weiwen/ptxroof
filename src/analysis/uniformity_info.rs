@@ -17,9 +17,9 @@ use crate::ptx::cfg::BlockId;
 use crate::ptx::ir::{
     Instr, Opcode, Operand, OperandId, Register, SpecialReg, SpecialVector, Stmt,
 };
-use crate::ptx::literal::{parse_bits, parse_int};
+use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{
-    Form, Memory, ParamAccess, Sem, ShflMode, Space, immediate_width, param_access, shift_count,
+    Form, Memory, ParamAccess, Sem, ShflMode, Space, immediate, param_access, shift_count,
 };
 use crate::ptx::register_effects::{is_pure, reads_cc, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register};
@@ -259,13 +259,7 @@ fn warp_index(
         return false;
     }
     let lane_bits = WARP_SZ.trailing_zeros();
-    let imm = |op: OperandId| match t.module.operand(op) {
-        Operand::Immediate(c) => parse_bits(
-            t.module.interner.resolve(*c),
-            immediate_width(t.module, instr, op),
-        ),
-        _ => None,
-    };
+    let imm = |op: OperandId| immediate(t.module, instr, op);
     let (a, high) = match (instr.mnemonic, inputs) {
         (Opcode::Shr, [a, k]) => (
             a,

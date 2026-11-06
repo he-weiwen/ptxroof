@@ -8,8 +8,7 @@
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId, Register, Stmt};
-use crate::ptx::literal::parse_bits;
-use crate::ptx::modifier::{Form, IntKind, immediate_width};
+use crate::ptx::modifier::{Form, IntKind, immediate};
 use crate::ptx::register_effects::writes;
 use crate::ssa::{RegisterSsa, Value};
 use crate::support::intern::Symbol;
@@ -163,11 +162,8 @@ impl Walk<'_> {
         };
         let term = |o: OperandId, sign: i64| -> Option<Step> {
             match self.module.operand(o) {
-                Operand::Immediate(t) => Some(Step {
-                    constant: sign.checked_mul(parse_bits(
-                        self.module.interner.resolve(*t),
-                        immediate_width(self.module, instr, o),
-                    )?)?,
+                Operand::Immediate(_) => Some(Step {
+                    constant: sign.checked_mul(immediate(self.module, instr, o)?)?,
                     ..Step::default()
                 }),
                 Operand::Register(r) => Some(Step {

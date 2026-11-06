@@ -57,7 +57,7 @@ use crate::ptx::ir::{
 use crate::ptx::literal::{parse_bits, parse_int};
 use crate::ptx::modifier::{
     Cmp, Form, IntInstrType, IntKind, IntPredicate, Memory, MulMode, ParamAccess, ShflMode, Space,
-    immediate_width, param_access, shift_count, space,
+    immediate, immediate_width, param_access, shift_count, space,
 };
 use crate::ptx::register_effects::{registers, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register, special_register_range};
@@ -415,12 +415,7 @@ impl<'a> AffineAnalysis<'a> {
                 return 0;
             };
             let ops = module.operand_ids(i.operands);
-            let imm = |k: usize| match ops.get(k).map(|&o| (o, module.operand(o))) {
-                Some((o, Operand::Immediate(t))) => {
-                    parse_bits(module.interner.resolve(*t), immediate_width(module, i, o))
-                }
-                _ => None,
-            };
+            let imm = |k: usize| ops.get(k).and_then(|&o| immediate(module, i, o));
             let width = Form::of(module, i).int_type().map_or(64, |t| t.width);
             let k = match i.mnemonic {
                 _ if i.predicate.is_some() => None,

@@ -5,6 +5,7 @@
 use crate::ptx::ir::{
     FundamentalType, Instr, Kernel, Module, Opcode, Operand, OperandId, named_enum,
 };
+use crate::ptx::literal::parse_bits;
 
 /// An integer instruction type of 8 to 64 bits, unsigned `.u`, signed
 /// `.s` or a `.b` bit pattern: how an instruction reads its operands
@@ -421,6 +422,18 @@ pub(crate) fn immediate_width(module: &Module, instr: &Instr, op: OperandId) -> 
         (_, Form::IntCompare { width, .. }, _) => width,
         (_, Form::IntConvert { from, .. }, _) => from.width,
         _ => 64,
+    }
+}
+
+/// Operand `op` of `instr` as an integer at the width `instr` reads it
+/// (`immediate_width`); `None` unless it is an integer immediate.
+pub(crate) fn immediate(module: &Module, instr: &Instr, op: OperandId) -> Option<i64> {
+    match module.operand(op) {
+        Operand::Immediate(text) => parse_bits(
+            module.interner.resolve(*text),
+            immediate_width(module, instr, op),
+        ),
+        _ => None,
     }
 }
 
