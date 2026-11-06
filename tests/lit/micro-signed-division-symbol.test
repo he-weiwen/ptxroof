@@ -1,0 +1,9 @@
+# A signed division of a value a bound shows may be negative is no
+# floor: n − 5, every symbol nonnegative, is at least −5, so unbound and
+# under --bind 1:n=2 the quotient is a uniform variable, where an RTX
+# 4090 run rounds −3/4 to 0; under --bind 1:n=13 it is 2, word 3.
+RUN: %ptxroof analyze %fixtures/micro/signed_division_symbol.ptx | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/signed_division_symbol.ptx --bind 1:n=2 | FileCheck --check-prefix=FREE "%s"
+RUN: %ptxroof analyze %fixtures/micro/signed_division_symbol.ptx --bind 1:n=13 | FileCheck --check-prefix=BOUND "%s"
+FREE: {{^}}	st.global.u32 	[%rd3+4], 1; // global store [4·uniform(%r3@{{[0-9]+}}) + param_0 + 4] sectors/req 1 (ideal 1){{$}}
+BOUND: {{^}}	st.global.u32 	[%rd3+4], 1; // global store [param_0 + 12] sectors/req 1 (ideal 1){{$}}

@@ -7,8 +7,8 @@
 // tests: `ISETP.GT.U32.AND P0, PT, R7, 0x7, PT`, `@P0 STG.E
 // [R2.64+0x4], R7`, `ISETP.GE.U32.AND P1, PT, R7, RZ, PT`, `@P1 STG.E
 // [R2.64+0x8], R7`. The third store's address reads the remainder as
-// the uniform variable mod 8, of range [0, 7]; the tracer decides
-// neither test.
+// the uniform variable mod 8, of range [0, 7], which decides both
+// tests.
 //
 .version 8.7
 .target sm_89

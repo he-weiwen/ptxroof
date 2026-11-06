@@ -473,10 +473,8 @@ impl KernelReportBuilder<'_> {
     /// register and line.
     fn var(&self, v: &Var, plus_one: bool) -> String {
         match v {
-            Var::Iteration(l) if plus_one => format!("({} + 1)", self.iv(*l)),
-            Var::Iteration(l) => self.iv(*l),
-            Var::Unknown(u) => self.leaf_name(&SymbolicConstant::Unknown(*u)),
-            v => v.to_string(),
+            Var::Iteration(l) if !plus_one => Self::iv(self.data, *l),
+            v => Self::var_text(self.data, self.lines, v),
         }
     }
 
@@ -747,17 +745,10 @@ impl KernelReportBuilder<'_> {
         self.shorten(format!("{} {op} {rhs}", side(lhs)))
     }
 
-    /// The condition on the thread and CTA indices that selects `set`, a
-    /// loop's iteration k as `iv + 1`.
+    /// The condition on the thread and CTA indices that selects `set`,
+    /// each comparison as `formula` writes it.
     fn condition(&self, set: &Pred) -> Option<String> {
-        (set.render_named(&|v| self.var(v, true))).map(|t| t.replace(" * ", "·"))
-    }
-
-    /// Loop `l`'s iteration from 0, `iv[<header label>]`, LLVM's canonical
-    /// induction variable (llvm/include/llvm/Analysis/LoopInfo.h).
-    fn iv(&self, l: LoopId) -> String {
-        let header = self.forest.get(l).header;
-        format!("iv[{}]", self.cfg.block_name(self.module, header))
+        set.render_named(&|c| self.formula(&c.form, c.cmp))
     }
 
     /// Loop `l`'s trip count, or `?` and why it is not known; a product
@@ -939,10 +930,10 @@ $L__BB0_5:
             [
                 "per thread: global store <= 20 B; param load 8 B",
                 "loop: trips 4 | exec 4/thread",
-                "[<block 2>] %tid.x - (iv[$L__BB0_1] + 1) < 0 | exec <= 4/thread | \
+                "[<block 2>] %tid.x < iv[$L__BB0_1] + 1 | exec <= 4/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
                 "exec 4/thread",
-                "[<block 5>] %tid.x <= 31 | exec <= 1/thread | \
+                "[<block 5>] %tid.x ≤ 31 | exec <= 1/thread | \
                  global store [param_0] sectors/req ? (block shape unknown: no .reqntid; pass --launch)",
             ]
         );

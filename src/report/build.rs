@@ -253,14 +253,7 @@ impl KernelReportBuilder<'_> {
         let mut operands = Operands::new();
         let mut per_request = PerRequests::new();
         let mut per_wavefronts = PerWavefronts::new();
-        let name = |v: &Var| match v {
-            Var::Iteration(l) => format!("k[{}]", self.loop_ref(*l)),
-            Var::Unknown(u) => format!(
-                "uniform({})",
-                Self::value_name(self.module, self.kernel, self.cfg, self.lines, *u)
-            ),
-            other => other.to_string(),
-        };
+        let name = |v: &Var| Self::var_text(self.data, self.lines, v);
         let shape = self.counts.shape;
         let mut out: HashMap<Option<LoopId>, Vec<Access>> = HashMap::new();
         for (bid, block) in cfg.blocks.iter_enumerated() {
@@ -575,13 +568,7 @@ impl<'a> KernelReportBuilder<'a> {
         let uniformity = UniformityInfo::new(data);
         let affine = AffineAnalysis::new(data, &uniformity, Some(bind_map));
         let names = loop_names(module, kernel, cfg, forest);
-        let name = |v: &Var| match v {
-            Var::Unknown(u) => format!(
-                "uniform({})",
-                Self::value_name(module, kernel, cfg, lines, *u)
-            ),
-            other => other.to_string(),
-        };
+        let name = |v: &Var| Self::var_text(data, lines, v);
         let trip_info = trip_counts_from(&affine, &name);
         let mut blocks = collect(module, kernel, cfg, forest);
 
@@ -677,6 +664,27 @@ impl<'a> KernelReportBuilder<'a> {
                 format!("{}@{}", reg(r), cfg.block_name(module, block))
             }
             Value::Undef(r) => reg(r),
+        }
+    }
+
+    /// Loop `l`'s iteration from 0, `iv[<header label>]`, LLVM's canonical
+    /// induction variable (llvm/include/llvm/Analysis/LoopInfo.h).
+    pub(super) fn iv(data: &KernelAnalyses, l: LoopId) -> String {
+        let header = data.forest.get(l).header;
+        format!("iv[{}]", data.cfg.block_name(data.module, header))
+    }
+
+    /// A variable as the report writes it: a loop's iteration k as
+    /// `(iv[<header label>] + 1)`, an unknown value by its register and
+    /// line, `uniform(%r83@106)`.
+    pub(super) fn var_text(data: &KernelAnalyses, lines: &LineIndex, v: &Var) -> String {
+        match v {
+            Var::Iteration(l) => format!("({} + 1)", Self::iv(data, *l)),
+            Var::Unknown(u) => {
+                let name = Self::value_name(data.module, data.kernel, data.cfg, lines, *u);
+                format!("uniform({name})")
+            }
+            other => other.to_string(),
         }
     }
 

@@ -5,12 +5,12 @@
 //! branch-condition analyses read memory operands and predicates here.
 //!
 //! A loop counter is an induction variable (`super::induction_variables`),
-//! read as its start plus `k − 1` steps; a φ at a join is the one value
-//! with no loop counter that every path writes, another φ one immediate
-//! every path writes, or refused. Supported arithmetic is followed down to
-//! `ld.param`, constants and special registers; an unsupported operation
-//! is a named reason, every special register, memory load and atomic it
-//! is computed from through arithmetic the analysis does not read.
+//! read as its start plus `k − 1` steps; another φ is the one value with
+//! no loop counter that every path writes, or refused. Supported
+//! arithmetic is followed down to `ld.param`, constants and special
+//! registers; an unsupported operation is a named reason, every special
+//! register, memory load and atomic it is computed from through
+//! arithmetic the analysis does not read.
 //!
 //! A loop's latch (`setp` + `@%p bra`) is normalized to
 //! `continue while A1·k + A0 cmp 0` (k = iteration number; a counter
@@ -57,7 +57,7 @@ use crate::ptx::ir::{
 use crate::ptx::literal::{parse_bits, parse_int};
 use crate::ptx::modifier::{
     Cmp, Form, IntInstrType, IntKind, IntPredicate, Memory, MulMode, ParamAccess, ShflMode, Space,
-    immediate_width, param_access, space,
+    immediate_width, param_access, shift_count, space,
 };
 use crate::ptx::register_effects::{registers, split_operands};
 use crate::ptx::special_registers::{SpecialRegister, special_register, special_register_range};
@@ -156,37 +156,6 @@ impl<'a> AffineAnalysis<'a> {
             let _ = analysis.loop_trip_count(l);
         }
         analysis
-    }
-
-    /// Every one of these definitions is `mov r, imm` with one immediate.
-    fn same_immediate(&self, defs: &[usize]) -> Option<i64> {
-        let module = self.data.module;
-        let mut value = None;
-        for &d in defs {
-            let Stmt::Instr(instr) = &self.data.kernel.stmts[d] else {
-                return None;
-            };
-            let [dst, src] = module.operand_ids(instr.operands) else {
-                return None;
-            };
-            let (Operand::Register(_), Operand::Immediate(text)) =
-                (module.operand(*dst), module.operand(*src))
-            else {
-                return None;
-            };
-            if instr.mnemonic != Opcode::Mov {
-                return None;
-            }
-            let c = parse_bits(
-                module.interner.resolve(*text),
-                immediate_width(module, instr, *src),
-            )?;
-            if value.is_some_and(|v| v != c) {
-                return None;
-            }
-            value = Some(c);
-        }
-        value
     }
 
     /// The one value every one of these definitions writes to `reg`, with
@@ -327,6 +296,11 @@ impl<'a> AffineAnalysis<'a> {
         least(a).or_else(|| (first != *a).then(|| least(&first)).flatten())
     }
 
+    /// `a` is never negative: its `least` value is 0 or more.
+    pub(crate) fn nonnegative(&self, a: &AffineExpr) -> bool {
+        self.least(a).is_some_and(|l| l >= 0)
+    }
+
     /// The greater of `a` and `b`: one where `least` puts it never below
     /// the other, a constant.
     fn max(&self, a: SymExpr, b: SymExpr) -> SymExpr {
@@ -441,19 +415,20 @@ impl<'a> AffineAnalysis<'a> {
                 return 0;
             };
             let ops = module.operand_ids(i.operands);
-            let imm = |k: usize| match ops.get(k).map(|&o| module.operand(o)) {
-                Some(Operand::Immediate(t)) => parse_int(module.interner.resolve(*t)),
+            let imm = |k: usize| match ops.get(k).map(|&o| (o, module.operand(o))) {
+                Some((o, Operand::Immediate(t))) => {
+                    parse_bits(module.interner.resolve(*t), immediate_width(module, i, o))
+                }
                 _ => None,
             };
+            let width = Form::of(module, i).int_type().map_or(64, |t| t.width);
             let k = match i.mnemonic {
                 _ if i.predicate.is_some() => None,
-                Opcode::Shl => imm(2).map(|c| i64::from(c as u32)),
-                Opcode::And => imm(2)
-                    .or_else(|| imm(1))
-                    .map(|m| i64::from(m.trailing_zeros())),
+                Opcode::Shl => imm(2).map(|c| shift_count(c, width)),
+                Opcode::And => imm(2).or_else(|| imm(1)).map(i64::trailing_zeros),
                 _ => None,
             };
-            k.map_or(0, |k| k.min(62) as u32)
+            k.map_or(0, |k| k.min(62))
         };
         (self.data.ssa.sources(v).iter())
             .map(zeros)
@@ -473,8 +448,8 @@ impl<'a> AffineAnalysis<'a> {
         })
     }
 
-    /// A φ: a counter's `start + (k − 1)·step`; at a join, the one value
-    /// every path writes; else one immediate every path writes.
+    /// A φ: a counter's `start + (k − 1)·step`; else the one value every
+    /// path writes.
     fn transfer_phi(
         &self,
         v: Value,
@@ -510,11 +485,7 @@ impl<'a> AffineAnalysis<'a> {
             };
             return Err((self.depends_on(vec![v], Vec::new())).unwrap_or_else(|| why.into()));
         }
-        let common = match header {
-            true => (self.same_immediate(&defs)).map(AffineExpr::constant),
-            false => self.same_value(&defs, reg, depth),
-        };
-        common.ok_or_else(refused)
+        self.same_value(&defs, reg, depth).ok_or_else(refused)
     }
 
     /// Counter `r` of loop `l` in its iteration `k`: its start plus
@@ -616,8 +587,9 @@ impl<'a> AffineAnalysis<'a> {
 
     /// Whether `a`, read at `pos`, is one value for the threads `level`
     /// names: each counter of a loop not holding `pos` that they leave
-    /// together, and each unknown value they see alike, defined outside
-    /// loop `scope`. Else the first variable that is not, why, and, for
+    /// together, and each unknown value they see alike, each defined
+    /// outside loop `scope`, a counter's loop not nested in it. Else the
+    /// first variable that is not, why, and, for
     /// an unknown value they may share, why affine analysis has no form
     /// for it, read now (a counter's wrap is known only while its count
     /// is computed).
@@ -633,6 +605,9 @@ impl<'a> AffineAnalysis<'a> {
             let (var, why, own) = match (v.counter(), v.unknown()) {
                 (Some(l), _) if !self.data.in_loop(l, pos) => {
                     let why = match uniformity.exit_uniformity(l) {
+                        _ if scope.is_some_and(|s| self.data.loop_within(l, s)) => {
+                            "is counted again on every trip of an enclosing loop".into()
+                        }
                         Ok(u) if u <= level => continue,
                         Ok(_) => "is one value per warp only after its loop".into(),
                         Err(why) => {
@@ -1353,6 +1328,14 @@ mod tests {
         assert_eq!(trips("shr.u32 %r3, %r2, 28;"), Ok("15".to_owned()));
         assert_eq!(trips("div.u32 %r3, %r2, 268435456;"), Ok("15".to_owned()));
         assert_eq!(trips("rem.u32 %r3, %r2, 10;"), Ok("4".to_owned()));
+        // A count is b's unsigned 32-bit value, clamped to the width: −1
+        // and 32 shift every bit of n − 4 out, a `.b64` shift by 63 keeps
+        // bit 0 as bit 63.
+        assert_eq!(trips("shr.u32 %r3, %r2, -1;"), Ok("1".to_owned()));
+        assert_eq!(trips("shr.u32 %r3, %r2, 32;"), Ok("1".to_owned()));
+        let top = "mov.b64 %rd1, 1;\nshl.b64 %rd2, %rd1, 63;\nshr.s64 %rd3, %rd2, 61;\n\
+                   cvt.s32.s64 %r5, %rd3;\nsub.s32 %r3, 2, %r5;";
+        assert_eq!(trips(top), Ok("6".to_owned()));
     }
 
     /// LLVM's loop guard: a branch before the loop that skips it when its
@@ -1697,9 +1680,9 @@ mod tests {
     }
 
     /// PTX ISA §9.7.6.2: `setp`'s second output is the complemented
-    /// comparison, which the latch matcher does not read.
+    /// comparison, which a latch on it continues on.
     #[test]
-    fn a_latch_on_setps_first_output_is_a_trip_count() {
+    fn a_latch_on_setps_second_output_reads_its_complement() {
         let trips = |dests: &str, pred: &str| {
             let src = kernel_with(
                 N_PARAM,
@@ -1715,10 +1698,12 @@ mod tests {
                 .map(ToString::to_string)
                 .map_err(Clone::clone)
         };
-        let second = Err("latch predicate is not `setp.lt.s32`'s first output".to_owned());
-        assert_eq!(trips("%p1|%p2", "%p1"), Ok("max(param_0, 1)".to_owned()));
-        assert_eq!(trips("%p2|%p1", "%p1"), second);
-        assert_eq!(trips("_|%p1", "%p1"), second);
+        let counted = Ok("max(param_0, 1)".to_owned());
+        let away = Err("loop bound moves away from the exit condition".to_owned());
+        assert_eq!(trips("%p1|%p2", "%p1"), counted);
+        assert_eq!(trips("%p2|%p1", "%p1"), away);
+        assert_eq!(trips("_|%p1", "%p1"), away);
+        assert_eq!(trips("%p2|%p1", "!%p1"), counted);
     }
 
     /// Triton's pipelined loops test the counter in the header, before
@@ -2271,7 +2256,7 @@ mod tests {
                 nonnegative,
             )
         };
-        let proven = |x: &AffineExpr| affine.least(x).is_some_and(|l| l >= 0);
+        let proven = |x: &AffineExpr| affine.nonnegative(x);
         assert_eq!(cmps(&|_| false), None);
         assert_eq!(
             cmps(&proven),

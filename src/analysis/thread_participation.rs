@@ -372,27 +372,32 @@ impl Pred {
     /// conjunctions alone, `hedged`, is left to the `<=` marker,
     /// elsewhere it prints as `?`, uniform ones combined as one. A
     /// disjunction is parenthesized when nested.
-    fn text(&self, nested: bool, hedged: bool, name: &dyn Fn(&Var) -> String) -> Option<String> {
+    fn text(
+        &self,
+        nested: bool,
+        hedged: bool,
+        cmp: &dyn Fn(&Constraint) -> String,
+    ) -> Option<String> {
         match self {
             _ if self.uniform_only() => Some("?".to_owned()),
             Pred::True => None,
             Pred::False => Some("no thread".to_owned()),
             Pred::Unknown | Pred::Uniform(..) => Some("?".to_owned()),
-            Pred::Cmp(c) => Some(c.render_named(name)),
+            Pred::Cmp(c) => Some(cmp(c)),
             Pred::Elect(_) => Some("elected".to_owned()),
-            Pred::Not(p) => Some(format!("not ({})", p.text(false, false, name)?)),
+            Pred::Not(p) => Some(format!("not ({})", p.text(false, false, cmp)?)),
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
                     .filter(|p| {
                         !hedged || !(matches!(p.as_ref(), Pred::Unknown) || p.uniform_only())
                     })
-                    .filter_map(|p| p.text(true, hedged, name))
+                    .filter_map(|p| p.text(true, hedged, cmp))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
             }
             Pred::Or(a, b) => {
-                let (a, b) = (a.text(true, false, name)?, b.text(true, false, name)?);
+                let (a, b) = (a.text(true, false, cmp)?, b.text(true, false, cmp)?);
                 let text = format!("{a} or {b}");
                 Some(if nested { format!("({text})") } else { text })
             }
@@ -442,25 +447,14 @@ fn decide(cmp: Cmp, lo: i128, hi: i128) -> Tri {
         Cmp::Eq => (zero, apart),
         Cmp::Ne => (apart, zero),
         _ => (
-            holds(cmp, lo) && holds(cmp, hi),
-            !holds(cmp, lo) && !holds(cmp, hi),
+            cmp.holds(lo) && cmp.holds(hi),
+            !cmp.holds(lo) && !cmp.holds(hi),
         ),
     };
     match (all, none) {
         (true, _) => Tri::Yes,
         (_, true) => Tri::No,
         _ => Tri::Maybe,
-    }
-}
-
-fn holds(cmp: Cmp, x: i128) -> bool {
-    match cmp {
-        Cmp::Lt => x < 0,
-        Cmp::Le => x <= 0,
-        Cmp::Gt => x > 0,
-        Cmp::Ge => x >= 0,
-        Cmp::Eq => x == 0,
-        Cmp::Ne => x != 0,
     }
 }
 
@@ -610,13 +604,13 @@ impl Pred {
     /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
     /// %tid.x == 0`; `None` when no such condition selects.
     pub fn render(&self) -> Option<String> {
-        self.render_named(&|v| v.to_string())
+        self.render_named(&Constraint::render)
     }
 
-    /// The same, naming each variable by `name`.
-    pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> Option<String> {
+    /// The same, each comparison as `cmp` writes it.
+    pub fn render_named(&self, cmp: &dyn Fn(&Constraint) -> String) -> Option<String> {
         self.has_condition()
-            .then(|| self.text(false, true, name))
+            .then(|| self.text(false, true, cmp))
             .flatten()
     }
 
@@ -1132,15 +1126,7 @@ impl PredicateReader<'_> {
 
     /// Whether `reg` is the second destination of `instr`, `d|p`.
     fn second(&self, instr: &Instr, reg: Symbol) -> bool {
-        let ops = self.module.operand_ids(instr.operands);
-        ops.first()
-            .and_then(|&id| match self.module.operand(id) {
-                Operand::MultipleDestinations { children } => {
-                    self.module.operand_ids(*children).get(1)
-                }
-                _ => None,
-            })
-            .is_some_and(|&id| matches!(self.module.operand(id), Operand::Register(r) if *r == reg))
+        self.affine.data.destination(instr, reg) == Some(1)
     }
 
     fn read_definition(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
@@ -1214,6 +1200,7 @@ impl PredicateReader<'_> {
                     Some(_) => (Pred::True, false),
                     None => (Pred::Unknown, false),
                 },
+                Operand::Register(r) => self.read_definition(*r, def, depth),
                 _ => (Pred::Unknown, false),
             },
             (Opcode::Not, Form::Pred, [_, a]) => match reg(*a) {
@@ -1435,7 +1422,7 @@ fn condition(
     }
     let read = |op| affine.operand_at(op, def, 0).ok();
     let (a, b) = (read(ops[1])?, read(ops[2])?);
-    let proven = |x: &AffineExpr| affine.least(x).is_some_and(|l| l >= 0);
+    let proven = |x: &AffineExpr| affine.nonnegative(x);
     let Some(atoms) = affine.setp_to_zero_cmps(pred, width, &a, &b, &proven) else {
         let on_tid = (a - b).depends_on_tid();
         let uniform = affine.uniformity().def_uniformity(def) == Ok(Uniform::Cta);
@@ -1454,7 +1441,8 @@ fn condition(
 }
 
 /// `form cmp 0`, a comparison of the `setp` at `def`, as the threads it
-/// holds on, and the comparison `forms` keeps for it. A form free of the
+/// holds on, and the comparison `forms` keeps for it: every thread or
+/// none where the form's range over the launch decides it. A form free of the
 /// thread index whose comparison the uniformity analysis finds divergent
 /// is none, unless it is a loop counter's, one value at each trip. Such a
 /// comparison free of the thread index and of loop counters that reads
@@ -1465,13 +1453,10 @@ fn comparison(
     form: AffineExpr,
     cmp: Cmp,
 ) -> (Option<Pred>, Option<(AffineExpr, Cmp)>) {
-    if let Some(d) = form.as_const() {
-        let p = if holds(cmp, d.into()) {
-            Pred::True
-        } else {
-            Pred::False
-        };
-        return (Some(p), None);
+    match affine.range(&form).map(|(lo, hi)| decide(cmp, lo, hi)) {
+        Some(Tri::Yes) => return (Some(Pred::True), None),
+        Some(Tri::No) => return (Some(Pred::False), None),
+        _ => {}
     }
     let on_tid = form.depends_on_tid();
     let trip = per_trip(affine, &form, def);

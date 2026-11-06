@@ -1,0 +1,5 @@
+# A loop header's φ of one value on every path, a `mov` of 7 on entry
+# and an `add` of 3 and 4 on the back edge, is that value, as a join's
+# is: 7 trips, where an RTX 4090 run stores 7.
+RUN: %ptxroof analyze %fixtures/micro/header_same_value.ptx | FileCheck --check-prefix=ANN "%s"
+ANN: {{^}}$L__BB0_1: // loop: trips 7 | warp * × lane * | exec 7/CTA{{$}}

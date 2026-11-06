@@ -11,7 +11,7 @@ use crate::analysis::control_flow::loops::LoopId;
 use crate::ptx::ir::{Element, SpecialReg, SpecialVector};
 use crate::ptx::special_registers::special_register_range;
 use crate::ssa::Value;
-use crate::support::integer::{gcd, same_window};
+use crate::support::integer::{gcd, remainder_range, same_window};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -325,15 +325,6 @@ impl AffineExpr {
         }
     }
 
-    /// Substitute bound symbols in every coefficient and the base.
-    pub fn bind(&self, bindings: &std::collections::HashMap<SymbolicConstant, i64>) -> AffineExpr {
-        let mut out = AffineExpr::from_base(self.base.bind(bindings));
-        for (v, c) in &self.terms {
-            out = out + AffineExpr::term(v.clone(), c.bind(bindings));
-        }
-        out
-    }
-
     /// Divide exactly by `d`, when every coefficient and the base are
     /// known multiples of it.
     pub fn div_exact(self, d: i64) -> Option<AffineExpr> {
@@ -566,7 +557,7 @@ impl AffineExpr {
     /// of symbolic coefficient at 0, in i128 so that a comparison of
     /// 64-bit operands reads exactly; `None` past i128.
     pub fn eval(&self, leaf: &dyn Fn(&Var) -> i64) -> Option<i128> {
-        (self.terms.iter()).try_fold(i128::from(self.base.const_part()), |x, (v, c)| {
+        (self.terms.iter()).try_fold(i128::from(self.base.const_part()?), |x, (v, c)| {
             let term =
                 i128::from(c.as_const().unwrap_or(0)).checked_mul(i128::from(v.eval(leaf)))?;
             x.checked_add(term)
@@ -743,12 +734,12 @@ impl AffineExpr {
     /// whose coefficients are not known multiples of 2^k and the base
     /// modulo 2^k, when it lies below 2^k, the rest being a multiple of
     /// 2^k that leaves the low k bits to it; and the whole form's bits
-    /// when it is a bounded nonnegative sum. `largest` gives a
-    /// variable's greatest value.
-    pub fn may_set(&self, largest: &dyn Fn(&Var) -> Option<i64>) -> u64 {
+    /// when it is a bounded nonnegative sum. `bound` gives a variable's
+    /// least and greatest value, as `range` reads it.
+    pub fn may_set(&self, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> u64 {
         let all: Vec<_> = self.terms.iter().collect();
         let mut set = (self.base.as_const())
-            .and_then(|b| bits(&all, b, largest))
+            .and_then(|b| bits(&all, b, bound))
             .unwrap_or(u64::MAX);
         for k in 1..63 {
             let p = 1i64 << k;
@@ -758,7 +749,7 @@ impl AffineExpr {
                 None => continue,
             };
             let (_, rest) = self.multiple_terms(p);
-            if let Some(r) = bits(&rest, base, largest)
+            if let Some(r) = bits(&rest, base, bound)
                 && r >> k == 0
             {
                 set &= r | (u64::MAX << k);
@@ -779,7 +770,7 @@ type Terms<'a> = Vec<(&'a Var, &'a SymExpr)>;
 
 /// The bits a sum of `terms` and `base` may set, when the base is
 /// nonnegative and each term a positive constant times a variable that
-/// is never negative and has a greatest value: a term's from its
+/// is never negative and has a greatest value (`var_range`): a term's from its
 /// coefficient's lowest set bit to its greatest value's highest, and of
 /// an xor of `%tid.x`'s bits only those its product sets
 /// (`XorSwizzle::times`). Where no two terms' bits meet the sum carries
@@ -788,7 +779,7 @@ type Terms<'a> = Vec<(&'a Var, &'a SymExpr)>;
 fn bits(
     terms: &[(&Var, &SymExpr)],
     base: i64,
-    largest: &dyn Fn(&Var) -> Option<i64>,
+    bound: &dyn Fn(&Var) -> Option<(i64, i64)>,
 ) -> Option<u64> {
     let upto = |n: u128| match 128 - n.leading_zeros() {
         len if len >= 64 => u64::MAX,
@@ -798,7 +789,9 @@ fn bits(
     let (mut masks, mut total) = (vec![base], u128::from(base));
     for &(v, c) in terms {
         let c = u64::try_from(c.as_const()?).ok().filter(|&c| c > 0)?;
-        let top = u128::from(c) * u128::from(u64::try_from(greatest(v, largest)?).ok()?);
+        let (least, most) = var_range(v, bound)?;
+        let most = u64::try_from(most).ok().filter(|_| least >= 0)?;
+        let top = u128::from(c) * u128::from(most);
         total = total.checked_add(top)?;
         let product = (v.xor_swizzle().and_then(|b| b.times(c))).map_or(u64::MAX, |b| b.may_set());
         masks.push(upto(top) & (u64::MAX << c.trailing_zeros()) & product);
@@ -810,19 +803,6 @@ fn bits(
         .map(|m| m.trailing_zeros())
         .min();
     Some(upto(total) & (u64::MAX << low.unwrap_or(0)))
-}
-
-/// A variable's greatest value when it is never negative: a mod's
-/// modulus less one, a floor's operand's over its divisor, an index's
-/// or a counter's from `largest`; a uniform variable's sign is unknown.
-fn greatest(v: &Var, largest: &dyn Fn(&Var) -> Option<i64>) -> Option<i64> {
-    match v {
-        Var::Mod(_, m) => Some(m - 1),
-        Var::FloorDiv(x, d) => Some(greatest(x, largest)?.div_euclid(*d)),
-        Var::Swizzle(b) => Some(b.range(largest(&Var::Tid(Axis::X)).map(|hi| (0, hi))).1),
-        Var::Tid(_) | Var::Ctaid(_) | Var::Iteration(_) => largest(v),
-        Var::Unknown(_) => None,
-    }
 }
 
 /// The range of `Σ c·t` over terms `t` that are `x`, `⌊x/d⌋` or
@@ -863,10 +843,8 @@ fn group_range(
         let d = d.filter(|&d| d > 0)?;
         let (lo, hi) = var_range(x, bound)?;
         let q = (lo.div_euclid(d), hi.div_euclid(d));
-        let r = match same_window(lo.into(), hi.into(), 0, d.into()) {
-            Some(_) => (lo.rem_euclid(d), hi.rem_euclid(d)),
-            None => (0, d - 1),
-        };
+        let (a, b) = remainder_range(Some((lo.into(), hi.into())), d.into());
+        let r = (remainder(a), remainder(b));
         let (a, b) = span(c[0].checked_mul(d.into())?.checked_add(c[1])?, q)?;
         let (e, f) = span(c[0].checked_add(c[2])?, r)?;
         Some((a.checked_add(e)?, b.checked_add(f)?))
@@ -886,15 +864,19 @@ fn var_range(v: &Var, bound: &dyn Fn(&Var) -> Option<(i64, i64)>) -> Option<(i64
             let (lo, hi) = var_range(inner, bound)?;
             Some((lo.div_euclid(*d), hi.div_euclid(*d)))
         }
-        Var::Mod(inner, m) => match var_range(inner, bound) {
-            Some((lo, hi)) if same_window(lo.into(), hi.into(), 0, (*m).into()).is_some() => {
-                Some((lo.rem_euclid(*m), hi.rem_euclid(*m)))
-            }
-            _ => Some((0, m - 1)),
-        },
+        Var::Mod(inner, m) => {
+            let range = var_range(inner, bound).map(|(lo, hi)| (lo.into(), hi.into()));
+            let (lo, hi) = remainder_range(range, (*m).into());
+            Some((remainder(lo), remainder(hi)))
+        }
         Var::Swizzle(b) => Some(b.range(bound(&Var::Tid(Axis::X)))),
         _ => bound(v),
     }
+}
+
+/// A remainder by an `i64` modulus, which lies below it.
+fn remainder(r: i128) -> i64 {
+    i64::try_from(r).expect("a remainder lies below its modulus")
 }
 
 impl fmt::Display for AffineExpr {
@@ -1039,7 +1021,7 @@ mod tests {
         let tid = || Var::Tid(Axis::X);
         let modulo = |m| AffineExpr::var(Var::Mod(Box::new(tid()), m));
         let floor = |d| AffineExpr::var(Var::FloorDiv(Box::new(tid()), d));
-        let block = |v: &Var| matches!(v, Var::Tid(_)).then_some(127);
+        let block = |v: &Var| matches!(v, Var::Tid(_)).then_some((0, 127));
         // rope_norm's 64·%ctaid.x + (⌊%tid.x/8⌋ mod 16): bits 0–3 and 6 up.
         let rope = AffineExpr::var(Var::Ctaid(Axis::X)).scale(c(64))
             + AffineExpr::var(Var::Mod(Box::new(Var::FloorDiv(Box::new(tid()), 8)), 16));
@@ -1064,7 +1046,7 @@ mod tests {
         let swizzle = (field(16, 2, 64).xor_swizzle().unwrap())
             .xor(&modulo(8).scale(c(16)).xor_swizzle().unwrap())
             .xor(&field(32, 4, 2048).xor_swizzle().unwrap());
-        let wide = |v: &Var| matches!(v, Var::Tid(_)).then_some(1023);
+        let wide = |v: &Var| matches!(v, Var::Tid(_)).then_some((0, 1023));
         assert_eq!(
             AffineExpr::var(Var::Swizzle(swizzle)).may_set(&wide),
             0x1870
@@ -1099,7 +1081,7 @@ mod tests {
             + huge(Var::Tid(Axis::Y))
             + huge(Var::Tid(Axis::Z))
             + huge(Var::Ctaid(Axis::X));
-        assert_eq!(wide.may_set(&|_| Some(i64::MAX)), u64::MAX);
+        assert_eq!(wide.may_set(&|_| Some((0, i64::MAX))), u64::MAX);
     }
 
     #[test]

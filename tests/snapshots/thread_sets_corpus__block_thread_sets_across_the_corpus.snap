@@ -1795,6 +1795,7 @@ tests/fixtures/micro/bare_registers.ptx:21	warp * × lane *
 tests/fixtures/micro/bare_registers.ptx:28	<= warp * × lane *
 tests/fixtures/micro/barrier_red.ptx:21	warp * × lane *
 tests/fixtures/micro/bfe_fields.ptx:25	warp * × lane *
+tests/fixtures/micro/bind_width_eq.ptx:22	warp * × lane *
 tests/fixtures/micro/branchy.ptx:28	runs when param_1 ≥ 1 (CTA-uniform, branch at line 26)
 tests/fixtures/micro/branchy.ptx:40	runs when predicate %p2 (line 36) is false (warp-uniform, branch at line 37)
 tests/fixtures/micro/call_returns.ptx:43	warp * × lane *
@@ -1831,6 +1832,11 @@ tests/fixtures/micro/counter_guard.ptx:47	warp * × lane *
 tests/fixtures/micro/counter_mod_offset.ptx:22	warp * × lane *
 tests/fixtures/micro/counter_mod_offset.ptx:24	warp * × lane *
 tests/fixtures/micro/counter_mod_offset.ptx:32	warp * × lane *
+tests/fixtures/micro/counter_names.ptx:20	warp * × lane *
+tests/fixtures/micro/counter_names.ptx:23	warp * × lane *
+tests/fixtures/micro/counter_names.ptx:27	warp * × lane *
+tests/fixtures/micro/counter_names.ptx:31	warp * × lane *
+tests/fixtures/micro/counter_names.ptx:35	warp * × lane *
 tests/fixtures/micro/counter_range_bound.ptx:24	warp * × lane *
 tests/fixtures/micro/counter_range_bound.ptx:30	warp * × lane * | runs when param_1 ≥ 1 (CTA-uniform, branch at line 29)
 tests/fixtures/micro/counter_range_bound.ptx:31	warp * × lane *
@@ -1945,6 +1951,9 @@ tests/fixtures/micro/guards.ptx:53	warp * × lane 0
 tests/fixtures/micro/guards.ptx:54	warp 1 × lane *
 tests/fixtures/micro/guards.ptx:56	warp 0 × lane 1-31 ∪ warp 1 × lane *
 tests/fixtures/micro/guards.ptx:57	warp * × lane *
+tests/fixtures/micro/header_same_value.ptx:21	warp * × lane *
+tests/fixtures/micro/header_same_value.ptx:25	warp * × lane *
+tests/fixtures/micro/header_same_value.ptx:30	warp * × lane *
 tests/fixtures/micro/hex_immediates.ptx:43	warp * × lane *
 tests/fixtures/micro/hex_immediates.ptx:45	warp * × lane *
 tests/fixtures/micro/hex_immediates.ptx:50	warp * × lane *
@@ -1957,6 +1966,11 @@ tests/fixtures/micro/hex_immediates.ptx:117	warp * × lane *
 tests/fixtures/micro/hex_immediates.ptx:121	warp * × lane *
 tests/fixtures/micro/hex_immediates.ptx:122	warp * × lane *
 tests/fixtures/micro/hex_immediates.ptx:135	warp * × lane *
+tests/fixtures/micro/inner_exit_counter.ptx:23	warp * × lane *
+tests/fixtures/micro/inner_exit_counter.ptx:25	warp * × lane *
+tests/fixtures/micro/inner_exit_counter.ptx:27	warp * × lane *
+tests/fixtures/micro/inner_exit_counter.ptx:31	warp * × lane *
+tests/fixtures/micro/inner_exit_counter.ptx:37	warp * × lane *
 tests/fixtures/micro/int_literals.ptx:28	warp * × lane *
 tests/fixtures/micro/int_literals.ptx:43	warp * × lane *
 tests/fixtures/micro/int_literals.ptx:58	warp * × lane *
@@ -2111,6 +2125,7 @@ tests/fixtures/micro/or_entry.ptx:96	warp 0 × lane 16-31 ∪ warp 1 × lane *
 tests/fixtures/micro/or_entry.ptx:98	warp 0 × lane 0-15 ∪ warp 1 × lane 16-31
 tests/fixtures/micro/or_entry.ptx:102	warp 0 × lane 0-15 ∪ warp 1 × lane 16-31
 tests/fixtures/micro/or_entry.ptx:107	warp * × lane *
+tests/fixtures/micro/or_mod_range.ptx:21	warp * × lane *
 tests/fixtures/micro/or_negative.ptx:24	warp * × lane *
 tests/fixtures/micro/packed_add.ptx:18	warp * × lane *
 tests/fixtures/micro/param_entry.ptx:23	warp * × lane *
@@ -2131,6 +2146,11 @@ tests/fixtures/micro/setp_float.ptx:26	warp * × lane *
 tests/fixtures/micro/setp_float.ptx:35	<= warp * × lane *
 tests/fixtures/micro/setp_float.ptx:49	warp * × lane *
 tests/fixtures/micro/setp_float.ptx:58	<= warp * × lane *
+tests/fixtures/micro/setp_second_output.ptx:24	warp * × lane *
+tests/fixtures/micro/setp_second_output.ptx:26	warp * × lane *
+tests/fixtures/micro/setp_second_output.ptx:30	warp * × lane *
+tests/fixtures/micro/setp_second_output.ptx:43	warp * × lane *
+tests/fixtures/micro/setp_second_output.ptx:49	warp * × lane 0-3
 tests/fixtures/micro/setp_u64_wide.ptx:23	warp * × lane *
 tests/fixtures/micro/setp_u64_wide.ptx:30	warp 0 × lane 1-31 ∪ warp 1-31 × lane *
 tests/fixtures/micro/setp_unknown_range.ptx:33	warp * × lane *
@@ -2168,6 +2188,8 @@ tests/fixtures/micro/shfl_idx.ptx:110	warp * × lane *
 tests/fixtures/micro/shfl_idx.ptx:129	warp * × lane *
 tests/fixtures/micro/shfl_idx.ptx:148	warp * × lane *
 tests/fixtures/micro/shfl_idx.ptx:166	warp * × lane *
+tests/fixtures/micro/shfl_whole_warp_control.ptx:20	warp * × lane *
+tests/fixtures/micro/signed_division_symbol.ptx:22	warp * × lane *
 tests/fixtures/micro/single_loop.ptx:28	runs when param_1 ≥ 1 (CTA-uniform, branch at line 26)
 tests/fixtures/micro/swap_latch.ptx:22	warp * × lane *
 tests/fixtures/micro/swap_latch.ptx:25	warp * × lane *
@@ -2189,7 +2211,7 @@ tests/fixtures/micro/tensor_copies.ptx:74	warp * × lane *
 tests/fixtures/micro/tensor_copies.ptx:83	warp * × lane *
 tests/fixtures/micro/texture_outputs.ptx:22	warp * × lane *
 tests/fixtures/micro/texture_outputs.ptx:27	<= warp * × lane *
-tests/fixtures/micro/tid_range.ptx:29	(%tid.x mod 16) == 0
+tests/fixtures/micro/tid_range.ptx:29	(%tid.x mod 16) = 0
 tests/fixtures/micro/trip_div_param.ptx:27	warp * × lane *
 tests/fixtures/micro/trip_div_param.ptx:33	warp * × lane * | runs when %r3@30 ≥ 1 (CTA-uniform, branch at line 32)
 tests/fixtures/micro/trip_div_param.ptx:34	warp * × lane *
@@ -2290,6 +2312,7 @@ tests/fixtures/micro/uniform_counter.ptx:159	warp * × lane *
 tests/fixtures/micro/uniform_counter.ptx:171	warp * × lane *
 tests/fixtures/micro/uniform_counter.ptx:200	warp * × lane *
 tests/fixtures/micro/uniform_mod_range.ptx:26	warp * × lane *
+tests/fixtures/micro/uniform_mod_range.ptx:30	no thread
 tests/fixtures/micro/unknown_in_loop.ptx:29	runs when param_1 ≥ 1 (CTA-uniform, branch at line 27)
 tests/fixtures/micro/unpack.ptx:43	warp * × lane *
 tests/fixtures/micro/unpack.ptx:72	warp * × lane *

@@ -462,7 +462,7 @@ pub struct AccessForm {
     pub conditional: bool,
     /// The address holds an unknown value defined in its loop or not one
     /// for the CTA, or the count of a loop the CTA's threads leave at
-    /// different iterations.
+    /// different iterations or that runs again on every trip of its loop.
     pub unknown_varies: bool,
 }
 
@@ -578,7 +578,7 @@ pub fn loop_bytes(
         let mut key = form.clone();
         key.terms
             .retain(|v, _| !v.depends_on_tid() && v.counter() != Some(id));
-        key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()));
+        key.base = SymExpr::sub(key.base.clone(), SymExpr::Const(key.base.const_part()?));
         let intervals = per_base.entry(key.clone()).or_default();
         for warp in warps_of(shape) {
             let offsets: Vec<i64> = warp
@@ -593,7 +593,9 @@ pub fn loop_bytes(
                 pats.push((SectorPattern::new(&offsets, bytes, align, stride), trips));
             } else {
                 for k in 1..=trips {
-                    let at: Vec<i64> = offsets.iter().map(|o| o + shift(k)).collect();
+                    let at: Vec<i64> = (offsets.iter())
+                        .map(|o| o.checked_add(shift(k)))
+                        .collect::<Option<_>>()?;
                     pats.push((SectorPattern::new(&at, bytes, align, 0), 1));
                 }
             }
@@ -608,8 +610,8 @@ pub fn loop_bytes(
                 return None;
             }
             for k in 1..=trips {
-                let start = base + shift(k);
-                intervals.push((start, start + bytes));
+                let start = base.checked_add(shift(k))?;
+                intervals.push((start, start.checked_add(bytes)?));
             }
         }
     }

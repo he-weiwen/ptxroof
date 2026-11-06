@@ -191,7 +191,14 @@ comparison or a widening: that file's
 third kernel, `add.u32` of n and `%tid.x` compared `setp.lt.s32` with
 n + 32, reads `%tid.x < 32`, and n = 0x7fffffe0, which makes n + 32
 the signed minimum and the store run on no thread, is outside the
-contract (Codex's review of 2b2731b).
+contract (Codex's review of 2b2731b). A signed division, remainder or
+sign-bit shift (PTX ISA §9.7.1.10: "The behavior for negative numbers
+is machine-dependent") reads its dividend as nonnegative under the
+contract only where no bound shows it negative, its range over the
+launch nor its least value with every symbol nonnegative
+(`micro/signed_division_symbol.ptx`: `div.s32` of n − 5 is refused,
+where an RTX 4090 run rounds n = 2's −3/4 to 0); of no bound, as a
+uniform value's, it is read so.
 
 ## How often each output is exact
 
@@ -211,26 +218,26 @@ output_tallies` rewrites it.
 |---|---|---|---|---|---|
 | `.entry`: shared memory per CTA | 36 | 1 (3%) | 35 (97%) |  |  |
 | `.entry`: FLOPs of a pipe it prints | 119 | 44 (37%) | 15 (13%) | 60 (50%) |  |
-| `.entry`: global load bytes | 47 | 21 (45%) | 12 (26%) | 14 (30%) |  |
-| `.entry`: global store bytes | 47 | 26 (55%) | 6 (13%) | 15 (32%) |  |
-| `.entry`: shared load bytes | 36 | 16 (44%) | 8 (22%) | 12 (33%) |  |
-| `.entry`: shared store bytes | 36 | 13 (36%) | 13 (36%) | 10 (28%) |  |
+| `.entry`: global load bytes | 47 | 22 (47%) | 11 (23%) | 14 (30%) |  |
+| `.entry`: global store bytes | 47 | 27 (57%) | 5 (11%) | 15 (32%) |  |
+| `.entry`: shared load bytes | 36 | 16 (44%) | 9 (25%) | 11 (31%) |  |
+| `.entry`: shared store bytes | 36 | 15 (42%) | 12 (33%) | 9 (25%) |  |
 | loop: trips | 194 | 31 (16%) |  | 163 (84%), 135 mbarrier waits |  |
-| loop: global bytes requested per CTA | 16 | 13 (81%) | 3 (19%) |  |  |
+| loop: global bytes requested per CTA | 16 | 14 (88%) | 2 (13%) |  |  |
 | loop: global bytes unique per CTA | 16 | 6 (38%) | 4 (25%) | 6 (38%) |  |
 | loop: global sector bytes per CTA | 16 | 6 (38%) | 4 (25%) |  | 6 (38%) |
 | block: threads | 854 | 825 (97%) | 29 (3%) |  |  |
 | block: CTAs | 85 | 85 (100%) |  |  |  |
-| block: `runs when` | 152 | 152 (100%) |  |  |  |
-| block: exec | 820 | 278 (34%) | 122 (15%) | 420 (51%) |  |
-| instruction: threads, where a guard narrows its block's | 908 | 724 (80%) | 184 (20%) |  |  |
-| instruction: exec, where it differs from its block's | 661 | 547 (83%) | 110 (17%) | 4 (1%) |  |
+| block: `runs when` | 147 | 147 (100%) |  |  |  |
+| block: exec | 818 | 286 (35%) | 112 (14%) | 420 (51%) |  |
+| instruction: threads, where a guard narrows its block's | 898 | 724 (81%) | 174 (19%) |  |  |
+| instruction: exec, where it differs from its block's | 651 | 556 (85%) | 91 (14%) | 4 (1%) |  |
 | instruction: `unused` | 954 | | | | |
 | instruction: `not classified` | 423 | | | | |
 | instruction: `bytes ?` | 109 | | | | |
 | operand: address | 4,399 | 4,050 (92%) |  | 349 (8%) |  |
-| operand: global sectors/req | 2,221 | 1,465 (66%) | 473 (21%) |  | 283 (13%) |
-| operand: global sectors/req, ideal | 1,938 | 1,746 (90%) | 192 (10%) |  |  |
+| operand: global sectors/req | 2,221 | 1,491 (67%) | 447 (20%) |  | 283 (13%) |
+| operand: global sectors/req, ideal | 1,938 | 1,772 (91%) | 166 (9%) |  |  |
 | operand: shared wavefronts/req | 2,178 | 1,442 (66%) |  | 557 (26%) | 179 (8%) |
 | operand: shared wavefronts/req, ideal | 1,442 | 1,442 (100%) |  |  |  |
 <!-- end tests/output_tallies.rs -->
@@ -365,7 +372,10 @@ output_tallies` rewrites it.
   16-bit and, and a 32-bit mask of more
   runs, take the remainder mod 2^(width−1) instead
   (`micro/and_sign_remainder.ptx`'s `n & 0x7fff`: `param_1 mod 32768`;
-  `micro/and_runs.ptx`'s `micro_and_sign_runs`); a 64-bit mask of more
+  `micro/and_runs.ptx`'s `micro_and_sign_runs`), and the runs' sum,
+  its remainders ranged one by one, as reaching below 0 and read mod
+  2^32: `4·((param_1 mod 16 + param_1 mod 2147483648 − param_1 mod
+  256) mod 4294967296)`, the same value; a 64-bit mask of more
   runs is refused (`micro_and_sign_wide_runs`: a uniform variable).
 - **`shfl.sync.idx` is read as if warps were rows of 32 `%tid.x`**,
   whatever the block shape: a warp is 32 consecutive
@@ -602,8 +612,11 @@ output_tallies` rewrites it.
   the loop's own blocks only, and need a numeric trip count, the block
   shape, constant lane and counter coefficients, every global access's
   bytes (else no footprint, `micro/tensor_copies.ptx`) and address,
-  its unknown values one for the CTA (else `unique unknown`,
-  `micro/footprint_unknown.ptx`), and
+  its unknown values one for the CTA and no count of a loop the loop
+  runs again on every trip (else `unique unknown`,
+  `micro/footprint_unknown.ptx`; `micro/inner_exit_counter.ptx`, an
+  inner loop's count k = 1, 1, 2, 3: requested 16 B, unique unknown,
+  where an RTX 4090 run stores 12 distinct bytes), and
   are bounds where which threads run the loop is not known. k5's K loop at
   256³ (`k5-footprint.test`): requested 65,536 B, unique 65,536 B;
   k1's (`k1-footprint.test`): 1,048,576 B, 32,768 B, a bound until M and
@@ -931,15 +944,6 @@ output_tallies` rewrites it.
   `micro/cp_async_ignore_src.ptx` line 55 reads its source on 80
   threads over the launch, exactly, with sectors `<= 51`, where 40 are
   measured.
-- **A comparison free of `%tid` and `%ctaid` is not decided by its
-  range.** The thread sets test a form's range only through
-  `across_ctas`, for a form over `%tid` and `%ctaid`
-  (`src/analysis/thread_participation.rs`, `condition`); a comparison
-  of a value read as a uniform variable is an unknown selector even
-  where its range decides it (`micro/uniform_mod_range.ptx`: a loaded
-  word `rem.u32` 8, `uniform(…) mod 8` of range [0, 7], compared `gt` 7
-  and `ge` 0, guards a store on no thread and one on all 32; both read
-  `exec <= 32/CTA`, `micro-uniform-mod-range.test`).
 - **A test both arms of an unknown branch repeat leaves a bound.** Read
   in three-valued logic, `(? and %tid.x < 16) or (? and %tid.x < 16)`
   is not `%tid.x < 16`: the block both arms reach counts `<= 16`

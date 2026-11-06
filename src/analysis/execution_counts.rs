@@ -20,6 +20,7 @@
 //! dominate the enclosing scope's latch/exits — e.g. the whole k2 body
 //! behind the bounds guard).
 
+use crate::analysis::affine::exit_limit::reaches;
 use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
 use crate::analysis::affine::trip_counts::TripCountResults;
 use crate::analysis::control_flow::dominators;
@@ -431,7 +432,7 @@ impl<'a> ExecutionCounts<'a> {
                 let n = self.trip_exprs[l.0 as usize].bind(&at).as_const()?;
                 if let Some((x, step)) = &self.trip_info.distances[l.0 as usize] {
                     let x = x.bind(&at).as_const()?;
-                    if x.checked_rem(*step)? != 0 || x.checked_div(*step)? < 1 {
+                    if !reaches(x, *step) {
                         return None;
                     }
                 }
