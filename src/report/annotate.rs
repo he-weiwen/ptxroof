@@ -2156,7 +2156,7 @@ mod invariants {
                 let cfg = build_cfg(&m, k);
                 let f = loop_forest(&cfg);
                 let data = KernelAnalyses::new(&m, k, &cfg, &f);
-                let uniformity = UniformityInfo::new(&data);
+                let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
                 for bm in collect(&AffineAnalysis::new(&data, &uniformity, None)) {
                     for meas in &bm.measurements {
                         assert!(
@@ -2179,7 +2179,7 @@ mod invariants {
                 let cfg = build_cfg(&m, k);
                 let f = loop_forest(&cfg);
                 let data = KernelAnalyses::new(&m, k, &cfg, &f);
-                let uniformity = UniformityInfo::new(&data);
+                let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
                 let from_blocks: usize = collect(&AffineAnalysis::new(&data, &uniformity, None))
                     .iter()
                     .map(|b| b.instructions.len())
@@ -2249,7 +2249,7 @@ mod invariants {
                 })
                 .collect();
             let data = KernelAnalyses::new(&m, k, &cfg, &f);
-            let uniformity = UniformityInfo::new(&data);
+            let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
             let blocks = collect(&AffineAnalysis::new(&data, &uniformity, None));
             let mut independent = 0i64;
             for bm in &blocks {

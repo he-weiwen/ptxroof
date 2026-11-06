@@ -2,7 +2,7 @@
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::Var;
-use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant};
+use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant, block_shape};
 use crate::analysis::control_flow::loops::{LoopForest, LoopId};
 use crate::analysis::kernel_analyses::KernelAnalyses;
 use crate::analysis::uniformity_info::UniformityInfo;
@@ -38,7 +38,7 @@ pub fn trip_counts(
     bindings: &HashMap<SymbolicConstant, i64>,
 ) -> TripCountResults {
     let data = KernelAnalyses::new(module, kernel, cfg, forest);
-    let uniformity = UniformityInfo::new(&data);
+    let uniformity = UniformityInfo::new(&data, block_shape(bindings));
     trip_counts_from(
         &AffineAnalysis::new(&data, &uniformity, Some(bindings)),
         &|v| unknown_by_register(module, v),

@@ -26,7 +26,7 @@
 //! `- c * x`, and a min or max as `max(a, b)`.
 
 use crate::analysis::control_flow::loops::LoopId;
-use crate::ptx::ir::SpecialReg;
+use crate::ptx::ir::{SpecialReg, SpecialVector};
 use crate::ssa::Value;
 use crate::support::integer::remainder_range;
 use std::collections::HashMap;
@@ -590,6 +590,15 @@ fn render(e: &SymExpr, ctx: PrintContext, name: &dyn Fn(&SymbolicConstant) -> St
     } else {
         body
     }
+}
+
+/// The block shape `bindings` fix (`--launch`, else `.reqntid`): its
+/// `%ntid.x`, `%ntid.y` and `%ntid.z`, `None` unless all three are bound.
+pub(crate) fn block_shape(bindings: &HashMap<SymbolicConstant, i64>) -> Option<[u32; 3]> {
+    let [x, y, z] = SpecialVector::Ntid.components().map(|r| {
+        (bindings.get(&SymbolicConstant::SpecialReg(r))).and_then(|&n| u32::try_from(n).ok())
+    });
+    Some([x?, y?, z?])
 }
 
 #[cfg(test)]

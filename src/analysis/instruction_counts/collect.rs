@@ -126,7 +126,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &forest);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let blocks = collect(&AffineAnalysis::new(&data, &uniformity, None));
         (blocks, m)
     }
@@ -295,7 +295,7 @@ mod ladder {
         let cfg = build_cfg(&module, kernel);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&module, kernel, &cfg, &forest);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         let blocks = collect(&AffineAnalysis::new(&data, &uniformity, None));
         Fixture {
             module,

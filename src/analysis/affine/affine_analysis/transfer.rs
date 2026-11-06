@@ -571,16 +571,12 @@ impl AffineAnalysis<'_> {
         depth: u32,
     ) -> Option<Result<AffineExpr, UnknownReason>> {
         let module = self.data.module;
-        let Some(v @ Value::Result { op, .. }) =
-            self.data.ssa.value_before(pos, Register::Named(src))
-        else {
-            return None;
-        };
-        let Stmt::Instr(instr) = &self.data.kernel.stmts[op] else {
-            return None;
-        };
+        let (op, instr) = self.data.def_at(src, pos)?;
         if depth > DEPTH_LIMIT {
-            self.cut_at(v);
+            self.cut_at(Value::Result {
+                op,
+                reg: Register::Named(src),
+            });
         }
         if instr.mnemonic != Opcode::Mov || depth > DEPTH_LIMIT {
             return None;

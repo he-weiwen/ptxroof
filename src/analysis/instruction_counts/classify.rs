@@ -566,7 +566,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &forest);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
         classify(&AffineAnalysis::new(&data, &uniformity, None), stmt)
     }
 
@@ -1259,7 +1259,7 @@ mod corpus {
                 let cfg = build_cfg(&m, k);
                 let forest = loop_forest(&cfg);
                 let data = KernelAnalyses::new(&m, k, &cfg, &forest);
-                let uniformity = UniformityInfo::new(&data);
+                let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
                 let affine = AffineAnalysis::new(&data, &uniformity, None);
                 for (s, stmt) in k.stmts.iter().enumerate() {
                     if let Stmt::Instr(i) = stmt {
@@ -1308,7 +1308,7 @@ mod corpus {
                 let cfg = build_cfg(&m, k);
                 let forest = loop_forest(&cfg);
                 let data = KernelAnalyses::new(&m, k, &cfg, &forest);
-                let uniformity = UniformityInfo::new(&data);
+                let uniformity = UniformityInfo::new(&data, data.kernel.reqntid);
                 let affine = AffineAnalysis::new(&data, &uniformity, None);
                 for (s, stmt) in k.stmts.iter().enumerate() {
                     let Stmt::Instr(i) = stmt else { continue };

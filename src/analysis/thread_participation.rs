@@ -33,6 +33,7 @@ use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
 
 /// One condition `form cmp 0` over the thread index and, with the grid
 /// bound, the CTA index: `cta` is the least and greatest value of the
@@ -348,6 +349,17 @@ impl Pred {
         }
     }
 
+    /// Every `elect.sync` it reads is a conjunct of it: no thread but the
+    /// elected one is in the set.
+    fn elect_is_conjunct(&self) -> bool {
+        match self {
+            Pred::And(a, b) => a.elect_is_conjunct() && b.elect_is_conjunct(),
+            Pred::Not(p) => p.elect_active().is_none(),
+            Pred::Or(a, b) => a.elect_active().is_none() && b.elect_active().is_none(),
+            _ => true,
+        }
+    }
+
     /// Only unknowns uniform in the CTA or a warp, under any `and`, `or`
     /// and `not`.
     fn uniform_only(&self) -> bool {
@@ -407,7 +419,9 @@ impl Pred {
 
 /// Whether `tid` is the lowest lane of its warp that `active` admits, a
 /// representative of the elected lane: yes when no lower lane may be
-/// active, maybe when the leader is one of several lanes that may be.
+/// active, maybe when the leader is one of several lanes that may be,
+/// and only the warp's first lane where the lanes of a warp are active
+/// together, `active` holding unknowns uniform in the CTA or a warp only.
 fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
     let id = to_1d(tid, shape);
     let warp = usize::try_from(id / WARP_SZ)
@@ -416,6 +430,13 @@ fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
     let Some(warp) = warp else {
         return Tri::Maybe;
     };
+    if active.uniform_only() {
+        return if id == warp.start {
+            Tri::Maybe
+        } else {
+            Tri::No
+        };
+    }
     let mut candidates = Vec::new();
     for l in warp {
         match active.eval_as(to_3d(l, shape), shape, Leader::Lowest, env) {
@@ -845,7 +866,8 @@ impl Pred {
     /// unspecified (PTX ISA §9.7.14.15 promises only that the same leader
     /// is elected every time), so every active lane is tried as the
     /// leader, and no leader when no lane is certainly active, and the
-    /// range covers those choices.
+    /// range covers those choices; where every election is a conjunct,
+    /// only the leader's thread is evaluated.
     fn tally(&self, shape: [u32; 3], env: Env) -> Option<(Counted, Counted)> {
         if !self.has_condition() || shape.contains(&0) {
             return None;
@@ -856,9 +878,9 @@ impl Pred {
         };
         let (mut threads, mut warps) = (zero, zero);
         for lanes in warps_of(shape) {
-            let lanes_as = |leader: Leader| {
+            let lanes_as = |leader: Leader, among: Range<i64>| {
                 let (mut yes, mut maybe) = (0, 0);
-                for l in lanes.clone() {
+                for l in among {
                     match self.eval_as(to_3d(l, shape), shape, leader, env) {
                         Tri::Yes => yes += 1,
                         Tri::Maybe => maybe += 1,
@@ -869,16 +891,17 @@ impl Pred {
             };
             let (min, max) = match self.elect_active() {
                 None => {
-                    let (yes, maybe) = lanes_as(Leader::Lowest);
+                    let (yes, maybe) = lanes_as(Leader::Lowest, lanes.clone());
                     (yes, yes + maybe)
                 }
                 Some(active) => {
                     let state = |l| active.eval_as(to_3d(l, shape), shape, Leader::Lowest, env);
                     let certain = lanes.clone().any(|l| state(l) == Tri::Yes);
+                    let conjunct = self.elect_is_conjunct();
+                    let among = |l: i64| if conjunct { l..l + 1 } else { lanes.clone() };
                     (lanes.clone().filter(|&l| state(l) != Tri::No))
-                        .map(Leader::Thread)
-                        .chain((!certain).then_some(Leader::Nobody))
-                        .map(lanes_as)
+                        .map(|l| lanes_as(Leader::Thread(l), among(l)))
+                        .chain((!certain).then(|| lanes_as(Leader::Nobody, lanes.clone())))
                         .fold((u32::MAX, 0), |(min, max), (yes, maybe)| {
                             (min.min(yes), max.max(yes + maybe))
                         })
@@ -1130,12 +1153,7 @@ impl PredicateReader<'_> {
     }
 
     fn read_definition(&mut self, reg: Symbol, pos: usize, depth: u32) -> (Pred, bool) {
-        let Some(Value::Result { op: def, .. }) =
-            self.affine.data.ssa.value_before(pos, Register::Named(reg))
-        else {
-            return (Pred::Unknown, false);
-        };
-        let Stmt::Instr(instr) = &self.kernel.stmts[def] else {
+        let Some((def, instr)) = self.affine.data.def_at(reg, pos) else {
             return (Pred::Unknown, false);
         };
         let gates = self.affine.uniformity().gate_uniformity(reg, pos);
@@ -1806,6 +1824,8 @@ mod tests {
         let maybe = Pred::Elect(Box::new(cta(0)));
         let range = |certain, possible| Some(Counted { certain, possible });
         assert_eq!(maybe.count([64, 1, 1]), range(0, 2));
+        // A warp's lanes are active together: its first is the leader.
+        assert_eq!(maybe.lane_masks([64, 1, 1], None), vec![(1, 0), (1, 0)]);
         assert_eq!((!maybe).count([64, 1, 1]), range(62, 64));
     }
 
@@ -2163,7 +2183,7 @@ mod tests {
         let cfg = build_cfg(&m, k);
         let forest = loop_forest(&cfg);
         let data = KernelAnalyses::new(&m, k, &cfg, &forest);
-        let uniformity = UniformityInfo::new(&data);
+        let uniformity = UniformityInfo::new(&data, k.reqntid);
         let sets = thread_sets(&AffineAnalysis::new(&data, &uniformity, None));
         (m, sets)
     }
@@ -2195,8 +2215,9 @@ mod tests {
     /// A `brx.idx` on a value each warp loads from one address, at the
     /// warp index its lane 0 shuffles to the others, sends all of a warp's
     /// threads to one target: each target runs on whole warps, which ones
-    /// unknown. Without the shuffle `⌊%tid.x/32⌋` reads as divergent, and
-    /// so do the targets.
+    /// unknown. Without the shuffle so does `⌊%tid.x/32⌋` in a block of one
+    /// row; a half-warp's index `⌊%tid.x/16⌋` reads as divergent, and so do
+    /// the targets.
     #[test]
     fn a_jump_table_on_a_warp_s_index_selects_whole_warps() {
         let table = |warp: &str| {
@@ -2218,7 +2239,9 @@ mod tests {
         assert_eq!(target(&shuffled.blocks[2]), Some(BlockId(2)));
         assert_eq!(target(&shuffled.blocks[3]), Some(BlockId(3)));
         let (_, divided) = sets_of(&table("mov.u32 %r3, %r2;"));
-        assert_eq!(divided.blocks[2], Pred::Unknown);
+        assert_eq!(target(&divided.blocks[2]), Some(BlockId(2)));
+        let (_, halves) = sets_of(&table("shr.u32 %r3, %r1, 4;"));
+        assert_eq!(halves.blocks[2], Pred::Unknown);
     }
 
     /// Three-valued logic does not see that an unknown and its negation
