@@ -32,6 +32,39 @@ pub struct Loop {
     pub depth: u32,
 }
 
+impl Loop {
+    /// Block `b` is one of this natural loop's blocks (LLVM's
+    /// `LoopBase::contains(const BlockT *)`).
+    pub fn contains_block(&self, b: BlockId) -> bool {
+        self.blocks.binary_search(&b).is_ok()
+    }
+
+    /// This loop's exit edges, each from one of its blocks (an exiting
+    /// block) to a block outside it (an exit block), by source block and
+    /// then successor order (LLVM's `LoopBase::getExitEdges`).
+    pub fn exit_edges<'a>(
+        &'a self,
+        cfg: &'a ControlFlowGraph,
+    ) -> impl Iterator<Item = (BlockId, BlockId)> + 'a {
+        (self.blocks.iter())
+            .flat_map(move |&b| cfg.block(b).succs.iter().map(move |&s| (b, s)))
+            .filter(|&(_, s)| !self.contains_block(s))
+    }
+
+    /// The entering block of this loop's one entering edge, the one edge
+    /// into its header from outside it. A block branching to the header
+    /// both when taken and by fallthrough has two such edges; LLVM's
+    /// `LoopBase::getLoopPredecessor` counts it as one entering block.
+    pub fn source_of_only_entering_edge(&self, cfg: &ControlFlowGraph) -> Option<BlockId> {
+        let mut entering =
+            (cfg.block(self.header).preds.iter()).filter(|&&p| !self.contains_block(p));
+        match (entering.next(), entering.next()) {
+            (Some(&p), None) => Some(p),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct LoopForest {
     pub loops: Vec<Loop>,
@@ -62,6 +95,30 @@ impl LoopForest {
         let mut kids = self.get(id).children.clone();
         kids.sort_by_key(|&l| self.get(l).header);
         kids
+    }
+
+    /// Loop `id` and the loops enclosing it in the loop nesting forest,
+    /// innermost first.
+    pub fn loop_and_enclosing_loops(&self, id: LoopId) -> impl Iterator<Item = LoopId> + '_ {
+        std::iter::successors(Some(id), |&l| self.get(l).parent)
+    }
+
+    /// The loops containing block `b`, innermost first: its innermost
+    /// loop and the loops enclosing that one.
+    pub fn loops_containing_block(&self, b: BlockId) -> impl Iterator<Item = LoopId> + '_ {
+        std::iter::successors(self.block_loop[b.0 as usize], |&l| self.get(l).parent)
+    }
+
+    /// The loop whose header block `b` is (LLVM's `LoopInfoBase::isLoopHeader`
+    /// asks the same of `getLoopFor(b)`).
+    pub fn loop_with_header(&self, b: BlockId) -> Option<LoopId> {
+        self.block_loop[b.0 as usize].filter(|&l| self.get(l).header == b)
+    }
+
+    /// Loop `inner` is `outer` or nested in it (LLVM's
+    /// `LoopBase::contains(const LoopT *)`).
+    pub fn loop_contains_loop(&self, outer: LoopId, inner: LoopId) -> bool {
+        self.loop_and_enclosing_loops(inner).any(|l| l == outer)
     }
 }
 
@@ -127,7 +184,7 @@ pub fn loop_forest(cfg: &ControlFlowGraph) -> LoopForest {
     for (pos, &i) in order.iter().enumerate() {
         let header = loops[i].header;
         for &j in order.iter().skip(pos + 1) {
-            if loops[j].blocks.binary_search(&header).is_ok() {
+            if loops[j].contains_block(header) {
                 loops[i].parent = Some(LoopId(j as u32));
                 break;
             }
@@ -230,6 +287,20 @@ mod tests {
         assert_eq!(l.latches, [BlockId(1)]);
         assert_eq!(l.blocks, [BlockId(1)]);
         assert_eq!(l.depth, 1);
+    }
+
+    #[test]
+    fn only_entering_edge_counts_a_branch_and_its_fallthrough_as_two() {
+        let entering = |before_header: &str| {
+            let (cfg, f) = forest_of(&format!(
+                "mov.u32 %r1, 0;\nsetp.lt.s32 %p2, %r1, %r2;\n{before_header}\
+                 $L__L:\nadd.s32 %r1, %r1, 1;\n\
+                 setp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__L;\nret;"
+            ));
+            f.loops[0].source_of_only_entering_edge(&cfg)
+        };
+        assert_eq!(entering(""), Some(BlockId(0)));
+        assert_eq!(entering("@%p2 bra $L__L;\n"), None);
     }
 
     #[test]

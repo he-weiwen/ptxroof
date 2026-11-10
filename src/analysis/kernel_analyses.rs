@@ -240,13 +240,7 @@ impl<'a> KernelAnalyses<'a> {
             Value::Argument { block, .. } => block,
             Value::Undef(_) => return false,
         };
-        self.forest.get(l).blocks.binary_search(&b).is_ok()
-    }
-
-    /// Loop `inner` is `outer` or nested in it, and so runs again on each
-    /// of `outer`'s trips.
-    pub(crate) fn loop_within(&self, inner: LoopId, outer: LoopId) -> bool {
-        std::iter::successors(Some(inner), |&l| self.forest.get(l).parent).any(|l| l == outer)
+        self.forest.get(l).contains_block(b)
     }
 
     pub(crate) fn in_loop(&self, id: LoopId, stmt: usize) -> bool {

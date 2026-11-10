@@ -81,12 +81,10 @@ impl KernelReportBuilder<'_> {
             let start = (first..end)
                 .find(|&s| matches!(self.kernel.stmts[s], Stmt::Label { .. } | Stmt::Instr(_)))
                 .unwrap_or(first);
-            let header = self.forest.block_loop[b.0 as usize]
-                .filter(|&l| self.forest.get(l).header == b)
-                .map(|l| {
-                    let bytes = self.loop_global(l).map(|b| format!(" | {b}"));
-                    format!("loop: trips {}{}", self.trips(l), bytes.unwrap_or_default())
-                });
+            let header = self.forest.loop_with_header(b).map(|l| {
+                let bytes = self.loop_global(l).map(|b| format!(" | {b}"));
+                format!("loop: trips {}{}", self.trips(l), bytes.unwrap_or_default())
+            });
             let (exec, mut parts) = self.execs(bm, per);
             let block_threads = self.threads(b, &self.counts.sets.blocks[b.0 as usize]);
             for &s in &bm.instructions {
@@ -2253,12 +2251,9 @@ mod invariants {
             let blocks = collect(&AffineAnalysis::new(&data, &uniformity, None));
             let mut independent = 0i64;
             for bm in &blocks {
-                let mut mult = 1i64;
-                let mut cur = f.block_loop[bm.block.0 as usize];
-                while let Some(l) = cur {
-                    mult *= trips_num[l.0 as usize];
-                    cur = f.get(l).parent;
-                }
+                let mult: i64 = (f.loops_containing_block(bm.block))
+                    .map(|l| trips_num[l.0 as usize])
+                    .product();
                 let flat: u64 = bm
                     .measurements
                     .iter()

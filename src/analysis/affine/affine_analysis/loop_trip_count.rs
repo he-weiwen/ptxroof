@@ -15,15 +15,7 @@ impl AffineAnalysis<'_> {
             return Err("loop has multiple latches".into());
         }
         let latch = l.latches[0];
-        let in_loop = |b: BlockId| l.blocks.binary_search(&b).is_ok();
-        let mut exit_edges = Vec::new();
-        for &b in &l.blocks {
-            for &s in &cfg.block(b).succs {
-                if !in_loop(s) {
-                    exit_edges.push((b, s));
-                }
-            }
-        }
+        let exit_edges: Vec<(BlockId, BlockId)> = l.exit_edges(cfg).collect();
         if exit_edges.len() != 1 {
             return Err(format!("loop has {} exit edges", exit_edges.len()).into());
         }
@@ -159,12 +151,7 @@ impl AffineAnalysis<'_> {
     fn guard_test(&self, id: LoopId) -> Option<(BlockId, SymExpr)> {
         let (module, cfg, forest) = (self.data.module, self.data.cfg, self.data.forest);
         let l = forest.get(id);
-        let mut outside =
-            (cfg.block(l.header).preds.iter()).filter(|p| l.blocks.binary_search(p).is_err());
-        let (&pre, None) = (outside.next()?, outside.next()) else {
-            return None;
-        };
-        let (mut g, mut into) = (pre, l.header);
+        let (mut g, mut into) = (l.source_of_only_entering_edge(cfg)?, l.header);
         loop {
             (g, into) = match (&cfg.block(g).succs[..], &cfg.block(g).preds[..]) {
                 ([_], &[p]) if !self.exits_some(g) => (p, g),
@@ -235,21 +222,13 @@ impl AffineAnalysis<'_> {
     fn sibling_entry(&self, g: BlockId, into: BlockId) -> Option<(BlockId, BlockId)> {
         let (forest, cfg) = (self.data.forest, self.data.cfg);
         let s = forest.get(forest.block_loop[g.0 as usize]?);
-        let inside = |b: &BlockId| s.blocks.binary_search(b).is_ok();
-        let exits = (s.blocks.iter())
-            .flat_map(|&b| cfg.block(b).succs.iter().map(move |&t| (b, t)))
-            .filter(|(_, t)| !inside(t));
         if s.latches != [g]
-            || !exits.eq([(g, into)])
+            || !s.exit_edges(cfg).eq([(g, into)])
             || s.blocks.iter().any(|&b| self.exits_some(b))
         {
             return None;
         }
-        let mut outside = (cfg.block(s.header).preds.iter()).filter(|p| !inside(p));
-        let (&q, None) = (outside.next()?, outside.next()) else {
-            return None;
-        };
-        Some((q, s.header))
+        Some((s.source_of_only_entering_edge(cfg)?, s.header))
     }
 
     /// Block `b` ends in a predicated `ret` or `exit`, which the CFG reads as
@@ -270,8 +249,7 @@ impl AffineAnalysis<'_> {
         a: AffineExpr,
         b: AffineExpr,
     ) -> Result<(AffineExpr, AffineExpr), UnknownReason> {
-        let top = (std::iter::successors(Some(id), |&l| self.data.forest.get(l).parent).last())
-            .unwrap_or(id);
+        let top = (self.data.forest.loop_and_enclosing_loops(id).last()).unwrap_or(id);
         self.alike(&(a.clone() - b.clone()), pos, Uniform::Cta, Some(top))?;
         let symbols = |x: AffineExpr| {
             self.per_cta(x.as_symbols(&|v| match v {
@@ -384,7 +362,7 @@ impl AffineAnalysis<'_> {
             .ssa
             .value_before(cfg.block(lp.header).start, Register::Named(*phi))?;
         let outside: Vec<Value> = (ssa.incoming(entry).into_iter())
-            .filter(|(p, _)| p.is_none_or(|p| lp.blocks.binary_search(&p).is_err()))
+            .filter(|(p, _)| p.is_none_or(|p| !lp.contains_block(p)))
             .map(|(_, v)| v)
             .collect();
         let [Value::Result { op: init_def, .. }, ..] = outside[..] else {

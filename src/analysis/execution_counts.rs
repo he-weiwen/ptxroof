@@ -338,13 +338,7 @@ impl<'a> ExecutionCounts<'a> {
     }
 
     pub(crate) fn chain(&self, b: BlockId) -> Vec<LoopId> {
-        let mut out = Vec::new();
-        let mut cur = self.forest.block_loop[b.0 as usize];
-        while let Some(l) = cur {
-            out.push(l);
-            cur = self.forest.get(l).parent;
-        }
-        out
+        self.forest.loops_containing_block(b).collect()
     }
 
     /// Where comparisons with the counter of loop `l`, one of `b`'s loops
