@@ -161,30 +161,7 @@ impl AffineAnalysis<'_> {
             let name = module.interner.resolve(pred);
             return Err(format!("{name} is written under a guard").into());
         }
-        let compared = match Form::of(module, setp) {
-            Form::IntCompare { pred, width, .. } => Some((pred, width)),
-            // PTX ISA §9.7.7.2: a packed `setp`'s first output compares the low halves.
-            Form::Float { lanes: 2 } => {
-                return Err("latch condition compares packed halves".into());
-            }
-            Form::Float { .. } => None,
-            _ => return Err("setp without comparison modifier".into()),
-        };
-        let ops = module.operand_ids(setp.operands);
-        match ops.len() {
-            3 => {}
-            // PTX ISA §9.7.6.2: `setp.CmpOp.BoolOp.type p, a, b, c` sets
-            // `p = BoolOp(a CmpOp b, c)`.
-            4 => return Err("latch condition combines a comparison with a predicate".into()),
-            _ => return Err("setp with unexpected operand count".into()),
-        }
-        // PTX ISA §9.7.6.2: a `setp` of no integer type compares floats,
-        // not the traced integers.
-        let Some((compare, width)) = compared else {
-            return Err("latch condition compares floating-point values".into());
-        };
-        let a = self.operand_at(ops[1], def, 0)?;
-        let b = self.operand_at(ops[2], def, 0)?;
+        let (compare, width, a, b) = self.predicate_and_operands_of_int_setp(def, setp, 0)?;
         let (a, b) = self.cta_uniform_symbols(id, def, a, b)?;
         let (d, cmp) = (self.loop_cmp(id, compare, width, &a, &b))
             .ok_or_else(|| "latch condition does not read as one integer comparison".to_owned())?;

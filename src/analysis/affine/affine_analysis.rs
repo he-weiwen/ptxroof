@@ -20,7 +20,7 @@
 //! branch that skips the loop where the latch fails at k = 0, and
 //! max(T, 1) per entry otherwise, as LLVM's ScalarEvolution counts a
 //! rotated loop's backedges from max(RHS, Start) unless a guard covers
-//! it (llvm/lib/Analysis/AffineAnalysis.cpp:13628–13643 at
+//! it (llvm/lib/Analysis/ScalarEvolution.cpp:13628–13643 at
 //! e32776a129f5).
 //!
 //! The two queries recurse into each other: a value after a loop, a
@@ -124,15 +124,7 @@ impl<'a> AffineAnalysis<'a> {
         let (mut recurrences_by_phi, mut by_update) = (HashMap::new(), HashMap::new());
         for &l in &order {
             let lp = forest.get(l);
-            for r in induction_variables(
-                data.module,
-                data.kernel,
-                data.cfg,
-                forest,
-                ssa,
-                l,
-                &by_update,
-            ) {
+            for r in induction_variables(data, l, &by_update) {
                 for (p, v) in ssa.incoming(r.phi) {
                     if p.is_some_and(|p| lp.contains_block(p)) {
                         by_update.insert(v, (l, r.clone()));

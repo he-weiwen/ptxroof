@@ -1170,7 +1170,7 @@ impl PredicateReader<'_> {
         };
         match (instr.mnemonic, Form::of(self.module, instr), ops) {
             (Opcode::Setp, _, _) => {
-                let p = condition(self.module, self.kernel, self.affine, def, &mut self.forms);
+                let p = condition(self.kernel, self.affine, def, &mut self.forms);
                 (p.unwrap_or(Pred::Unknown), false)
             }
             (Opcode::And | Opcode::Or, Form::Pred, [_, a, b]) => {
@@ -1390,7 +1390,6 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
 /// analysis finds it so. The comparison of a `setp` read as one comparison
 /// is kept in `forms` where `comparison` keeps it.
 fn condition(
-    module: &Module,
     kernel: &Kernel,
     affine: &AffineAnalysis,
     def: usize,
@@ -1399,22 +1398,7 @@ fn condition(
     let Stmt::Instr(setp) = &kernel.stmts[def] else {
         return None;
     };
-    // PTX ISA §9.7.6.2, §9.7.7.2: a `setp` of no integer type compares
-    // floats, a packed one per half.
-    let Form::IntCompare {
-        pred,
-        width,
-        bool_op: None,
-    } = Form::of(module, setp)
-    else {
-        return None;
-    };
-    let ops = module.operand_ids(setp.operands);
-    if ops.len() != 3 {
-        return None;
-    }
-    let read = |op| affine.operand_at(op, def, 0).ok();
-    let (a, b) = (read(ops[1])?, read(ops[2])?);
+    let (pred, width, a, b) = (affine.predicate_and_operands_of_int_setp(def, setp, 0)).ok()?;
     let proven = |x: &AffineExpr| affine.nonnegative(x);
     let Some(atoms) = affine.setp_to_zero_cmps(pred, width, &a, &b, &proven) else {
         let on_tid = (a - b).depends_on_tid();
