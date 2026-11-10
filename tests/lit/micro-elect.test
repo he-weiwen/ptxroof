@@ -1,7 +1,8 @@
 # elect.sync as an instruction guard over a CTA of 128 threads: the
 # elected lane of warp 0 stores 4 B, the elected lane of each of the 4
-# warps 8 B, every other lane 2 B, and lane 0 stores 4 B only if it is
-# its warp's elected lane, which is unspecified: the CTA stores 284 B
-# plus a bound of 4, besides the 512 B its 128 threads load.
+# warps 8 B, every other lane 2 B, and lane 0 stores 4 B if it is its
+# warp's elected lane, as the lowest lane an election reads as is
+# (PLAN.md's input contract): the CTA stores 288 B, besides the 512 B
+# its 128 threads load.
 RUN: %ptxroof analyze %fixtures/micro/elect.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}.visible .entry micro_elect( // block 128×1×1 | pointer params assumed 32 B aligned | per CTA: global load 512 B, store <= 288 B; param load 2,048 B{{$}}
+ANN: {{^}}.visible .entry micro_elect( // block 128×1×1 | pointer params assumed 32 B aligned | per CTA: global load 512 B, store 288 B; param load 2,048 B{{$}}

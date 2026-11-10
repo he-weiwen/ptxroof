@@ -200,6 +200,20 @@ launch nor its least value with every symbol nonnegative
 (`micro/signed_division_symbol.ptx`: `div.s32` of n − 5 is refused,
 where an RTX 4090 run rounds n = 2's −3/4 to 0); of no bound, as a
 uniform value's, it is read so.
+Which lane an `elect.sync` elects (PTX ISA §9.7.14.15: it "elects one
+predicated active leader thread", the same one "for the same
+membermask every time", without saying which) is taken not to matter
+to what the kernel reads, writes or branches on afterwards. An
+election is read as the lowest lane that certainly executes it, else
+the lowest that may, and the threads, counts and addresses under it
+are that lane's (`micro/elect.ptx`: the store under `%tid.x == 0 and
+elected` runs `exec 1/CTA`). A kernel that tests or addresses by the
+elected lane is outside the contract: `micro/elect_lane.ptx`'s store
+under `%tid.x == 1 and elected` reads `no thread` and `exec 0/CTA`,
+where lane 1, if elected, stores once (`micro-elect-lane.test`). In
+the Blackwell corpus no condition and no address under an election
+differs among the lanes it chose among: 140,128 thread sets and
+52,502 accesses, in 1,819 files.
 
 ## How often each output is exact
 
@@ -231,7 +245,7 @@ output_tallies` rewrites it.
 | block: CTAs | 149 | 149 (100%) |  |  |  |
 | block: `runs when` | 233 | 233 (100%) |  |  |  |
 | block: exec | 1,304 | 391 (30%) | 175 (13%) | 738 (57%) |  |
-| instruction: threads, where a guard narrows its block's | 1,457 | 1,195 (82%) | 262 (18%) |  |  |
+| instruction: threads, where a guard narrows its block's | 2,077 | 1,815 (87%) | 262 (13%) |  |  |
 | instruction: exec, where it differs from its block's | 1,010 | 778 (77%) | 228 (23%) | 4 (0%) |  |
 | instruction: `unused` | 1,491 | | | | |
 | instruction: `not classified` | 14 | | | | |
@@ -633,13 +647,6 @@ output_tallies` rewrites it.
   16 B store at p making each byte store one sector, where with n == 0
   and p ≡ 17 mod 32 (`--ptr-align 1`) the byte stores request 256
   (`micro-optional-align.test`).
-- **The threads and sectors of an access under `elect.sync` read the
-  lowest active lane as the elected one**, where its count tries every
-  active lane (PTX ISA §9.7.14.15 does not say which is elected):
-  `micro/elect_lane.ptx`'s store under `%tid.x == 1 and elected` runs
-  `exec <= 1/CTA` but reads `no thread` and `sectors/req 0`, where lane
-  1, if elected, requests one (`micro-elect-lane.test`). The census has no election
-  under a condition that varies by lane.
 
 ### Reported as unknowns
 
@@ -1032,8 +1039,8 @@ output_tallies` rewrites it.
   ?` with no unclassified statement.
 - **A statement's own threads print only where their text differs
   from its block's.** A guard narrowing a block whose set is a bound
-  prints nothing, both reading `<= warp … × lane …`: 2,098 statements
-  in 44 files of the Blackwell corpus, 1,806 of them elect-guarded. A
+  prints nothing, both reading `<= warp … × lane …`: 761 statements
+  in 93 files of the Blackwell corpus. A
   `cp.async`'s source
   threads, those its ignore-src admits (PTX ISA §9.7.9.26.3.1), print
   nowhere, though its sectors, bytes and footprint count them
@@ -1149,20 +1156,17 @@ output_tallies` rewrites it.
   dimension and `record_launches.py` keeps Triton's program grid, while
   sol-study's reports hold 23 cluster launches of Gluon kernels with
   PTX.
-- **Thread sets grow with the checks along a dominator chain, and a
-  file prints nothing until every kernel is done.** A block's set is
-  its immediate dominator's and its own condition, which every
-  consumer evaluates thread by thread, so a chain of checks whose
-  failing side does not rejoin (Triton's concurrency sanitizer: `@%p
-  bra` to `__assertfail; trap;`) costs time and memory quadratic in
-  their number: 29 sanitizer builds of sol-study's Gluon kernels
-  (20,036–44,815 statements; 24 of them cluster kernels) take
-  up to a minute and 1.5 GB each, most of it evaluating thread sets
-  (the slowest run alone: 61 s), where no other Blackwell corpus file
-  takes 3 s. Bindings that differ
-  from `.reqntid` build a second set of thread sets for dead code, 40–50%
-  more memory on those kernels. The output is written once, after every
-  kernel, so a run stopped by a time or memory limit prints nothing.
+- **A file prints nothing until every kernel is done.** The output is
+  written once, after every kernel, so a run stopped by a time or
+  memory limit prints nothing. The slowest are 29 sanitizer builds of
+  sol-study's Gluon kernels (Triton's concurrency sanitizer: `@%p bra`
+  to `__assertfail; trap;` at each check; 20,036–44,815 statements; 24
+  of them cluster kernels), up to 8.9 s and 394 MB each run alone,
+  85% of the slowest's time reading the predicates its branches test
+  (`PredicateReader::read`), where no other Blackwell corpus file
+  takes 1 s. Bindings that differ from `.reqntid` build a second set
+  of thread sets for dead code, 10% more memory on
+  `mla_decode_2cta_kernel` under `--launch 256,1,1`.
 
 - Fixture corpus: nvcc output for one CUDA header ladder (k1, k2, k5,
   k11, k12, k14, mma_demo), Triton 3.8.0 (Gluon) output for five
