@@ -9,16 +9,3 @@ pub mod ptx;
 pub mod report;
 pub mod ssa;
 pub mod support;
-
-/// Tool version, baked in from Cargo.toml at compile time.
-pub fn version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn version_is_nonempty() {
-        assert!(!super::version().is_empty());
-    }
-}

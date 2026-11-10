@@ -27,7 +27,6 @@ pub struct Loop {
     /// All blocks of the loop, sorted by id; includes `header`.
     pub blocks: Vec<BlockId>,
     pub parent: Option<LoopId>,
-    pub children: Vec<LoopId>,
     /// 1 = top-level.
     pub depth: u32,
 }
@@ -78,23 +77,6 @@ pub struct LoopForest {
 impl LoopForest {
     pub fn get(&self, id: LoopId) -> &Loop {
         &self.loops[id.0 as usize]
-    }
-
-    /// Top-level loops in program order (header block id).
-    pub fn top_level(&self) -> Vec<LoopId> {
-        let mut tops: Vec<LoopId> = (0..self.loops.len() as u32)
-            .map(LoopId)
-            .filter(|&l| self.get(l).parent.is_none())
-            .collect();
-        tops.sort_by_key(|&l| self.get(l).header);
-        tops
-    }
-
-    /// Children of a loop in program order.
-    pub fn children_of(&self, id: LoopId) -> Vec<LoopId> {
-        let mut kids = self.get(id).children.clone();
-        kids.sort_by_key(|&l| self.get(l).header);
-        kids
     }
 
     /// Loop `id` and the loops enclosing it in the loop nesting forest,
@@ -172,7 +154,6 @@ pub fn loop_forest(cfg: &ControlFlowGraph) -> LoopForest {
             latches,
             blocks,
             parent: None,
-            children: Vec::new(),
             depth: 0,
         });
     }
@@ -188,11 +169,6 @@ pub fn loop_forest(cfg: &ControlFlowGraph) -> LoopForest {
                 loops[i].parent = Some(LoopId(j as u32));
                 break;
             }
-        }
-    }
-    for i in 0..loops.len() {
-        if let Some(p) = loops[i].parent {
-            loops[p.0 as usize].children.push(LoopId(i as u32));
         }
     }
     for i in 0..loops.len() {

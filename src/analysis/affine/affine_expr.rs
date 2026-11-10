@@ -887,15 +887,15 @@ fn remainder(r: i128) -> i64 {
     i64::try_from(r).expect("a remainder lies below its modulus")
 }
 
-impl fmt::Display for AffineExpr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.render(|v| v.to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl fmt::Display for AffineExpr {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.render(|v| v.to_string()))
+        }
+    }
 
     fn free(_: &Var) -> Option<(i64, i64)> {
         None

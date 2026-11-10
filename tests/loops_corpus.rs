@@ -72,7 +72,8 @@ fn k5_inner_loop_nests_inside_outer() {
         .expect("inner loop");
     let outer = f.loops[inner].parent.expect("inner has parent");
     assert_eq!(f.get(outer).depth, 1);
-    assert_eq!(f.get(outer).children.len(), 1);
+    let nested = f.loops.iter().filter(|l| l.parent == Some(outer));
+    assert_eq!(nested.count(), 1);
     // The dot loop is a single block; the tile loop wraps it plus the
     // copy block and the latch block.
     assert_eq!(f.loops[inner].blocks.len(), 1);

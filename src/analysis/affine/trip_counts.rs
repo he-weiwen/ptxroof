@@ -2,14 +2,9 @@
 
 use crate::analysis::affine::affine_analysis::AffineAnalysis;
 use crate::analysis::affine::affine_expr::Var;
-use crate::analysis::affine::sym_expr::{SymExpr, SymbolicConstant, block_shape};
-use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::analysis::kernel_analyses::KernelAnalyses;
-use crate::analysis::uniformity_info::UniformityInfo;
-use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Kernel, Module, Register};
-use crate::ssa::Value;
-use std::collections::HashMap;
+use crate::analysis::affine::sym_expr::SymExpr;
+use crate::analysis::control_flow::loops::LoopId;
+use crate::ptx::cfg::BlockId;
 
 /// Trip count of one loop: an expression, or a named reason there
 /// isn't one.
@@ -26,37 +21,6 @@ pub struct TripCountResults {
     /// covers and its step; the count holds where the step divides the
     /// distance into a positive count.
     pub distances: Vec<Option<(SymExpr, i64)>>,
-}
-
-/// Every loop's trip count, each symbol `bindings` (`--bind`, the launch
-/// shape) fixes read as its value.
-pub fn trip_counts(
-    module: &Module,
-    kernel: &Kernel,
-    cfg: &ControlFlowGraph,
-    forest: &LoopForest,
-    bindings: &HashMap<SymbolicConstant, i64>,
-) -> TripCountResults {
-    let data = KernelAnalyses::new(module, kernel, cfg, forest);
-    let uniformity = UniformityInfo::new(&data, block_shape(bindings));
-    trip_counts_from(
-        &AffineAnalysis::new(&data, &uniformity, Some(bindings)),
-        &|v| unknown_by_register(module, v),
-    )
-}
-
-/// Variable `v` as a reason prints it outside a report, its unknown
-/// value by register: `uniform(%r3)`.
-pub(crate) fn unknown_by_register(module: &Module, v: &Var) -> String {
-    match v {
-        Var::Unknown(
-            Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg),
-        ) => match reg {
-            Register::Named(s) => format!("uniform({})", module.interner.resolve(*s)),
-            Register::Cc => "uniform(CC.CF)".to_owned(),
-        },
-        other => other.to_string(),
-    }
 }
 
 /// Every loop's trip count under `affine`'s bindings, a reason's unknown
@@ -89,11 +53,55 @@ pub(crate) fn trip_counts_from(
 }
 
 #[cfg(test)]
+pub(crate) use tests::{trip_counts, unknown_by_register};
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::affine::sym_expr::{SymbolicConstant, block_shape};
     use crate::analysis::control_flow::loop_forest;
+    use crate::analysis::control_flow::loops::LoopForest;
+    use crate::analysis::kernel_analyses::KernelAnalyses;
+    use crate::analysis::uniformity_info::UniformityInfo;
+    use crate::ptx::cfg::ControlFlowGraph;
     use crate::ptx::cfg::build_cfg;
+    use crate::ptx::ir::{Kernel, Module, Register};
     use crate::ptx::parse::parser::parse;
+    use crate::ssa::Value;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// Every loop's trip count, each symbol `bindings` (`--bind`, the launch
+    /// shape) fixes read as its value.
+    pub(crate) fn trip_counts(
+        module: &Module,
+        kernel: &Kernel,
+        cfg: &ControlFlowGraph,
+        forest: &LoopForest,
+        bindings: &HashMap<SymbolicConstant, i64>,
+    ) -> TripCountResults {
+        let data = KernelAnalyses::new(module, kernel, cfg, forest);
+        let uniformity = UniformityInfo::new(&data, block_shape(bindings));
+        trip_counts_from(
+            &AffineAnalysis::new(&data, &uniformity, Some(bindings)),
+            &|v| unknown_by_register(module, v),
+        )
+    }
+
+    /// Variable `v` as a reason prints it outside a report, its unknown
+    /// value by register: `uniform(%r3)`.
+    pub(crate) fn unknown_by_register(module: &Module, v: &Var) -> String {
+        match v {
+            Var::Unknown(
+                Value::Result { reg, .. } | Value::Argument { reg, .. } | Value::Undef(reg),
+            ) => match reg {
+                Register::Named(s) => format!("uniform({})", module.interner.resolve(*s)),
+                Register::Cc => "uniform(CC.CF)".to_owned(),
+            },
+            other => other.to_string(),
+        }
+    }
 
     #[test]
     fn an_unrolled_loop_s_main_part_runs_the_quotient() {
@@ -165,5 +173,143 @@ mod tests {
         );
         let clamped = Some("max((param_0 - param_0 mod 4) / 4, 0)".to_owned());
         assert_eq!(pairs(&src, &free), clamped);
+    }
+
+    // Pinned trip counts for the corpus: the ladder's
+    // real nvcc shapes and the micro fixtures' honest unknowns. Every
+    // unknown must carry a reason string — these are pinned too, because
+    // they are user-facing output.
+
+    fn info_of(fixture: &str) -> (Vec<String>, TripCountResults) {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(fixture);
+        let src = fs::read_to_string(&path).expect("fixture readable");
+        let m = parse(&src).expect("fixture parses");
+        let k = &m.kernels[0];
+        let cfg = build_cfg(&m, k);
+        let f = loop_forest(&cfg);
+        let info = trip_counts(&m, k, &cfg, &f, &Default::default());
+        let rendered = info
+            .trips
+            .iter()
+            .map(|t| match t {
+                Ok(e) => format!("ok: {e}"),
+                Err(r) => format!("unknown: {r}"),
+            })
+            .collect();
+        (rendered, info)
+    }
+
+    #[test]
+    fn ladder_trip_counts_are_pinned() {
+        // k2: K is param 2; main loop (K − K mod 4)/4, nounroll remainder
+        // K mod 4.
+        let (trips, _) = info_of("k2/k2.sm_80.ptx");
+        assert_eq!(
+            trips,
+            ["ok: (param_2 - param_2 mod 4) / 4", "ok: param_2 mod 4"]
+        );
+
+        // k1 is the same kernel shape.
+        let (trips, _) = info_of("k1/k1.sm_80.ptx");
+        assert_eq!(
+            trips,
+            ["ok: (param_2 - param_2 mod 4) / 4", "ok: param_2 mod 4"]
+        );
+
+        // k5: outer tile loop ceildiv(K, 8); inner dot loop a constant 8.
+        let (trips, _) = info_of("k5/k5.sm_80.ptx");
+        assert_eq!(trips, ["ok: ⌈param_2/8⌉", "ok: 8"]);
+    }
+
+    #[test]
+    fn gluon_trip_counts_are_pinned() {
+        // Both fp8 GEMMs: K tiles of 64, param 10 is K.
+        let (trips, _) = info_of("gluon/fp8_gemm_kernel.c_fc.sm_89.ptx");
+        assert_eq!(trips, ["ok: ⌈param_10/64⌉"]);
+        let (trips, _) = info_of("gluon/fp8_gemm_kernel.lm_head_dx.sm_89.ptx");
+        assert_eq!(trips, ["ok: ⌈param_10/64⌉"]);
+        // Cross-entropy: V/BLOCK = 8 for both passes ...
+        let (trips, _) = info_of("gluon/ce_chunk_kernel.sm_89.ptx");
+        assert_eq!(trips, ["ok: 8", "ok: 8"]);
+        // ... and at V = 2·BLOCK LLVM unrolls the first pass and turns the
+        // second into a predicate-phi loop of two trips.
+        let (trips, _) = info_of("gluon/ce_chunk_kernel.v8192.sm_89.ptx");
+        assert_eq!(trips, ["ok: 2"]);
+    }
+
+    #[test]
+    fn two_register_counter_is_an_induction_variable() {
+        // t = i + 1 in the header, `mov i, t` in the latch after the compare.
+        let (trips, _) = info_of("micro/two_register_counter.ptx");
+        assert_eq!(trips, ["ok: param_1"]);
+    }
+
+    #[test]
+    fn attention_trip_reasons_are_pinned() {
+        // A causal bound reads the CTA index, one value per CTA.
+        let (trips, _) = info_of("gluon/attn_bwd_kernel.sm_89.ptx");
+        assert_eq!(trips, ["ok: param_13 / 64 - %ctaid.x"]);
+        for f in [
+            "gluon/attn_bwd_pre_kernel.sm_89.ptx",
+            "gluon/attn_bwd_post_kernel.sm_89.ptx",
+        ] {
+            assert!(info_of(f).0.is_empty(), "{f}: no loops");
+        }
+        let (trips, _) = info_of("gluon/attn_fwd_ws_kernel.sm_89.ptx");
+        let mut reasons: Vec<&str> = trips.iter().map(String::as_str).collect();
+        reasons.sort();
+        reasons.dedup();
+        assert_eq!(
+            reasons,
+            [
+                "unknown: latch predicate is defined by `mbarrier.test_wait.parity.shared::cta.b64`, not a comparison",
+                "unknown: loop exit is not at the latch",
+                "unknown: loop has multiple latches",
+                "unknown: uniform(%r1773) is defined in an enclosing loop: depends on %r1773, carried around an enclosing loop",
+                "unknown: uniform(%r1884) is defined in an enclosing loop: depends on %r1884, carried around an enclosing loop",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_triangular_nest_is_an_honest_unknown() {
+        let (trips, _) = info_of("micro/triangular.ptx");
+        let mut sorted = trips.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            [
+                "ok: max(param_0, 1)",
+                "unknown: latch condition depends on an enclosing loop's counter",
+            ]
+        );
+    }
+
+    #[test]
+    fn scoped_labels_are_separate_loops() {
+        let (trips, _) = info_of("micro/scoped_labels.ptx");
+        assert_eq!(trips, ["ok: max(param_0, 1)", "ok: max(param_1, 1)"]);
+    }
+
+    #[test]
+    fn micro_trip_counts_and_honest_unknowns() {
+        let (trips, _) = info_of("micro/single_loop.ptx");
+        assert_eq!(trips, ["ok: param_1"]);
+
+        let (trips, _) = info_of("micro/branchy.ptx");
+        assert_eq!(trips, ["ok: param_1"]);
+
+        let (trips, _) = info_of("micro/no_loc.ptx");
+        assert_eq!(trips, ["ok: param_1"]);
+
+        // The honesty case: a latch on loaded floats has no static trip
+        // count and the reason is named, never guessed (S9.1).
+        let (trips, _) = info_of("micro/data_dep.ptx");
+        assert_eq!(
+            trips,
+            ["unknown: latch condition compares floating-point values"]
+        );
     }
 }

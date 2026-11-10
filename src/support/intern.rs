@@ -31,18 +31,19 @@ impl Interner {
     pub fn resolve(&self, sym: Symbol) -> &str {
         &self.strings[sym.0 as usize]
     }
-
-    /// Look up an already-interned string without inserting — for
-    /// read-only consumers of a built module (CFG, classifier), which
-    /// hold `&Module` and compare symbols by id.
-    pub fn get(&self, text: &str) -> Option<Symbol> {
-        self.map.get(text).copied()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl Interner {
+        /// Look up an already-interned string without inserting, as tests
+        /// name a register or a label of a built module.
+        pub fn get(&self, text: &str) -> Option<Symbol> {
+            self.map.get(text).copied()
+        }
+    }
 
     #[test]
     fn intern_is_idempotent_and_resolve_round_trips() {

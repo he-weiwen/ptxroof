@@ -21,9 +21,6 @@ use crate::ptx::ir::{Kernel, Module, SourceLoc};
 /// Human-readable identity of one loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoopName {
-    /// Source file basename + line, when debug info names the loop.
-    pub file: Option<String>,
-    pub line: Option<u32>,
     /// The header block's label (always present in compiler output;
     /// synthesized from the block id otherwise).
     pub label: String,
@@ -86,16 +83,9 @@ fn loop_name(
                 .unwrap_or("<unknown file>")
                 .to_owned();
             let display = format!("{file}:{}", loc.line);
-            LoopName {
-                file: Some(file),
-                line: Some(loc.line),
-                label,
-                display,
-            }
+            LoopName { label, display }
         }
         None => LoopName {
-            file: None,
-            line: None,
             display: label.clone(),
             label,
         },
@@ -130,7 +120,6 @@ mod tests {
         );
         assert_eq!(names.len(), 1);
         assert_eq!(names[0].display, "kern.cu:7");
-        assert_eq!(names[0].file.as_deref(), Some("kern.cu"));
         assert_eq!(names[0].label, "$L__L");
     }
 
@@ -151,6 +140,5 @@ mod tests {
              setp.lt.s32 %p1, %r1, %r2;\n@%p1 bra $L__L;\nret;\n}\n",
         );
         assert_eq!(names[0].display, "$L__L");
-        assert_eq!(names[0].file, None);
     }
 }

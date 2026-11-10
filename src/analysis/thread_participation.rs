@@ -28,7 +28,7 @@ use crate::ptx::cfg::{BlockId, ControlFlowGraph};
 use crate::ptx::ir::{FundamentalType, Instr, Kernel, Module, Opcode, Operand, Register, Stmt};
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::{Cmp, Form, cp_async_size_operand};
-use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_1d, to_3d, warps_of};
+use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_3d, warps_of};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::cell::OnceCell;
@@ -185,21 +185,6 @@ impl Pred {
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
             (Pred::Uniform(u, a), Pred::Uniform(v, b)) if a == b => Pred::Uniform(u.max(v), a),
             (a, b) => Pred::Or(SharedPred::new(a), SharedPred::new(b)),
-        }
-    }
-
-    pub fn eval(&self, tid: [i64; 3], shape: [u32; 3]) -> Tri {
-        let id = to_1d(tid, shape);
-        let lanes = self.eval_warps(shape, Env::default());
-        let warp = usize::try_from(id / WARP_SZ).ok();
-        let Some(&(may, must)) = warp.and_then(|w| lanes.get(w)) else {
-            return Tri::Maybe;
-        };
-        let bit = 1u32 << (id % WARP_SZ);
-        match (must & bit != 0, may & bit != 0) {
-            (true, _) => Tri::Yes,
-            (false, true) => Tri::Maybe,
-            (false, false) => Tri::No,
         }
     }
 
@@ -605,29 +590,6 @@ impl Constraint {
             .map(|(v, k)| i128::from(k.as_const().unwrap_or(0)) * i128::from(v.eval(&index)))
             .sum()
     }
-
-    /// `form cmp 0` with the constant moved to the right: `⌊%tid.x/32⌋ < 4`.
-    pub fn render(&self) -> String {
-        self.render_named(&|v| v.to_string())
-    }
-
-    /// The same, naming each variable by `name`.
-    pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> String {
-        let c = self.form.base.as_const().unwrap_or(0);
-        let lhs = AffineExpr {
-            terms: self.form.terms.clone(),
-            base: crate::analysis::affine::sym_expr::SymExpr::Const(0),
-        };
-        let op = match self.cmp {
-            Cmp::Lt => "<",
-            Cmp::Le => "<=",
-            Cmp::Gt => ">",
-            Cmp::Ge => ">=",
-            Cmp::Eq => "==",
-            Cmp::Ne => "!=",
-        };
-        format!("{} {op} {}", lhs.render(name), -i128::from(c))
-    }
 }
 
 impl Pred {
@@ -647,13 +609,9 @@ impl Pred {
         !self.constraints(|k| k.cta.is_some()).is_empty()
     }
 
-    /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
-    /// %tid.x == 0`; `None` when no such condition selects.
-    pub fn render(&self) -> Option<String> {
-        self.render_named(&Constraint::render)
-    }
-
-    /// The same, each comparison as `cmp` writes it.
+    /// The thread-index conditions as text, each comparison as `cmp`
+    /// writes it: `⌊%tid.x/32⌋ < 4 and %tid.x == 0`; `None` when no such
+    /// condition selects.
     pub fn render_named(&self, cmp: &dyn Fn(&Constraint) -> String) -> Option<String> {
         self.has_condition()
             .then(|| self.text(false, true, cmp))
@@ -1495,6 +1453,56 @@ mod tests {
     use crate::analysis::affine::affine_expr::Axis;
     use crate::analysis::affine::sym_expr::SymExpr;
     use crate::analysis::uniformity_info::UniformityInfo;
+    use crate::ptx::thread_hierarchy::to_1d;
+
+    impl Pred {
+        /// Whether thread `tid` of a block of `shape` is in the set.
+        pub fn eval(&self, tid: [i64; 3], shape: [u32; 3]) -> Tri {
+            let id = to_1d(tid, shape);
+            let lanes = self.eval_warps(shape, Env::default());
+            let warp = usize::try_from(id / WARP_SZ).ok();
+            let Some(&(may, must)) = warp.and_then(|w| lanes.get(w)) else {
+                return Tri::Maybe;
+            };
+            let bit = 1u32 << (id % WARP_SZ);
+            match (must & bit != 0, may & bit != 0) {
+                (true, _) => Tri::Yes,
+                (false, true) => Tri::Maybe,
+                (false, false) => Tri::No,
+            }
+        }
+
+        /// The thread-index conditions as text, `⌊%tid.x/32⌋ < 4 and
+        /// %tid.x == 0`; `None` when no such condition selects.
+        pub fn render(&self) -> Option<String> {
+            self.render_named(&Constraint::render)
+        }
+    }
+
+    impl Constraint {
+        /// `form cmp 0` with the constant moved to the right: `⌊%tid.x/32⌋ < 4`.
+        pub fn render(&self) -> String {
+            self.render_named(&|v| v.to_string())
+        }
+
+        /// The same, naming each variable by `name`.
+        pub fn render_named(&self, name: &dyn Fn(&Var) -> String) -> String {
+            let c = self.form.base.as_const().unwrap_or(0);
+            let lhs = AffineExpr {
+                terms: self.form.terms.clone(),
+                base: crate::analysis::affine::sym_expr::SymExpr::Const(0),
+            };
+            let op = match self.cmp {
+                Cmp::Lt => "<",
+                Cmp::Le => "<=",
+                Cmp::Gt => ">",
+                Cmp::Ge => ">=",
+                Cmp::Eq => "==",
+                Cmp::Ne => "!=",
+            };
+            format!("{} {op} {}", lhs.render(name), -i128::from(c))
+        }
+    }
 
     fn exact(n: u32) -> Counted {
         Counted {

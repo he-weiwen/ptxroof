@@ -89,10 +89,6 @@ pub enum SymExpr {
 }
 
 impl SymExpr {
-    pub fn sym(name: impl Into<String>) -> SymExpr {
-        SymExpr::Sym(SymbolicConstant::AddressOf(name.into()))
-    }
-
     /// The constant summand, the value with every symbol at 0, where it
     /// fits `i64`: a constant past it stays a term or a factor of its own.
     pub fn const_part(&self) -> Option<i64> {
@@ -605,6 +601,13 @@ pub(crate) fn block_shape(bindings: &HashMap<SymbolicConstant, i64>) -> Option<[
 mod tests {
     use super::SymExpr as E;
     use super::*;
+
+    impl SymExpr {
+        /// A named location's address, as tests write a symbol.
+        pub fn sym(name: impl Into<String>) -> SymExpr {
+            SymExpr::Sym(SymbolicConstant::AddressOf(name.into()))
+        }
+    }
 
     fn k() -> E {
         E::Sym(SymbolicConstant::KernelParam(2))
