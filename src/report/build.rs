@@ -28,7 +28,7 @@ use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Register, SharedSize, Specia
 use crate::ptx::literal::parse_int;
 use crate::ptx::modifier::Space;
 use crate::ptx::parse::parser::{ParseError, parse};
-use crate::ptx::thread_hierarchy::{WARP_SZ, ctas, threads};
+use crate::ptx::thread_hierarchy::{WARP_SZ, ctas, threads, to_1d};
 use crate::report::bindings::BindingSpec;
 use crate::report::measured::{
     Comparison, LineIndex, MeasuredBlock, MeasuredTotals, NcuRecord, Prediction, SectorCount,
@@ -371,6 +371,7 @@ impl KernelReportBuilder<'_> {
                         }),
                         _ => None,
                     };
+                    let executes = set.may_contain(shape);
                     let footprint = match (&form, bytes) {
                         (Some(a), Some(b)) if matches!(space, Space::Global | Space::Generic) => {
                             let pointer = self.pointee(a);
@@ -380,7 +381,7 @@ impl KernelReportBuilder<'_> {
                                 align.unwrap_or(b),
                                 pointer,
                                 shape,
-                                |tid| set.contains(tid, shape),
+                                |tid| executes[to_1d(tid, shape) as usize],
                             ))
                         }
                         _ => None,
@@ -391,7 +392,9 @@ impl KernelReportBuilder<'_> {
                             request
                                 .ok_or_else(|| "wavefronts not modelled".to_owned())
                                 .and_then(|r| {
-                                    warp_wavefronts(a, r, shape, |tid| set.contains(tid, shape))
+                                    warp_wavefronts(a, r, shape, |tid| {
+                                        executes[to_1d(tid, shape) as usize]
+                                    })
                                 }),
                         ),
                         _ => None,
@@ -663,7 +666,10 @@ impl<'a> KernelReportBuilder<'a> {
                 let Some(at) = line(op) else {
                     return reg(r);
                 };
-                let on: Vec<usize> = (0..kernel.stmts.len())
+                let near = |i: &usize| line(*i).is_none_or(|l| l == at);
+                let first = (0..op).rev().take_while(near).last().unwrap_or(op);
+                let on: Vec<usize> = (first..kernel.stmts.len())
+                    .take_while(near)
                     .filter(|&i| line(i) == Some(at))
                     .collect();
                 match on.iter().position(|&i| i == op) {

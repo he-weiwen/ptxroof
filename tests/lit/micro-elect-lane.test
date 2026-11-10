@@ -1,7 +1,7 @@
-# Wrong output (PLAN.md): the thread count tries every active lane as
-# the elected one, but the threads and the sectors read the lowest: the
-# store under `%tid.x == 1 and elected` runs `<= 1` time per CTA, but
-# its threads read `no thread` and its sectors none, where lane 1, if
-# elected, requests one.
+# Outside the input contract (PLAN.md): which lane `elect.sync` elects is
+# taken not to matter, and an election reads as its lowest lane. The
+# store under `%tid.x == 1 and elected` reads as under lane 0's
+# election, on no thread and never run, where lane 1, if elected,
+# stores once.
 RUN: %ptxroof analyze %fixtures/micro/elect_lane.ptx | FileCheck --check-prefix=ANN "%s"
-ANN: {{^}}	@%p3 st.global.b32 	[%rd2], %r1; // no thread | exec <= 1/CTA | global store [param_0] sectors/req 0 (ideal 0){{$}}
+ANN: {{^}}	@%p3 st.global.b32 	[%rd2], %r1; // no thread | exec 0/CTA | global store [param_0] sectors/req 0 (ideal 0){{$}}

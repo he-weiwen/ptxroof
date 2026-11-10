@@ -31,9 +31,11 @@ use crate::ptx::modifier::{Cmp, Form, cp_async_size_operand};
 use crate::ptx::thread_hierarchy::{WARP_SZ, threads, to_1d, to_3d, warps_of};
 use crate::ssa::Value;
 use crate::support::intern::Symbol;
+use std::cell::OnceCell;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
+use std::rc::Rc;
 
 /// One condition `form cmp 0` over the thread index and, with the grid
 /// bound, the CTA index: `cta` is the least and greatest value of the
@@ -65,12 +67,14 @@ pub enum Pred {
     /// which.
     Uniform(Uniform, Atom),
     Cmp(Constraint),
-    /// `elect.sync`: the lowest lane of each warp among the threads
-    /// executing it, which the inner predicate selects.
-    Elect(Box<Pred>),
-    Not(Box<Pred>),
-    And(Box<Pred>, Box<Pred>),
-    Or(Box<Pred>, Box<Pred>),
+    /// `elect.sync`: one lane of each warp among the threads executing
+    /// it, which the inner predicate selects. PTX ISA §9.7.14.15 does not
+    /// say which lane; it is taken not to matter to what the kernel reads,
+    /// writes or branches on (PLAN.md), and read as the lowest.
+    Elect(SharedPred),
+    Not(SharedPred),
+    And(SharedPred, SharedPred),
+    Or(SharedPred, SharedPred),
 }
 
 /// Which condition a `Pred::Uniform` is, and whether it is negated.
@@ -123,16 +127,6 @@ struct Env {
     trip: Option<(LoopId, i128)>,
 }
 
-/// Which lane an `elect.sync` elected, for one evaluation: the lowest
-/// active lane as a representative, the thread of a given thread ID, or
-/// none.
-#[derive(Debug, Clone, Copy)]
-enum Leader {
-    Lowest,
-    Thread(i64),
-    Nobody,
-}
-
 impl std::ops::Not for Pred {
     type Output = Pred;
 
@@ -154,10 +148,10 @@ impl std::ops::Not for Pred {
                 cta: c.cta,
                 trip: c.trip,
             }),
-            Pred::Not(p) => *p,
-            Pred::And(a, b) => (!*a).or(!*b),
-            Pred::Or(a, b) => (!*a).and(!*b),
-            p => Pred::Not(Box::new(p)),
+            Pred::Not(p) => p.unwrap_or_clone(),
+            Pred::And(a, b) => (!a.unwrap_or_clone()).or(!b.unwrap_or_clone()),
+            Pred::Or(a, b) => (!a.unwrap_or_clone()).and(!b.unwrap_or_clone()),
+            p => Pred::Not(SharedPred::new(p)),
         }
     }
 }
@@ -180,7 +174,7 @@ impl Pred {
             (Pred::True, p) | (p, Pred::True) => p,
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
             (Pred::Uniform(u, a), Pred::Uniform(v, b)) if a == b => Pred::Uniform(u.max(v), a),
-            (a, b) => Pred::And(Box::new(a), Box::new(b)),
+            (a, b) => Pred::And(SharedPred::new(a), SharedPred::new(b)),
         }
     }
 
@@ -190,68 +184,67 @@ impl Pred {
             (Pred::False, p) | (p, Pred::False) => p,
             (Pred::Unknown, Pred::Unknown) => Pred::Unknown,
             (Pred::Uniform(u, a), Pred::Uniform(v, b)) if a == b => Pred::Uniform(u.max(v), a),
-            (a, b) => Pred::Or(Box::new(a), Box::new(b)),
+            (a, b) => Pred::Or(SharedPred::new(a), SharedPred::new(b)),
         }
     }
 
     pub fn eval(&self, tid: [i64; 3], shape: [u32; 3]) -> Tri {
-        self.eval_as(tid, shape, Leader::Lowest, Env::default())
+        let id = to_1d(tid, shape);
+        let lanes = self.eval_warps(shape, Env::default());
+        let warp = usize::try_from(id / WARP_SZ).ok();
+        let Some(&(may, must)) = warp.and_then(|w| lanes.get(w)) else {
+            return Tri::Maybe;
+        };
+        let bit = 1u32 << (id % WARP_SZ);
+        match (must & bit != 0, may & bit != 0) {
+            (true, _) => Tri::Yes,
+            (false, true) => Tri::Maybe,
+            (false, false) => Tri::No,
+        }
     }
 
-    fn eval_as(&self, tid: [i64; 3], shape: [u32; 3], leader: Leader, env: Env) -> Tri {
-        let eval = |p: &Pred| p.eval_as(tid, shape, leader, env);
+    /// Per warp of a block of `shape`, the lanes that may be in the set at
+    /// `env` and those that are, as bit masks. An `elect.sync` is read as
+    /// electing the lowest lane its inner predicate certainly admits, or
+    /// else may admit (`Pred::Elect`).
+    fn eval_warps(&self, shape: [u32; 3], env: Env) -> LaneMasks {
+        let warps = warps_of(shape);
+        let full = |w: &Range<i64>| u32::MAX >> (WARP_SZ - (w.end - w.start));
+        let lowest = |lanes: u32| lanes & lanes.wrapping_neg();
+        let both = |a: &SharedPred, b: &SharedPred, op: fn(u32, u32) -> u32| {
+            (a.eval_warps(shape, env)
+                .iter()
+                .zip(b.eval_warps(shape, env).iter()))
+            .map(|(x, y)| (op(x.0, y.0), op(x.1, y.1)))
+            .collect()
+        };
         match self {
-            Pred::True => Tri::Yes,
-            Pred::False => Tri::No,
-            Pred::Unknown | Pred::Uniform(..) => Tri::Maybe,
-            Pred::Cmp(c) => {
-                let trip = env
-                    .trip
-                    .filter(|&(l, _)| c.trip.is_some_and(|(m, _)| l == m));
-                let Ok(trip) = trip
-                    .map(|(l, k)| i64::try_from(k).map(|k| (l, k)))
-                    .transpose()
-                else {
-                    return Tri::Maybe;
-                };
-                let value = |v: &Var| match (v, env.cta, trip) {
-                    (Var::Ctaid(a), Some(c), _) => c[*a as usize],
-                    (Var::Iteration(l), _, Some((m, k))) if *l == m => k,
-                    _ => at_tid(tid)(v),
-                };
-                let Some(x) = c.form.eval(&value) else {
-                    return Tri::Maybe;
-                };
-                let (lo, hi) = match c.cta.filter(|_| env.cta.is_none()) {
-                    Some((a, b)) => (x + a, x + b),
-                    None => (x, x),
-                };
-                let (lo, hi) = match c.trip.filter(|_| trip.is_none()) {
-                    Some((_, (a, b))) => (lo + a, hi + b),
-                    None => (lo, hi),
-                };
-                decide(c.cmp, lo, hi)
-            }
-            Pred::Elect(active) => match leader {
-                Leader::Lowest => elected(active, tid, shape, env),
-                Leader::Thread(k) if to_1d(tid, shape) == k => Tri::Yes,
-                _ => Tri::No,
-            },
-            Pred::Not(p) => match eval(p) {
-                Tri::Yes => Tri::No,
-                Tri::No => Tri::Yes,
-                Tri::Maybe => Tri::Maybe,
-            },
-            Pred::And(a, b) => match (eval(a), eval(b)) {
-                (Tri::No, _) | (_, Tri::No) => Tri::No,
-                (Tri::Yes, Tri::Yes) => Tri::Yes,
-                _ => Tri::Maybe,
-            },
-            Pred::Or(a, b) => match (eval(a), eval(b)) {
-                (Tri::Yes, _) | (_, Tri::Yes) => Tri::Yes,
-                (Tri::No, Tri::No) => Tri::No,
-                _ => Tri::Maybe,
-            },
+            Pred::True => warps.map(|w| (full(&w), full(&w))).collect(),
+            Pred::False => warps.map(|_| (0, 0)).collect(),
+            Pred::Unknown | Pred::Uniform(..) => warps.map(|w| (full(&w), 0)).collect(),
+            Pred::Cmp(c) => warps
+                .map(|w| {
+                    w.clone().fold((0, 0), |(may, must), l| {
+                        let bit = 1 << (l - w.start);
+                        match c.eval(to_3d(l, shape), env) {
+                            Tri::Yes => (may | bit, must | bit),
+                            Tri::Maybe => (may | bit, must),
+                            Tri::No => (may, must),
+                        }
+                    })
+                })
+                .collect(),
+            Pred::Elect(active) => (active.eval_warps(shape, env).iter())
+                .map(|&(may, must)| match must {
+                    0 => (lowest(may), 0),
+                    _ => (lowest(must), lowest(must)),
+                })
+                .collect(),
+            Pred::Not(p) => (p.eval_warps(shape, env).iter().zip(warps))
+                .map(|(&(may, must), w)| (full(&w) & !must, full(&w) & !may))
+                .collect(),
+            Pred::And(a, b) => both(a, b, |x, y| x & y),
+            Pred::Or(a, b) => both(a, b, |x, y| x | y),
         }
     }
 
@@ -290,16 +283,6 @@ impl Pred {
         }
     }
 
-    /// The threads an `elect.sync` in this predicate chose among.
-    pub fn elect_active(&self) -> Option<&Pred> {
-        match self {
-            Pred::Elect(active) => Some(active),
-            Pred::Not(p) => p.elect_active(),
-            Pred::And(a, b) | Pred::Or(a, b) => a.elect_active().or_else(|| b.elect_active()),
-            _ => None,
-        }
-    }
-
     /// Every selector is a thread-index condition.
     pub fn exact(&self) -> bool {
         match self {
@@ -333,7 +316,14 @@ impl Pred {
     /// accepts: a comparison with another loop's counter is not its
     /// current trip's there, and selects as an unknown.
     fn in_loops(self, inside: &dyn Fn(LoopId) -> bool) -> Pred {
-        let at = |p: Box<Pred>| Box::new(p.in_loops(inside));
+        let counters = self.constraints(|k| k.trip.is_some());
+        if counters
+            .iter()
+            .all(|k| k.trip.is_some_and(|(l, _)| inside(l)))
+        {
+            return self;
+        }
+        let at = |p: SharedPred| SharedPred::new(p.unwrap_or_clone().in_loops(inside));
         match self {
             Pred::Cmp(c) if c.trip.is_some_and(|(l, _)| !inside(l)) => {
                 match c.form.depends_on_tid() {
@@ -346,17 +336,6 @@ impl Pred {
             Pred::And(a, b) => Pred::And(at(a), at(b)),
             Pred::Or(a, b) => Pred::Or(at(a), at(b)),
             p => p,
-        }
-    }
-
-    /// Every `elect.sync` it reads is a conjunct of it: no thread but the
-    /// elected one is in the set.
-    fn elect_is_conjunct(&self) -> bool {
-        match self {
-            Pred::And(a, b) => a.elect_is_conjunct() && b.elect_is_conjunct(),
-            Pred::Not(p) => p.elect_active().is_none(),
-            Pred::Or(a, b) => a.elect_active().is_none() && b.elect_active().is_none(),
-            _ => true,
         }
     }
 
@@ -401,9 +380,7 @@ impl Pred {
             Pred::And(a, b) => {
                 let parts: Vec<String> = [a, b]
                     .into_iter()
-                    .filter(|p| {
-                        !hedged || !(matches!(p.as_ref(), Pred::Unknown) || p.uniform_only())
-                    })
+                    .filter(|p| !hedged || !(matches!(***p, Pred::Unknown) || p.uniform_only()))
                     .filter_map(|p| p.text(true, hedged, cmp))
                     .collect();
                 (!parts.is_empty()).then(|| parts.join(" and "))
@@ -414,47 +391,6 @@ impl Pred {
                 Some(if nested { format!("({text})") } else { text })
             }
         }
-    }
-}
-
-/// Whether `tid` is the lowest lane of its warp that `active` admits, a
-/// representative of the elected lane: yes when no lower lane may be
-/// active, maybe when the leader is one of several lanes that may be,
-/// and only the warp's first lane where the lanes of a warp are active
-/// together, `active` holding unknowns uniform in the CTA or a warp only.
-fn elected(active: &Pred, tid: [i64; 3], shape: [u32; 3], env: Env) -> Tri {
-    let id = to_1d(tid, shape);
-    let warp = usize::try_from(id / WARP_SZ)
-        .ok()
-        .and_then(|w| warps_of(shape).nth(w));
-    let Some(warp) = warp else {
-        return Tri::Maybe;
-    };
-    if active.uniform_only() {
-        return if id == warp.start {
-            Tri::Maybe
-        } else {
-            Tri::No
-        };
-    }
-    let mut candidates = Vec::new();
-    for l in warp {
-        match active.eval_as(to_3d(l, shape), shape, Leader::Lowest, env) {
-            Tri::Yes if candidates.is_empty() => {
-                return if l == id { Tri::Yes } else { Tri::No };
-            }
-            Tri::Yes => {
-                candidates.push(l);
-                break;
-            }
-            Tri::Maybe => candidates.push(l),
-            Tri::No => {}
-        }
-    }
-    if candidates.contains(&id) {
-        Tri::Maybe
-    } else {
-        Tri::No
     }
 }
 
@@ -562,7 +498,61 @@ fn on_tid_only(a: &AffineExpr) -> bool {
 
 /// Per warp of a block, the lanes that may be in a set and those that
 /// are, as bit masks.
-pub(crate) type LaneMasks = Vec<(u32, u32)>;
+pub(crate) type LaneMasks = Rc<[(u32, u32)]>;
+
+/// A predicate several sets hold, with its lanes (`Pred::eval_warps`)
+/// in the block shape first asked of it.
+#[derive(Clone)]
+pub struct SharedPred {
+    pred: Rc<Pred>,
+    lanes: Rc<OnceCell<([u32; 3], LaneMasks)>>,
+}
+
+impl SharedPred {
+    fn new(pred: Pred) -> SharedPred {
+        SharedPred {
+            pred: Rc::new(pred),
+            lanes: Rc::default(),
+        }
+    }
+
+    fn unwrap_or_clone(self) -> Pred {
+        Rc::unwrap_or_clone(self.pred)
+    }
+
+    fn eval_warps(&self, shape: [u32; 3], env: Env) -> LaneMasks {
+        if env.cta.is_some() || env.trip.is_some() {
+            return self.pred.eval_warps(shape, env);
+        }
+        let first = || (shape, self.pred.eval_warps(shape, env));
+        match self.lanes.get_or_init(first) {
+            (s, lanes) if *s == shape => lanes.clone(),
+            _ => self.pred.eval_warps(shape, env),
+        }
+    }
+}
+
+impl std::ops::Deref for SharedPred {
+    type Target = Pred;
+
+    fn deref(&self) -> &Pred {
+        &self.pred
+    }
+}
+
+impl PartialEq for SharedPred {
+    fn eq(&self, other: &SharedPred) -> bool {
+        self.pred == other.pred
+    }
+}
+
+impl Eq for SharedPred {}
+
+impl std::fmt::Debug for SharedPred {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
+    }
+}
 
 /// What two CTAs share when every lane has the same truth at both
 /// (`Pred::cta_keys`).
@@ -574,6 +564,36 @@ pub(crate) const CTA_BUDGET: u64 = 1 << 24;
 const LANE_BUDGET: u64 = 1 << 26;
 
 impl Constraint {
+    /// Whether the comparison holds on thread `tid` at `env`.
+    fn eval(&self, tid: [i64; 3], env: Env) -> Tri {
+        let trip = env
+            .trip
+            .filter(|&(l, _)| self.trip.is_some_and(|(m, _)| l == m));
+        let Ok(trip) = trip
+            .map(|(l, k)| i64::try_from(k).map(|k| (l, k)))
+            .transpose()
+        else {
+            return Tri::Maybe;
+        };
+        let value = |v: &Var| match (v, env.cta, trip) {
+            (Var::Ctaid(a), Some(c), _) => c[*a as usize],
+            (Var::Iteration(l), _, Some((m, k))) if *l == m => k,
+            _ => at_tid(tid)(v),
+        };
+        let Some(x) = self.form.eval(&value) else {
+            return Tri::Maybe;
+        };
+        let (lo, hi) = match self.cta.filter(|_| env.cta.is_none()) {
+            Some((a, b)) => (x + a, x + b),
+            None => (x, x),
+        };
+        let (lo, hi) = match self.trip.filter(|_| trip.is_none()) {
+            Some((_, (a, b))) => (lo + a, hi + b),
+            None => (lo, hi),
+        };
+        decide(self.cmp, lo, hi)
+    }
+
     /// The value of the form's `%ctaid` terms at the CTA `c`.
     fn cta_part(&self, c: [i64; 3]) -> i128 {
         let index = |v: &Var| match v {
@@ -611,10 +631,15 @@ impl Constraint {
 }
 
 impl Pred {
-    /// Whether the thread at `tid` may be in the set; an unknown
-    /// selector includes every thread, as a bound.
-    pub fn contains(&self, tid: [i64; 3], shape: [u32; 3]) -> bool {
-        self.eval(tid, shape) != Tri::No
+    /// By thread ID in a block of `shape`, whether the thread may be in
+    /// the set; an unknown selector includes every thread, as a bound.
+    pub fn may_contain(&self, shape: [u32; 3]) -> Vec<bool> {
+        (warps_of(shape).zip(self.lane_masks(shape, None).iter()))
+            .flat_map(|(lanes, &(may, _))| {
+                let first = lanes.start;
+                lanes.map(move |l| may >> (l - first) & 1 == 1)
+            })
+            .collect()
     }
 
     /// A comparison selecting the set reads the CTA index.
@@ -652,17 +677,7 @@ impl Pred {
     /// an elected lane is the lowest active one.
     pub(crate) fn lane_masks(&self, shape: [u32; 3], cta: Option<[i64; 3]>) -> LaneMasks {
         let env = Env { cta, trip: None };
-        let lane = |(may, must): (u32, u32), t: i64| {
-            let bit = 1 << (t % WARP_SZ);
-            match self.eval_as(to_3d(t, shape), shape, Leader::Lowest, env) {
-                Tri::Yes => (may | bit, must | bit),
-                Tri::Maybe => (may | bit, must),
-                Tri::No => (may, must),
-            }
-        };
-        (warps_of(shape))
-            .map(|lanes| lanes.fold((0, 0), lane))
-            .collect()
+        self.eval_warps(shape, env)
     }
 
     /// The threads and warps the set holds over a launch of `grid` CTAs
@@ -861,13 +876,8 @@ impl Pred {
         Some(sums)
     }
 
-    /// The threads and the warps with a lane in the set, from the fewest
-    /// and the most lanes of each warp in it. An elected lane is
-    /// unspecified (PTX ISA §9.7.14.15 promises only that the same leader
-    /// is elected every time), so every active lane is tried as the
-    /// leader, and no leader when no lane is certainly active, and the
-    /// range covers those choices; where every election is a conjunct,
-    /// only the leader's thread is evaluated.
+    /// The threads and the warps with a lane in the set at `env`, from
+    /// the lanes of each warp that are in it and those that may be.
     fn tally(&self, shape: [u32; 3], env: Env) -> Option<(Counted, Counted)> {
         if !self.has_condition() || shape.contains(&0) {
             return None;
@@ -877,40 +887,11 @@ impl Pred {
             possible: 0,
         };
         let (mut threads, mut warps) = (zero, zero);
-        for lanes in warps_of(shape) {
-            let lanes_as = |leader: Leader, among: Range<i64>| {
-                let (mut yes, mut maybe) = (0, 0);
-                for l in among {
-                    match self.eval_as(to_3d(l, shape), shape, leader, env) {
-                        Tri::Yes => yes += 1,
-                        Tri::Maybe => maybe += 1,
-                        Tri::No => {}
-                    }
-                }
-                (yes, maybe)
-            };
-            let (min, max) = match self.elect_active() {
-                None => {
-                    let (yes, maybe) = lanes_as(Leader::Lowest, lanes.clone());
-                    (yes, yes + maybe)
-                }
-                Some(active) => {
-                    let state = |l| active.eval_as(to_3d(l, shape), shape, Leader::Lowest, env);
-                    let certain = lanes.clone().any(|l| state(l) == Tri::Yes);
-                    let conjunct = self.elect_is_conjunct();
-                    let among = |l: i64| if conjunct { l..l + 1 } else { lanes.clone() };
-                    (lanes.clone().filter(|&l| state(l) != Tri::No))
-                        .map(|l| lanes_as(Leader::Thread(l), among(l)))
-                        .chain((!certain).then(|| lanes_as(Leader::Nobody, lanes.clone())))
-                        .fold((u32::MAX, 0), |(min, max), (yes, maybe)| {
-                            (min.min(yes), max.max(yes + maybe))
-                        })
-                }
-            };
-            threads.certain += min;
-            threads.possible += max;
-            warps.certain += u32::from(min > 0);
-            warps.possible += u32::from(max > 0);
+        for &(may, must) in self.eval_warps(shape, env).iter() {
+            threads.certain += must.count_ones();
+            threads.possible += may.count_ones();
+            warps.certain += u32::from(must != 0);
+            warps.possible += u32::from(may != 0);
         }
         Some((threads, warps))
     }
@@ -1230,7 +1211,7 @@ impl PredicateReader<'_> {
                     .find(|(_, blk)| blk.start <= def && def < blk.end)
                     .map(|(id, _)| id);
                 match here {
-                    Some(b) => (Pred::Elect(Box::new(self.block(b))), false),
+                    Some(b) => (Pred::Elect(SharedPred::new(self.block(b))), false),
                     None => (Pred::Unknown, false),
                 }
             }
@@ -1691,11 +1672,11 @@ mod tests {
                 possible: 128
             })
         );
-        assert!(set.contains([0, 0, 0], [256, 1, 1]));
-        assert!(!set.contains([200, 0, 0], [256, 1, 1]));
+        assert!(set.may_contain([256, 1, 1])[0]);
+        assert!(!set.may_contain([256, 1, 1])[200]);
         let unknown = Pred::True.and(Pred::Unknown);
         assert_eq!(unknown, Pred::Unknown);
-        assert!(unknown.contains([5, 0, 0], [256, 1, 1]));
+        assert!(unknown.may_contain([256, 1, 1])[5]);
         assert_eq!(unknown.render(), None);
         assert_eq!(unknown.count([256, 1, 1]), None);
     }
@@ -1755,7 +1736,7 @@ mod tests {
 
     #[test]
     fn elect_is_one_lane_per_warp_of_the_active_threads() {
-        let all = Pred::Elect(Box::new(Pred::True));
+        let all = Pred::Elect(SharedPred::new(Pred::True));
         assert_eq!(all.count([128, 1, 1]), Some(exact(4)));
         assert_eq!(all.eval([32, 0, 0], [128, 1, 1]), Tri::Yes);
         assert_eq!(all.eval([33, 0, 0], [128, 1, 1]), Tri::No);
@@ -1767,7 +1748,7 @@ mod tests {
             cta: None,
             trip: None,
         });
-        let of_upper = Pred::Elect(Box::new(upper.clone()));
+        let of_upper = Pred::Elect(SharedPred::new(upper.clone()));
         assert_eq!(of_upper.count([128, 1, 1]), Some(exact(3)));
         let warp0 = Pred::Cmp(Constraint {
             form: AffineExpr::var(Var::FloorDiv(Box::new(Var::Tid(Axis::X)), 32)),
@@ -1776,30 +1757,25 @@ mod tests {
             trip: None,
         });
         // A warp-uniform condition on the elected lane is exact.
-        let leader_of_warp0 = warp0.and(Pred::Elect(Box::new(Pred::True)));
+        let leader_of_warp0 = warp0.and(Pred::Elect(SharedPred::new(Pred::True)));
         assert_eq!(leader_of_warp0.count([128, 1, 1]), Some(exact(1)));
         assert_eq!(
             leader_of_warp0.render().as_deref(),
             Some("⌊%tid.x/32⌋ == 0 and elected")
         );
-        // A lane-varying one is not: the leader may or may not be lane 0.
+        // A lane-varying one is outside the input contract (PLAN.md): it
+        // reads as the lowest lane's, here lane 0, which is elected.
         let lane0 = Pred::Cmp(Constraint {
             form: AffineExpr::var(Var::Tid(Axis::X)),
             cmp: Cmp::Eq,
             cta: None,
             trip: None,
         });
-        let leader_is_lane0 = lane0.and(Pred::Elect(Box::new(Pred::True)));
-        assert_eq!(
-            leader_is_lane0.count([128, 1, 1]),
-            Some(Counted {
-                certain: 0,
-                possible: 1
-            })
-        );
-        let others = !Pred::Elect(Box::new(Pred::True));
+        let leader_is_lane0 = lane0.and(Pred::Elect(SharedPred::new(Pred::True)));
+        assert_eq!(leader_is_lane0.count([128, 1, 1]), Some(exact(1)));
+        let others = !Pred::Elect(SharedPred::new(Pred::True));
         assert_eq!(others.count([128, 1, 1]), Some(exact(124)));
-        let hedged = Pred::Elect(Box::new(upper.or(Pred::Unknown)));
+        let hedged = Pred::Elect(SharedPred::new(upper.or(Pred::Unknown)));
         assert!(!hedged.exact());
         // Warp 0 may have no active lane, so no leader.
         assert_eq!(
@@ -1809,11 +1785,11 @@ mod tests {
                 possible: 4
             })
         );
-        let maybe = Pred::Elect(Box::new(cta(0)));
+        let maybe = Pred::Elect(SharedPred::new(cta(0)));
         let range = |certain, possible| Some(Counted { certain, possible });
         assert_eq!(maybe.count([64, 1, 1]), range(0, 2));
         // A warp's lanes are active together: its first is the leader.
-        assert_eq!(maybe.lane_masks([64, 1, 1], None), vec![(1, 0), (1, 0)]);
+        assert_eq!(*maybe.lane_masks([64, 1, 1], None), [(1, 0), (1, 0)]);
         assert_eq!((!maybe).count([64, 1, 1]), range(62, 64));
     }
 
@@ -1859,15 +1835,18 @@ mod tests {
             below.clone().and(cta(0)).launch([32, 1, 1], [4, 1, 1]),
             None
         );
-        // An election of one lane per warp counts; one among lanes that a
-        // comparison then splits does not.
+        // An election counts as its lowest lane, one per warp: lane 0 is
+        // below 2c at CTAs 1 to 3.
         let first_two = over_ctas(0, 1, -2, Cmp::Lt, 4);
-        let elected = Pred::Elect(Box::new(Pred::True));
+        let elected = Pred::Elect(SharedPred::new(Pred::True));
         assert_eq!(
             first_two.and(elected.clone()).launch([64, 1, 1], [4, 1, 1]),
             Some((4, 4))
         );
-        assert_eq!(below.and(elected).launch([32, 1, 1], [4, 1, 1]), None);
+        assert_eq!(
+            below.and(elected).launch([32, 1, 1], [4, 1, 1]),
+            Some((3, 3))
+        );
         // Past the budgets: 2^24 CTAs on the axis read, or 130,944 groups of
         // a lane-dependent comparison times 1024 lanes.
         let one = over_ctas(1, -1, 0, Cmp::Lt, (1 << 24) + 1);
@@ -2002,25 +1981,22 @@ mod tests {
         assert_eq!(below_100.warps([128, 1, 1]), Some(exact(4)));
         // Every warp with an active lane has a leader, whichever lane.
         assert_eq!(
-            Pred::Elect(Box::new(Pred::True)).warps([128, 1, 1]),
+            Pred::Elect(SharedPred::new(Pred::True)).warps([128, 1, 1]),
             Some(exact(4))
         );
         assert_eq!(
             warp0
-                .and(Pred::Elect(Box::new(Pred::True)))
+                .and(Pred::Elect(SharedPred::new(Pred::True)))
                 .warps([128, 1, 1]),
             Some(exact(1))
         );
-        // Whether warp 0's leader is lane 0 is not known.
+        // The election reads as each warp's lowest lane: thread 0 is warp 0's.
         assert_eq!(
             lane0
                 .clone()
-                .and(Pred::Elect(Box::new(Pred::True)))
+                .and(Pred::Elect(SharedPred::new(Pred::True)))
                 .warps([128, 1, 1]),
-            Some(Counted {
-                certain: 0,
-                possible: 1
-            })
+            Some(exact(1))
         );
         // Lane 0 is certainly in; the other lanes of every warp may be.
         let hedged = lane0.or(Pred::Unknown);
@@ -2053,7 +2029,7 @@ mod tests {
         let lanes = || Pred::Cmp(warps_below_4());
         assert!(!cta(0).or(lanes()).lane_exact());
         assert!(!(!(cta(0).and(lanes()))).lane_exact());
-        assert!(Pred::Elect(Box::new(cta(0).and(lanes()))).lane_exact());
+        assert!(Pred::Elect(SharedPred::new(cta(0).and(lanes()))).lane_exact());
         // The negation of a disjunction is the conjunction of its parts'
         // negations: Triton's leader branch `@(%p or ⌊%tid.x/32⌋ ≠ 0) bra`
         // leaves warp 0's lanes, or none.

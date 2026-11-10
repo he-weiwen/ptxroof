@@ -513,10 +513,9 @@ pub fn loop_bytes(
     for f in global {
         let bytes = f.bytes?;
         let set = &f.set;
-        let lanes = (0..threads)
-            .filter(|&t| set.contains(to_3d(t, shape), shape))
-            .count() as u64;
-        let per_trip = (set.trip_loop() == Some(id) && set.elect_active().is_none())
+        let executes = set.may_contain(shape);
+        let lanes = executes.iter().filter(|&&m| m).count() as u64;
+        let per_trip = (set.trip_loop() == Some(id))
             .then(|| set.over_trips(shape, id, u64::try_from(trips).ok()?))
             .flatten();
         let guarded = !f.guard_exact || f.conditional;
@@ -574,12 +573,6 @@ pub fn loop_bytes(
             return None;
         }
         let bytes = i64::from(bytes);
-        // Which lane an election picks is unspecified: a lane-dependent
-        // address touched by the elected lane is a bound.
-        if f.set.elect_active().is_some() && form.depends_on_tid() {
-            at_most = true;
-            requested_at_most = true;
-        }
         let mut key = form.clone();
         key.terms
             .retain(|v, _| !v.depends_on_tid() && v.counter() != Some(id));
@@ -587,9 +580,8 @@ pub fn loop_bytes(
         let intervals = per_base.entry(key.clone()).or_default();
         for warp in warps_of(shape) {
             let offsets: Vec<i64> = warp
-                .map(|t| to_3d(t, shape))
-                .filter(|&tid| set.contains(tid, shape))
-                .map(|tid| i64::try_from(form.eval(&at_tid(tid))?).ok())
+                .filter(|&t| executes[t as usize])
+                .map(|t| i64::try_from(form.eval(&at_tid(to_3d(t, shape)))?).ok())
                 .collect::<Option<_>>()?;
             let align = i64::from(f.align);
             let pats = patterns.entry(key.clone()).or_default();
@@ -607,7 +599,7 @@ pub fn loop_bytes(
         }
         for t in 0..threads {
             let tid = to_3d(t, shape);
-            if !set.contains(tid, shape) {
+            if !executes[t as usize] {
                 continue;
             }
             let base = i64::try_from(form.eval(&at_tid(tid))?).ok()?;

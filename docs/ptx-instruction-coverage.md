@@ -383,7 +383,7 @@ transfers are a different roofline (misfit §F). All Tier 4.
 | 9.7.14.12 | `activemask` | none | OK. |
 | 9.7.14.13 | `redux.sync` | none | OK, with a flag: ⚠ misfit §A (mild) — it also performs the reduction arithmetic (integer; `.f32` min/max, sm_100a). Counted as communication, not as flops: an integer reduction has no roofline home, and an `.f32` one is 31 maximums per 32 values, no whole number per thread (b200 `quant…_per_token_group_quant_8bit` line 97, `redux.sync.max.f32`; 1,254 `.f32` statements in 294 files of the Blackwell corpus). |
 | 9.7.14.14 | `griddepcontrol` | none | OK — it orders dependent grids and moves no counted work. |
-| 9.7.14.15 | `elect.sync` | none (the `d|p` destination parses since the `|` operand change) | OK — warp-collective leader election. |
+| 9.7.14.15 | `elect.sync` | none (the `d|p` destination parses since the `|` operand change) | OK — warp-collective leader election. Thread sets: read as electing each warp's lowest executing lane, which lane taken not to matter (PLAN.md's input contract; `elect_is_one_lane_per_warp_of_the_active_threads`). |
 | 9.7.14.16.12 | `mbarrier.init` | none (via `mbarrier`) | OK — technically writes 8 bytes of shared memory to initialize the object; negligible by construction, no contribution is right. |
 | 9.7.14.16.13 | `mbarrier.inval` | none | OK. |
 | 9.7.14.16.14 | `mbarrier.expect_tx` | none | OK. |
