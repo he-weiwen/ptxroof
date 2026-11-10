@@ -5,12 +5,13 @@
 //! register step is free of every variable, and what the start is, are
 //! the reader's.
 
-use crate::analysis::control_flow::loops::{LoopForest, LoopId};
-use crate::ptx::cfg::{BlockId, ControlFlowGraph};
-use crate::ptx::ir::{Instr, Kernel, Module, Opcode, Operand, OperandId, Register, Stmt};
+use crate::analysis::control_flow::loops::LoopId;
+use crate::analysis::kernel_analyses::KernelAnalyses;
+use crate::ptx::cfg::BlockId;
+use crate::ptx::ir::{Instr, Opcode, Operand, OperandId, Register, Stmt};
 use crate::ptx::modifier::{Form, IntKind, immediate};
 use crate::ptx::register_effects::writes;
-use crate::ssa::{RegisterSsa, Value};
+use crate::ssa::Value;
 use crate::support::intern::Symbol;
 use std::collections::{BTreeSet, HashMap};
 
@@ -35,16 +36,13 @@ pub struct Step {
 
 /// The induction variables of loop `l`; `inner` holds those of the loops nested
 /// in it, by the value each feeds back on its back edge.
-pub fn induction_variables(
-    module: &Module,
-    kernel: &Kernel,
-    cfg: &ControlFlowGraph,
-    forest: &LoopForest,
-    ssa: &RegisterSsa,
+pub(crate) fn induction_variables(
+    data: &KernelAnalyses,
     l: LoopId,
     inner: &HashMap<Value, (LoopId, InductionVariable)>,
 ) -> Vec<InductionVariable> {
-    let lp = forest.get(l);
+    let (module, kernel, cfg, ssa) = (data.module, data.kernel, data.cfg, &data.ssa);
+    let lp = data.forest.get(l);
     let start = cfg.block(lp.header).start;
     let in_loop = |b: BlockId| lp.contains_block(b);
     let regs: BTreeSet<Symbol> = (lp.blocks.iter())
@@ -55,15 +53,7 @@ pub fn induction_variables(
             Register::Cc => None,
         })
         .collect();
-    let walk = Walk {
-        module,
-        kernel,
-        cfg,
-        forest,
-        ssa,
-        l,
-        inner,
-    };
+    let walk = Walk { data, l, inner };
     let mut out = Vec::new();
     for reg in regs {
         let Some(phi @ Value::Argument { block, .. }) =
@@ -114,11 +104,7 @@ pub fn induction_variables(
 }
 
 struct Walk<'a> {
-    module: &'a Module,
-    kernel: &'a Kernel,
-    cfg: &'a ControlFlowGraph,
-    forest: &'a LoopForest,
-    ssa: &'a RegisterSsa<'a>,
+    data: &'a KernelAnalyses<'a>,
     l: LoopId,
     inner: &'a HashMap<Value, (LoopId, InductionVariable)>,
 }
@@ -134,18 +120,17 @@ impl Walk<'_> {
         let Value::Result { op, .. } = v else {
             return None;
         };
-        let Stmt::Instr(instr) = &self.kernel.stmts[op] else {
+        let (module, forest) = (self.data.module, self.data.forest);
+        let Stmt::Instr(instr) = &self.data.kernel.stmts[op] else {
             return None;
         };
-        let own = (self.cfg.blocks.iter_enumerated())
-            .find(|(_, b)| b.start <= op && op < b.end)
-            .is_some_and(|(b, _)| self.forest.block_loop[b.0 as usize] == Some(self.l));
+        let own = forest.block_loop[self.data.block_of(op).0 as usize] == Some(self.l);
         if depth == 0 {
             return None;
         }
         if !own {
             let (c, r) = self.inner.get(&v)?;
-            if self.forest.get(*c).parent != Some(self.l) {
+            if forest.get(*c).parent != Some(self.l) {
                 return None;
             }
             let mut s = self.offset(r.start, phi, depth - 1)?;
@@ -155,15 +140,15 @@ impl Walk<'_> {
         if instr.predicate.is_some() {
             return None;
         }
-        let ops = self.module.operand_ids(instr.operands);
-        let reg_value = |o: OperandId| match self.module.operand(o) {
-            Operand::Register(r) => self.ssa.value_before(op, Register::Named(*r)),
+        let ops = module.operand_ids(instr.operands);
+        let reg_value = |o: OperandId| match module.operand(o) {
+            Operand::Register(r) => self.data.ssa.value_before(op, Register::Named(*r)),
             _ => None,
         };
         let term = |o: OperandId, sign: i64| -> Option<Step> {
-            match self.module.operand(o) {
+            match module.operand(o) {
                 Operand::Immediate(_) => Some(Step {
-                    constant: sign.checked_mul(immediate(self.module, instr, o)?)?,
+                    constant: sign.checked_mul(immediate(module, instr, o)?)?,
                     ..Step::default()
                 }),
                 Operand::Register(r) => Some(Step {
@@ -194,7 +179,7 @@ impl Walk<'_> {
     /// A scalar integer `add` or `sub`, not saturating.
     fn integer(&self, instr: &Instr) -> bool {
         matches!(
-            Form::of(self.module, instr),
+            Form::of(self.data.module, instr),
             Form::Int { ty, sat: false, .. } if ty.kind != IntKind::Bits && ty.width >= 16
         )
     }
@@ -221,19 +206,14 @@ mod tests {
         assert_eq!(kernel.stmts.len(), body.lines().count());
         let cfg = build_cfg(&module, kernel);
         let forest = loop_forest(&cfg);
-        let mut table: HashMap<Register, Vec<usize>> = HashMap::new();
-        for (i, stmt) in kernel.stmts.iter().enumerate() {
-            for reg in writes(&module, stmt) {
-                table.entry(reg).or_default().push(i);
-            }
-        }
-        let ssa = RegisterSsa::new(&cfg, &forest.doms, table);
+        let data = KernelAnalyses::new(&module, kernel, &cfg, &forest);
+        let ssa = &data.ssa;
         let mut loops: Vec<LoopId> = (0..forest.loops.len() as u32).map(LoopId).collect();
         loops.sort_by_key(|&l| std::cmp::Reverse(forest.get(l).depth));
         let mut found: HashMap<LoopId, Vec<InductionVariable>> = HashMap::new();
         let mut inner = HashMap::new();
         for &l in &loops {
-            let rs = induction_variables(&module, kernel, &cfg, &forest, &ssa, l, &inner);
+            let rs = induction_variables(&data, l, &inner);
             for r in &rs {
                 for (_, v) in ssa
                     .incoming(r.phi)

@@ -125,11 +125,10 @@ impl AffineAnalysis<'_> {
             // the operation", which leaves a sum its type holds.
             (Opcode::Add | Opcode::Sub, Form::Int { ty, sat: true, .. }) if ops.len() == 3 => {
                 let opcode = module.opcode(instr);
-                let read = |x: AffineExpr| {
-                    (self.extend(&x, ty))
-                        .ok_or_else(|| format!("`{opcode}` reads a value its type does not hold"))
-                };
-                let (a, b) = (read(arg(1)?)?, read(arg(2)?)?);
+                let (a, b) = (
+                    self.read_as(&arg(1)?, ty, instr)?,
+                    self.read_as(&arg(2)?, ty, instr)?,
+                );
                 let value = if mnemonic == Opcode::Add {
                     a + b
                 } else {
@@ -310,10 +309,7 @@ impl AffineAnalysis<'_> {
                 // the type reads it.
                 let ty = form.int_type();
                 let v = match ty {
-                    Some(ty) => self.extend(&arg(1)?, ty).ok_or_else(|| {
-                        let opcode = module.opcode(instr);
-                        format!("`{opcode}` reads a value its type does not hold")
-                    })?,
+                    Some(ty) => self.read_as(&arg(1)?, ty, instr)?,
                     None => arg(1)?,
                 };
                 let Some(b) = arg(2)?.as_const() else {
@@ -447,12 +443,7 @@ impl AffineAnalysis<'_> {
                 if !(a.is_symbolic_or_constant() && b.is_symbolic_or_constant()) {
                     return Err(refuse(&(a + b), mnemonic.name()));
                 }
-                let opcode = module.opcode(instr);
-                let read = |x: &AffineExpr| {
-                    (self.extend(x, ty))
-                        .ok_or_else(|| format!("`{opcode}` of a value its type does not hold"))
-                };
-                let (a, b) = (read(&a)?, read(&b)?);
+                let (a, b) = (self.read_as(&a, ty, instr)?, self.read_as(&b, ty, instr)?);
                 Ok(AffineExpr::from_base(match mnemonic {
                     Opcode::Min => SymExpr::min(a.base, b.base),
                     _ => self.max(a.base, b.base),
@@ -469,25 +460,12 @@ impl AffineAnalysis<'_> {
             ) => Err(format!("`{}` keeps a product's upper half", module.opcode(instr)).into()),
             (Opcode::Mul, _) if ops.len() == 3 => {
                 let [a, b] = self.wide_operands([arg(1)?, arg(2)?], instr, form)?;
-                if a.is_symbolic_or_constant() {
-                    Ok(b.scale(a.base))
-                } else if b.is_symbolic_or_constant() {
-                    Ok(a.scale(b.base))
-                } else {
-                    Err(refuse(&(a + b), "product"))
-                }
+                product(a, b)
             }
             (Opcode::Mad, _) if ops.len() == 4 => {
                 let (a, b, c) = (arg(1)?, arg(2)?, arg(3)?);
                 let [a, b] = self.wide_operands([a, b], instr, form)?;
-                let prod = if a.is_symbolic_or_constant() {
-                    b.scale(a.base)
-                } else if b.is_symbolic_or_constant() {
-                    a.scale(b.base)
-                } else {
-                    return Err(refuse(&(a + b), "product"));
-                };
-                Ok(prod + c)
+                Ok(product(a, b)? + c)
             }
             _ => Err(self.unread(instr, def)),
         }?;
@@ -511,20 +489,19 @@ impl AffineAnalysis<'_> {
             return None;
         };
         let (op, setp, complement) = self.data.setp_at(c, def)?;
-        let Form::IntCompare {
-            pred: pred @ (IntPredicate::Eq | IntPredicate::Ne),
-            width,
-            bool_op: None,
-        } = Form::of(module, setp)
-        else {
-            return None;
-        };
-        let sops = module.operand_ids(setp.operands);
-        if setp.predicate.is_some() || sops.len() != 3 {
+        let eq_or_ne = matches!(
+            Form::of(module, setp),
+            Form::IntCompare {
+                pred: IntPredicate::Eq | IntPredicate::Ne,
+                ..
+            }
+        );
+        if setp.predicate.is_some() || !eq_or_ne {
             return None;
         }
+        let (pred, width, x, y) =
+            (self.predicate_and_operands_of_int_setp(op, setp, depth + 1)).ok()?;
         let read = |id, at| self.operand_at(id, at, depth + 1).ok();
-        let (x, y) = (read(sops[1], op)?, read(sops[2], op)?);
         let [(diff, cmp)] = &self.setp_to_zero_cmps(pred, width, &x, &y, &|_| false)?[..] else {
             return None;
         };
@@ -713,8 +690,19 @@ impl AffineAnalysis<'_> {
         else {
             return Ok(ops);
         };
-        let [a, b] = ops.map(|a| self.extend(&a, ty));
-        a.zip(b).map(|(a, b)| [a, b]).ok_or_else(|| {
+        let [a, b] = ops;
+        Ok([self.read_as(&a, ty, instr)?, self.read_as(&b, ty, instr)?])
+    }
+
+    /// `a` as `ty` reads its bits (`extend`), or refused as a value
+    /// `instr`'s type does not hold.
+    fn read_as(
+        &self,
+        a: &AffineExpr,
+        ty: IntInstrType,
+        instr: &Instr,
+    ) -> Result<AffineExpr, UnknownReason> {
+        self.extend(a, ty).ok_or_else(|| {
             let opcode = self.data.module.opcode(instr);
             format!("`{opcode}` reads a value its type does not hold").into()
         })
@@ -774,6 +762,42 @@ impl AffineAnalysis<'_> {
             }
             None => None,
         }
+    }
+
+    /// The integer `setp` (`Form::IntCompare`) `p, a, b` at `def`: its
+    /// predicate, the width it compares at, and `a` and `b` read at `def`.
+    pub(crate) fn predicate_and_operands_of_int_setp(
+        &self,
+        def: usize,
+        setp: &Instr,
+        depth: u32,
+    ) -> Result<(IntPredicate, u32, AffineExpr, AffineExpr), UnknownReason> {
+        let module = self.data.module;
+        let compared = match Form::of(module, setp) {
+            Form::IntCompare { pred, width, .. } => Some((pred, width)),
+            // PTX ISA §9.7.7.2: a packed `setp`'s first output compares the low halves.
+            Form::Float { lanes: 2 } => {
+                return Err("latch condition compares packed halves".into());
+            }
+            Form::Float { .. } => None,
+            _ => return Err("setp without comparison modifier".into()),
+        };
+        let ops = module.operand_ids(setp.operands);
+        match ops.len() {
+            3 => {}
+            // PTX ISA §9.7.6.2: `setp.CmpOp.BoolOp.type p, a, b, c` sets
+            // `p = BoolOp(a CmpOp b, c)`.
+            4 => return Err("latch condition combines a comparison with a predicate".into()),
+            _ => return Err("setp with unexpected operand count".into()),
+        }
+        // PTX ISA §9.7.6.2: a `setp` of no integer type compares floats,
+        // not the traced integers.
+        let Some((pred, width)) = compared else {
+            return Err("latch condition compares floating-point values".into());
+        };
+        let a = self.operand_at(ops[1], def, depth)?;
+        let b = self.operand_at(ops[2], def, depth)?;
+        Ok((pred, width, a, b))
     }
 
     /// The comparisons `form cmp 0` whose conjunction an integer `setp` `pred`
@@ -846,6 +870,17 @@ impl AffineAnalysis<'_> {
         }
         let sign = (!nonnegative(x)).then(|| (x.clone(), Cmp::Ge));
         Some(sign.into_iter().chain([(a - b, pred.cmp())]).collect())
+    }
+}
+
+/// `a·b`, one side symbolic or constant.
+fn product(a: AffineExpr, b: AffineExpr) -> Result<AffineExpr, UnknownReason> {
+    if a.is_symbolic_or_constant() {
+        Ok(b.scale(a.base))
+    } else if b.is_symbolic_or_constant() {
+        Ok(a.scale(b.base))
+    } else {
+        Err(refuse(&(a + b), "product"))
     }
 }
 
