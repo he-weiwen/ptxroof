@@ -41,9 +41,7 @@ pub fn join_blocks(cfg: &ControlFlowGraph, forest: &LoopForest) -> Vec<Vec<Block
 pub fn exit_branches(cfg: &ControlFlowGraph, forest: &LoopForest) -> Vec<Vec<BlockId>> {
     let next = label_edges(cfg, forest);
     let branches = |l: &Loop| {
-        let inside = |x: usize| {
-            x != l.header.0 as usize && l.blocks.binary_search(&BlockId(x as u32)).is_ok()
-        };
+        let inside = |x: usize| x != l.header.0 as usize && l.contains_block(BlockId(x as u32));
         let within: Vec<Vec<BlockId>> = (next.iter().enumerate())
             .map(|(x, n)| if inside(x) { n.clone() } else { Vec::new() })
             .collect();
@@ -69,10 +67,7 @@ fn label_edges(cfg: &ControlFlowGraph, forest: &LoopForest) -> Vec<Vec<BlockId>>
     let blocks = (0..cfg.blocks.len() as u32).map(BlockId);
     let mut next: Vec<Vec<BlockId>> = blocks.map(|b| cfg.block(b).succs.clone()).collect();
     for l in &forest.loops {
-        let mut exits: Vec<BlockId> = (l.blocks.iter())
-            .flat_map(|&b| cfg.block(b).succs.iter().copied())
-            .filter(|s| l.blocks.binary_search(s).is_err())
-            .collect();
+        let mut exits: Vec<BlockId> = l.exit_edges(cfg).map(|(_, s)| s).collect();
         exits.sort();
         exits.dedup();
         next[l.header.0 as usize] = exits;

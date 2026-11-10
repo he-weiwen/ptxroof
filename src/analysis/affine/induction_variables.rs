@@ -46,7 +46,7 @@ pub fn induction_variables(
 ) -> Vec<InductionVariable> {
     let lp = forest.get(l);
     let start = cfg.block(lp.header).start;
-    let in_loop = |b: BlockId| lp.blocks.binary_search(&b).is_ok();
+    let in_loop = |b: BlockId| lp.contains_block(b);
     let regs: BTreeSet<Symbol> = (lp.blocks.iter())
         .flat_map(|&b| cfg.block(b).start..cfg.block(b).end)
         .flat_map(|i| writes(module, &kernel.stmts[i]))
@@ -235,9 +235,11 @@ mod tests {
         for &l in &loops {
             let rs = induction_variables(&module, kernel, &cfg, &forest, &ssa, l, &inner);
             for r in &rs {
-                for (_, v) in ssa.incoming(r.phi).into_iter().filter(|(p, _)| {
-                    p.is_some_and(|p| forest.get(l).blocks.binary_search(&p).is_ok())
-                }) {
+                for (_, v) in ssa
+                    .incoming(r.phi)
+                    .into_iter()
+                    .filter(|(p, _)| p.is_some_and(|p| forest.get(l).contains_block(p)))
+                {
                     inner.insert(v, (l, r.clone()));
                 }
             }

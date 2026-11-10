@@ -944,28 +944,25 @@ fn kept(forest: &LoopForest, s: Option<LoopId>, x: BlockId, t: BlockId) -> bool 
     !forest.irreducible_edges.contains(&(x, t))
         && s.is_none_or(|l| {
             let l = forest.get(l);
-            t != l.header
-                && l.blocks.binary_search(&x).is_ok()
-                && l.blocks.binary_search(&t).is_ok()
+            t != l.header && l.contains_block(x) && l.contains_block(t)
         })
 }
 
 /// The block standing for `x` in one trip of scope `s`: `x`, or the
 /// header of the loop directly inside `s` that holds it.
 fn level(forest: &LoopForest, s: Option<LoopId>, x: BlockId) -> BlockId {
-    let (mut at, mut l) = (x, forest.block_loop[x.0 as usize]);
-    while let Some(id) = l.filter(|&id| Some(id) != s) {
-        (at, l) = (forest.get(id).header, forest.get(id).parent);
-    }
-    at
+    (forest.loops_containing_block(x))
+        .take_while(|&id| Some(id) != s)
+        .last()
+        .map_or(x, |id| forest.get(id).header)
 }
 
 /// The scope one trip of which decides whether `b` runs: its innermost
 /// loop, or that loop's parent for its header.
 fn scope(forest: &LoopForest, b: BlockId) -> Option<LoopId> {
-    match forest.block_loop[b.0 as usize] {
-        Some(l) if forest.get(l).header == b => forest.get(l).parent,
-        other => other,
+    match forest.loop_with_header(b) {
+        Some(l) => forest.get(l).parent,
+        None => forest.block_loop[b.0 as usize],
     }
 }
 
@@ -984,7 +981,7 @@ impl PredicateReader<'_> {
             Some(d) => {
                 let s = scope(forest, b);
                 let d = level(forest, s, d);
-                let around = |l: LoopId| forest.get(l).blocks.binary_search(&b).is_ok();
+                let around = |l: LoopId| forest.get(l).contains_block(b);
                 let at = self.block(d).in_loops(&around);
                 let mut left = REACH_BUDGET;
                 let relative = self.reach(s, d, b, b, &mut left);
@@ -1091,10 +1088,7 @@ impl PredicateReader<'_> {
             return Pred::Unknown;
         };
         let forest = self.forest;
-        let inside = |l: LoopId| {
-            let blocks = &forest.get(l).blocks;
-            blocks.binary_search(&b).is_ok() && blocks.binary_search(&x).is_ok()
-        };
+        let inside = |l: LoopId| forest.get(l).contains_block(b) && forest.get(l).contains_block(x);
         let p = self.of(guard.reg, pos, 0).in_loops(&inside);
         let p = if guard.negated { !p } else { p };
         let p = match kept(forest, s, x, taken) && self.trip(s).0.dominates(c, taken) {
@@ -1350,8 +1344,7 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
             continue;
         }
         let b = affine.data.block_of(pos);
-        let p = (reader.of(guard.reg, pos, 0))
-            .in_loops(&|l| forest.get(l).blocks.binary_search(&b).is_ok());
+        let p = (reader.of(guard.reg, pos, 0)).in_loops(&|l| forest.get(l).contains_block(b));
         guards.insert(pos, if guard.negated { !p } else { p });
     }
     let mut dead_edges = Vec::new();
@@ -1380,8 +1373,9 @@ pub(crate) fn thread_sets(affine: &AffineAnalysis) -> ThreadSets {
         };
         let b = affine.data.block_of(pos);
         let read = match kernel.register_type(module, *r) {
-            Some(FundamentalType::Pred) => !(reader.of(*r, pos, 0))
-                .in_loops(&|l| forest.get(l).blocks.binary_search(&b).is_ok()),
+            Some(FundamentalType::Pred) => {
+                !(reader.of(*r, pos, 0)).in_loops(&|l| forest.get(l).contains_block(b))
+            }
             _ => Pred::Unknown,
         };
         if read != Pred::True {
@@ -1525,13 +1519,7 @@ fn per_trip(
     rest.terms.remove(v);
     let c = i128::from(c.as_const().filter(|&c| c != 0)?);
     let (_, n) = affine.var_bounds(v)?;
-    let inside = affine
-        .data
-        .forest
-        .get(*l)
-        .blocks
-        .binary_search(&affine.data.block_of(def))
-        .is_ok();
+    let inside = (affine.data.forest.get(*l)).contains_block(affine.data.block_of(def));
     (on_tid_only(&rest) && inside)
         .then_some((*l, (c.min(c * i128::from(n)), c.max(c * i128::from(n)))))
 }

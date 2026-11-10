@@ -7,98 +7,30 @@ use super::*;
 impl AffineAnalysis<'_> {
     /// The count loop `id`'s latch comparison gives.
     pub(super) fn counted_trips(&self, id: LoopId) -> Result<LoopTripCount, UnknownReason> {
-        let (module, cfg) = (self.data.module, self.data.cfg);
         let l = self.data.forest.get(id);
-
-        // Structural requirements: one latch, one exit edge, at the latch.
-        if l.latches.len() != 1 {
-            return Err("loop has multiple latches".into());
-        }
-        let latch = l.latches[0];
-        let in_loop = |b: BlockId| l.blocks.binary_search(&b).is_ok();
-        let mut exit_edges = Vec::new();
-        for &b in &l.blocks {
-            for &s in &cfg.block(b).succs {
-                if !in_loop(s) {
-                    exit_edges.push((b, s));
-                }
-            }
-        }
-        if exit_edges.len() != 1 {
-            return Err(format!("loop has {} exit edges", exit_edges.len()).into());
-        }
-        if exit_edges[0].0 != latch {
-            return Err("loop exit is not at the latch".into());
-        }
-
-        // The latch terminator: `@%p bra HEADER` (or inverted).
-        let latch_block = cfg.block(latch);
-        let branch = self
-            .data
-            .last_instr(latch)
-            .ok_or_else(|| "latch block has no instructions".to_owned())?;
-        let pred = branch
-            .1
-            .predicate
-            .ok_or_else(|| "latch branch is unconditional".to_owned())?;
-        // succs[0] is the taken target (graph contract). Taken = header
-        // means continue-if-true; predicate negation flips once more.
-        let mut continue_if_true = latch_block.succs.first() == Some(&l.header);
-        if pred.negated {
-            continue_if_true = !continue_if_true;
-        }
+        let per_entry = |count| LoopTripCount {
+            count,
+            entry: l.header,
+            distance: None,
+        };
+        let (latch, _) = self.exiting_latch(id)?;
+        let (pos, pred, continue_if_true) = self.branch_to(latch, l.header)?;
 
         // The setp defining the branch predicate, in a block of this loop,
         // not of a nested one, that dominates the latch.
-        let found = (self.data.setp_at(pred.reg, branch.0)).filter(|&(d, ..)| {
+        let found = (self.data.setp_at(pred, pos)).filter(|&(d, ..)| {
             let b = self.data.block_of(d);
             self.data.forest.block_loop[b.0 as usize] == Some(id)
                 && self.data.forest.doms.dominates(b, latch)
         });
-        let Some((setp_idx, setp, complement)) = found else {
+        let Some(setp) = found else {
             return self
-                .predicate_phi_trips(id, latch, branch.0, pred.reg, continue_if_true)
-                .unwrap_or_else(|| Err(self.predicate_reason(latch, branch.0, pred.reg)))
-                .map(|count| LoopTripCount {
-                    count,
-                    entry: l.header,
-                    distance: None,
-                });
+                .predicate_phi_trips(id, latch, pos, pred, continue_if_true)
+                .unwrap_or_else(|| Err(self.predicate_reason(latch, pos, pred)))
+                .map(per_entry);
         };
-        if setp.predicate.is_some() {
-            let name = module.interner.resolve(pred.reg);
-            return Err(format!("{name} is written under a guard").into());
-        }
-        let compared = match Form::of(module, setp) {
-            Form::IntCompare { pred, width, .. } => Some((pred, width)),
-            // PTX ISA §9.7.7.2: a packed `setp`'s first output compares the low halves.
-            Form::Float { lanes: 2 } => {
-                return Err("latch condition compares packed halves".into());
-            }
-            Form::Float { .. } => None,
-            _ => return Err("setp without comparison modifier".into()),
-        };
-
-        // Trace both operands at the setp.
-        let ops = module.operand_ids(setp.operands);
-        match ops.len() {
-            3 => {}
-            // PTX ISA §9.7.6.2: `setp.CmpOp.BoolOp.type p, a, b, c` sets
-            // `p = BoolOp(a CmpOp b, c)`.
-            4 => return Err("latch condition combines a comparison with a predicate".into()),
-            _ => return Err("setp with unexpected operand count".into()),
-        }
-        // PTX ISA §9.7.6.2: a `setp` of no integer type compares floats,
-        // not the traced integers.
-        let Some((pred, width)) = compared else {
-            return Err("latch condition compares floating-point values".into());
-        };
-        let a = self.operand_at(ops[1], setp_idx, 0)?;
-        let b = self.operand_at(ops[2], setp_idx, 0)?;
-        let (a, b) = self.cta_uniform_symbols(id, setp_idx, a, b)?;
-        // D = A − B; condition is `D cmp 0`
-        let (d, cmp) = (self.loop_cmp(id, pred, width, &a, &b))
-            .ok_or_else(|| "latch condition does not read as one integer comparison".to_owned())?;
+        // D = A − B; the latch continues where `D cond 0`.
+        let (d, cond) = self.predicate_cmp(id, setp, pred, continue_if_true)?;
 
         // D(k) = A1·k + A0 in this loop's iteration number alone.
         let k = Var::Iteration(id);
@@ -119,98 +51,39 @@ impl AffineAnalysis<'_> {
         if a1 == i64::MIN {
             return Err("induction step is −2^63, which has no negation".into());
         }
-        let cond = if continue_if_true != complement {
-            cmp
-        } else {
-            cmp.inverse()
-        };
         let trips = exit_limit(cond, a1, d.base.clone())?;
-        let distance =
-            (cond == Cmp::Ne).then(|| (SymExpr::mul(SymExpr::Const(-1), d.base.clone()), a1));
-        match (below_zero(cond, d.base), self.guard_test(id)) {
-            (Some(at_zero), Some((g, test))) if test == at_zero => Ok(LoopTripCount {
-                count: self.max(trips, SymExpr::Const(0)),
-                entry: g,
-                distance: None,
-            }),
-            (Some(_), _) => Ok(LoopTripCount {
-                count: self.max(trips, SymExpr::Const(1)),
-                entry: l.header,
-                distance: None,
-            }),
-            _ => Ok(LoopTripCount {
+        // `!=` (an `==` latch has no `exit_limit`): the count holds where
+        // the step divides the distance, which the reader checks.
+        let Some(at_zero) = below_zero(cond, d.base.clone()) else {
+            let distance = Some((SymExpr::mul(SymExpr::Const(-1), d.base), a1));
+            return Ok(LoopTripCount {
                 count: trips,
                 entry: l.header,
                 distance,
-            }),
-        }
+            });
+        };
+        // Under a guard entering the loop exactly where the latch's
+        // condition holds of the counter's start, D(0), the count is per
+        // guard and from 0; else per entry, and each entry runs ≥ 1 trip.
+        Ok(match self.zero_trip_guard(id, &at_zero) {
+            Some(g) => LoopTripCount {
+                count: self.max(trips, SymExpr::Const(0)),
+                entry: g,
+                distance: None,
+            },
+            None => per_entry(self.max(trips, SymExpr::Const(1))),
+        })
     }
 
-    /// LLVM's loop guard branch (`Loop::getLoopGuardBranch`,
-    /// llvm/lib/Analysis/LoopInfo.cpp): above the header's one predecessor
-    /// outside the loop, through blocks of one predecessor and one successor
-    /// and loops left only through their one latch, none ending in a
-    /// predicated `ret` or `exit`, the first block, which
-    /// must lie in the loop's parent and end in a two-way branch whose other
-    /// successor does not reach the header without passing it. That block,
-    /// and its test of entering the loop, read from the `setp` that reaches
-    /// its branch predicate, as `e < 0`; `!=` and `==` of a side never
-    /// negative as `>` and `<=`.
-    fn guard_test(&self, id: LoopId) -> Option<(BlockId, SymExpr)> {
-        let (module, cfg, forest) = (self.data.module, self.data.cfg, self.data.forest);
-        let l = forest.get(id);
-        let mut outside =
-            (cfg.block(l.header).preds.iter()).filter(|p| l.blocks.binary_search(p).is_err());
-        let (&pre, None) = (outside.next()?, outside.next()) else {
-            return None;
-        };
-        let (mut g, mut into) = (pre, l.header);
-        loop {
-            (g, into) = match (&cfg.block(g).succs[..], &cfg.block(g).preds[..]) {
-                ([_], &[p]) if !self.exits_some(g) => (p, g),
-                ([_, _], _) => match self.sibling_entry(g, into) {
-                    Some(entry) => entry,
-                    None => break,
-                },
-                _ => break,
-            };
-        }
-        let &[taken, other] = &cfg.block(g).succs[..] else {
-            return None;
-        };
-        let skip = if taken == into { other } else { taken };
-        let in_loop = |b: BlockId| forest.block_loop[b.0 as usize];
-        if taken == other || in_loop(g) != l.parent || self.data.path_avoiding(skip, l.header, g) {
-            return None;
-        }
-        let (pos, bra) = self.data.last_instr(g)?;
-        let pred = bra.predicate?;
-        let (def, setp, complement) = self.data.setp_at(pred.reg, pos)?;
-        let Form::IntCompare {
-            pred: compare,
-            width,
-            ..
-        } = Form::of(module, setp)
-        else {
-            return None;
-        };
-        let &[_, a, b] = module.operand_ids(setp.operands) else {
-            return None;
-        };
-        if setp.predicate.is_some() {
-            return None;
-        }
-        let (a, b) = (
-            self.operand_at(a, def, 0).ok()?,
-            self.operand_at(b, def, 0).ok()?,
-        );
-        let (a, b) = self.cta_uniform_symbols(id, def, a, b).ok()?;
-        let (form, cmp) = self.loop_cmp(id, compare, width, &a, &b)?;
-        let cmp = if ((taken == into) != pred.negated) != complement {
-            cmp
-        } else {
-            cmp.inverse()
-        };
+    /// Loop `id`'s guard (`loop_guard`), where it enters the loop exactly
+    /// when `enters < 0`: the test read from the `setp` that reaches its
+    /// branch predicate, `!=` and `==` of a side never negative as `>` and
+    /// `<=`.
+    fn zero_trip_guard(&self, id: LoopId, enters: &SymExpr) -> Option<BlockId> {
+        let (g, into) = self.loop_guard(id)?;
+        let (pos, pred, enters_if_true) = self.branch_to(g, into).ok()?;
+        let setp = self.data.setp_at(pred, pos)?;
+        let (form, cmp) = self.predicate_cmp(id, setp, pred, enters_if_true).ok()?;
         let e = form.is_symbolic_or_constant().then_some(form.base)?;
         let nonneg = |e: &SymExpr| self.nonnegative(&AffineExpr::from_base(e.clone()));
         let (cmp, e) = match cmp {
@@ -227,29 +100,131 @@ impl AffineAnalysis<'_> {
             }
             _ => (cmp, e),
         };
-        Some((g, below_zero(cmp, e)?))
+        (below_zero(cmp, e)? == *enters).then_some(g)
+    }
+
+    /// LLVM's loop guard branch (`Loop::getLoopGuardBranch`,
+    /// llvm/lib/Analysis/LoopInfo.cpp): above the header's one predecessor
+    /// outside the loop, through blocks of one predecessor and one successor
+    /// and loops left only through their one latch, none ending in a
+    /// predicated `ret` or `exit`, the first block, which
+    /// must lie in the loop's parent and end in a two-way branch whose other
+    /// successor does not reach the header without passing it. That block,
+    /// and its successor toward loop `id`.
+    fn loop_guard(&self, id: LoopId) -> Option<(BlockId, BlockId)> {
+        let (cfg, forest) = (self.data.cfg, self.data.forest);
+        let l = forest.get(id);
+        let (mut g, mut into) = (l.source_of_only_entering_edge(cfg)?, l.header);
+        loop {
+            (g, into) = match (&cfg.block(g).succs[..], &cfg.block(g).preds[..]) {
+                ([_], &[p]) if !self.exits_some(g) => (p, g),
+                ([_, _], _) => match self.sibling_entry(g, into) {
+                    Some(entry) => entry,
+                    None => break,
+                },
+                _ => break,
+            };
+        }
+        let &[taken, other] = &cfg.block(g).succs[..] else {
+            return None;
+        };
+        let skip = if taken == into { other } else { taken };
+        let in_loop = |b: BlockId| forest.block_loop[b.0 as usize];
+        let blocked = taken == other || in_loop(g) != l.parent;
+        (!blocked && !self.data.path_avoiding(skip, l.header, g)).then_some((g, into))
+    }
+
+    /// Block `b`'s closing `@p bra`: its position, p, and whether it goes
+    /// to `to` where p holds. `succs[0]` is the taken target (graph
+    /// contract); the predicate's negation flips that once more.
+    fn branch_to(&self, b: BlockId, to: BlockId) -> Result<(usize, Symbol, bool), UnknownReason> {
+        let (pos, bra) = (self.data.last_instr(b))
+            .ok_or_else(|| "latch block has no instructions".to_owned())?;
+        let pred = (bra.predicate).ok_or_else(|| "latch branch is unconditional".to_owned())?;
+        let taken = self.data.cfg.block(b).succs.first() == Some(&to);
+        Ok((pos, pred.reg, taken != pred.negated))
+    }
+
+    /// `form cmp 0` (`loop_cmp`), holding exactly where `pred`, written by
+    /// `setp` (`setp_at`'s triple: its second output where `complement`),
+    /// is `holds`; both operands read at the setp as `cta_uniform_symbols`
+    /// reads them.
+    fn predicate_cmp(
+        &self,
+        id: LoopId,
+        (def, setp, complement): (usize, &Instr, bool),
+        pred: Symbol,
+        holds: bool,
+    ) -> Result<(AffineExpr, Cmp), UnknownReason> {
+        let module = self.data.module;
+        if setp.predicate.is_some() {
+            let name = module.interner.resolve(pred);
+            return Err(format!("{name} is written under a guard").into());
+        }
+        let compared = match Form::of(module, setp) {
+            Form::IntCompare { pred, width, .. } => Some((pred, width)),
+            // PTX ISA §9.7.7.2: a packed `setp`'s first output compares the low halves.
+            Form::Float { lanes: 2 } => {
+                return Err("latch condition compares packed halves".into());
+            }
+            Form::Float { .. } => None,
+            _ => return Err("setp without comparison modifier".into()),
+        };
+        let ops = module.operand_ids(setp.operands);
+        match ops.len() {
+            3 => {}
+            // PTX ISA §9.7.6.2: `setp.CmpOp.BoolOp.type p, a, b, c` sets
+            // `p = BoolOp(a CmpOp b, c)`.
+            4 => return Err("latch condition combines a comparison with a predicate".into()),
+            _ => return Err("setp with unexpected operand count".into()),
+        }
+        // PTX ISA §9.7.6.2: a `setp` of no integer type compares floats,
+        // not the traced integers.
+        let Some((compare, width)) = compared else {
+            return Err("latch condition compares floating-point values".into());
+        };
+        let a = self.operand_at(ops[1], def, 0)?;
+        let b = self.operand_at(ops[2], def, 0)?;
+        let (a, b) = self.cta_uniform_symbols(id, def, a, b)?;
+        let (d, cmp) = (self.loop_cmp(id, compare, width, &a, &b))
+            .ok_or_else(|| "latch condition does not read as one integer comparison".to_owned())?;
+        Ok((
+            d,
+            if holds != complement {
+                cmp
+            } else {
+                cmp.inverse()
+            },
+        ))
+    }
+
+    /// Loop `id`'s one latch, and the block its one exit edge, from that
+    /// latch, enters.
+    fn exiting_latch(&self, id: LoopId) -> Result<(BlockId, BlockId), UnknownReason> {
+        let (cfg, l) = (self.data.cfg, self.data.forest.get(id));
+        let &[latch] = &l.latches[..] else {
+            return Err("loop has multiple latches".into());
+        };
+        let exits: Vec<(BlockId, BlockId)> = l.exit_edges(cfg).collect();
+        match exits[..] {
+            [(b, s)] if b == latch => Ok((latch, s)),
+            [_] => Err("loop exit is not at the latch".into()),
+            _ => Err(format!("loop has {} exit edges", exits.len()).into()),
+        }
     }
 
     /// The one block entering loop S from outside, and S's header, where `g`
     /// is S's one latch and `g → into` its one exit edge.
     fn sibling_entry(&self, g: BlockId, into: BlockId) -> Option<(BlockId, BlockId)> {
-        let (forest, cfg) = (self.data.forest, self.data.cfg);
-        let s = forest.get(forest.block_loop[g.0 as usize]?);
-        let inside = |b: &BlockId| s.blocks.binary_search(b).is_ok();
-        let exits = (s.blocks.iter())
-            .flat_map(|&b| cfg.block(b).succs.iter().map(move |&t| (b, t)))
-            .filter(|(_, t)| !inside(t));
-        if s.latches != [g]
-            || !exits.eq([(g, into)])
+        let forest = self.data.forest;
+        let id = forest.block_loop[g.0 as usize]?;
+        let s = forest.get(id);
+        if self.exiting_latch(id).ok() != Some((g, into))
             || s.blocks.iter().any(|&b| self.exits_some(b))
         {
             return None;
         }
-        let mut outside = (cfg.block(s.header).preds.iter()).filter(|p| !inside(p));
-        let (&q, None) = (outside.next()?, outside.next()) else {
-            return None;
-        };
-        Some((q, s.header))
+        Some((s.source_of_only_entering_edge(self.data.cfg)?, s.header))
     }
 
     /// Block `b` ends in a predicated `ret` or `exit`, which the CFG reads as
@@ -270,8 +245,7 @@ impl AffineAnalysis<'_> {
         a: AffineExpr,
         b: AffineExpr,
     ) -> Result<(AffineExpr, AffineExpr), UnknownReason> {
-        let top = (std::iter::successors(Some(id), |&l| self.data.forest.get(l).parent).last())
-            .unwrap_or(id);
+        let top = (self.data.forest.loop_and_enclosing_loops(id).last()).unwrap_or(id);
         self.alike(&(a.clone() - b.clone()), pos, Uniform::Cta, Some(top))?;
         let symbols = |x: AffineExpr| {
             self.per_cta(x.as_symbols(&|v| match v {
@@ -384,7 +358,7 @@ impl AffineAnalysis<'_> {
             .ssa
             .value_before(cfg.block(lp.header).start, Register::Named(*phi))?;
         let outside: Vec<Value> = (ssa.incoming(entry).into_iter())
-            .filter(|(p, _)| p.is_none_or(|p| lp.blocks.binary_search(&p).is_err()))
+            .filter(|(p, _)| p.is_none_or(|p| !lp.contains_block(p)))
             .map(|(_, v)| v)
             .collect();
         let [Value::Result { op: init_def, .. }, ..] = outside[..] else {

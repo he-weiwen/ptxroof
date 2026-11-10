@@ -412,13 +412,10 @@ fn merges(t: &KernelAnalyses, v: Value) -> (Vec<BlockId>, Vec<LoopId>) {
                     Value::Argument { block, .. } => Some(block),
                     Value::Undef(_) => None,
                 };
-                let mut l = from.and_then(|b| t.forest.block_loop[b.0 as usize]);
-                while let Some(id) = l {
-                    if !t.forest.get(id).blocks.contains(&block) {
-                        left.push(id);
-                    }
-                    l = t.forest.get(id).parent;
-                }
+                let loops = from
+                    .into_iter()
+                    .flat_map(|b| t.forest.loops_containing_block(b));
+                left.extend(loops.filter(|&id| !t.forest.get(id).contains_block(block)));
                 work.push(w);
             }
         }
@@ -453,12 +450,10 @@ fn read_sites(
         {
             return Read::Divergent(format!("{name} is read after a cycle defining it"));
         }
-        let mut l = t.forest.block_loop[at.0 as usize];
-        while let Some(id) = l {
+        for id in t.forest.loops_containing_block(at) {
             if !t.in_loop(id, pos) {
                 sources.extend(exits(t, id));
             }
-            l = t.forest.get(id).parent;
         }
     }
     for &id in left {

@@ -134,7 +134,7 @@ impl<'a> AffineAnalysis<'a> {
                 &by_update,
             ) {
                 for (p, v) in ssa.incoming(r.phi) {
-                    if p.is_some_and(|p| lp.blocks.binary_search(&p).is_ok()) {
+                    if p.is_some_and(|p| lp.contains_block(p)) {
                         by_update.insert(v, (l, r.clone()));
                     }
                 }
@@ -453,7 +453,7 @@ impl<'a> AffineAnalysis<'a> {
         depth: u32,
     ) -> Result<AffineExpr, UnknownReason> {
         let name = self.data.module.interner.resolve(reg);
-        let header = (self.data.forest.loops.iter()).any(|l| l.header == block);
+        let header = self.data.forest.loop_with_header(block).is_some();
         let refused = || {
             self.depends_on(vec![v], Vec::new())
                 .unwrap_or_else(|| match header {
@@ -600,7 +600,7 @@ impl<'a> AffineAnalysis<'a> {
             let (var, why, own) = match (v.counter(), v.unknown()) {
                 (Some(l), _) if !self.data.in_loop(l, pos) => {
                     let why = match uniformity.exit_uniformity(l) {
-                        _ if scope.is_some_and(|s| self.data.loop_within(l, s)) => {
+                        _ if scope.is_some_and(|s| self.data.forest.loop_contains_loop(s, l)) => {
                             "is counted again on every trip of an enclosing loop".into()
                         }
                         Ok(u) if u <= level => continue,
